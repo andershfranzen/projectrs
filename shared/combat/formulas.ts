@@ -313,6 +313,21 @@ export interface CombatBonuses {
   magicDefence: number;
 }
 
+export const COMBAT_BONUS_WIRE_KEYS = [
+  'stabAttack',
+  'slashAttack',
+  'crushAttack',
+  'stabDefence',
+  'slashDefence',
+  'crushDefence',
+  'meleeStrength',
+  'rangedAccuracy',
+  'rangedStrength',
+  'rangedDefence',
+  'magicAccuracy',
+  'magicDefence',
+] as const satisfies readonly (keyof CombatBonuses)[];
+
 export function zeroBonuses(): CombatBonuses {
   return {
     stabAttack: 0, slashAttack: 0, crushAttack: 0,

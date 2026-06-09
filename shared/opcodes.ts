@@ -192,6 +192,10 @@ export enum ServerOpcode {
   PLAYER_INVENTORY_BATCH = 24,
   PLAYER_SKILLS_BATCH = 25,
   PLAYER_EQUIPMENT_BATCH = 26,
+  /** Current aggregate equipment bonuses for the local player. Layout follows
+   *  COMBAT_BONUS_WIRE_KEYS. Sent after equipment syncs so public item data
+   *  does not need to expose combat stats. */
+  PLAYER_EQUIPMENT_BONUSES = 27,
   COMBAT_HIT = 30,
   /** Entity left the client's world. Payload: [entityId, kind?].
    *  kind=0/omitted means ordinary despawn/visibility cleanup; kind=1 means

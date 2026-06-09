@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ClientOpcode, decodePacket, type ItemDef } from '@projectrs/shared';
+import { ClientOpcode, COMBAT_BONUS_WIRE_KEYS, decodePacket, zeroBonuses, type ItemDef } from '@projectrs/shared';
 import { SidePanel } from './SidePanel';
 
 function makeSpellModePanel(): any {
@@ -68,6 +68,21 @@ function makeInventoryPanel(): any {
   panel.showUsingBanner = () => {};
   panel.hideUsingBanner = () => {};
   panel.sent = sent;
+  return panel;
+}
+
+function makeEquipmentBonusPanel(): any {
+  const panel = Object.create(SidePanel.prototype) as any;
+  panel.equipment = new Map<number, number>([[0, 201]]);
+  panel.itemDefs = new Map<number, ItemDef>([[
+    201,
+    { id: 201, name: 'Raw Stat Sword', description: '', stackable: false, equippable: true, value: 1, stabAttack: 99 },
+  ]]);
+  panel.equipmentBonusValues = {};
+  for (const key of COMBAT_BONUS_WIRE_KEYS) {
+    panel.equipmentBonusValues[key] = { textContent: '', style: { color: '' } };
+  }
+  panel.equipmentBonusesFromServer = null;
   return panel;
 }
 
@@ -214,5 +229,19 @@ describe('SidePanel auto retaliate', () => {
     expect(panel.autoRetaliate).toBe(true);
     expect(panel.autoRetaliateRow.classList.contains('is-active')).toBe(true);
     expect(panel.autoRetaliateRow.getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+describe('SidePanel equipment bonuses', () => {
+  test('server-sent bonuses override item definition stats', () => {
+    const panel = makeEquipmentBonusPanel();
+    const bonuses = zeroBonuses();
+    bonuses.stabAttack = 5;
+    bonuses.meleeStrength = -2;
+
+    panel.setEquipmentBonuses(bonuses);
+
+    expect(panel.equipmentBonusValues.stabAttack.textContent).toBe('+5');
+    expect(panel.equipmentBonusValues.meleeStrength.textContent).toBe('-2');
   });
 });

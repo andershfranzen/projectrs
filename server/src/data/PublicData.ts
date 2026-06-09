@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
+import { npcCombatLevel } from '@projectrs/shared';
 
 const PUBLIC_DATA_FILES = new Set([
   'gear-overrides.json',
@@ -35,6 +36,96 @@ export function invalidatePublicDataCache(filename?: string): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown, fallback: number = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
+  return Math.floor(value);
+}
+
+function sanitizeStackModel(model: unknown): unknown {
+  if (!isRecord(model)) return model;
+  const { minQuantity, model: modelPath, scale } = model;
+  return {
+    minQuantity,
+    model: modelPath,
+    ...(scale !== undefined ? { scale } : {}),
+  };
+}
+
+function sanitizeBodyTypeModels(value: unknown): unknown {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, modelPath] of Object.entries(value)) {
+    if (typeof modelPath === 'string') out[key] = modelPath;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function sanitizeItemDef(item: Record<string, unknown>): Record<string, unknown> {
+  const {
+    id,
+    name,
+    description,
+    stackable,
+    noteable,
+    noteId,
+    unnotedId,
+    equippable,
+    equipSlot,
+    bodyHideStyle,
+    headRenderMode,
+    attackRange,
+    weaponStyle,
+    twoHanded,
+    healAmount,
+    toolType,
+    sprite,
+    icon,
+    model,
+    stackModels,
+    bodyTypeModels,
+  } = item;
+  const out: Record<string, unknown> = {
+    id,
+    name,
+    description,
+    stackable,
+    equippable,
+  };
+  if (noteable !== undefined) out.noteable = noteable;
+  if (noteId !== undefined) out.noteId = noteId;
+  if (unnotedId !== undefined) out.unnotedId = unnotedId;
+  if (equipSlot !== undefined) out.equipSlot = equipSlot;
+  if (bodyHideStyle !== undefined) out.bodyHideStyle = bodyHideStyle;
+  if (headRenderMode !== undefined) out.headRenderMode = headRenderMode;
+  if (attackRange !== undefined) out.attackRange = attackRange;
+  if (weaponStyle !== undefined) out.weaponStyle = weaponStyle;
+  if (twoHanded !== undefined) out.twoHanded = twoHanded;
+  if (healAmount !== undefined) out.healAmount = healAmount;
+  if (toolType !== undefined) out.toolType = toolType;
+  if (sprite !== undefined) out.sprite = sprite;
+  if (icon !== undefined) out.icon = icon;
+  if (model !== undefined) out.model = model;
+  if (Array.isArray(stackModels)) out.stackModels = stackModels.map(sanitizeStackModel);
+  const sanitizedBodyModels = sanitizeBodyTypeModels(bodyTypeModels);
+  if (sanitizedBodyModels !== undefined) out.bodyTypeModels = sanitizedBodyModels;
+  return out;
+}
+
+function publicNpcCombatLevel(npc: Record<string, unknown>): number {
+  const explicit = positiveInteger(npc.combatLevel);
+  if (explicit !== undefined) return explicit;
+  return npcCombatLevel({
+    health: finiteNumber(npc.health, 1),
+    attack: finiteNumber(npc.attack, 1),
+    defence: finiteNumber(npc.defence, 1),
+    strength: finiteNumber(npc.strength, 1),
+  });
 }
 
 function sanitizeObjectRecipe(recipe: unknown): unknown {
@@ -82,56 +173,34 @@ function sanitizeQuestStage(stage: unknown): unknown {
 }
 
 export function sanitizePublicData(filename: string, data: unknown): unknown {
+  if (filename === 'items.json' && Array.isArray(data)) {
+    return data.map((item) => isRecord(item) ? sanitizeItemDef(item) : item);
+  }
   if (filename === 'npcs.json' && Array.isArray(data)) {
     return data.map((npc) => {
       if (!isRecord(npc)) return npc;
       const {
         id,
         name,
+        examineText,
         modelNpcId,
         defaultAppearance,
         defaultEquipment,
         defaultCustomColors,
         defaultAttackAnim,
-        health,
-        attack,
-        defence,
-        strength,
-        combatLevel,
-        attackBonus,
-        strengthBonus,
-        stabDefence,
-        slashDefence,
-        crushDefence,
-        rangedDefence,
-        magicDefence,
-        attackStyle,
-        attackSpeed,
         size,
         stationary,
       } = npc;
       return {
         id,
         name,
+        ...(examineText !== undefined ? { examineText } : {}),
         ...(modelNpcId !== undefined ? { modelNpcId } : {}),
         ...(defaultAppearance !== undefined ? { defaultAppearance } : {}),
         ...(defaultEquipment !== undefined ? { defaultEquipment } : {}),
         ...(defaultCustomColors !== undefined ? { defaultCustomColors } : {}),
         ...(defaultAttackAnim !== undefined ? { defaultAttackAnim } : {}),
-        health,
-        attack,
-        defence,
-        strength,
-        ...(combatLevel !== undefined ? { combatLevel } : {}),
-        ...(attackBonus !== undefined ? { attackBonus } : {}),
-        ...(strengthBonus !== undefined ? { strengthBonus } : {}),
-        ...(stabDefence !== undefined ? { stabDefence } : {}),
-        ...(slashDefence !== undefined ? { slashDefence } : {}),
-        ...(crushDefence !== undefined ? { crushDefence } : {}),
-        ...(rangedDefence !== undefined ? { rangedDefence } : {}),
-        ...(magicDefence !== undefined ? { magicDefence } : {}),
-        ...(attackStyle !== undefined ? { attackStyle } : {}),
-        attackSpeed,
+        combatLevel: publicNpcCombatLevel(npc),
         ...(size !== undefined ? { size } : {}),
         ...(stationary !== undefined ? { stationary } : {}),
       };

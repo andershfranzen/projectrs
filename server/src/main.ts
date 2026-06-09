@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import type { CustomColors, FloorLayerData, GroundType, KCMapFile, KCTile, MapMeta, PlayerAppearance, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, defaultGroundForMap, getObjectInteractionTiles, localSidesToWorldSides, TileType } from '@projectrs/shared';
 import { World } from './World';
+import { canFetchScopedGameplayMapDataPath, isGameplayObjectManifestPath, mapIdFromGameplayMapPath } from './data/MapDataAccess';
 import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } from './data/PublicData';
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
@@ -3666,10 +3667,11 @@ const server = Bun.serve<SocketData>({
         return new Response('Forbidden', { status: 403 });
       }
       const hasBakeSecret = (req.headers.get('x-forum-avatar-bake-secret') || '') === FORUM_AVATAR_BAKE_SECRET;
-      if (isProductionLike() && !hasBakeSecret && !getBoundBearerSessionForScope(req, 'game')) {
+      const boundDataSession = getBoundBearerSessionForScope(req, 'game');
+      if (isProductionLike() && !hasBakeSecret && !boundDataSession) {
         return new Response('Unauthorized', { status: 401 });
       }
-      if (isProductionLike() && !isPublicDataFile(filename)) {
+      if (isProductionLike() && !hasBakeSecret && !boundDataSession?.isAdmin && !isPublicDataFile(filename)) {
         return new Response('Not Found', { status: 404 });
       }
       // Symlink-safe path resolution. Without realpath, a `server/data/evil ->
@@ -3677,7 +3679,7 @@ const server = Bun.serve<SocketData>({
       const filePath = resolveWithinBase(DATA_DIR, filename);
       if (!filePath) return new Response('Forbidden', { status: 403 });
       try {
-        const content = readPublicDataContent(filename, filePath, isProductionLike());
+        const content = readPublicDataContent(filename, filePath, isProductionLike() && !hasBakeSecret && !boundDataSession?.isAdmin);
         return new Response(content, {
           headers: {
             'Content-Type': 'application/json',
@@ -4768,6 +4770,24 @@ const server = Bun.serve<SocketData>({
         boundMapSession = getBoundBearerSessionForScope(req, 'game');
         if (isProductionLike() && !boundMapSession) return new Response('Unauthorized', { status: 401 });
         if (boundMapSession && gameplayMapDataPath) recordGameplayMapDataFetch(boundMapSession, mapPath, req, server);
+        if (isProductionLike() && boundMapSession && gameplayMapDataPath && !boundMapSession.isAdmin) {
+          if (isGameplayObjectManifestPath(mapPath)) return new Response('Not Found', { status: 404 });
+          const player = world.getActivePlayerByAccountId(boundMapSession.accountId);
+          if (!canFetchScopedGameplayMapDataPath(mapPath, player ? {
+            currentMapLevel: player.currentMapLevel,
+            currentChunkX: player.currentChunkX,
+            currentChunkZ: player.currentChunkZ,
+          } : null)) {
+            return new Response('Forbidden', { status: 403 });
+          }
+        }
+        if (isProductionLike() && boundMapSession && isLegacyMapTexturePath(mapPath) && !boundMapSession.isAdmin) {
+          const mapId = mapIdFromGameplayMapPath(mapPath);
+          const player = world.getActivePlayerByAccountId(boundMapSession.accountId);
+          if (!mapId || !player || player.currentMapLevel !== mapId) {
+            return new Response('Forbidden', { status: 403 });
+          }
+        }
       }
       // Symlink-safe path resolution
       const filePath = resolvePossiblyMissingWithinBase(MAPS_DIR, mapPath);
@@ -4775,7 +4795,7 @@ const server = Bun.serve<SocketData>({
         return new Response('Forbidden', { status: 403 });
       }
       try {
-        if (/^[-\w]+\/objects\/manifest\.json$/.test(mapPath)) {
+        if (isGameplayObjectManifestPath(mapPath)) {
           return new Response(JSON.stringify(buildObjectChunkManifest(resolve(filePath, '..', '..'))), {
             headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
           });

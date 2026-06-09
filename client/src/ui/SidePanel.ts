@@ -7,7 +7,7 @@ import {
   ARROWHEAD_FLETCHING_RECIPES, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID,
   QUEST_STAGE_COMPLETED,
   isAutocastableSpell, spellReagentSummary, spellSchoolSkill,
-  zeroBonuses, STANCE_KEYS, combatLevelFromLevels,
+  zeroBonuses, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, combatLevelFromLevels,
   isNotedItem,
   type SkillId, type MeleeStance, type MagicStance, type ItemDef, type QuestDef, type QuestState,
   type CombatBonuses,
@@ -147,6 +147,7 @@ export class SidePanel {
   private autoRetaliate: boolean = false;
   private autoRetaliateRow: HTMLButtonElement | null = null;
   private equipmentBonusValues: Partial<Record<keyof CombatBonuses, HTMLSpanElement>> = {};
+  private equipmentBonusesFromServer: CombatBonuses | null = null;
 
   // Item definitions
   private itemDefs: Map<number, ItemDef> = new Map();
@@ -3309,9 +3310,12 @@ export class SidePanel {
 
     if (this.sellCallback) {
       const priceDef = isNotedItem(def) ? (this.itemDefs.get(def.unnotedId) ?? def) : def;
-      const sellPrice = Math.max(1, Math.floor((priceDef?.value || 1) / 2));
+      const value = priceDef?.value;
+      const sellPrice = typeof value === 'number' && Number.isFinite(value)
+        ? Math.max(1, Math.floor(value / 2))
+        : null;
       options.push({
-        label: `Sell ${name} (${sellPrice} gp)`,
+        label: sellPrice === null ? `Sell ${name}` : `Sell ${name} (${sellPrice} gp)`,
         action: () => {
           if (this.using) this.clearUsingInvItem();
           this.sellCallback!(index, slot.itemId);
@@ -3643,23 +3647,37 @@ export class SidePanel {
     if (slotIndex === 0) this.updateStanceUI();
   }
 
+  setEquipmentBonuses(bonuses: CombatBonuses): void {
+    const normalized = zeroBonuses();
+    for (const key of COMBAT_BONUS_WIRE_KEYS) {
+      const value = bonuses[key];
+      normalized[key] = Number.isFinite(value) ? Math.trunc(value) : 0;
+    }
+    this.equipmentBonusesFromServer = normalized;
+    this.updateEquipmentBonuses();
+  }
+
   private updateEquipmentBonuses(): void {
     const bonuses = zeroBonuses();
-    for (const itemId of this.equipment.values()) {
-      const def = this.itemDefs.get(itemId);
-      if (!def) continue;
-      bonuses.stabAttack += def.stabAttack ?? 0;
-      bonuses.slashAttack += def.slashAttack ?? 0;
-      bonuses.crushAttack += def.crushAttack ?? 0;
-      bonuses.stabDefence += def.stabDefence ?? 0;
-      bonuses.slashDefence += def.slashDefence ?? 0;
-      bonuses.crushDefence += def.crushDefence ?? 0;
-      bonuses.meleeStrength += def.meleeStrength ?? 0;
-      bonuses.rangedAccuracy += def.rangedAccuracy ?? 0;
-      bonuses.rangedStrength += def.rangedStrength ?? 0;
-      bonuses.rangedDefence += def.rangedDefence ?? 0;
-      bonuses.magicAccuracy += def.magicAccuracy ?? 0;
-      bonuses.magicDefence += def.magicDefence ?? 0;
+    if (this.equipmentBonusesFromServer) {
+      for (const key of COMBAT_BONUS_WIRE_KEYS) bonuses[key] = this.equipmentBonusesFromServer[key];
+    } else {
+      for (const itemId of this.equipment.values()) {
+        const def = this.itemDefs.get(itemId);
+        if (!def) continue;
+        bonuses.stabAttack += def.stabAttack ?? 0;
+        bonuses.slashAttack += def.slashAttack ?? 0;
+        bonuses.crushAttack += def.crushAttack ?? 0;
+        bonuses.stabDefence += def.stabDefence ?? 0;
+        bonuses.slashDefence += def.slashDefence ?? 0;
+        bonuses.crushDefence += def.crushDefence ?? 0;
+        bonuses.meleeStrength += def.meleeStrength ?? 0;
+        bonuses.rangedAccuracy += def.rangedAccuracy ?? 0;
+        bonuses.rangedStrength += def.rangedStrength ?? 0;
+        bonuses.rangedDefence += def.rangedDefence ?? 0;
+        bonuses.magicAccuracy += def.magicAccuracy ?? 0;
+        bonuses.magicDefence += def.magicDefence ?? 0;
+      }
     }
 
     for (const [key, el] of Object.entries(this.equipmentBonusValues) as Array<[keyof CombatBonuses, HTMLSpanElement]>) {

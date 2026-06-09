@@ -11,10 +11,66 @@ describe('public data hardening', () => {
     expect(isPublicDataFile('shops.json')).toBe(false);
   });
 
-  test('NPC public data strips server-only behavior but keeps client render/combat fields', () => {
+  test('item public data strips economy and combat stats but keeps render/action fields', () => {
+    const sanitized = sanitizePublicData('items.json', [{
+      id: 10,
+      name: 'Bronze Sword',
+      description: 'A sword.',
+      stackable: false,
+      noteable: true,
+      noteId: 110,
+      equippable: true,
+      equipSlot: 'weapon',
+      weaponStyle: 'slash',
+      twoHanded: false,
+      attackRange: 1,
+      healAmount: 4,
+      toolType: 'hammer',
+      icon: '/sprites/sword.png',
+      model: '10.glb',
+      stackModels: [{ minQuantity: 10, model: 'coins_10.glb', scale: 0.9 }],
+      bodyTypeModels: { 1: 'female.glb' },
+      value: 100,
+      attackSpeed: 4,
+      stabAttack: 1,
+      slashAttack: 6,
+      meleeStrength: 5,
+      rangedAccuracy: 2,
+      equipSkill: 'weaponry',
+      levelRequired: 5,
+      toolLevel: 2,
+      toolBonus: 3,
+      ammoType: 'arrow',
+      isAmmo: true,
+    }]) as Array<Record<string, unknown>>;
+
+    expect(sanitized[0].name).toBe('Bronze Sword');
+    expect(sanitized[0].noteId).toBe(110);
+    expect(sanitized[0].equipSlot).toBe('weapon');
+    expect(sanitized[0].weaponStyle).toBe('slash');
+    expect(sanitized[0].attackRange).toBe(1);
+    expect(sanitized[0].healAmount).toBe(4);
+    expect(sanitized[0].toolType).toBe('hammer');
+    expect(sanitized[0].model).toBe('10.glb');
+    expect(sanitized[0].value).toBeUndefined();
+    expect(sanitized[0].attackSpeed).toBeUndefined();
+    expect(sanitized[0].stabAttack).toBeUndefined();
+    expect(sanitized[0].slashAttack).toBeUndefined();
+    expect(sanitized[0].meleeStrength).toBeUndefined();
+    expect(sanitized[0].rangedAccuracy).toBeUndefined();
+    expect(sanitized[0].equipSkill).toBeUndefined();
+    expect(sanitized[0].levelRequired).toBeUndefined();
+    expect(sanitized[0].toolLevel).toBeUndefined();
+    expect(sanitized[0].toolBonus).toBeUndefined();
+    expect(sanitized[0].ammoType).toBeUndefined();
+    expect(sanitized[0].isAmmo).toBeUndefined();
+  });
+
+  test('NPC public data strips server-only behavior and exact combat stats', () => {
     const sanitized = sanitizePublicData('npcs.json', [{
       id: 4,
       name: 'Wolf',
+      examineText: 'A hungry wolf.',
       modelNpcId: 17,
       health: 20,
       attack: 8,
@@ -38,16 +94,21 @@ describe('public data hardening', () => {
     }]) as Array<Record<string, unknown>>;
 
     expect(sanitized[0].name).toBe('Wolf');
+    expect(sanitized[0].examineText).toBe('A hungry wolf.');
     expect(sanitized[0].modelNpcId).toBe(17);
-    expect(sanitized[0].health).toBe(20);
-    expect(sanitized[0].attackBonus).toBe(-5);
-    expect(sanitized[0].strengthBonus).toBe(-3);
-    expect(sanitized[0].stabDefence).toBe(-2);
-    expect(sanitized[0].slashDefence).toBe(-1);
-    expect(sanitized[0].crushDefence).toBe(0);
-    expect(sanitized[0].rangedDefence).toBe(1);
-    expect(sanitized[0].magicDefence).toBe(2);
-    expect(sanitized[0].attackStyle).toBe('stab');
+    expect(sanitized[0].combatLevel).toBe(11);
+    expect(sanitized[0].health).toBeUndefined();
+    expect(sanitized[0].attack).toBeUndefined();
+    expect(sanitized[0].defence).toBeUndefined();
+    expect(sanitized[0].strength).toBeUndefined();
+    expect(sanitized[0].attackBonus).toBeUndefined();
+    expect(sanitized[0].strengthBonus).toBeUndefined();
+    expect(sanitized[0].stabDefence).toBeUndefined();
+    expect(sanitized[0].slashDefence).toBeUndefined();
+    expect(sanitized[0].crushDefence).toBeUndefined();
+    expect(sanitized[0].rangedDefence).toBeUndefined();
+    expect(sanitized[0].magicDefence).toBeUndefined();
+    expect(sanitized[0].attackStyle).toBeUndefined();
     expect(sanitized[0].lootTable).toBeUndefined();
     expect(sanitized[0].rareDropTables).toBeUndefined();
     expect(sanitized[0].shop).toBeUndefined();
@@ -77,6 +138,9 @@ describe('public data hardening', () => {
         levelRequired: 1,
         xpReward: 6,
         successChance: 0.5,
+        hqOutputItemId: 30,
+        hqChance: 0.01,
+        hqXpMultiplier: 3,
       }],
     }]) as Array<Record<string, unknown>>;
 
@@ -86,6 +150,9 @@ describe('public data hardening', () => {
     expect(recipe.inputItemId).toBe(25);
     expect(recipe.xpReward).toBeUndefined();
     expect(recipe.successChance).toBeUndefined();
+    expect(recipe.hqOutputItemId).toBeUndefined();
+    expect(recipe.hqChance).toBeUndefined();
+    expect(recipe.hqXpMultiplier).toBeUndefined();
   });
 
   test('quest public data strips trigger internals but keeps journal progress thresholds', () => {
