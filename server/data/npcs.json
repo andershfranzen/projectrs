@@ -901,6 +901,11 @@
         "chance": 1
       },
       {
+        "itemId": 452,
+        "quantity": 1,
+        "chance": 0.005
+      },
+      {
         "itemId": 289,
         "quantity": 1,
         "chance": 0.0048
