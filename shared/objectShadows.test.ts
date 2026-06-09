@@ -69,6 +69,11 @@ describe('object shadow profiles', () => {
     expect(runs).toContainEqual({ x0: 0, z0: 1, x1: 2, z1: 1 });
   });
 
+  test('full-block collision masks do not cast wall shadows by default', () => {
+    expect(wallShadowRunsFromEntries([[4, 5, 15]])).toEqual([]);
+    expect(wallShadowRunsFromEntries([[4, 5, 15]], { includeFullBlockTiles: true })).toContainEqual({ x0: 4, z0: 5, x1: 5, z1: 5 });
+  });
+
   test('collision wall shadows cast from the merged wall line', () => {
     const caster = createWallEdgeShadowCaster(8, 10, 12, 10);
 

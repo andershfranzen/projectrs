@@ -6,6 +6,7 @@ import gearOverridesJson from '../../../server/data/gear-overrides.json';
 import thumbnailOverridesJson from '../../../server/data/thumbnail-overrides.json';
 import {
   buildThumbnailOptionsFromOverride,
+  buildGroundItemOptionsFromOverride,
   findThumbnailOverrideForItem,
   getItemLegacyIconUrl,
   getItemIconSyncUrl,
@@ -304,5 +305,26 @@ describe('item thumbnail families', () => {
     }
 
     expect(getItemLegacyIconUrl(defs.get(25)!)).toBe('/items/copper_ore_150.png');
+  });
+
+  test('ground item options ignore thumbnail-only model paths', () => {
+    const def = {
+      id: 9001,
+      name: 'Test Sword',
+      description: '',
+      stackable: false,
+      equippable: true,
+      equipSlot: 'weapon',
+      model: '/assets/equipment/weapon/BronzeDagger.glb',
+      thumbnailModel: '/assets/models/item-thumbnails/ore/CopperOreRock.glb',
+    } as ItemDef;
+
+    expect(resolveItemModelPath(def, 1)).toBe('/assets/models/item-thumbnails/ore/CopperOreRock.glb');
+    expect(resolveGroundItemModelPath(def, 1)).toBe('/assets/equipment/weapon/BronzeDagger.glb');
+    expect(buildGroundItemOptionsFromOverride(def, { rotationY: 0.75, iconScale: 1.2 })).toMatchObject({
+      cacheIdentity: 'ground-item:9001',
+      rotationY: 0.75,
+      iconScale: 1.2,
+    });
   });
 });

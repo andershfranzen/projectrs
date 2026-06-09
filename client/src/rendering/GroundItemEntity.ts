@@ -17,7 +17,7 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
-import { buildThumbnailOptionsForItem, resolveGroundItemModelPath, stackModelScaleForItem } from './ItemIcon';
+import { buildGroundItemOptionsForItem, resolveGroundItemModelPath, stackModelScaleForItem } from './ItemIcon';
 import type { ThumbnailOptions } from './ThumbnailRenderer';
 import '@babylonjs/loaders/glTF';
 
@@ -230,7 +230,7 @@ async function loadTemplate(scene: Scene, def: ItemDef, quantity: number): Promi
   const path = resolveGroundItemModelPath(def, quantity);
   if (!path) return null;
 
-  const options = await buildThumbnailOptionsForItem(def);
+  const options = await buildGroundItemOptionsForItem(def);
   const targetSize = groundItemTargetModelSizeForItem(def, quantity, groundItemVisualScaleFromOptions(options));
   const key = templateCacheKey(path, options, targetSize);
   let sceneCache = TEMPLATE_CACHE_BY_SCENE.get(scene);

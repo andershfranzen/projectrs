@@ -1812,6 +1812,8 @@ function tuneModelLighting(model) {
     collisionData.holes = root.holes
     collisionData.floorLayers = normalizeCollisionFloorLayers(data?.floorLayers)
     rebuildCollisionMeshes()
+    invalidateShadowCache()
+    markRootWallShadowTerrainDirty({ force: true })
   }
 
   // --- Biome painting (8x8 tile cells with fog/sky overrides) ---
@@ -2336,6 +2338,11 @@ let selectedWaterFlowChunk = null
     } else {
       _terrainDirtyRegion = null  // structural change — need full rebuild
     }
+  }
+
+  function markRootWallShadowTerrainDirty({ force = false } = {}) {
+    if (!force && collisionFloor !== 0) return
+    markTerrainDirty({ skipTexturePlanes: true, skipTextureOverlays: true })
   }
 
   function markCollisionDirty() {
@@ -5484,6 +5491,7 @@ let selectedWaterFlowChunk = null
     layer.walls = {}
     layer.wallHeights = {}
     rebuildCollisionMeshes()
+    markRootWallShadowTerrainDirty()
     statusText.textContent = 'Cleared all walls on floor ' + collisionFloor
   })
 
@@ -5621,6 +5629,7 @@ let selectedWaterFlowChunk = null
     const region = getChunkRegion(chunk)
     const count = autoDetectWallsInRegion(region)
     rebuildCollisionMeshes()
+    markRootWallShadowTerrainDirty()
     statusText.textContent = `Auto-detected ${count} wall edges in chunk (${chunk.cx},${chunk.cz})`
   })
 
@@ -5638,6 +5647,7 @@ let selectedWaterFlowChunk = null
       }
     }
     rebuildCollisionMeshes()
+    markRootWallShadowTerrainDirty()
     statusText.textContent = `Cleared ${count} wall tiles in chunk (${chunk.cx},${chunk.cz})`
   })
 
@@ -14513,6 +14523,7 @@ function applyToolAtTile(tile, eventLike = null) {
     if (event.button === 0) {
       const wasPainting = state.isPainting
       const paintingTool = state.tool === ToolMode.TERRAIN || state.tool === ToolMode.PAINT
+      const collisionPainting = state.tool === ToolMode.COLLISION
       state.isPainting = false
       state.draggedTiles.clear()
       state.historyCapturedThisStroke = false
@@ -14541,6 +14552,9 @@ function applyToolAtTile(tile, eventLike = null) {
             })
           }
         }
+      }
+      if (wasPainting && collisionPainting) {
+        markRootWallShadowTerrainDirty()
       }
 
       if (isDragSelecting && dragSelectStart) {

@@ -325,6 +325,12 @@ const SHIELD_THUMBNAIL_TINT: Record<number, [number, number, number]> = {
 
 const SHIELD_DOMINANT_BROWN: [number, number, number] = [0.119, 0.044, 0.007];
 
+function bowColorRevisionForModel(modelPath: string): string {
+  return /(?:^|\/)(?:Shortbow|OakShortbow|WillowShortbow|MapleShortbow|YewShortbow|MysticShortbow|MagicShortbow)\.glb$/i.test(modelPath)
+    ? ':bow-colors-v5'
+    : '';
+}
+
 function loadOverrides(): Promise<ThumbnailOverrideStore> {
   if (_overridesPromise) return _overridesPromise;
   _overridesPromise = (async () => {
@@ -418,9 +424,7 @@ export function findThumbnailOverrideForItem(
  *  game client and editor previews so saved editor poses match runtime icons. */
 export function buildThumbnailOptionsFromOverride(def: ItemDef, itemOverride?: ThumbnailOverride, visualDef: ItemDef = def): ThumbnailOptions {
   const modelPath = visualDef.thumbnailModel ?? visualDef.model ?? def.thumbnailModel ?? def.model ?? '';
-  const bowColorRevision = /(?:^|\/)(?:Shortbow|OakShortbow|WillowShortbow|MapleShortbow|YewShortbow|MysticShortbow|MagicShortbow)\.glb$/i.test(modelPath)
-    ? ':bow-colors-v5'
-    : '';
+  const bowColorRevision = bowColorRevisionForModel(modelPath);
   const opts: ThumbnailOptions = { cacheIdentity: `item:${visualDef.id}${bowColorRevision}` };
   const tint = TOOL_TIER_METAL_COLOR[visualDef.id];
   if (tint) opts.tint = tint;
@@ -442,12 +446,36 @@ export function buildThumbnailOptionsFromOverride(def: ItemDef, itemOverride?: T
   return opts;
 }
 
+export function buildGroundItemOptionsFromOverride(def: ItemDef, itemOverride?: ThumbnailOverride): ThumbnailOptions {
+  const modelPath = def.model ?? '';
+  const bowColorRevision = bowColorRevisionForModel(modelPath);
+  const opts: ThumbnailOptions = { cacheIdentity: `ground-item:${def.id}${bowColorRevision}` };
+  const tint = TOOL_TIER_METAL_COLOR[def.id];
+  if (tint) opts.tint = tint;
+  const shieldTint = SHIELD_THUMBNAIL_TINT[def.id];
+  if (shieldTint) {
+    opts.tint = shieldTint;
+    opts.tintBaseColorMatch = SHIELD_DOMINANT_BROWN;
+  }
+  if (itemOverride) {
+    const { rotationY, iconScale } = itemOverride;
+    if (rotationY) opts.rotationY = rotationY;
+    if (typeof iconScale === 'number' && Number.isFinite(iconScale) && iconScale > 0) opts.iconScale = iconScale;
+  }
+  return opts;
+}
+
 /** Build the camera + rotation options for an item. Merges slot default with
  *  per-item override. Exposed so the bake script can use the same settings. */
 export async function buildThumbnailOptionsForItem(def: ItemDef): Promise<ThumbnailOptions> {
   const overrides = await loadOverrides();
   const visualDef = itemThumbnailVisualSource(def);
   return buildThumbnailOptionsFromOverride(def, findThumbnailOverrideForItem(def, overrides), visualDef);
+}
+
+export async function buildGroundItemOptionsForItem(def: ItemDef): Promise<ThumbnailOptions> {
+  const overrides = await loadOverrides();
+  return buildGroundItemOptionsFromOverride(def, findThumbnailOverrideForItem(def, overrides));
 }
 
 function normalizeStackQuantity(quantity: number | undefined): number {

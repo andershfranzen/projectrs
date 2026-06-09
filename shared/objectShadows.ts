@@ -46,6 +46,10 @@ export interface WallShadowCoverageOptions {
   spanPadding?: number;
 }
 
+export interface WallShadowRunOptions {
+  includeFullBlockTiles?: boolean;
+}
+
 const SHADOW_DIR_X = -0.86;
 const SHADOW_DIR_Z = -0.51;
 const WALL_EDGE_MASK = WallEdge.N | WallEdge.E | WallEdge.S | WallEdge.W;
@@ -235,7 +239,7 @@ function pushMergedRunsForAxis(
   }
 }
 
-export function wallShadowRunsFromEntries(entries: Iterable<readonly [number, number, number]>): WallShadowRun[] {
+export function wallShadowRunsFromEntries(entries: Iterable<readonly [number, number, number]>, options: WallShadowRunOptions = {}): WallShadowRun[] {
   const horizontalByZ = new Map<number, Set<number>>();
   const verticalByX = new Map<number, Set<number>>();
 
@@ -243,6 +247,7 @@ export function wallShadowRunsFromEntries(entries: Iterable<readonly [number, nu
     if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
     const mask = rawMask & WALL_EDGE_MASK;
     if (mask === 0) continue;
+    if (mask === WALL_EDGE_MASK && !options.includeFullBlockTiles) continue;
 
     if (mask & WallEdge.N) addSetValue(horizontalByZ, z, x);
     if (mask & WallEdge.S) addSetValue(horizontalByZ, z + 1, x);
@@ -256,7 +261,7 @@ export function wallShadowRunsFromEntries(entries: Iterable<readonly [number, nu
   return runs;
 }
 
-export function wallShadowRunsFromWallRecord(walls: Record<string, unknown> | null | undefined): WallShadowRun[] {
+export function wallShadowRunsFromWallRecord(walls: Record<string, unknown> | null | undefined, options: WallShadowRunOptions = {}): WallShadowRun[] {
   if (!walls) return [];
   const wallRecord = walls;
 
@@ -271,7 +276,7 @@ export function wallShadowRunsFromWallRecord(walls: Record<string, unknown> | nu
     }
   }
 
-  return wallShadowRunsFromEntries(entries());
+  return wallShadowRunsFromEntries(entries(), options);
 }
 
 export function isLinearCasterCoveredByWallRuns(
