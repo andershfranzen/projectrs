@@ -16,10 +16,12 @@ describe('session WebSocket binding', () => {
       expect(session?.accountId).toBe(first.accountId);
       expect(session?.deviceId).toBe('11111111-1111-4111-8111-111111111111');
       expect(session?.wsSecret).toBe(first.wsSecret);
+      expect(db.getSessionByWsSecret(first.wsSecret)?.accountId).toBe(first.accountId);
       expect(db.ensureSessionWsSecret(first.token)).toBe(first.wsSecret);
 
       const second = db.loginFallbackAccount('Alice', '11111111-1111-4111-8111-111111111111');
       expect(db.getSession(first.token)).toBeNull();
+      expect(db.getSessionByWsSecret(first.wsSecret)).toBeNull();
       expect(second.wsSecret).toHaveLength(64);
       expect(second.wsSecret).not.toBe(first.wsSecret);
     } finally {

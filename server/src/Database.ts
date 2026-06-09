@@ -2130,6 +2130,31 @@ export class GameDatabase {
     };
   }
 
+  getSessionByWsSecret(wsSecret: string): SessionInfo | null {
+    if (!wsSecret) return null;
+    const now = Math.floor(Date.now() / 1000);
+    const row = this.db.query(`
+      SELECT s.account_id, a.username, a.is_admin, a.is_moderator, s.device_id, s.ws_secret, s.oauth_client_id, s.oauth_scopes
+      FROM sessions s
+      JOIN accounts a ON a.id = s.account_id
+      WHERE s.ws_secret = ? AND s.expires_at > ?
+    `).get(wsSecret, now) as { account_id: number; username: string; is_admin: number; is_moderator: number; device_id: string | null; ws_secret: string | null; oauth_client_id: string | null; oauth_scopes: string | null } | null;
+
+    if (!row) return null;
+    const oauthScopes = parseStoredStringArray(row.oauth_scopes);
+    const isOAuthSession = !!row.oauth_client_id;
+    return {
+      accountId: row.account_id,
+      username: row.username,
+      isAdmin: row.is_admin === 1 && (!isOAuthSession || oauthScopes.includes('admin')),
+      isModerator: row.is_moderator === 1 && (!isOAuthSession || oauthScopes.includes('moderator') || oauthScopes.includes('admin')),
+      deviceId: row.device_id ?? '',
+      wsSecret: row.ws_secret ?? '',
+      oauthClientId: row.oauth_client_id ?? null,
+      oauthScopes,
+    };
+  }
+
   ensureSessionWsSecret(token: string): string | null {
     if (!token) return null;
     const now = Math.floor(Date.now() / 1000);

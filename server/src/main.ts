@@ -11,6 +11,7 @@ import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } fr
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
 import { requestClientIp } from './network/clientIp';
+import { hasForbiddenStaticSourceExtension, requiresAuthenticatedGameStaticAsset } from './security/StaticAssetAccess';
 import { audit } from './Audit';
 import { sanitizeForumUpload } from './forumUploadSecurity';
 import { parseOAuthClients, validateOAuthAuthorizeParams, verifyPkceS256, type OAuthAuthorizeParams, type OAuthAuthorizeRequest } from './oauth';
@@ -1474,6 +1475,8 @@ function serveStatic(req: Request, pathname: string, allowIndexFallback = false)
       cacheControl = 'no-cache';
     } else if (decoded.startsWith('/assets/') && (filePath.endsWith('.js') || filePath.endsWith('.css'))) {
       cacheControl = 'public, max-age=31536000, immutable';
+    } else if (requiresAuthenticatedGameStaticAsset(decoded)) {
+      cacheControl = 'private, no-cache, must-revalidate';
     }
     const headers: Record<string, string> = {
       'Content-Type': getMimeType(filePath),
@@ -2374,6 +2377,22 @@ function getBoundBearerSessionForScope(req: Request, scope: string) {
   return session;
 }
 
+function getBoundCookieSession(req: Request) {
+  const wsSecret = parseCookie(req, WS_SESSION_COOKIE);
+  const session = db.getSessionByWsSecret(wsSecret);
+  if (!session) return null;
+  if (session.deviceId && !hasMatchingCookie(req, DEVICE_COOKIE, session.deviceId)) return null;
+  return session;
+}
+
+function getStaticAssetSessionForScope(req: Request, scope: string) {
+  const bearerSession = getBoundBearerSessionForScope(req, scope);
+  if (bearerSession) return bearerSession;
+  const cookieSession = getBoundCookieSession(req);
+  if (!cookieSession || !boundSessionHasAnyScope(cookieSession, [scope])) return null;
+  return cookieSession;
+}
+
 function getForumSession(req: Request, srv: { requestIP(req: Request): { address: string } | null }) {
   const session = getBoundBearerSession(req);
   if (!session) return null;
@@ -2780,14 +2799,6 @@ function isForbiddenMapPath(mapPath: string): boolean {
   const basename = parts[parts.length - 1] ?? '';
   return parts.includes('backups')
     || /^backup(?:[.\-_].*)?\.json$/i.test(basename);
-}
-
-function requiresAuthenticatedJsonAsset(pathname: string): boolean {
-  return pathname === '/assets/assets.json' || pathname === '/assets/textures/textures.json';
-}
-
-function hasForbiddenStaticSourceExtension(pathname: string): boolean {
-  return /\.(?:blend\d*|fbx|psd|kra|xcf)$/i.test(pathname);
 }
 
 interface HttpMapDataScanWindow {
@@ -4937,7 +4948,7 @@ const server = Bun.serve<SocketData>({
       if (hasForbiddenStaticSourceExtension(decodedPath)) {
         return new Response('Not Found', { status: 404 });
       }
-      if (isProductionLike() && requiresAuthenticatedJsonAsset(decodedPath) && !getBoundBearerSessionForScope(req, 'game')) {
+      if (isProductionLike() && requiresAuthenticatedGameStaticAsset(decodedPath) && !getStaticAssetSessionForScope(req, 'game')) {
         return new Response('Unauthorized', { status: 401 });
       }
       const publicAssetsDir = resolve(import.meta.dir, '../../client/public');
@@ -4956,8 +4967,11 @@ const server = Bun.serve<SocketData>({
           // from client/public/assets/) still uses a short cache so swapped
           // assets show up without forcing browser-data clears during dev.
           const isHashedBundle = filePath.endsWith('.js') || filePath.endsWith('.css');
+          const isProtectedAsset = requiresAuthenticatedGameStaticAsset(decodedPath);
           const cacheControl = isHashedBundle
             ? 'public, max-age=31536000, immutable'
+            : isProtectedAsset
+              ? 'private, no-cache, must-revalidate'
             : 'no-cache, must-revalidate';
           return new Response(content, {
             headers: {
@@ -4975,6 +4989,9 @@ const server = Bun.serve<SocketData>({
       const isManifest = decodedPath === '/items/3d/manifest.json';
       const isPng = /^\/items\/3d\/[0-9]+(?:-[0-9]+)?\.png$/.test(decodedPath);
       if (!isManifest && !isPng) return new Response('Not Found', { status: 404 });
+      if (isProductionLike() && requiresAuthenticatedGameStaticAsset(decodedPath) && !getStaticAssetSessionForScope(req, 'game')) {
+        return new Response('Unauthorized', { status: 401 });
+      }
 
       const publicItemsDir = resolve(import.meta.dir, '../../client/public/items/3d');
       const distItemsDir = resolve(CLIENT_DIST, 'items/3d');
@@ -4985,7 +5002,7 @@ const server = Bun.serve<SocketData>({
         try {
           const content = readCachedStaticFile(filePath);
           return new Response(content, {
-            headers: { 'Content-Type': getMimeType(filePath), 'Cache-Control': 'no-cache, must-revalidate' },
+            headers: { 'Content-Type': getMimeType(filePath), 'Cache-Control': 'private, no-cache, must-revalidate' },
           });
         } catch { /* try next */ }
       }
@@ -5005,6 +5022,10 @@ const server = Bun.serve<SocketData>({
 
     const websiteResponse = serveWebsite(req, url.pathname);
     if (websiteResponse) return websiteResponse;
+
+    if (isProductionLike() && requiresAuthenticatedGameStaticAsset(url.pathname) && !getStaticAssetSessionForScope(req, 'game')) {
+      return new Response('Unauthorized', { status: 401 });
+    }
 
     const response = serveStatic(req, url.pathname, isGameRoute(url.pathname));
     if (response) return response;
