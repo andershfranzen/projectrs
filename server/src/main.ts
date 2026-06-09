@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto';
 import type { CustomColors, FloorLayerData, GroundType, KCMapFile, KCTile, MapMeta, PlayerAppearance, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, defaultGroundForMap, getObjectInteractionTiles, localSidesToWorldSides, TileType } from '@projectrs/shared';
 import { World } from './World';
-import { canFetchScopedGameplayMapDataPath, isGameplayObjectManifestPath, mapIdFromGameplayMapPath } from './data/MapDataAccess';
+import { canFetchScopedGameplayMapDataPath, gameplayMapPlayerWindowFromWorldPosition, isGameplayObjectManifestPath, mapIdFromGameplayMapPath, type GameplayMapPlayerWindow } from './data/MapDataAccess';
 import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } from './data/PublicData';
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
@@ -1302,7 +1302,7 @@ function getWorldMapSnapshot(world: World): PublicWorldMapSnapshot {
   }
   return worldMapSnapshotCache;
 }
-import { GameDatabase } from './Database';
+import { GameDatabase, WORLD_RESPAWN_VERSION } from './Database';
 import { flushAuditSync } from './Audit';
 import {
   handleGameSocketOpen,
@@ -2876,6 +2876,43 @@ function recordGameplayMapDataFetch(
       sampleFiles: burst.sampleFiles,
     },
   });
+}
+
+function gameplayMapWindowForSession(
+  session: NonNullable<ReturnType<typeof getBoundBearerSession>>,
+  mapPath: string,
+): GameplayMapPlayerWindow | null {
+  const activePlayer = world.getActivePlayerByAccountId(session.accountId);
+  if (activePlayer) {
+    return {
+      currentMapLevel: activePlayer.currentMapLevel,
+      currentChunkX: activePlayer.currentChunkX,
+      currentChunkZ: activePlayer.currentChunkZ,
+    };
+  }
+
+  const requestedMapId = mapIdFromGameplayMapPath(mapPath);
+  if (!requestedMapId) return null;
+
+  const saved = db.loadPlayerState(session.accountId);
+  const savedMapId = saved?.mapLevel ?? 'kcmap';
+  if (savedMapId !== requestedMapId) return null;
+
+  try {
+    const map = world.getMap(savedMapId);
+    const useSpawn = !saved
+      || (saved.respawnVersion ?? 0) < WORLD_RESPAWN_VERSION
+      || !Number.isFinite(saved.x)
+      || !Number.isFinite(saved.z)
+      || saved.x < 0
+      || saved.z < 0
+      || saved.x >= map.width
+      || saved.z >= map.height;
+    const pos = useSpawn ? map.findSpawnPoint() : { x: saved.x, z: saved.z };
+    return gameplayMapPlayerWindowFromWorldPosition(savedMapId, pos.x, pos.z);
+  } catch {
+    return null;
+  }
 }
 
 // Clean expired sessions every 10 minutes
@@ -4772,19 +4809,14 @@ const server = Bun.serve<SocketData>({
         if (boundMapSession && gameplayMapDataPath) recordGameplayMapDataFetch(boundMapSession, mapPath, req, server);
         if (isProductionLike() && boundMapSession && gameplayMapDataPath && !boundMapSession.isAdmin) {
           if (isGameplayObjectManifestPath(mapPath)) return new Response('Not Found', { status: 404 });
-          const player = world.getActivePlayerByAccountId(boundMapSession.accountId);
-          if (!canFetchScopedGameplayMapDataPath(mapPath, player ? {
-            currentMapLevel: player.currentMapLevel,
-            currentChunkX: player.currentChunkX,
-            currentChunkZ: player.currentChunkZ,
-          } : null)) {
+          if (!canFetchScopedGameplayMapDataPath(mapPath, gameplayMapWindowForSession(boundMapSession, mapPath))) {
             return new Response('Forbidden', { status: 403 });
           }
         }
         if (isProductionLike() && boundMapSession && isLegacyMapTexturePath(mapPath) && !boundMapSession.isAdmin) {
           const mapId = mapIdFromGameplayMapPath(mapPath);
-          const player = world.getActivePlayerByAccountId(boundMapSession.accountId);
-          if (!mapId || !player || player.currentMapLevel !== mapId) {
+          const playerWindow = gameplayMapWindowForSession(boundMapSession, mapPath);
+          if (!mapId || playerWindow?.currentMapLevel !== mapId) {
             return new Response('Forbidden', { status: 403 });
           }
         }

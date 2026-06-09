@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   canFetchScopedGameplayMapDataPath,
+  gameplayMapPlayerWindowFromWorldPosition,
   isGameplayMapChunkInPlayerWindow,
   isGameplayObjectManifestPath,
   parseGameplayMapChunkPath,
@@ -31,6 +32,14 @@ describe('map data access hardening', () => {
   test('allows editor tile chunks needed for normal render slack and rejects distant chunks', () => {
     expect(canFetchScopedGameplayMapDataPath('kcmap/tiles/chunk_7_11.json', player)).toBe(true);
     expect(canFetchScopedGameplayMapDataPath('kcmap/heights/chunk_20_20.json', player)).toBe(false);
+  });
+
+  test('allows the pre-login warm-start height chunks around the kcmap spawn', () => {
+    const spawnWindow = gameplayMapPlayerWindowFromWorldPosition('kcmap', 224.5, 170.5);
+    expect(spawnWindow).not.toBeNull();
+    expect(canFetchScopedGameplayMapDataPath('kcmap/heights/chunk_2_1.json', spawnWindow)).toBe(true);
+    expect(canFetchScopedGameplayMapDataPath('kcmap/heights/chunk_5_3.json', spawnWindow)).toBe(true);
+    expect(canFetchScopedGameplayMapDataPath('kcmap/heights/chunk_20_20.json', spawnWindow)).toBe(false);
   });
 
   test('does not let an active player fetch another map level', () => {

@@ -18,6 +18,20 @@ export interface GameplayMapChunkPath {
 const OBJECT_CHUNK_RADIUS_SLACK = 1;
 const EDITOR_CHUNK_RADIUS_SLACK = 3;
 
+export function gameplayMapPlayerWindowFromWorldPosition(
+  currentMapLevel: string,
+  x: number,
+  z: number,
+): GameplayMapPlayerWindow | null {
+  if (!/^[-\w]+$/.test(currentMapLevel)) return null;
+  if (!Number.isFinite(x) || !Number.isFinite(z) || x < 0 || z < 0) return null;
+  return {
+    currentMapLevel,
+    currentChunkX: Math.floor(x / CHUNK_SIZE),
+    currentChunkZ: Math.floor(z / CHUNK_SIZE),
+  };
+}
+
 export function mapIdFromGameplayMapPath(mapPath: string): string | null {
   const slash = mapPath.indexOf('/');
   if (slash <= 0) return null;

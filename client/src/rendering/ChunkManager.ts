@@ -1529,6 +1529,10 @@ export class ChunkManager {
         authFetch(`/maps/${mapId}/tiles/chunk_${ecx}_${ecz}.json`).catch(() => null),
         authFetch(`/maps/${mapId}/heights/chunk_${ecx}_${ecz}.json`).catch(() => null),
       ]);
+      const deniedRes = [tilesRes, heightsRes].find((res): res is Response => !!res && !res.ok && res.status !== 404);
+      if (deniedRes) {
+        throw new Error(`HTTP ${deniedRes.status} while loading editor chunk ${key}`);
+      }
       const startX = ecx * ECHUNK, startZ = ecz * ECHUNK;
       const endX = Math.min(startX + ECHUNK, this.mapWidth);
       const endZ = Math.min(startZ + ECHUNK, this.mapHeight);
