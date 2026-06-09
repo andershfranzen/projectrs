@@ -3471,6 +3471,21 @@ const server = Bun.serve<SocketData>({
       });
     }
 
+    if (url.pathname === '/api/admin/bot-review/clear' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      const cleared = db.clearBotStats();
+      const resetActive = world.resetActiveBotStats();
+      audit({
+        type: 'admin',
+        tick: world.getCurrentTick(),
+        accountId: session.accountId,
+        details: { action: 'clear_bot_review_stats', cleared, resetActive },
+      });
+      return jsonResponse({ ok: true, cleared, resetActive });
+    }
+
     if (url.pathname === '/api/admin/game-events' && req.method === 'GET') {
       const session = getBoundBearerSession(req);
       if (!session?.isAdmin) return adminForbidden();

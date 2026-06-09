@@ -541,6 +541,19 @@ export class World {
     return undefined;
   }
 
+  resetActiveBotStats(): number {
+    let reset = 0;
+    for (const [, player] of this.players) {
+      if (!player.botStats) continue;
+      const xpBaseline: Record<string, number> = {};
+      for (const skill of ALL_SKILLS) xpBaseline[skill] = player.skills[skill].xp;
+      player.botStats = BotStats.empty();
+      player.botStats.onLogin(xpBaseline, player.deviceId);
+      reset++;
+    }
+    return reset;
+  }
+
   setActiveAccountModerator(accountId: number, isModerator: boolean): boolean {
     const player = this.getActivePlayerByAccountId(accountId);
     if (!player) return false;

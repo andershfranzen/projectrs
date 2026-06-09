@@ -1728,7 +1728,7 @@ export class GameDatabase {
   private runOneTimeBotStatsMigrations(): void {
     const alreadyRun = this.db.query('SELECT 1 FROM server_migrations WHERE id = ?').get(RESET_BOT_METRICS_MIGRATION_ID);
     if (alreadyRun) return;
-    const changed = this.db.query('DELETE FROM bot_stats').run().changes;
+    const changed = this.clearBotStats();
     this.db.query('INSERT INTO server_migrations (id) VALUES (?)').run(RESET_BOT_METRICS_MIGRATION_ID);
     console.log(`[migration] ${RESET_BOT_METRICS_MIGRATION_ID}: cleared ${changed} polluted bot metric row(s).`);
   }
@@ -3389,6 +3389,10 @@ export class GameDatabase {
 	      FROM bot_stats WHERE account_id = ?
 	    `).get(accountId) as BotStatsRow | null;
     return row;
+  }
+
+  clearBotStats(): number {
+    return this.db.query('DELETE FROM bot_stats').run().changes;
   }
 
   /** Record a new login session. Returns the rowid so handlePlayerDisconnect

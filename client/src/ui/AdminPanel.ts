@@ -153,6 +153,7 @@ export class AdminPanel {
   private eventSearchInput: HTMLInputElement;
   private eventUserInput: HTMLInputElement;
   private refreshButton: HTMLButtonElement;
+  private clearRiskButton: HTMLButtonElement;
   private subtitleEl: HTMLSpanElement | null = null;
   private activeTab: AdminTab = 'bots';
   private readonly tabButtons = new Map<AdminTab, HTMLButtonElement>();
@@ -271,6 +272,11 @@ export class AdminPanel {
       }
     });
     toolbar.appendChild(this.botSearchInput);
+
+    this.clearRiskButton = this.smallButton('Clear risk', 'rgba(74, 24, 18, 0.92)');
+    this.clearRiskButton.style.minWidth = '82px';
+    this.clearRiskButton.addEventListener('click', () => void this.clearBotRiskLevels());
+    toolbar.appendChild(this.clearRiskButton);
 
     this.refreshButton = document.createElement('button');
     this.refreshButton.type = 'button';
@@ -435,6 +441,7 @@ export class AdminPanel {
     this.hideAccountContextMenu();
     this.loading = true;
     this.refreshButton.disabled = true;
+    this.clearRiskButton.disabled = true;
     this.refreshButton.textContent = 'Loading';
     try {
       const params = new URLSearchParams();
@@ -467,6 +474,7 @@ export class AdminPanel {
     } finally {
       this.loading = false;
       this.refreshButton.disabled = false;
+      this.clearRiskButton.disabled = false;
       this.refreshButton.textContent = 'Refresh';
     }
   }
@@ -489,6 +497,7 @@ export class AdminPanel {
       button.style.cssText = this.tabButtonCss(tab === this.activeTab);
     }
     if (this.subtitleEl) this.subtitleEl.textContent = this.activeTab === 'events' ? 'Game log' : 'Bot review';
+    this.clearRiskButton.style.display = this.activeTab === 'bots' ? '' : 'none';
   }
 
   private startEventPolling(): void {
@@ -508,6 +517,7 @@ export class AdminPanel {
     if (this.eventLoading) return;
     this.eventLoading = true;
     this.refreshButton.disabled = true;
+    this.clearRiskButton.disabled = true;
     this.refreshButton.textContent = 'Loading';
     try {
       const params = new URLSearchParams();
@@ -556,12 +566,52 @@ export class AdminPanel {
     } finally {
       this.eventLoading = false;
       this.refreshButton.disabled = false;
+      this.clearRiskButton.disabled = false;
       this.refreshButton.textContent = 'Refresh';
+    }
+  }
+
+  private async clearBotRiskLevels(): Promise<void> {
+    if (this.loading || this.eventLoading) return;
+    const confirmed = window.confirm('Clear all bot review risk levels and telemetry? Accounts, bans, mutes, and login history stay intact.');
+    if (!confirmed) return;
+    this.hideAccountContextMenu();
+    this.refreshButton.disabled = true;
+    this.clearRiskButton.disabled = true;
+    const previousLabel = this.clearRiskButton.textContent ?? 'Clear risk';
+    this.clearRiskButton.textContent = 'Clearing';
+    try {
+      const res = await fetch('/api/admin/bot-review/clear', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin',
+        body: '{}',
+      });
+      if (res.status === 401 || res.status === 403) {
+        this.accounts = [];
+        this.renderEmpty('');
+        this.hide();
+        return;
+      }
+      const payload = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok || !payload.ok) throw new Error(payload.error || `Clear failed (${res.status})`);
+      this.selectedAccountId = null;
+      await this.refreshBotReview();
+    } catch (err) {
+      this.renderActionError(err instanceof Error ? err.message : 'Unable to clear risk levels.');
+    } finally {
+      this.refreshButton.disabled = false;
+      this.clearRiskButton.disabled = false;
+      this.clearRiskButton.textContent = previousLabel;
     }
   }
 
   private renderBotReview(): void {
     this.botSearchInput.style.display = '';
+    this.clearRiskButton.style.display = '';
     this.eventFilterEl.style.display = 'none';
     this.setGridHeader(BOT_GRID_COLUMNS, ['Account', 'Score', 'Risk', 'Signals', 'Last login']);
     const total = this.accounts.length;
@@ -590,6 +640,7 @@ export class AdminPanel {
 
   private renderGameEvents(): void {
     this.botSearchInput.style.display = 'none';
+    this.clearRiskButton.style.display = 'none';
     this.eventFilterEl.style.display = 'flex';
     this.renderEventFilters();
     this.setGridHeader(EVENT_GRID_COLUMNS, ['Time', 'Type', 'Actor', 'Event', 'Location']);

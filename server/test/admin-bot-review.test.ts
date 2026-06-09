@@ -87,4 +87,33 @@ describe('admin bot review data', () => {
       db.close();
     }
   });
+
+  test('clears bot risk telemetry while keeping account review rows', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const session = db.loginFallbackAccount('reset-target', '11111111-1111-4111-8111-111111111111');
+      const loginRowId = db.recordLogin(session.accountId, '203.0.113.7', '11111111-1111-4111-8111-111111111111');
+      db.recordLogout(loginRowId, 8);
+
+      const stats = BotStats.empty();
+      stats.onLogin({});
+      for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket('malformed-frame');
+      stats.finalize(db, session.accountId, {}, 77);
+
+      expect(db.loadBotStats(session.accountId)?.risk_score).toBeGreaterThan(0);
+      expect(db.clearBotStats()).toBe(1);
+      expect(db.loadBotStats(session.accountId)).toBeNull();
+
+      const row = db.listAdminBotReviewAccounts(200, 'reset-target')[0];
+      expect(row?.username).toBe('reset-target');
+      expect(row?.riskScore).toBe(0);
+      expect(row?.riskLevel).toBe('low');
+      expect(row?.riskReasons).toEqual([]);
+      expect(row?.totalSuspiciousPackets).toBe(0);
+      expect(row?.lastIp).toBe('203.0.113.7');
+      expect(row?.lastSessionMinutes).toBe(8);
+    } finally {
+      db.close();
+    }
+  });
 });
