@@ -83,6 +83,8 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'stone small stairs': STAIRS_OBJECT_DEF_ID,
   'limestone stairs': STAIRS_OBJECT_DEF_ID,
   'WIPStair1': STAIRS_OBJECT_DEF_ID,
+  'Theodosian_WIPStair1': STAIRS_OBJECT_DEF_ID,
+  'Byzantine_WIPStair1': STAIRS_OBJECT_DEF_ID,
   // Chests (roguery / lockpicking). Closed asset is interactable; the open
   // variant is the depleted-state visual loaded by WorldObjectModels and
   // never needs its own mapping. Add a new entry per chest tier when a

@@ -213,6 +213,60 @@ function tuneModelLighting(model) {
     for (const mesh of meshes) mesh.isPickable = pickable
   }
 
+  function setHierarchyWorldMatrixFrozen(node, frozen) {
+    if (!node) return
+    const descendants = node.getDescendants ? node.getDescendants(false) : (node.getChildMeshes ? node.getChildMeshes() : [])
+    const nodes = [node, ...descendants]
+    for (const child of nodes) {
+      if (frozen) {
+        child.computeWorldMatrix?.(true)
+        child.freezeWorldMatrix?.()
+      } else {
+        child.unfreezeWorldMatrix?.()
+      }
+    }
+  }
+
+  function hierarchyHasAnimations(node) {
+    if (!node) return false
+    const descendants = node.getDescendants ? node.getDescendants(false) : [
+      ...(node.getChildren ? node.getChildren() : []),
+      ...(node.getChildMeshes ? node.getChildMeshes() : [])
+    ]
+    const nodes = [node, ...descendants]
+    return nodes.some((child) => Array.isArray(child.animations) && child.animations.length > 0)
+  }
+
+  function freezePlacedModel(model) {
+    if (!model?.userData || model.userData._editorTransforming) return
+    if (hierarchyHasAnimations(model)) return
+    if (model.userData._worldMatrixFrozen) setHierarchyWorldMatrixFrozen(model, false)
+    setHierarchyWorldMatrixFrozen(model, true)
+    model.userData._worldMatrixFrozen = true
+  }
+
+  function unfreezePlacedModel(model) {
+    if (!model?.userData?._worldMatrixFrozen) return
+    setHierarchyWorldMatrixFrozen(model, false)
+    model.userData._worldMatrixFrozen = false
+  }
+
+  function unfreezePlacedModels(models) {
+    for (const model of models || []) {
+      if (!model?.userData) continue
+      model.userData._editorTransforming = true
+      unfreezePlacedModel(model)
+    }
+  }
+
+  function freezePlacedModels(models) {
+    for (const model of models || []) {
+      if (!model?.userData) continue
+      delete model.userData._editorTransforming
+      freezePlacedModel(model)
+    }
+  }
+
   function nextFrame() {
     return new Promise(resolve => requestAnimationFrame(resolve))
   }
@@ -238,6 +292,7 @@ function tuneModelLighting(model) {
     updatePlacedModelDerivedData(model)
     model.parent = placedGroup
     _spatialRegister(model)
+    freezePlacedModel(model)
     if (invalidateShadow) invalidateShadowCache()
     const asset = assetById.get(model.userData.assetId)
     if (asset) setupModelAnimations(model, asset.path)
@@ -1628,6 +1683,8 @@ function tuneModelLighting(model) {
   let diagFloorStart = null   // {x, z} world coords of first click
   let diagFloorWidth = 3      // perpendicular width in tiles
   let diagFloorPreview = null  // Babylon Mesh for ghost preview
+  let diagFloorPreviewKey = null
+  let diagFloorPreviewMat = null
 
   function snapAngle(angle, snapDeg = 45) {
     const snap = snapDeg * Math.PI / 180
@@ -1639,6 +1696,17 @@ function tuneModelLighting(model) {
       diagFloorPreview.dispose()
       diagFloorPreview = null
     }
+    diagFloorPreviewKey = null
+  }
+
+  function getDiagFloorPreviewMaterial() {
+    if (diagFloorPreviewMat) return diagFloorPreviewMat
+    const mat = new StandardMaterial('diagFloorPreviewMat', scene)
+    mat.diffuseColor = new Color3(0.3, 0.6, 1.0)
+    mat.alpha = 0.35
+    mat.backFaceCulling = false
+    diagFloorPreviewMat = mat
+    return mat
   }
 
   function cancelDiagFloor() {
@@ -2179,6 +2247,7 @@ function tuneModelLighting(model) {
   function _spatialRefresh(obj) {
     _spatialUnregister(obj)
     _spatialRegister(obj)
+    freezePlacedModel(obj)
   }
 
   function _spatialNearby(worldX, worldZ, radius) {
@@ -2231,6 +2300,18 @@ let selectedWaterFlowChunk = null
   let _terrainDirty = false
   let _terrainDirtyOpts = { skipTexturePlanes: true, skipShadows: true, skipTextureOverlays: true }
   let _terrainDirtyRegion = null  // {x1,z1,x2,z2} when only heights changed; null = full rebuild needed
+  let _terrainStrokeRegion = null
+  let _collisionDirty = false
+
+  function unionTileRegion(a, b) {
+    if (!b) return a
+    if (!a) return { ...b }
+    a.x1 = Math.min(a.x1, b.x1)
+    a.z1 = Math.min(a.z1, b.z1)
+    a.x2 = Math.max(a.x2, b.x2)
+    a.z2 = Math.max(a.z2, b.z2)
+    return a
+  }
 
   function markTerrainDirty({ skipTexturePlanes = true, skipShadows = false, skipTextureOverlays = true, heightsOnly = false, region = null, rebuildTexturePlanes = false, rebuildTextureOverlays = false } = {}) {
     // Convenience: explicit rebuild flags override skip flags
@@ -2242,17 +2323,15 @@ let selectedWaterFlowChunk = null
     if (!skipTextureOverlays) _terrainDirtyOpts.skipTextureOverlays = false
 
     if (heightsOnly && region) {
-      if (_terrainDirtyRegion) {
-        _terrainDirtyRegion.x1 = Math.min(_terrainDirtyRegion.x1, region.x1)
-        _terrainDirtyRegion.z1 = Math.min(_terrainDirtyRegion.z1, region.z1)
-        _terrainDirtyRegion.x2 = Math.max(_terrainDirtyRegion.x2, region.x2)
-        _terrainDirtyRegion.z2 = Math.max(_terrainDirtyRegion.z2, region.z2)
-      } else {
-        _terrainDirtyRegion = { ...region }
-      }
+      _terrainDirtyRegion = unionTileRegion(_terrainDirtyRegion, region)
+      if (state.isPainting && state.tool === ToolMode.TERRAIN) _terrainStrokeRegion = unionTileRegion(_terrainStrokeRegion, region)
     } else {
       _terrainDirtyRegion = null  // structural change — need full rebuild
     }
+  }
+
+  function markCollisionDirty() {
+    _collisionDirty = true
   }
 
   // Highlight mesh for hovered tile
@@ -2775,7 +2854,7 @@ let selectedWaterFlowChunk = null
       <div id="npcTypeResults" style="display:none;max-height:168px;overflow-y:auto;margin-top:4px;background:#181818;border:1px solid #444;border-radius:4px;"></div>
       <select id="npcTypeSelect" style="display:none;"></select>
       <div id="npcTypeSummary" style="font-size:10px;color:rgba(255,255,255,0.45);margin-top:4px;min-height:13px;"></div>
-      <button id="npcCreateVariantBtn" style="width:100%;margin-top:6px;font-size:11px;padding:6px;background:#34465d;color:#fff;cursor:pointer;border:1px solid #617891;border-radius:3px;" title="Create a new NPC type with its own name/stats/drops while reusing this type's model.">New named variant from this model</button>
+      <button id="npcCreateVariantBtn" style="width:100%;margin-top:6px;font-size:11px;padding:6px;background:#34465d;color:#fff;cursor:pointer;border:1px solid #617891;border-radius:3px;" title="Creates a new reusable NPC type. Use this before editing name, stats, drops, shop, or dialogue for a new mob.">Create new NPC type</button>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
         <div style="font-size:11px;color:rgba(255,255,255,0.55);">NPC Library</div>
         <div id="npcTypeLibraryCount" style="font-size:10px;color:rgba(255,255,255,0.35);"></div>
@@ -2787,8 +2866,8 @@ let selectedWaterFlowChunk = null
         <button id="npcModeMoveBtn" data-npc-mode="move" style="font-size:11px;padding:5px;background:#262626;color:#ddd;cursor:pointer;border:1px solid #555;border-radius:3px;">Move</button>
       </div>
       <div style="display:flex;gap:4px;margin-top:5px;">
-        <button id="npcDuplicateSelectedBtn" style="flex:1;font-size:11px;padding:5px;background:#33334f;color:#fff;cursor:pointer;border:1px solid #555;border-radius:3px;">Duplicate</button>
-        <button id="npcDeleteSelectedBtn" style="flex:1;font-size:11px;padding:5px;background:#4a2222;color:#fff;cursor:pointer;border:1px solid #744;border-radius:3px;">Delete</button>
+        <button id="npcDuplicateSelectedBtn" style="flex:1;font-size:11px;padding:5px;background:#33334f;color:#fff;cursor:pointer;border:1px solid #555;border-radius:3px;" title="Copies this placed spawn only. It does not create a new NPC type.">Clone spawn</button>
+        <button id="npcDeleteSelectedBtn" style="flex:1;font-size:11px;padding:5px;background:#4a2222;color:#fff;cursor:pointer;border:1px solid #744;border-radius:3px;">Delete spawn</button>
       </div>
       <div id="npcSelectedLabel" style="font-size:10px;color:rgba(255,255,255,0.55);margin-top:5px;min-height:13px;"></div>
       <!-- Tab bar — switches the content area below. Spawn tab shows
@@ -2929,7 +3008,7 @@ let selectedWaterFlowChunk = null
       <b>Transform:</b> G move · R rotate · S scale · X/Y/Z axis · click confirm · Esc cancel<br>
       <b>While moving:</b> Q raise · E lower · Shift snap to grid · Ctrl/Cmd use upper surface · Alt disable edge snap<br>
       <b>Terrain:</b> Q/E raise/lower hovered · L level mode · F flip tile split<br>
-      <b>Duplicate:</b> D in-place · Shift+D right · Ctrl+D left · Alt+D forward · Alt+A back · Shift+A stack up<br>
+      <b>Clone objects:</b> D in-place · Shift+D right · Ctrl+D left · Alt+D forward · Alt+A back · Shift+A stack up<br>
       <b>Other:</b> K snap to grid · V toggle plane vertical/horizontal · Del remove selected
     </div>
   `
@@ -2969,6 +3048,9 @@ let selectedWaterFlowChunk = null
   // npcDefsDirty gates the "Save NPC defs" button and is set by any def edit.
   let activeNpcTab = 'spawn'
   let npcDefsDirty = false
+  let builtInNpcDefBaseline = new Map()
+  const unlockedSharedNpcDefIds = new Set()
+  const BUILT_IN_NPC_DEF_MAX_ID = 99
   const DEFAULT_SHOP_RESTOCK_TICKS = 100
   const SHOP_EDITOR_ITEMS_PER_PAGE = 6
   let shopEditorPageIndex = 0
@@ -2997,6 +3079,105 @@ let selectedWaterFlowChunk = null
       status.textContent = statusText || ''
       if (statusText) setTimeout(() => { status.textContent = '' }, 3000)
     }
+  }
+
+  function stableJson(value) {
+    if (value === null) return 'null'
+    if (Array.isArray(value)) {
+      return `[${value.map(item => item === undefined ? 'null' : stableJson(item)).join(',')}]`
+    }
+    if (typeof value === 'object') {
+      const entries = Object.keys(value)
+        .filter(key => value[key] !== undefined)
+        .sort()
+        .map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      return `{${entries.join(',')}}`
+    }
+    if (typeof value === 'number' && !Number.isFinite(value)) return 'null'
+    return JSON.stringify(value)
+  }
+
+  function snapshotBuiltInNpcDefs(defs = npcDefs) {
+    builtInNpcDefBaseline = new Map()
+    for (const def of defs) {
+      if (Number.isInteger(def?.id) && def.id <= BUILT_IN_NPC_DEF_MAX_ID) {
+        builtInNpcDefBaseline.set(def.id, stableJson(def))
+      }
+    }
+  }
+
+  function changedBuiltInNpcDefs() {
+    const current = new Map()
+    for (const def of npcDefs) {
+      if (Number.isInteger(def?.id) && def.id <= BUILT_IN_NPC_DEF_MAX_ID) {
+        current.set(def.id, def)
+      }
+    }
+    const changes = []
+    for (const [id, def] of current) {
+      const before = builtInNpcDefBaseline.get(id)
+      if (before === undefined) {
+        changes.push({ id, name: def.name || `NPC ${id}`, kind: 'added' })
+      } else if (before !== stableJson(def)) {
+        changes.push({ id, name: def.name || `NPC ${id}`, kind: 'changed' })
+      }
+    }
+    for (const [id, before] of builtInNpcDefBaseline) {
+      if (!current.has(id)) {
+        let name = `NPC ${id}`
+        try {
+          name = JSON.parse(before)?.name || name
+        } catch {}
+        changes.push({ id, name, kind: 'removed' })
+      }
+    }
+    return changes.sort((a, b) => a.id - b.id)
+  }
+
+  function confirmBuiltInNpcDefSave() {
+    const changes = changedBuiltInNpcDefs()
+    if (changes.length === 0) return true
+    const listed = changes
+      .slice(0, 10)
+      .map(change => `#${change.id} ${change.name} (${change.kind})`)
+      .join('\n')
+    const more = changes.length > 10 ? `\n...and ${changes.length - 10} more` : ''
+    return window.confirm(
+      `You changed built-in NPC types (IDs 1-${BUILT_IN_NPC_DEF_MAX_ID}):\n\n${listed}${more}\n\nThese changes affect existing mobs everywhere. Continue saving NPC defs?`
+    )
+  }
+
+  function isNpcSharedEditUnlocked(def) {
+    return !!def && unlockedSharedNpcDefIds.has(def.id)
+  }
+
+  function unlockNpcSharedEditing(def) {
+    if (!def) return false
+    const ok = window.confirm(
+      `Unlock shared editing for #${def.id} ${def.name || 'NPC'}?\n\nChanges here affect every spawn using this NPC type. For a new mob, use "Create new NPC type" first.`
+    )
+    if (!ok) return false
+    unlockedSharedNpcDefIds.add(def.id)
+    renderNpcInspector()
+    return true
+  }
+
+  function appendNpcSharedEditGate(root, def, scopeLabel = 'shared fields') {
+    if (isNpcSharedEditUnlocked(def)) return true
+    const card = document.createElement('div')
+    card.style.cssText = 'font-size:11px;color:#f2d195;margin:0 0 8px;padding:7px;background:#241f14;border:1px solid #5c4524;border-radius:4px;line-height:1.35;'
+    card.innerHTML = `
+      <div style="font-weight:bold;color:#ffcc66;margin-bottom:4px;">Shared NPC type locked</div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.62);margin-bottom:7px;">
+        ${escapeEditorHtml(scopeLabel)} affect NPC type #${def.id} "${escapeEditorHtml(def.name || 'NPC')}" and every spawn using it.
+      </div>
+      <button data-create-npc-type style="width:100%;font-size:11px;padding:5px;background:#34465d;color:#fff;cursor:pointer;border:1px solid #617891;border-radius:3px;margin-bottom:5px;">Create new NPC type from this</button>
+      <button data-unlock-npc-shared style="width:100%;font-size:11px;padding:5px;background:#3b2f20;color:#fff;cursor:pointer;border:1px solid #725634;border-radius:3px;">Unlock shared editing</button>
+    `
+    root.appendChild(card)
+    card.querySelector('[data-create-npc-type]')?.addEventListener('click', createNpcVariantFromCurrentType)
+    card.querySelector('[data-unlock-npc-shared]')?.addEventListener('click', () => unlockNpcSharedEditing(def))
+    return false
   }
 
   // Reuses the item-spawn system's itemDefs (declared above) — they share the
@@ -3398,6 +3579,7 @@ let selectedWaterFlowChunk = null
   loadNpcDefsForEditor()
     .then(defs => {
       npcDefs = defs
+      snapshotBuiltInNpcDefs(defs)
       applyNpcDefDefaultsToExistingSpawns()
       populateNpcTypeControls(defs)
       rebuildNpcSpawnMeshes()
@@ -3496,19 +3678,9 @@ let selectedWaterFlowChunk = null
     const status = sidebar.querySelector('#saveNpcDefsStatus')
     if (status) status.textContent = 'saving…'
     try {
-      const r = await fetch('/api/editor/npcs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ npcs: npcDefs }),
-      })
-      const body = await r.json().catch(() => ({}))
-      if (r.ok && body.ok) {
-        clearDefsDirty('saved ✓')
-      } else {
-        if (status) status.textContent = body.error || 'save failed'
-      }
+      await saveNpcDefsToServer()
     } catch (err) {
-      if (status) status.textContent = 'network error'
+      if (status) status.textContent = err?.cancelled ? 'save cancelled' : (err?.message || 'save failed')
     }
   })
 
@@ -3615,7 +3787,7 @@ let selectedWaterFlowChunk = null
     root.innerHTML = `
       <label style="font-size:11px;color:rgba(255,255,255,0.45);">Name (override)</label>
       <input id="spawnNameInput" type="text" value="${nameValue.replace(/"/g, '&quot;')}" placeholder="${defName.replace(/"/g, '&quot;') || 'defaults to NPC type name'}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:4px 5px;font-size:11px;margin-top:3px;" ${spawn ? '' : 'disabled'} />
-      <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">This renames only this placed spawn. Use "New named variant from this model" when the name, stats, drops, shop, or dialogue should become a reusable NPC type.</div>
+      <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">This renames only this placed spawn. Use "Create new NPC type" before editing name, stats, drops, shop, or dialogue for a new mob.</div>
       <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Position</label>
       <div style="display:flex;gap:5px;margin-top:3px;">
         <div style="flex:1;">
@@ -3654,8 +3826,7 @@ let selectedWaterFlowChunk = null
         ${animOptions}
       </select>
       <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">Forces a swing animation regardless of equipped weapon. Combat NPCs only.</div>
-      <button id="duplicateSpawnBtn" style="width:100%;margin-top:10px;font-size:11px;padding:5px;background:#3a3a5a;color:#fff;cursor:pointer;border:1px solid #555;border-radius:3px;" ${spawn ? '' : 'disabled'}>Duplicate spawn</button>
-      <button id="basicGuardPresetBtn" style="width:100%;margin-top:6px;font-size:11px;padding:5px;background:#2f3d33;color:#fff;cursor:pointer;border:1px solid #4c6a52;border-radius:3px;" ${spawn ? '' : 'disabled'}>Make basic guard</button>
+      <button id="basicGuardPresetBtn" style="width:100%;margin-top:10px;font-size:11px;padding:5px;background:#2f3d33;color:#fff;cursor:pointer;border:1px solid #4c6a52;border-radius:3px;" ${spawn ? '' : 'disabled'}>Make basic guard</button>
       <div class="hint" style="margin-top:4px;font-size:10px;color:rgba(255,255,255,0.35);">${spawn ? 'Selected spawn' : 'No spawn selected'}</div>
     `
     root.querySelector('#spawnNameInput')?.addEventListener('input', (e) => {
@@ -3735,7 +3906,6 @@ let selectedWaterFlowChunk = null
     }
     root.querySelector('#spawnXInput')?.addEventListener('change', (e) => updatePosition('x', e.target.value))
     root.querySelector('#spawnZInput')?.addEventListener('change', (e) => updatePosition('z', e.target.value))
-    root.querySelector('#duplicateSpawnBtn')?.addEventListener('click', duplicateSelectedNpcSpawn)
     root.querySelector('#basicGuardPresetBtn')?.addEventListener('click', () => applyBasicGuardPreset())
   }
 
@@ -3920,6 +4090,7 @@ let selectedWaterFlowChunk = null
     }
 
     npcDefs.push(clone)
+    unlockedSharedNpcDefIds.add(clone.id)
     populateNpcTypeControls(npcDefs)
 
     const sel = sidebar.querySelector('#npcTypeSelect')
@@ -4013,6 +4184,10 @@ let selectedWaterFlowChunk = null
     refreshCombatLevelReadout()
     root.appendChild(combatLevelReadout)
     root.appendChild(dpsReadout)
+
+    if (!overrideActive && !appendNpcSharedEditGate(root, def, 'Stats edits')) {
+      return
+    }
 
     const recommendation = NPC_STARTER_RECOMMENDATIONS[def.id]
     if (recommendation) {
@@ -4137,8 +4312,8 @@ let selectedWaterFlowChunk = null
       .join('')
     const shared = document.createElement('div')
     shared.innerHTML = `
-      <div style="font-size:10px;color:#ffaa44;margin-bottom:6px;">Editing shared NpcDef #${def.id} — affects every spawn of "${def.name}".</div>
-      <button id="duplicateNpcDefBtn" style="width:100%;margin-bottom:8px;font-size:11px;padding:5px;background:#34465d;color:#fff;cursor:pointer;border:1px solid #617891;border-radius:3px;" title="Create a new NPC type with its own name/stats/drops while reusing this type's model.">New named variant from this model</button>
+      <div style="font-size:10px;color:#ffaa44;margin-bottom:6px;">Editing shared NPC type #${def.id} — affects every spawn of "${def.name}". For a new mob, create a new NPC type first.</div>
+      <button id="duplicateNpcDefBtn" style="width:100%;margin-bottom:8px;font-size:11px;padding:5px;background:#34465d;color:#fff;cursor:pointer;border:1px solid #617891;border-radius:3px;" title="Creates a new reusable NPC type with its own name, stats, drops, shop, and dialogue while reusing this model.">Create new NPC type from this</button>
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
         <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">Name</span>
         <input data-def-key="name" type="text" value="${def.name ?? ''}" style="width:140px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
@@ -4690,6 +4865,8 @@ let selectedWaterFlowChunk = null
       items: itemDefs,
       loadItems: fetchItemDefsOnce,
       selectedNpcId,
+      isNpcEditable: isNpcSharedEditUnlocked,
+      onRequestUnlock: unlockNpcSharedEditing,
       onDirty: markDefsDirty,
       onSave: saveNpcDefsToServer,
     })
@@ -4751,6 +4928,10 @@ let selectedWaterFlowChunk = null
       return
     }
 
+    if (!appendNpcSharedEditGate(root, def, 'Drop edits')) {
+      return
+    }
+
     if (itemDefs.length === 0) {
       root.innerHTML = `<div class="hint">Loading item names...</div>`
       fetchItemDefsOnce().then(() => {
@@ -4785,7 +4966,7 @@ let selectedWaterFlowChunk = null
     const relicButtonDisabled = !relicRecommendation && relicRows.length === 0
 
     root.innerHTML = `
-      <div style="font-size:10px;color:#ffaa44;margin-bottom:6px;">Editing shared NpcDef #${def.id} — affects every spawn of "${escapeEditorHtml(def.name)}".</div>
+      <div style="font-size:10px;color:#ffaa44;margin-bottom:6px;">Editing shared NPC type #${def.id} — affects every spawn of "${escapeEditorHtml(def.name)}".</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:8px;">
         <div style="background:#1a1a1a;border:1px solid #333;border-radius:4px;padding:6px;text-align:center;">
           <div style="font-size:15px;color:#fff;font-weight:bold;">${rows.length}</div>
@@ -4866,7 +5047,7 @@ let selectedWaterFlowChunk = null
     })
   }
 
-  /** Append a "Shared (def) | Override (this spawn)" mode toggle. Used by
+  /** Append a "Shared type | This spawn" mode toggle. Used by
    *  the Shop and Dialogue tabs — both edit either a shared NpcDef field or
    *  a per-spawn override of it. The disabled state for "Override" handles
    *  the "no spawn selected" case so the user understands why it's greyed. */
@@ -4879,8 +5060,8 @@ let selectedWaterFlowChunk = null
       btn.style.cssText = `flex:1;font-size:10px;padding:4px;background:${active ? '#2a2a2a' : '#1a1a1a'};color:#fff;border:1px solid ${active ? '#666' : '#444'};cursor:pointer;border-radius:3px;`
       return btn
     }
-    const defBtn = make('Shared (def)', !overrideActive)
-    const ovrBtn = make('Override (this spawn)', overrideActive)
+    const defBtn = make('Shared type', !overrideActive)
+    const ovrBtn = make('This spawn', overrideActive)
     if (!hasSpawn) ovrBtn.disabled = true
     defBtn.addEventListener('click', onSelectDef)
     ovrBtn.addEventListener('click', onSelectOverride)
@@ -4919,6 +5100,9 @@ let selectedWaterFlowChunk = null
 
     // Target object — the shop being edited (either def.shop or spawn.shop).
     const targetIsOverride = overrideActive
+    if (!targetIsOverride && !appendNpcSharedEditGate(root, def, 'Shop edits')) {
+      return
+    }
     const target = targetIsOverride ? spawn.shop : def.shop
     const hasShop = !!target
 
@@ -5138,6 +5322,9 @@ let selectedWaterFlowChunk = null
     })
 
     const targetIsOverride = overrideActive
+    if (!targetIsOverride && !appendNpcSharedEditGate(root, def, 'Dialogue edits')) {
+      return
+    }
     const target = targetIsOverride ? spawn.dialogue : def.dialogue
 
     const toggleRow = document.createElement('label')
@@ -5502,7 +5689,9 @@ let selectedWaterFlowChunk = null
       if (!selectedPlacedObject) return
       const tiles = parseFloat(btn.dataset.tiles)
       pushUndoState('objects')
+      unfreezePlacedModel(selectedPlacedObject)
       scaleObjectToTiles(selectedPlacedObject, tiles)
+      _spatialRefresh(selectedPlacedObject)
       updateSelectionHelper()
       invalidateShadowCache()
     })
@@ -5514,7 +5703,9 @@ let selectedWaterFlowChunk = null
     const tiles = parseFloat(customTileSizeInput.value)
     if (!isFinite(tiles) || tiles <= 0) return
     pushUndoState('objects')
+    unfreezePlacedModel(selectedPlacedObject)
     scaleObjectToTiles(selectedPlacedObject, tiles)
+    _spatialRefresh(selectedPlacedObject)
     updateSelectionHelper()
     invalidateShadowCache()
   })
@@ -7358,6 +7549,7 @@ let selectedWaterFlowChunk = null
   }
 
   function clearSelection() {
+    freezePlacedModels(selectedPlacedObjects)
     selectedPlacedObject = null
     selectedPlacedObjects = []
     selectedTexturePlane = null
@@ -8250,7 +8442,12 @@ let selectedWaterFlowChunk = null
       const shadowInf = _shadowInfluencesCache ?? buildObjectShadowInfluences()
       _shadowInfluencesCache = shadowInf
       if (updateTerrainLandHeights(map, shadowInf, _heightsOnlyRegion.x1, _heightsOnlyRegion.z1, _heightsOnlyRegion.x2, _heightsOnlyRegion.z2)) {
-        replaceTerrainWaterMeshes()
+        if (!(state.isPainting && state.tool === ToolMode.TERRAIN)) {
+          replaceTerrainWaterMeshes()
+        }
+        if (!skipTextureOverlays) {
+          updateTextureOverlaysInRegion(_heightsOnlyRegion)
+        }
 
         if (state.isPainting && state.tool === ToolMode.TERRAIN) {
           applyLayerVisibility()
@@ -8388,6 +8585,19 @@ let selectedWaterFlowChunk = null
     if (!meshes) return
     for (const m of meshes) m.dispose(false, false)
     overlayMeshesByTile.delete(key)
+  }
+
+  function updateTextureOverlaysInRegion(region) {
+    if (!region) return
+    const x1 = Math.max(0, Math.floor(region.x1) - 1)
+    const z1 = Math.max(0, Math.floor(region.z1) - 1)
+    const x2 = Math.min(map.width - 1, Math.ceil(region.x2) + 1)
+    const z2 = Math.min(map.height - 1, Math.ceil(region.z2) + 1)
+    for (let tz = z1; tz <= z2; tz++) {
+      for (let tx = x1; tx <= x2; tx++) {
+        updateTileTextureOverlay(tx, tz)
+      }
+    }
   }
 
   function updateTileTextureOverlay(tx, tz) {
@@ -8909,7 +9119,7 @@ let selectedWaterFlowChunk = null
   }
 
   function isModularAsset(assetId) {
-    const asset = assetRegistry.find((a) => a.id === assetId)
+    const asset = assetById.get(assetId) || assetRegistry.find((a) => a.id === assetId)
     return asset?.path?.toLowerCase().includes('modular assets') ?? false
   }
 
@@ -8976,7 +9186,7 @@ let selectedWaterFlowChunk = null
     let best = null
     let bestScore = Infinity
 
-    for (const obj of placedGroup.getChildren()) {
+    for (const obj of _spatialNearby(referencePoint.x, referencePoint.z, SPATIAL_CELL * 2)) {
       if (obj.isEnabled?.() === false || !isPlacedWallObject(obj)) continue
 
       const info = wallPlacementTargetInfo(obj)
@@ -9073,7 +9283,7 @@ let selectedWaterFlowChunk = null
     let bestX = null, bestZ = null
     let bestDX = THRESHOLD, bestDZ = THRESHOLD
 
-    for (const other of placedGroup.getChildren()) {
+    for (const other of _spatialNearby(targetX, targetZ, SPATIAL_CELL * 2)) {
       if (selectedPlacedObjects.includes(other)) continue
       if (!isModularAsset(other.userData?.assetId)) continue
 
@@ -10086,6 +10296,7 @@ function applyToolAtTile(tile, eventLike = null) {
     transformMode = mode
     transformLift = 0
     movePlaneStart = null
+    unfreezePlacedModels(selectedPlacedObjects)
 
     if (mode === 'scale') transformAxis = 'all'
 
@@ -10217,8 +10428,8 @@ function applyToolAtTile(tile, eventLike = null) {
       }
     }
 
-    // Re-register moved GLB objects at their restored positions
-    if (transformMode === 'move' && selectedPlacedObjects.length) {
+    // Re-register moved/scaled GLB objects at their restored bounds
+    if ((transformMode === 'move' || transformMode === 'scale') && selectedPlacedObjects.length) {
       for (const obj of selectedPlacedObjects) {
         _spatialUnregister(obj)
         _spatialRegister(obj)
@@ -10229,6 +10440,7 @@ function applyToolAtTile(tile, eventLike = null) {
     updateSelectionHelper()
 
     if (transformMode === 'rotate') lastRotateAxis = transformAxis
+    freezePlacedModels(selectedPlacedObjects)
     transformMode = null
     transformStart = null
     transformLift = 0
@@ -10237,7 +10449,7 @@ function applyToolAtTile(tile, eventLike = null) {
   }
 
   function confirmTransform() {
-    if (transformMode === 'move') {
+    if (transformMode === 'move' || transformMode === 'scale') {
       for (const obj of selectedPlacedObjects) {
         _spatialUnregister(obj)
         _spatialRegister(obj)
@@ -10250,6 +10462,7 @@ function applyToolAtTile(tile, eventLike = null) {
       lastRotateAxis = transformAxis
     }
 
+    freezePlacedModels(selectedPlacedObjects)
     transformMode = null
     transformStart = null
     transformLift = 0
@@ -10328,6 +10541,9 @@ function applyToolAtTile(tile, eventLike = null) {
   const thumbnailCache = new Map()
   let assetGridThumbObserver = null
   let replaceGridThumbObserver = null
+  const ASSET_GRID_BATCH_SIZE = 96
+  let assetGridRenderLimit = ASSET_GRID_BATCH_SIZE
+  let assetGridFilterKey = ''
 
   function createThumbObserver(rootEl) {
     return new IntersectionObserver((entries, obs) => {
@@ -10380,6 +10596,11 @@ function applyToolAtTile(tile, eventLike = null) {
 
   function refreshAssetList() {
     const q = assetSearch.value.trim().toLowerCase()
+    const nextFilterKey = `${assetSectionFilter}|${assetGroupFilter}|${q}`
+    if (nextFilterKey !== assetGridFilterKey) {
+      assetGridFilterKey = nextFilterKey
+      assetGridRenderLimit = ASSET_GRID_BATCH_SIZE
+    }
 
     const WALL_FILES = ['stone wall.glb', 'dark stone wall.glb', 'white wall.glb', 'wood wall.glb']
 
@@ -10411,7 +10632,8 @@ function applyToolAtTile(tile, eventLike = null) {
       return haystack.includes(q)
     })
 
-    if (filteredAssets.length && !filteredAssets.find((a) => a.id === selectedAssetId)) {
+    const selectedAssetIndex = filteredAssets.findIndex((a) => a.id === selectedAssetId)
+    if (filteredAssets.length && (selectedAssetIndex < 0 || selectedAssetIndex >= assetGridRenderLimit)) {
       selectedAssetId = filteredAssets[0].id
     }
 
@@ -10425,7 +10647,9 @@ function applyToolAtTile(tile, eventLike = null) {
       return
     }
 
-    for (const asset of filteredAssets) {
+    const visibleAssets = filteredAssets.slice(0, assetGridRenderLimit)
+
+    for (const asset of visibleAssets) {
       const card = document.createElement('div')
       card.className = 'asset-card' + (asset.id === selectedAssetId ? ' selected' : '')
       card.dataset.assetId = asset.id
@@ -10478,6 +10702,18 @@ function applyToolAtTile(tile, eventLike = null) {
         if (url) img.src = url
       })
       assetGridThumbObserver.observe(img)
+    }
+
+    if (visibleAssets.length < filteredAssets.length) {
+      const more = document.createElement('button')
+      more.type = 'button'
+      more.className = 'asset-grid-more'
+      more.textContent = `Show ${Math.min(ASSET_GRID_BATCH_SIZE, filteredAssets.length - visibleAssets.length)} more (${visibleAssets.length}/${filteredAssets.length})`
+      more.addEventListener('click', () => {
+        assetGridRenderLimit += ASSET_GRID_BATCH_SIZE
+        refreshAssetList()
+      })
+      assetGrid.appendChild(more)
     }
 
     updateToolUI()
@@ -10955,6 +11191,11 @@ function applyToolAtTile(tile, eventLike = null) {
   }
 
   async function saveNpcDefsToServer() {
+    if (!confirmBuiltInNpcDefSave()) {
+      const err = new Error('NPC defs save cancelled')
+      err.cancelled = true
+      throw err
+    }
     const r = await fetch('/api/editor/npcs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -10962,6 +11203,7 @@ function applyToolAtTile(tile, eventLike = null) {
     })
     const body = await r.json().catch(() => ({}))
     if (!r.ok || !body.ok) throw new Error(body.error || 'unknown')
+    snapshotBuiltInNpcDefs()
     clearDefsDirty('NPC defs saved ✓')
   }
 
@@ -11184,7 +11426,10 @@ function applyToolAtTile(tile, eventLike = null) {
         savedParts.push(`${quests.length} quest(s)`)
 
         setStatus(`Saved ${savedParts.join(', ')} ✓`, '#6e6')
-      } catch (e) { setStatus(`Network error: ${e.message}`, '#e44') }
+      } catch (e) {
+        if (e?.cancelled) setStatus('Save cancelled before NPC defs were written.', '#aaa')
+        else setStatus(`Network error: ${e.message}`, '#e44')
+      }
     })
 
     // Load quests + objects in parallel; itemDefs already lazy-loaded by the
@@ -12752,7 +12997,11 @@ function applyToolAtTile(tile, eventLike = null) {
       try {
         await saveNpcDefsToServer()
       } catch (err) {
-        showEditorNotice(`NPC defs save failed:\n${err.message}`, 'error', 12000)
+        if (err?.cancelled) {
+          showEditorNotice('Save Server cancelled before NPC defs were written.', 'info', 6000)
+        } else {
+          showEditorNotice(`NPC defs save failed:\n${err.message}`, 'error', 12000)
+        }
         return
       }
     }
@@ -13692,21 +13941,21 @@ function applyToolAtTile(tile, eventLike = null) {
         const midZ = (diagFloorStart.z + cursorZ) / 2
         const midY = map.getAverageTileHeight(Math.floor(midX), Math.floor(midZ)) + 0.06
 
-        disposeDiagFloorPreview()
-        diagFloorPreview = MeshBuilder.CreatePlane('diagFloorPreview', {
-          width: length,
-          height: diagFloorWidth,
-          sideOrientation: Mesh.DOUBLESIDE
-        }, scene)
-        diagFloorPreview.position.set(midX, midY, midZ)
-        diagFloorPreview.rotation.set(-Math.PI / 2, angle, 0)
-        diagFloorPreview.isPickable = false
-        const mat = new StandardMaterial('diagFloorPreviewMat', scene)
-        mat.diffuseColor = new Color3(0.3, 0.6, 1.0)
-        mat.alpha = 0.35
-        mat.backFaceCulling = false
-        diagFloorPreview.material = mat
-        diagFloorPreview.isPickable = false
+        const nextPreviewKey = `${midX.toFixed(3)},${midY.toFixed(3)},${midZ.toFixed(3)},${length.toFixed(3)},${angle.toFixed(4)},${diagFloorWidth}`
+        if (nextPreviewKey !== diagFloorPreviewKey || !diagFloorPreview) {
+          disposeDiagFloorPreview()
+          diagFloorPreviewKey = nextPreviewKey
+          diagFloorPreview = MeshBuilder.CreatePlane('diagFloorPreview', {
+            width: length,
+            height: diagFloorWidth,
+            sideOrientation: Mesh.DOUBLESIDE
+          }, scene)
+          diagFloorPreview.position.set(midX, midY, midZ)
+          diagFloorPreview.rotation.set(-Math.PI / 2, angle, 0)
+          diagFloorPreview.isPickable = false
+          diagFloorPreview.material = getDiagFloorPreviewMaterial()
+          diagFloorPreview.isPickable = false
+        }
       }
     }
 
@@ -13720,88 +13969,85 @@ function applyToolAtTile(tile, eventLike = null) {
       return
     }
 
-if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode.SELECT) {
-  const key = `${tile.x},${tile.z}`
+    if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode.SELECT) {
+      const key = `${tile.x},${tile.z}`
 
-  if (state.tool === ToolMode.BIOME) {
-    if (!biomeStrokeStart || !biomeStrokeSnapshot) return
-    const cx = Math.floor(tile.x / BIOME_CELL_SIZE)
-    const cz = Math.floor(tile.z / BIOME_CELL_SIZE)
-    // Reset to stroke-start state and re-fill the rectangle from start to current cell.
-    // Lets the user drag out a rectangle in any direction; re-shrinks if they overshoot.
-    biomeData.cells = { ...biomeStrokeSnapshot }
-    const x0 = Math.min(biomeStrokeStart.cx, cx)
-    const x1 = Math.max(biomeStrokeStart.cx, cx)
-    const z0 = Math.min(biomeStrokeStart.cz, cz)
-    const z1 = Math.max(biomeStrokeStart.cz, cz)
-    for (let zz = z0; zz <= z1; zz++) {
-      for (let xx = x0; xx <= x1; xx++) {
-        const key = `${xx},${zz}`
-        if (biomeStrokeId == null) delete biomeData.cells[key]
-        else biomeData.cells[key] = biomeStrokeId
-      }
-    }
-    biomeOverlayDirty = true
-    rebuildBiomeOverlay()
-    return
-  }
-
-  if (
-    state.tool === ToolMode.TERRAIN ||
-    state.tool === ToolMode.PAINT
-  ) {
-    if (state.tool === ToolMode.TERRAIN) {
-      const now = performance.now()
-
-      if (!state.draggedTiles.has(key) && now - state.lastTerrainEditTime >= state.terrainEditInterval) {
-        state.draggedTiles.add(key)
-        state.lastTerrainEditTime = now
-        applyToolAtTile(tile, event)
-      }
-    } else if (state.tool === ToolMode.COLLISION) {
-      if (collisionMode === 'wall') {
-        const erasing = wallEraseMode || event.shiftKey
-        if (erasing) {
-          // Erase mode: clear all edges per tile, track by tile
-          const tileKey = `${tile.x},${tile.z}`
-          if (!state.draggedTiles.has(tileKey)) {
-            state.draggedTiles.add(tileKey)
-            setWallAt(tile.x, tile.z, 0)
-            delete getCollisionLayer().wallHeights[`${tile.x},${tile.z}`]
-            rebuildCollisionMeshes()
-          }
-        } else {
-          // Draw mode: use the locked edge from mousedown so dragging extends the same edge
-          const edge = lockedWallEdge || getNearestEdge(tile.x, tile.z, tile.u, tile.v).edge
-          const edgeKey = `${tile.x},${tile.z},${edge}`
-          if (!state.draggedTiles.has(edgeKey)) {
-            state.draggedTiles.add(edgeKey)
-            const current = getWallAt(tile.x, tile.z)
-            setWallAt(tile.x, tile.z, current | edge)
-            rebuildCollisionMeshes()
+      if (state.tool === ToolMode.BIOME) {
+        if (!biomeStrokeStart || !biomeStrokeSnapshot) return
+        const cx = Math.floor(tile.x / BIOME_CELL_SIZE)
+        const cz = Math.floor(tile.z / BIOME_CELL_SIZE)
+        // Reset to stroke-start state and re-fill the rectangle from start to current cell.
+        // Lets the user drag out a rectangle in any direction; re-shrinks if they overshoot.
+        biomeData.cells = { ...biomeStrokeSnapshot }
+        const x0 = Math.min(biomeStrokeStart.cx, cx)
+        const x1 = Math.max(biomeStrokeStart.cx, cx)
+        const z0 = Math.min(biomeStrokeStart.cz, cz)
+        const z1 = Math.max(biomeStrokeStart.cz, cz)
+        for (let zz = z0; zz <= z1; zz++) {
+          for (let xx = x0; xx <= x1; xx++) {
+            const key = `${xx},${zz}`
+            if (biomeStrokeId == null) delete biomeData.cells[key]
+            else biomeData.cells[key] = biomeStrokeId
           }
         }
-      } else if (collisionMode === 'block') {
-        if (!state.draggedTiles.has(key)) {
-          state.draggedTiles.add(key)
-          setBlockedTile(tile.x, tile.z, !event.shiftKey)
-          rebuildCollisionMeshes()
-        }
-      } else if (collisionMode === 'hole') {
-        if (!state.draggedTiles.has(key)) {
-          state.draggedTiles.add(key)
-          setHoleAt(tile.x, tile.z, !event.shiftKey)
-          rebuildCollisionMeshes()
-        }
+        biomeOverlayDirty = true
+        rebuildBiomeOverlay()
+        return
       }
-    } else {
-      if (!state.draggedTiles.has(key)) {
-        state.draggedTiles.add(key)
-        applyToolAtTile(tile, event)
+
+      if (state.tool === ToolMode.COLLISION) {
+        if (collisionMode === 'wall') {
+          const erasing = wallEraseMode || event.shiftKey
+          if (erasing) {
+            // Erase mode: clear all edges per tile, track by tile.
+            const tileKey = `${tile.x},${tile.z}`
+            if (!state.draggedTiles.has(tileKey)) {
+              state.draggedTiles.add(tileKey)
+              setWallAt(tile.x, tile.z, 0)
+              delete getCollisionLayer().wallHeights[`${tile.x},${tile.z}`]
+              markCollisionDirty()
+            }
+          } else {
+            // Draw mode: use the locked edge from mousedown so dragging extends the same edge.
+            const edge = lockedWallEdge || getNearestEdge(tile.x, tile.z, tile.u, tile.v).edge
+            const edgeKey = `${tile.x},${tile.z},${edge}`
+            if (!state.draggedTiles.has(edgeKey)) {
+              state.draggedTiles.add(edgeKey)
+              const current = getWallAt(tile.x, tile.z)
+              setWallAt(tile.x, tile.z, current | edge)
+              markCollisionDirty()
+            }
+          }
+        } else if (collisionMode === 'block') {
+          if (!state.draggedTiles.has(key)) {
+            state.draggedTiles.add(key)
+            setBlockedTile(tile.x, tile.z, !event.shiftKey)
+            markCollisionDirty()
+          }
+        } else if (collisionMode === 'hole') {
+          if (!state.draggedTiles.has(key)) {
+            state.draggedTiles.add(key)
+            setHoleAt(tile.x, tile.z, !event.shiftKey)
+            markCollisionDirty()
+          }
+        }
+        return
+      }
+
+      if (state.tool === ToolMode.TERRAIN) {
+        const now = performance.now()
+        if (!state.draggedTiles.has(key) && now - state.lastTerrainEditTime >= state.terrainEditInterval) {
+          state.draggedTiles.add(key)
+          state.lastTerrainEditTime = now
+          applyToolAtTile(tile, event)
+        }
+      } else if (state.tool === ToolMode.PAINT) {
+        if (!state.draggedTiles.has(key)) {
+          state.draggedTiles.add(key)
+          applyToolAtTile(tile, event)
+        }
       }
     }
-  }
-}
   })
 
   dragSelectBox = document.createElement('div')
@@ -14183,7 +14429,7 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
           setHoleAt(tile.x, tile.z, !current)
         }
       }
-      rebuildCollisionMeshes()
+      markCollisionDirty()
       state.isPainting = true
       state.draggedTiles.clear()
       state.draggedTiles.add(`${tile.x},${tile.z}`)
@@ -14242,6 +14488,7 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
     state.historyCapturedThisStroke = false
     state.draggedTiles.clear()
     state.lastTerrainEditTime = 0
+    if (state.tool === ToolMode.TERRAIN) _terrainStrokeRegion = null
 
 
 
@@ -14267,9 +14514,20 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
         // Shadow cache is stale after terrain edits, but a full rebuild is expensive.
         // Just invalidate the cache so the NEXT rebuild (e.g. from undo) picks it up.
         invalidateShadowCache()
-        // Rebuild texture overlays so they align with new terrain heights
+        // Finalize water/cliffs and refresh only the texture overlays whose
+        // corners may have moved. A full overlay rebuild is visible on kcmap.
         if (state.tool === ToolMode.TERRAIN) {
-          markTerrainDirty({ rebuildTextureOverlays: true })
+          const region = _terrainStrokeRegion
+          _terrainStrokeRegion = null
+          if (region) {
+            markTerrainDirty({
+              skipTexturePlanes: true,
+              skipShadows: true,
+              rebuildTextureOverlays: true,
+              heightsOnly: true,
+              region
+            })
+          }
         }
       }
 
@@ -15059,6 +15317,10 @@ if (key === 'e') {
   Promise.all([initAssets(), initTextures()]).then(() => initDefaultSave())
 
   engine.runRenderLoop(() => {
+    if (_collisionDirty) {
+      rebuildCollisionMeshes()
+      _collisionDirty = false
+    }
     if (_terrainDirty) {
       rebuildTerrain({ ..._terrainDirtyOpts, _heightsOnlyRegion: _terrainDirtyRegion })
       _terrainDirty = false

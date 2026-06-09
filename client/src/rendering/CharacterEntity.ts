@@ -46,23 +46,19 @@ function keepCloseCameraDetailVisible(mesh: AbstractMesh): void {
   mesh.cullingStrategy = AbstractMesh.CULLINGSTRATEGY_OPTIMISTIC_INCLUSION_THEN_BSPHERE_ONLY;
 }
 
-async function importMeshWithTimeout(
+async function importMeshWithSlowWarning(
   scene: Scene,
   dir: string,
   file: string,
-  timeoutMs: number = 20_000,
+  slowWarnMs: number = 20_000,
 ): Promise<Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>> {
   let timer: number | null = null;
   try {
-    return await Promise.race([
-      SceneLoader.ImportMeshAsync('', dir, file, scene),
-      new Promise<never>((_, reject) => {
-        timer = window.setTimeout(
-          () => reject(new Error(`GLB import timed out after ${timeoutMs}ms: ${dir}${file}`)),
-          timeoutMs,
-        );
-      }),
-    ]);
+    const url = `${dir}${file}`;
+    timer = window.setTimeout(() => {
+      console.warn(`[loading] GLB import still running after ${slowWarnMs}ms: ${url}`);
+    }, slowWarnMs);
+    return await SceneLoader.ImportMeshAsync('', dir, file, scene);
   } finally {
     if (timer !== null) window.clearTimeout(timer);
   }
@@ -509,7 +505,7 @@ export class CharacterEntity {
       const dir = options.modelPath.substring(0, lastSlash + 1);
       const file = devCacheBust(options.modelPath.substring(lastSlash + 1));
 
-      const result = await importMeshWithTimeout(this.scene, dir, file);
+      const result = await importMeshWithSlowWarning(this.scene, dir, file);
       if (this.disposed || this.scene.isDisposed) {
         disposeImportedMeshResult(result);
         this._resolveReady();
@@ -712,6 +708,10 @@ export class CharacterEntity {
 
       // Load additional animations from separate GLB files
       if (options.additionalAnimations) {
+        // Keep rest-pose meshes hidden while external animation GLBs are
+        // loading/binding. This avoids visible T-poses on cold-cache logins
+        // and when remote humanoids stream in during active play.
+        this.root.setEnabled(false);
         await this.loadAdditionalAnimations(options.additionalAnimations);
       }
       if (this.disposed || this.scene.isDisposed || !this.root) {
@@ -806,7 +806,10 @@ export class CharacterEntity {
 
       // Propagate layerMask (if any) to all body+hair meshes
       this.applyLayerMask();
-      if (!this.renderEnabled) this.root.setEnabled(false);
+      if (this.currentAnimName === '') {
+        console.warn(`[CharacterEntity] '${options.modelPath}' loaded with no playable idle/walk animation; keeping mesh hidden to avoid rest-pose render`);
+      }
+      this.root.setEnabled(this.renderEnabled && this.currentAnimName !== '');
 
       this._ready = true;
       this._resolveReady();
@@ -866,7 +869,7 @@ export class CharacterEntity {
   setRenderEnabled(enabled: boolean): void {
     if (this.renderEnabled === enabled) return;
     this.renderEnabled = enabled;
-    if (this.root) this.root.setEnabled(enabled);
+    if (this.root) this.root.setEnabled(enabled && this._ready && this.currentAnimName !== '');
     if (!enabled) {
       for (const [, group] of this.animGroups) group.stop();
       if (this.labelEl) this.labelEl.style.opacity = '0';

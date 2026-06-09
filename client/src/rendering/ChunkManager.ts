@@ -3525,7 +3525,7 @@ export class ChunkManager {
       const lastSlash = encodedPath.lastIndexOf('/');
       const dir = encodedPath.substring(0, lastSlash + 1);
       const file = encodedPath.substring(lastSlash + 1);
-      const result = await this.importMeshWithTimeout(dir, file);
+      const result = await this.importMeshWithSlowWarning(dir, file);
       if (this.isObjectLoadStale(generation)) {
         this.disposeImportedMeshResult(result);
         return null;
@@ -3593,15 +3593,14 @@ export class ChunkManager {
     }
   }
 
-  private async importMeshWithTimeout(dir: string, file: string, timeoutMs: number = 20_000): Promise<Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>> {
+  private async importMeshWithSlowWarning(dir: string, file: string, slowWarnMs: number = 20_000): Promise<Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>> {
     let timer: number | null = null;
     try {
-      return await Promise.race([
-        SceneLoader.ImportMeshAsync('', dir, file, this.scene),
-        new Promise<never>((_, reject) => {
-          timer = window.setTimeout(() => reject(new Error(`GLB import timed out after ${timeoutMs}ms: ${dir}${file}`)), timeoutMs);
-        }),
-      ]);
+      const url = `${dir}${file}`;
+      timer = window.setTimeout(() => {
+        console.warn(`[loading] GLB import still running after ${slowWarnMs}ms: ${url}`);
+      }, slowWarnMs);
+      return await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
     } finally {
       if (timer !== null) window.clearTimeout(timer);
     }
@@ -4665,6 +4664,7 @@ export class ChunkManager {
     const tx = Math.floor(x);
     const tz = Math.floor(z);
     const r = Math.ceil(radius);
+    const radiusSq = Math.max(0, radius) * Math.max(0, radius);
     const minChunkX = Math.floor((tx - r) / CHUNK_SIZE);
     const maxChunkX = Math.floor((tx + r) / CHUNK_SIZE);
     const minChunkZ = Math.floor((tz - r) / CHUNK_SIZE);
@@ -4682,10 +4682,13 @@ export class ChunkManager {
           const dx = ox - tx;
           const dz = oz - tz;
           if (Math.abs(dx) > r || Math.abs(dz) > r) continue;
+          const objectDx = (ox + 0.5) - x;
+          const objectDz = (oz + 0.5) - z;
+          const objectDistSq = objectDx * objectDx + objectDz * objectDz;
+          if (objectDistSq > radiusSq) continue;
           const seed = this.findRoofSeedTile(ox, oz, minY, radius);
           if (!seed) continue;
 
-          const objectDistSq = dx * dx + dz * dz;
           const roofDx = seed.x - ox;
           const roofDz = seed.z - oz;
           const roofDistSq = roofDx * roofDx + roofDz * roofDz;

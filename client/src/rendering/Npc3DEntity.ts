@@ -62,23 +62,19 @@ function normalizePositiveScale(value: number | undefined, fallback: number): nu
   return value;
 }
 
-async function loadAssetContainerWithTimeout(
+async function loadAssetContainerWithSlowWarning(
   scene: Scene,
   dir: string,
   file: string,
-  timeoutMs: number = 20_000,
+  slowWarnMs: number = 20_000,
 ): Promise<AssetContainer> {
   let timer: number | null = null;
   try {
-    return await Promise.race([
-      SceneLoader.LoadAssetContainerAsync(dir, file, scene),
-      new Promise<never>((_, reject) => {
-        timer = window.setTimeout(
-          () => reject(new Error(`GLB import timed out after ${timeoutMs}ms: ${dir}${file}`)),
-          timeoutMs,
-        );
-      }),
-    ]);
+    const url = `${dir}${file}`;
+    timer = window.setTimeout(() => {
+      console.warn(`[loading] GLB asset container still loading after ${slowWarnMs}ms: ${url}`);
+    }, slowWarnMs);
+    return await SceneLoader.LoadAssetContainerAsync(dir, file, scene);
   } finally {
     if (timer !== null) window.clearTimeout(timer);
   }
@@ -221,7 +217,7 @@ function getNpcModelTemplate(
   const key = `${fileKey}|${buildAnimationProfileKey(animMap, preserveAnimationRoles)}`;
   let promise = cache.get(key);
   if (!promise) {
-    promise = loadAssetContainerWithTimeout(scene, dir, file)
+    promise = loadAssetContainerWithSlowWarning(scene, dir, file)
       .then((container) => {
         prepareTemplateMaterials(container);
         prepareTemplateAnimationGroups(container.animationGroups, animMap, preserveAnimationRoles);

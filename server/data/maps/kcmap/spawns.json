@@ -186,9 +186,9 @@
     },
     {
       "id": 15,
-      "npcId": 15,
-      "x": 241.5,
-      "z": 233.5,
+      "npcId": 109,
+      "x": 236.5,
+      "z": 225.5,
       "wanderRange": 4,
       "equipment": [
         0,
@@ -203,13 +203,6 @@
         0,
         0
       ]
-    },
-    {
-      "id": 16,
-      "npcId": 15,
-      "x": 258.5,
-      "z": 212.5,
-      "wanderRange": 4
     },
     {
       "id": 27,
@@ -2745,6 +2738,310 @@
       "z": 72.5,
       "wanderRange": 4,
       "aggressive": false
+    },
+    {
+      "id": 158,
+      "npcId": 110,
+      "x": 262.5,
+      "z": 212.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 6,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 7,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "equipment": [
+        89,
+        95,
+        79,
+        82,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "pantsColor": [
+          0.08235294117647059,
+          0.1803921568627451,
+          0.09803921568627451
+        ]
+      }
+    },
+    {
+      "id": 159,
+      "npcId": 110,
+      "x": 226.5,
+      "z": 240.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 6,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 7,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "equipment": [
+        89,
+        95,
+        79,
+        82,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "pantsColor": [
+          0.08235294117647059,
+          0.1803921568627451,
+          0.09803921568627451
+        ]
+      }
+    },
+    {
+      "id": 160,
+      "npcId": 110,
+      "x": 223.5,
+      "z": 241.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 6,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 7,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "equipment": [
+        89,
+        95,
+        79,
+        82,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "pantsColor": [
+          0.08235294117647059,
+          0.1803921568627451,
+          0.09803921568627451
+        ]
+      }
+    },
+    {
+      "id": 163,
+      "npcId": 110,
+      "x": 226.5,
+      "z": 228.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 6,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 7,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "equipment": [
+        89,
+        95,
+        79,
+        82,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "pantsColor": [
+          0.08235294117647059,
+          0.1803921568627451,
+          0.09803921568627451
+        ]
+      }
+    },
+    {
+      "id": 164,
+      "npcId": 110,
+      "x": 223.5,
+      "z": 229.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 6,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 7,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "equipment": [
+        89,
+        95,
+        79,
+        82,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "pantsColor": [
+          0.08235294117647059,
+          0.1803921568627451,
+          0.09803921568627451
+        ]
+      }
+    },
+    {
+      "id": 165,
+      "npcId": 110,
+      "x": 222.5,
+      "z": 228.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 6,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 7,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "equipment": [
+        89,
+        95,
+        79,
+        82,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "pantsColor": [
+          0.08235294117647059,
+          0.1803921568627451,
+          0.09803921568627451
+        ]
+      }
+    },
+    {
+      "id": 166,
+      "npcId": 110,
+      "x": 221.5,
+      "z": 240.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 6,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 7,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "equipment": [
+        89,
+        95,
+        79,
+        82,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "pantsColor": [
+          0.08235294117647059,
+          0.1803921568627451,
+          0.09803921568627451
+        ]
+      }
+    },
+    {
+      "id": 167,
+      "npcId": 110,
+      "x": 218.5,
+      "z": 229.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 6,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 7,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "equipment": [
+        89,
+        95,
+        79,
+        82,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "pantsColor": [
+          0.08235294117647059,
+          0.1803921568627451,
+          0.09803921568627451
+        ]
+      }
     }
   ],
   "objects": [],

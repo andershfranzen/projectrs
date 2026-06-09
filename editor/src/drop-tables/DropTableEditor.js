@@ -248,6 +248,25 @@ export async function openDropTableEditor(options = {}) {
     return ensureLootTable(selectedNpc())
   }
 
+  function npcIsLocked(npc) {
+    return !!npc && typeof options.isNpcEditable === 'function' && !options.isNpcEditable(npc)
+  }
+
+  function requestNpcUnlock(npc = selectedNpc()) {
+    if (!npc) return false
+    if (!npcIsLocked(npc)) return true
+    if (typeof options.onRequestUnlock === 'function' && options.onRequestUnlock(npc)) {
+      render()
+      return true
+    }
+    setStatus('shared NPC type locked', '#fc6')
+    return false
+  }
+
+  function canEditSelectedNpc() {
+    return requestNpcUnlock(selectedNpc())
+  }
+
   function setStatus(message, color = '#999') {
     statusEl.textContent = message
     statusEl.style.color = color
@@ -331,6 +350,7 @@ export async function openDropTableEditor(options = {}) {
   }
 
   function setDrop(index, patch) {
+    if (!canEditSelectedNpc()) return
     const npc = selectedNpc()
     if (!npc) return
     const drops = ensureLootTable(npc)
@@ -342,6 +362,7 @@ export async function openDropTableEditor(options = {}) {
   }
 
   function removeDrop(index) {
+    if (!canEditSelectedNpc()) return
     const npc = selectedNpc()
     if (!npc) return
     const drops = ensureLootTable(npc)
@@ -353,6 +374,7 @@ export async function openDropTableEditor(options = {}) {
   }
 
   function moveDrop(index, direction) {
+    if (!canEditSelectedNpc()) return
     const npc = selectedNpc()
     if (!npc) return
     const drops = ensureLootTable(npc)
@@ -367,6 +389,7 @@ export async function openDropTableEditor(options = {}) {
   }
 
   function addDrop(chance = 1) {
+    if (!canEditSelectedNpc()) return
     const npc = selectedNpc()
     if (!npc) return
     const drops = ensureLootTable(npc)
@@ -381,6 +404,7 @@ export async function openDropTableEditor(options = {}) {
   }
 
   function copyFromNpc(sourceId) {
+    if (!canEditSelectedNpc()) return
     const npc = selectedNpc()
     const source = npcs.find(n => n.id === Number(sourceId))
     if (!npc || !source || npc === source) return
@@ -390,6 +414,7 @@ export async function openDropTableEditor(options = {}) {
   }
 
   function setNpcStatField(key, value, field) {
+    if (!canEditSelectedNpc()) return
     const npc = selectedNpc()
     if (!npc) return
     const text = String(value ?? '').trim()
@@ -403,6 +428,7 @@ export async function openDropTableEditor(options = {}) {
   }
 
   function setNpcSelectField(key, value) {
+    if (!canEditSelectedNpc()) return
     const npc = selectedNpc()
     if (!npc) return
     const text = String(value ?? '').trim()
@@ -413,6 +439,7 @@ export async function openDropTableEditor(options = {}) {
   }
 
   function setNpcBooleanField(key, value) {
+    if (!canEditSelectedNpc()) return
     const npc = selectedNpc()
     if (!npc) return
     npc[key] = value === true || value === 'true'
@@ -532,6 +559,7 @@ export async function openDropTableEditor(options = {}) {
       return
     }
     const stats = tableStats(npc, itemIndex)
+    const locked = npcIsLocked(npc)
     selectedDropIndex = clamp(selectedDropIndex, 0, Math.max(0, ensureLootTable(npc).length - 1))
     editorEl.innerHTML = `
       <div class="drop-table-editor-head">
@@ -540,8 +568,7 @@ export async function openDropTableEditor(options = {}) {
           <span>NPC #${npc.id}</span>
         </div>
         <div class="drop-table-actions">
-          <button data-add-drop="1">+ Always Drop</button>
-          <button data-add-drop="0.25">+ Random Drop</button>
+          ${locked ? '' : '<button data-add-drop="1">+ Always Drop</button><button data-add-drop="0.25">+ Random Drop</button>'}
         </div>
       </div>
       <div class="drop-table-stat-strip">
@@ -550,6 +577,13 @@ export async function openDropTableEditor(options = {}) {
         <div><b>${stats.random}</b><span>random</span></div>
         <div><b>${formatNumber(stats.valueEv, 1)}</b><span>value/kill</span></div>
       </div>
+      ${locked ? `
+        <section style="background:#241f14;border:1px solid #5c4524;border-radius:6px;padding:12px;color:#f2d195;line-height:1.4;">
+          <div style="font-weight:700;color:#ffcc66;margin-bottom:4px;">Shared NPC type locked</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.68);margin-bottom:10px;">Drop and stat edits affect every spawn using NPC #${npc.id} ${esc(npc.name || 'NPC')}.</div>
+          <button id="dropTableUnlockNpc" style="background:#3b2f20;color:#fff;border:1px solid #725634;border-radius:4px;padding:6px 10px;cursor:pointer;">Unlock shared editing</button>
+        </section>
+      ` : `
       ${renderNpcStatsEditor(npc)}
       <div class="drop-table-presets">
         <button data-set-selected-chance="1">100%</button>
@@ -561,7 +595,13 @@ export async function openDropTableEditor(options = {}) {
       </div>
       ${renderCopyTools(npc)}
       <div class="drop-table-entries">${renderDropRows(npc)}</div>
+      `}
     `
+
+    if (locked) {
+      editorEl.querySelector('#dropTableUnlockNpc')?.addEventListener('click', () => requestNpcUnlock(npc))
+      return
+    }
 
     for (const btn of editorEl.querySelectorAll('[data-add-drop]')) {
       btn.addEventListener('click', () => addDrop(Number(btn.dataset.addDrop)))

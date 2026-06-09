@@ -58,23 +58,19 @@ function devCacheBust(file: string): string {
   return CACHE_BUST_TOKEN ? `${file}${CACHE_BUST_TOKEN}` : file;
 }
 
-async function importMeshWithTimeout(
+async function importMeshWithSlowWarning(
   scene: Scene,
   dir: string,
   file: string,
-  timeoutMs: number = 20_000,
+  slowWarnMs: number = 20_000,
 ): Promise<ImportedMeshResult> {
   let timer: number | null = null;
   try {
-    return await Promise.race([
-      SceneLoader.ImportMeshAsync('', dir, file, scene),
-      new Promise<never>((_, reject) => {
-        timer = window.setTimeout(
-          () => reject(new Error(`GLB import timed out after ${timeoutMs}ms: ${dir}${file}`)),
-          timeoutMs,
-        );
-      }),
-    ]);
+    const url = `${dir}${file}`;
+    timer = window.setTimeout(() => {
+      console.warn(`[loading] GLB import still running after ${slowWarnMs}ms: ${url}`);
+    }, slowWarnMs);
+    return await SceneLoader.ImportMeshAsync('', dir, file, scene);
   } finally {
     if (timer !== null) window.clearTimeout(timer);
   }
@@ -300,7 +296,7 @@ async function createTemplate(
     const lastSlash = anim.path.lastIndexOf('/');
     const dir = anim.path.substring(0, lastSlash + 1);
     const file = devCacheBust(anim.path.substring(lastSlash + 1));
-    imported = await importMeshWithTimeout(scene, dir, file);
+    imported = await importMeshWithSlowWarning(scene, dir, file);
     if (scene.isDisposed) return null;
 
     const sourceRestRotations = new Map<string, Quaternion>();

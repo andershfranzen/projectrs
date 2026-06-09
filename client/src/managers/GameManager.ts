@@ -84,10 +84,10 @@ const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
 const GROUND_ITEM_TOOLTIP_MAX_LINES = 8;
 const ROOF_HOVER_REFRESH_MS = 75;
-const ROOF_HOVER_CLEAR_GRACE_MS = 300;
-const ROOF_HOVER_STICKY_RADIUS_TILES = 4;
-const ROOF_HOVER_WALL_TRIGGER_RADIUS_TILES = 3;
-const ROOF_HOVER_RAY_SEARCH_RADIUS_TILES = 10;
+const ROOF_HOVER_CLEAR_GRACE_MS = 120;
+const ROOF_HOVER_STICKY_RADIUS_TILES = 1;
+const ROOF_HOVER_WALL_TRIGGER_RADIUS_TILES = 1;
+const ROOF_HOVER_RAY_SEARCH_RADIUS_TILES = 4;
 const ROOF_HOVER_STRUCTURAL_SAMPLE_HEIGHT_OFFSETS = [1.1, 1.8, 2.5] as const;
 const NPC_FACING_NONE = -32768;
 const TERMINAL_CLOSE_REASONS = new Set([
@@ -554,6 +554,8 @@ export class GameManager {
   private static readonly TOUCH_CAMERA_PITCH_PER_PX = 0.004;
   private static readonly TOUCH_PINCH_MIN_DISTANCE_PX = 24;
   private static readonly TOUCH_PINCH_MAX_STEP_FACTOR = 1.18;
+  private static readonly WORLD_CONTEXT_MENU_DEDUPE_MS = 120;
+  private static readonly WORLD_CONTEXT_MENU_DEDUPE_RADIUS_PX = 3;
   private static readonly BROWSER_PAGE_ZOOM_EPSILON = 0.01;
   private static readonly HEALTH_BAR_VISIBLE_MS = 4500;
   private static readonly LOCAL_DAMAGE_SYNC_GRACE_MS = 250;
@@ -609,6 +611,9 @@ export class GameManager {
   private fpsLastSampleAt: number = 0;
   private fpsCounterUserToggled: boolean = false;
   private nativeContextMenuBlocker: ((event: MouseEvent) => void) | null = null;
+  private lastWorldContextMenuEventAt: number = 0;
+  private lastWorldContextMenuEventX: number = -9999;
+  private lastWorldContextMenuEventY: number = -9999;
 
   // WASD camera
   private keysDown: Set<string> = new Set();
@@ -707,11 +712,7 @@ export class GameManager {
     // previous click.
     canvas.addEventListener('pointerdown', (e) => {
       if (e.button === 2 && !this.isTouchPointer(e)) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        suppressNextContextMenuClick(canvas, e.clientX, e.clientY);
-        this.hideContextMenu();
-        this.openWorldContextMenuAt(e.clientX, e.clientY);
+        this.handleWorldContextMenuEvent(canvas, e, true);
         return;
       }
       if (e.button !== 0) return;
@@ -753,6 +754,10 @@ export class GameManager {
         e.stopImmediatePropagation();
         e.preventDefault();
       }
+    }, true);
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button !== 2) return;
+      this.handleWorldContextMenuEvent(canvas, e, true);
     }, true);
     canvas.addEventListener('pointermove', (e) => this.handlePendingTouchMove(e), true);
     canvas.addEventListener('pointerup', (e) => this.finishPendingTouchInteraction(e), true);
@@ -1025,11 +1030,8 @@ export class GameManager {
       onProgress?.(completed / 3, `${status} (${completed}/3)`);
     };
 
-    const characterReady = this.waitWithTimeout(
-      this.localPlayer?.whenReady() ?? Promise.resolve(),
-      GameManager.PRELOAD_STEP_TIMEOUT_MS,
-      'character preload',
-    ).then(() => step('Loaded character models'));
+    const characterReady = (this.localPlayer?.whenReady() ?? Promise.resolve())
+      .then(() => step('Loaded character models'));
     const objectsReady = this.waitWithTimeout(
       this._objectModelsReady,
       GameManager.PRELOAD_STEP_TIMEOUT_MS,
@@ -1064,6 +1066,16 @@ export class GameManager {
     }
   }
 
+  private async waitForCurrentLocalPlayerReady(seq?: number): Promise<void> {
+    while (!this.destroyed) {
+      if (seq !== undefined && seq !== this._loginReadySeq) return;
+      const player = this.localPlayer;
+      if (!player) return;
+      await player.whenReady();
+      if (this.localPlayer === player) return;
+    }
+  }
+
   private noteLoginBootstrapPacket(kind: 'skills' | 'inventory' | 'equipment'): void {
     const pending = this._loginBootstrapPending;
     if (!pending) return;
@@ -1093,9 +1105,7 @@ export class GameManager {
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
 
     this._loginProgress?.(0.72, 'Loading character');
-    if (this.localPlayer) {
-      await this.waitWithTimeout(this.localPlayer.whenReady(), GameManager.LOGIN_READY_TIMEOUT_MS, 'login character ready');
-    }
+    await this.waitForCurrentLocalPlayerReady(seq);
     if (this.localAppearance && this.localPlayer) this.localPlayer.applyAppearance(this.localAppearance);
 
     this._loginProgress?.(0.78, 'Loading saved location');
@@ -1117,6 +1127,7 @@ export class GameManager {
     }
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
     if (this.localAppearance && this.localPlayer) this.localPlayer.applyAppearance(this.localAppearance);
+    await this.waitForCurrentLocalPlayerReady(seq);
 
     // Let Babylon commit any meshes/materials applied by packet handlers
     // before the canvas is revealed.
@@ -4341,21 +4352,46 @@ export class GameManager {
 
   private setupContextMenu(canvas: HTMLCanvasElement): void {
     canvas.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      this.hideContextMenu();
-      this.openWorldContextMenuAt(e.clientX, e.clientY);
+      this.handleWorldContextMenuEvent(canvas, e, false);
     });
   }
 
-  private openWorldContextMenuAt(clientX: number, clientY: number): void {
-      // Same gate as left-click: don't surface interaction options against a
-      // half-streamed world.
-      if (!this.inputManager.isEnabled()) return;
+  private handleWorldContextMenuEvent(
+    canvas: HTMLCanvasElement,
+    event: MouseEvent | PointerEvent,
+    suppressNativeFollowup: boolean,
+  ): void {
+    if (typeof PointerEvent !== 'undefined' && event instanceof PointerEvent && this.isTouchPointer(event)) return;
 
-      const options = this.getWorldInteractionOptionsAt(clientX, clientY);
-      if (options.length > 0) {
-        this.showContextMenu(clientX, clientY, options);
-      }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const now = performance.now();
+    const isDuplicate = now - this.lastWorldContextMenuEventAt <= GameManager.WORLD_CONTEXT_MENU_DEDUPE_MS
+      && Math.hypot(
+        event.clientX - this.lastWorldContextMenuEventX,
+        event.clientY - this.lastWorldContextMenuEventY,
+      ) <= GameManager.WORLD_CONTEXT_MENU_DEDUPE_RADIUS_PX;
+
+    if (suppressNativeFollowup) suppressNextContextMenuClick(canvas, event.clientX, event.clientY);
+    if (isDuplicate) return;
+
+    this.lastWorldContextMenuEventAt = now;
+    this.lastWorldContextMenuEventX = event.clientX;
+    this.lastWorldContextMenuEventY = event.clientY;
+    this.hideContextMenu();
+    this.openWorldContextMenuAt(event.clientX, event.clientY);
+  }
+
+  private openWorldContextMenuAt(clientX: number, clientY: number): void {
+    // Same gate as left-click: don't surface interaction options against a
+    // half-streamed world.
+    if (!this.inputManager.isEnabled()) return;
+
+    const options = this.getWorldInteractionOptionsAt(clientX, clientY);
+    if (options.length > 0) {
+      this.showContextMenu(clientX, clientY, options);
+    }
   }
 
   private setupNativeContextMenuBlocker(): void {

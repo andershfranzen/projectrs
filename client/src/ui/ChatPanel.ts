@@ -40,6 +40,11 @@ export class ChatPanel {
   private emoteToken: { start: number; end: number } | null = null;
   private emoteQuery = '';
   private removeEmoteListener: (() => void) | null = null;
+  private readonly globalKeydownHandler = (event: KeyboardEvent): void => {
+    if (event.key !== 'Enter' || !this.shouldFocusChatFromGlobalEnter(event)) return;
+    event.preventDefault();
+    this.input.focus();
+  };
 
   // Chat filtering
   private activeTab: ChatTab = 'all';
@@ -92,12 +97,7 @@ export class ChatPanel {
       }
     });
 
-    window.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && this.shouldFocusChatFromGlobalEnter(e)) {
-        e.preventDefault();
-        this.input.focus();
-      }
-    });
+    window.addEventListener('keydown', this.globalKeydownHandler, { capture: true });
 
     this.container.addEventListener('click', () => {
       this.input.focus();
@@ -178,16 +178,58 @@ export class ChatPanel {
     if (event.defaultPrevented || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return false;
     if (document.activeElement === this.input) return false;
     const gameFrame = document.getElementById('game-frame');
-    if (gameFrame && (gameFrame.style.display === 'none' || gameFrame.style.visibility === 'hidden')) return false;
+    if (gameFrame) {
+      const frameStyle = window.getComputedStyle(gameFrame);
+      if (frameStyle.display === 'none' || frameStyle.visibility === 'hidden') return false;
+    }
+    if (this.hasVisibleBlockingPanel()) return false;
 
     const active = document.activeElement as HTMLElement | null;
     if (active && active !== document.body) {
       const tag = active.tagName.toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select' || active.isContentEditable) return false;
       if (active.closest('[role="dialog"], .modal, #login-screen')) return false;
+      if (this.isFocusedInteractiveControl(active, tag)) return false;
     }
 
     return true;
+  }
+
+  private isFocusedInteractiveControl(active: HTMLElement, tag: string): boolean {
+    if (tag === 'button' || tag === 'a' || tag === 'summary') return true;
+    const role = active.getAttribute('role')?.toLowerCase();
+    if (role && ['button', 'link', 'menuitem', 'option', 'radio', 'checkbox', 'tab', 'slider', 'spinbutton'].includes(role)) {
+      return true;
+    }
+    return active.id !== 'game-canvas' && active.tabIndex >= 0;
+  }
+
+  private hasVisibleBlockingPanel(): boolean {
+    const selectors = [
+      '#dialogue-panel',
+      '#quantity-input-panel',
+      '#bank-panel',
+      '#smithing-panel',
+      '#shop-panel',
+      '#spellbook-panel',
+      '#trade-panel',
+      '#duel-panel',
+      '#character-creator',
+      '#admin-panel',
+      '#login-screen',
+      '[role="dialog"]',
+      '.modal',
+    ];
+    for (const selector of selectors) {
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>(selector))) {
+        if (el === this.container || this.container.contains(el)) continue;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        if (el.getClientRects().length === 0) continue;
+        return true;
+      }
+    }
+    return false;
   }
 
   private buildUI(): HTMLDivElement {
@@ -639,6 +681,7 @@ export class ChatPanel {
     this.removeEmoteListener = null;
     this.mobileHintMedia?.removeEventListener('change', this.updateInputPlaceholder);
     window.removeEventListener('resize', this.updateInputPlaceholder);
+    window.removeEventListener('keydown', this.globalKeydownHandler, true);
     this.container.remove();
   }
 }

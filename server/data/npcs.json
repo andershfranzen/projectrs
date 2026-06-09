@@ -1646,5 +1646,89 @@
         }
       }
     }
+  },
+  {
+    "id": 109,
+    "name": "Palace Guard",
+    "examineText": "A camel chewing thoughtfully, as if judging the whole kingdom.",
+    "health": 24,
+    "attack": 10,
+    "defence": 17,
+    "strength": 15,
+    "attackSpeed": 5,
+    "respawnTime": 25,
+    "aggressive": false,
+    "wanderRange": 4,
+    "size": 2,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 237,
+        "quantity": 1,
+        "chance": 0.001
+      },
+      {
+        "itemId": 409,
+        "quantity": 1,
+        "chance": 0.001
+      },
+      {
+        "itemId": 410,
+        "quantity": 1,
+        "chance": 0.001
+      },
+      {
+        "itemId": 411,
+        "quantity": 1,
+        "chance": 0.001
+      },
+      {
+        "itemId": 412,
+        "quantity": 1,
+        "chance": 0.001
+      },
+      {
+        "itemId": 300,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 224,
+        "quantity": 1,
+        "chance": 0.03
+      }
+    ],
+    "modelNpcId": 15
+  },
+  {
+    "id": 110,
+    "name": "Palace Guard",
+    "examineText": "A custom-built stranger with a look that says someone is still editing.",
+    "health": 34,
+    "attack": 32,
+    "defence": 20,
+    "strength": 23,
+    "attackSpeed": 4,
+    "respawnTime": 30,
+    "aggressive": false,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 301,
+        "quantity": 1,
+        "chance": 0.25
+      },
+      {
+        "itemId": 227,
+        "quantity": 1,
+        "chance": 0.0112
+      }
+    ],
+    "modelNpcId": 102,
+    "attackStyle": "slash"
   }
 ]

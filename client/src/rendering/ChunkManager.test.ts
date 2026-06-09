@@ -149,6 +149,27 @@ describe('roof hover reveal indexing', () => {
     expect(hit?.y).toBe(1.5);
   });
 
+  test('does not reveal a roof from a distant structural hover sample', () => {
+    const { manager, internals } = makeChunkManagerForRoofGrid();
+    internals.roofObjectGrid.set('90,34', [{ y: 2.98, floor: 0 }]);
+    internals.placedObjectsByChunk.set('2,1', [
+      { assetId: 'stone wall', position: { x: 90, y: 0, z: 34 } },
+    ]);
+
+    const hit = manager.findRoofRevealPointFromRay(
+      new Vector3(92.1, 3, 34.5),
+      new Vector3(0, -1, 0),
+      0.5,
+      92.1,
+      34.5,
+      1,
+      1,
+      [1.5],
+    );
+
+    expect(hit).toBeNull();
+  });
+
   test('stamps the authored roof tile when transformed bounds contain no tile center', () => {
     const { manager, internals } = makeChunkManagerForRoofGrid();
     const stampRoofObjectFootprint = internals.stampRoofObjectFootprint.bind(manager);
