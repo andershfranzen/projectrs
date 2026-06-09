@@ -22,7 +22,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import '@babylonjs/loaders/glTF';
-import { ChunkManager } from '../rendering/ChunkManager';
+import { ChunkManager, assertOptionalMapResourceResponse } from '../rendering/ChunkManager';
 import { GameCamera } from '../rendering/Camera';
 import { CharacterEntity, loadGearTemplate, type GearDef, type GearTemplate } from '../rendering/CharacterEntity';
 import { PER_TARGET_GEAR_SLOTS, buildCharacterGearDef, disposeImportedGearResult, loadCharacterGearSmart, loadStaticGearTemplate, resolveCharacterGearModelFile } from '../rendering/CharacterGearLoader';
@@ -1541,18 +1541,25 @@ export class GameManager {
     this._lastBiomeCX = -9999;
     this._lastBiomeCZ = -9999;
     this._lastBiomeDef = undefined;
+    let res: Response;
     try {
       const token = this.token || localStorage.getItem('evilquest_token') || '';
-      const res = await fetch(`/maps/${mapId}/biomes.json`, {
+      res = await fetch(`/maps/${mapId}/biomes.json`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         credentials: 'same-origin',
       });
-      if (!res.ok) return;
+    } catch {
+      // No biomes.json → use map meta fog only
+      return;
+    }
+    assertOptionalMapResourceResponse(res, `${mapId}/biomes.json`);
+    if (!res.ok) return;
+    try {
       const file: BiomesFile = await res.json();
       this.biomesFile = file;
       for (const def of file.defs) this.biomeById.set(def.id, def);
     } catch {
-      // No biomes.json → use map meta fog only
+      // Malformed biomes.json → use map meta fog only
     }
   }
 

@@ -1,7 +1,58 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
-import { ChunkManager, isInteractiveDoorPlacedAsset, isRoofLikePlacedAsset, placedObjectThinGroupKey } from './ChunkManager';
+import { ChunkManager, assertOptionalMapResourceResponse, isInteractiveDoorPlacedAsset, isRoofLikePlacedAsset, placedObjectThinGroupKey } from './ChunkManager';
+
+const originalFetch = globalThis.fetch;
+const originalConsoleWarn = console.warn;
+const originalLocalStorageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  console.warn = originalConsoleWarn;
+  if (originalLocalStorageDescriptor) {
+    Object.defineProperty(globalThis, 'localStorage', originalLocalStorageDescriptor);
+  } else {
+    Reflect.deleteProperty(globalThis, 'localStorage');
+  }
+});
+
+function installNoTokenFetch(fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Response | Promise<Response>): void {
+  globalThis.fetch = fetchImpl as typeof fetch;
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { getItem: () => '' },
+  });
+}
+
+type ObjectChunkManagerHarness = {
+  mapId: string;
+  objectLoadGeneration: number;
+  scene: { isDisposed: boolean };
+  loadingObjectChunks: Set<string>;
+  chunkPlacedNodes: Map<string, TransformNode[]>;
+  chunksKnownEmpty: Set<string>;
+  placedObjectsByChunk: Map<string, unknown[]>;
+  objectLoadChunks: Set<string>;
+  desiredObjectChunks: Set<string>;
+  touchObjectChunk: () => void;
+  loadChunkPlacedObjects: (chunkKey: string, generation: number) => Promise<void>;
+};
+
+function makeObjectChunkManager(): ObjectChunkManagerHarness {
+  return Object.assign(Object.create(ChunkManager.prototype), {
+    mapId: 'kcmap',
+    objectLoadGeneration: 1,
+    scene: { isDisposed: false },
+    loadingObjectChunks: new Set<string>(['1,2']),
+    chunkPlacedNodes: new Map<string, TransformNode[]>(),
+    chunksKnownEmpty: new Set<string>(),
+    placedObjectsByChunk: new Map<string, unknown[]>(),
+    objectLoadChunks: new Set<string>(),
+    desiredObjectChunks: new Set<string>(),
+    touchObjectChunk: () => {},
+  });
+}
 
 describe('placed object roof classification', () => {
   test('does not treat structural slabs as removable roofs', () => {
@@ -49,6 +100,41 @@ describe('placed object thin-instance grouping', () => {
       .toBe(placedObjectThinGroupKey('stone wall', 'ground', 2.73));
     expect(placedObjectThinGroupKey('tile roofing', 'roof', 2.73))
       .toBe(placedObjectThinGroupKey('tile roofing', 'roof', 5.49));
+  });
+});
+
+describe('secured map resource loading', () => {
+  test('treats missing optional map resources differently from protected failures', () => {
+    expect(() => {
+      assertOptionalMapResourceResponse(new Response('', { status: 404 }), 'kcmap/walls.json');
+    }).not.toThrow();
+
+    expect(() => {
+      assertOptionalMapResourceResponse(new Response('Forbidden', { status: 403 }), 'kcmap/walls.json');
+    }).toThrow('HTTP 403 while loading kcmap/walls.json');
+  });
+
+  test('does not cache protected object chunk failures as empty chunks', async () => {
+    installNoTokenFetch(async () => new Response('Forbidden', { status: 403 }));
+    console.warn = () => {};
+    const manager = makeObjectChunkManager();
+
+    await manager.loadChunkPlacedObjects('1,2', 1);
+
+    expect(manager.chunkPlacedNodes.has('1,2')).toBe(false);
+    expect(manager.chunksKnownEmpty.has('1,2')).toBe(false);
+    expect(manager.loadingObjectChunks.has('1,2')).toBe(false);
+  });
+
+  test('still caches genuinely missing object chunks as empty', async () => {
+    installNoTokenFetch(async () => new Response('Not Found', { status: 404 }));
+    const manager = makeObjectChunkManager();
+
+    await manager.loadChunkPlacedObjects('1,2', 1);
+
+    expect(manager.chunkPlacedNodes.get('1,2')).toEqual([]);
+    expect(manager.chunksKnownEmpty.has('1,2')).toBe(true);
+    expect(manager.loadingObjectChunks.has('1,2')).toBe(false);
   });
 });
 

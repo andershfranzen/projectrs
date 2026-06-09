@@ -90,6 +90,42 @@ function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
   return fetch(input, { ...init, headers, credentials: 'same-origin' });
 }
 
+interface MapResourceFetchError extends Error {
+  mapResourceStatus: number;
+}
+
+function mapResourceFetchError(resource: string, status: number): MapResourceFetchError {
+  const message = status === 0
+    ? `Network error while loading ${resource}`
+    : `HTTP ${status} while loading ${resource}`;
+  const error = new Error(message) as MapResourceFetchError;
+  error.mapResourceStatus = status;
+  return error;
+}
+
+function isMapResourceFetchError(error: unknown): error is MapResourceFetchError {
+  return !!error
+    && typeof error === 'object'
+    && 'mapResourceStatus' in error
+    && typeof (error as { mapResourceStatus?: unknown }).mapResourceStatus === 'number';
+}
+
+export function assertOptionalMapResourceResponse(res: Response, resource: string): void {
+  if (res.ok || res.status === 404) return;
+  throw mapResourceFetchError(resource, res.status);
+}
+
+async function fetchOptionalMapResource(input: RequestInfo | URL, resource: string): Promise<Response> {
+  try {
+    const res = await authFetch(input);
+    assertOptionalMapResourceResponse(res, resource);
+    return res;
+  } catch (e) {
+    if (isMapResourceFetchError(e)) throw e;
+    throw mapResourceFetchError(resource, 0);
+  }
+}
+
 function rgbToColor3(c: RGB): Color3 {
   return new Color3(c.r, c.g, c.b);
 }
@@ -721,7 +757,7 @@ export class ChunkManager {
     this.floorLayerData.clear();
     this.currentFloor = 0;
     try {
-      const wallsRes = await authFetch(`/maps/${mapId}/walls.json${cacheBust}`);
+      const wallsRes = await fetchOptionalMapResource(`/maps/${mapId}/walls.json${cacheBust}`, `${mapId}/walls.json`);
       if (isStale()) return;
       if (wallsRes.ok) {
         const wallsData: WallsFile = await wallsRes.json();
@@ -770,7 +806,11 @@ export class ChunkManager {
           }
         }
       }
-    } catch { /* no walls.json */ }
+    } catch (e) {
+      if (isMapResourceFetchError(e)) throw e;
+      // Missing or malformed walls.json is legacy-compatible; protected-resource
+      // failures are rethrown above so they can't masquerade as an empty map.
+    }
 
     // Create shared materials
     if (!this.groundMat) {
@@ -1526,13 +1566,9 @@ export class ChunkManager {
     try {
       // Fetch tiles and heights in parallel (missing chunks return 404 — that's OK)
       const [tilesRes, heightsRes] = await Promise.all([
-        authFetch(`/maps/${mapId}/tiles/chunk_${ecx}_${ecz}.json`).catch(() => null),
-        authFetch(`/maps/${mapId}/heights/chunk_${ecx}_${ecz}.json`).catch(() => null),
+        fetchOptionalMapResource(`/maps/${mapId}/tiles/chunk_${ecx}_${ecz}.json`, `${mapId}/tiles/chunk_${ecx}_${ecz}.json`),
+        fetchOptionalMapResource(`/maps/${mapId}/heights/chunk_${ecx}_${ecz}.json`, `${mapId}/heights/chunk_${ecx}_${ecz}.json`),
       ]);
-      const deniedRes = [tilesRes, heightsRes].find((res): res is Response => !!res && !res.ok && res.status !== 404);
-      if (deniedRes) {
-        throw new Error(`HTTP ${deniedRes.status} while loading editor chunk ${key}`);
-      }
       const startX = ecx * ECHUNK, startZ = ecz * ECHUNK;
       const endX = Math.min(startX + ECHUNK, this.mapWidth);
       const endZ = Math.min(startZ + ECHUNK, this.mapHeight);
@@ -3467,7 +3503,7 @@ export class ChunkManager {
   private async loadObjectChunkManifest(mapId: string, cacheBust: string): Promise<void> {
     this.objectChunkManifest = null;
     try {
-      const res = await authFetch(`/maps/${mapId}/objects/manifest.json${cacheBust}`);
+      const res = await fetchOptionalMapResource(`/maps/${mapId}/objects/manifest.json${cacheBust}`, `${mapId}/objects/manifest.json`);
       if (!res.ok) return;
       const data = await res.json() as { chunks?: Record<string, unknown> };
       if (!data || !data.chunks || typeof data.chunks !== 'object') return;
@@ -3478,7 +3514,8 @@ export class ChunkManager {
       }
       this.objectChunkManifest = manifest;
       if (import.meta.env.DEV) console.log(`[ChunkManager] Loaded object manifest for ${manifest.size} chunks`);
-    } catch {
+    } catch (e) {
+      if (isMapResourceFetchError(e)) throw e;
       this.objectChunkManifest = null;
     }
   }
@@ -3955,7 +3992,8 @@ export class ChunkManager {
     if (!objects || objects.length === 0) {
       try {
         const [cx, cz] = chunkKey.split(',').map(Number);
-        const res = await authFetch(`/maps/${this.mapId}/objects/chunk_${cx}_${cz}.json`);
+        const resource = `${this.mapId}/objects/chunk_${cx}_${cz}.json`;
+        const res = await fetchOptionalMapResource(`/maps/${resource}`, resource);
         if (this.isObjectLoadStale(generation)) return;
         if (res.ok) {
           const fetched: PlacedObject[] = await res.json();
@@ -3971,7 +4009,10 @@ export class ChunkManager {
           // No objects file exists for this chunk. Cache that fact.
           this.chunksKnownEmpty.add(chunkKey);
         }
-      } catch { /* no per-chunk objects file */ }
+      } catch (e) {
+        if (isMapResourceFetchError(e)) throw e;
+        throw mapResourceFetchError(`${this.mapId}/objects/chunk_${chunkKey.replace(',', '_')}.json`, 0);
+      }
     }
     if (!objects || objects.length === 0) {
       this.chunkPlacedNodes.set(chunkKey, []);
@@ -4328,6 +4369,10 @@ export class ChunkManager {
     if (visible) this.onChunkObjectsLoaded?.(chunkKey);
     } catch (e) {
       if (!this.isObjectLoadStale(generation)) {
+        if (isMapResourceFetchError(e)) {
+          console.warn(`[ChunkManager] Failed to load object chunk ${chunkKey}:`, e);
+          return;
+        }
         console.warn(`[ChunkManager] Failed to instantiate objects for chunk ${chunkKey}:`, e);
         this.clearRoofObjectGridForChunk(chunkKey);
         this.chunkPlacedNodes.set(chunkKey, []);
