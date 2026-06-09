@@ -1534,6 +1534,7 @@
       "wanderRange": 2,
       "aggressive": false,
       "appearance": {
+        "bodyType": 0,
         "shirtColor": 4,
         "pantsColor": 3,
         "shoesColor": 1,
@@ -1554,6 +1555,62 @@
         0,
         0
       ],
+      "shop": {
+        "name": "William's Smithy",
+        "restockTicks": 150,
+        "items": [
+          {
+            "itemId": 52,
+            "price": 5,
+            "stock": 8
+          },
+          {
+            "itemId": 29,
+            "price": 15,
+            "stock": 10
+          },
+          {
+            "itemId": 65,
+            "price": 75,
+            "stock": 4
+          },
+          {
+            "itemId": 70,
+            "price": 110,
+            "stock": 4
+          },
+          {
+            "itemId": 79,
+            "price": 150,
+            "stock": 3
+          },
+          {
+            "itemId": 84,
+            "price": 280,
+            "stock": 3
+          },
+          {
+            "itemId": 93,
+            "price": 300,
+            "stock": 2
+          },
+          {
+            "itemId": 98,
+            "price": 720,
+            "stock": 2
+          },
+          {
+            "itemId": 107,
+            "price": 925,
+            "stock": 1
+          },
+          {
+            "itemId": 112,
+            "price": 1600,
+            "stock": 1
+          }
+        ]
+      },
       "name": "William the Smith"
     },
     {
@@ -1966,7 +2023,7 @@
     },
     {
       "id": 83,
-      "npcId": 102,
+      "npcId": 11,
       "x": 206.5,
       "z": 146.5,
       "wanderRange": 3,
@@ -3040,6 +3097,50 @@
           0.08235294117647059,
           0.1803921568627451,
           0.09803921568627451
+        ]
+      }
+    },
+    {
+      "id": 168,
+      "npcId": 11,
+      "x": 351.5,
+      "z": 184.5,
+      "wanderRange": 2,
+      "aggressive": false,
+      "facing": 3.141592653589793,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 6,
+        "hairStyle": 1
+      },
+      "equipment": [
+        115,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "shirtColor": [
+          0.13725490196078433,
+          0.10196078431372549,
+          0.10196078431372549
+        ],
+        "pantsColor": [
+          0.17647058823529413,
+          0.16470588235294117,
+          0.16470588235294117
         ]
       }
     }

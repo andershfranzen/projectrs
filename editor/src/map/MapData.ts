@@ -1,5 +1,5 @@
-import { DEFAULT_CUT_ANGLE, DEFAULT_WATER_FLOW, defaultGroundForMap, legacyCutAngleFromSplit, normalizeCutAngle, normalizeWaterFlow } from '@projectrs/shared'
-import type { GroundType, WaterFlow } from '@projectrs/shared'
+import { DEFAULT_CUT_ANGLE, DEFAULT_WATER_FLOW, defaultGroundForMap, legacyCutAngleFromSplit, normalizeCutAngle, normalizeMinimapMarkers, normalizeWaterFlow } from '@projectrs/shared'
+import type { GroundType, MinimapMarker, WaterFlow } from '@projectrs/shared'
 
 export interface Tile {
   ground: string
@@ -65,6 +65,7 @@ export interface MapDataJSON {
   chunkWaterFlows: Record<string, WaterFlow>
   selectedTexturePlaneId: string | null
   texturePlanes: TexturePlane[]
+  minimapMarkers: MinimapMarker[]
   tiles: Tile[][]
   heights: number[][]
   terrainGeneration: number
@@ -105,6 +106,7 @@ export class MapData {
   chunkWaterLevels: Record<string, number>
   chunkWaterFlows: Record<string, WaterFlow>
   texturePlanes: TexturePlane[]
+  minimapMarkers: MinimapMarker[]
   selectedTexturePlaneId: string | null
   activeChunks: Set<string>
   tiles: Tile[][]
@@ -122,6 +124,7 @@ export class MapData {
     this.chunkWaterLevels = {}
     this.chunkWaterFlows = {}
     this.texturePlanes = []
+    this.minimapMarkers = []
     this.selectedTexturePlaneId = null
     this.activeChunks = new Set<string>()
     // Initialize all chunks within bounds as active
@@ -535,6 +538,7 @@ export class MapData {
       Object.assign(next.chunkWaterFlows, this.chunkWaterFlows)
     }
     next.texturePlanes = JSON.parse(JSON.stringify(this.texturePlanes))
+    next.minimapMarkers = JSON.parse(JSON.stringify(this.minimapMarkers))
     next.selectedTexturePlaneId = this.selectedTexturePlaneId
 
     // Carry over active chunks with offset
@@ -554,7 +558,11 @@ export class MapData {
           if (tp.position.z != null) tp.position.z += offsetZ
         }
       }
+      next.minimapMarkers = next.minimapMarkers
+        .map((marker) => ({ ...marker, x: marker.x + offsetX, z: marker.z + offsetZ }))
     }
+    next.minimapMarkers = next.minimapMarkers
+      .filter((marker) => marker.x >= 0 && marker.z >= 0 && marker.x <= newWidth && marker.z <= newHeight)
 
     for (let sz = 0; sz < this.height; sz++) {
       const dz = sz + offsetZ
@@ -591,6 +599,7 @@ export class MapData {
       chunkWaterFlows: { ...this.chunkWaterFlows },
       selectedTexturePlaneId: this.selectedTexturePlaneId,
       texturePlanes: this.texturePlanes,
+      minimapMarkers: JSON.parse(JSON.stringify(this.minimapMarkers)),
       tiles: this.tiles,
       heights: this.heights,
       terrainGeneration: this.terrainGeneration,
@@ -625,6 +634,7 @@ export class MapData {
     map.texturePlanes = Array.isArray(data.texturePlanes)
       ? JSON.parse(JSON.stringify(data.texturePlanes))
       : []
+    map.minimapMarkers = normalizeMinimapMarkers((data as any).minimapMarkers, map.width, map.height)
 
     if (Array.isArray(data.tiles)) {
       for (let z = 0; z < map.height; z++) {

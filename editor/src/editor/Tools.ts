@@ -8,6 +8,7 @@ export const ToolMode = {
   NPC_SPAWN: 'npc_spawn',
   COLLISION: 'collision',
   ITEM_SPAWN: 'item_spawn',
+  MINIMAP_MARKER: 'minimap_marker',
   BIOME: 'biome'
 } as const
 
@@ -23,6 +24,7 @@ export function toolLabel(mode: ToolModeValue): string {
   if (mode === ToolMode.NPC_SPAWN) return 'NPC Spawn'
   if (mode === ToolMode.COLLISION) return 'Collision'
   if (mode === ToolMode.ITEM_SPAWN) return 'Item Spawn'
+  if (mode === ToolMode.MINIMAP_MARKER) return 'Minimap Icons'
   if (mode === ToolMode.BIOME) return 'Biome Paint'
   return 'Unknown Tool'
 }

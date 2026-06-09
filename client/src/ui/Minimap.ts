@@ -1,4 +1,5 @@
-import { TileType, WallEdge, GROUND_TYPE_ID, GROUND_TYPES_BY_ID, GROUND_TYPE_NONE, groundColor } from '@projectrs/shared';
+import { TileType, WallEdge, GROUND_TYPE_ID, GROUND_TYPES_BY_ID, GROUND_TYPE_NONE, groundColor, minimapIconUrl } from '@projectrs/shared';
+import type { MinimapMarker } from '@projectrs/shared';
 import type { ChunkManager } from '../rendering/ChunkManager';
 
 const INTERACTIVE_CATEGORIES = new Set([
@@ -79,6 +80,7 @@ export class Minimap {
 
   private onClickMove: MinimapClickMoveHandler | null = null;
   private onCompassClick: MinimapCompassClickHandler | null = null;
+  private iconImages: Map<string, HTMLImageElement | null> = new Map();
 
   private lastPlayerX: number = 0;
   private lastPlayerZ: number = 0;
@@ -259,6 +261,7 @@ export class Minimap {
   }
 
   dispose(): void {
+    this.iconImages.clear();
     this.container.remove();
   }
 
@@ -307,6 +310,7 @@ export class Minimap {
     cameraAlpha: number = 0,
     worldObjects: MinimapObject[] = [],
     groundItems: MinimapDrop[] = [],
+    minimapMarkers: readonly MinimapMarker[] = [],
     dt: number = 1 / 60,
     playerFacingYaw: number | null = null,
   ): void {
@@ -623,6 +627,8 @@ export class Minimap {
 
     ctx.restore();
 
+    this.drawMinimapMarkers(ctx, minimapMarkers, playerX, playerZ, cameraAlpha, scale, center);
+
     // Destination marker — position follows the rotated map, but the flag
     // itself is drawn in screen space so it always points upward.
     if (this.destX !== null && this.destZ !== null) {
@@ -653,6 +659,82 @@ export class Minimap {
     ctx.restore();
 
     this.drawCompass(cameraAlpha);
+  }
+
+  private getIconImage(icon: string): HTMLImageElement | null {
+    const existing = this.iconImages.get(icon);
+    if (existing !== undefined) return existing;
+
+    const url = minimapIconUrl(icon);
+    if (!url) {
+      this.iconImages.set(icon, null);
+      return null;
+    }
+
+    const image = new Image();
+    image.decoding = 'async';
+    image.onerror = () => {
+      this.iconImages.set(icon, null);
+    };
+    image.src = url;
+    this.iconImages.set(icon, image);
+    return image;
+  }
+
+  private drawMinimapMarkers(
+    ctx: CanvasRenderingContext2D,
+    markers: readonly MinimapMarker[],
+    playerX: number,
+    playerZ: number,
+    cameraAlpha: number,
+    scale: number,
+    center: number,
+  ): void {
+    if (markers.length === 0) return;
+
+    const previousSmoothing = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+
+    for (const marker of markers) {
+      const screen = this.worldVectorToMinimapScreen(marker.x - playerX, marker.z - playerZ, cameraAlpha);
+      const x = center + screen.x * scale;
+      const y = center + screen.y * scale;
+      const size = Math.max(8, Math.min(32, marker.size ?? 16));
+      const radius = size * 0.55;
+      const dx = x - center;
+      const dy = y - center;
+      if ((dx * dx + dy * dy) > (center + radius) * (center + radius)) continue;
+
+      ctx.save();
+      ctx.globalAlpha = 0.7;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.68)';
+      ctx.beginPath();
+      ctx.arc(x + 1, y + 1, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      const image = this.getIconImage(marker.icon);
+      if (image?.complete && image.naturalWidth > 0) {
+        ctx.drawImage(image, x - size / 2, y - size / 2, size, size);
+      } else {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.fillStyle = '#60d4ff';
+        ctx.strokeStyle = '#061016';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, -radius);
+        ctx.lineTo(radius, 0);
+        ctx.lineTo(0, radius);
+        ctx.lineTo(-radius, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    ctx.imageSmoothingEnabled = previousSmoothing;
   }
 
   private smoothPlayerArrowAngle(targetAngle: number, dt: number): number {

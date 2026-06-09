@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS, isValidMinimapIconFilename, normalizeMinimapMarkers } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -4224,6 +4224,26 @@ const server = Bun.serve<SocketData>({
       }
     }
 
+    if (url.pathname === '/api/editor/minimap-icons' && req.method === 'GET') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      try {
+        const iconDir = resolve(import.meta.dir, '../../client/public/minimap/icons');
+        if (!existsSync(iconDir)) mkdirSync(iconDir, { recursive: true });
+        const icons = readdirSync(iconDir, { withFileTypes: true })
+          .filter(entry => entry.isFile() && isValidMinimapIconFilename(entry.name))
+          .map(entry => entry.name)
+          .sort((a, b) => a.localeCompare(b))
+          .map((file) => ({
+            file,
+            url: `/minimap/icons/${encodeURIComponent(file)}`,
+            label: file.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '),
+          }));
+        return jsonResponse({ ok: true, icons });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Failed to list minimap icons' }, 500);
+      }
+    }
+
     if (url.pathname === '/api/editor/save-map' && req.method === 'POST') {
       if (!isAdminRequest(req, server)) return adminForbidden();
       if (!bodyWithinLimit(req, BODY_LIMIT_EDITOR)) return tooLarge();
@@ -4301,6 +4321,10 @@ const server = Bun.serve<SocketData>({
         // (partial-payload protection).
         const { placedObjects: _, ...mapDataWithoutObjects } = mapData;
         let preservedTexturePlanes = mapDataWithoutObjects.map?.texturePlanes;
+        const incomingMinimapMarkers = mapDataWithoutObjects.map?.minimapMarkers;
+        let preservedMinimapMarkers = incomingMinimapMarkers === undefined
+          ? undefined
+          : normalizeMinimapMarkers(incomingMinimapMarkers, mapWidth, mapHeight);
         let preservedChunkWaterLevels = mapDataWithoutObjects.map?.chunkWaterLevels;
         let preservedChunkWaterFlows = mapDataWithoutObjects.map?.chunkWaterFlows;
         const shouldPreserveEmptyChunkWaterLevels = preservedChunkWaterLevels !== undefined
@@ -4308,12 +4332,16 @@ const server = Bun.serve<SocketData>({
           && Object.keys(existingMapForShape?.map?.chunkWaterLevels ?? {}).length > 0;
         if (
           preservedTexturePlanes === undefined
+          || preservedMinimapMarkers === undefined
           || preservedChunkWaterLevels === undefined
           || shouldPreserveEmptyChunkWaterLevels
           || preservedChunkWaterFlows === undefined
         ) {
           const existingMap = existingMapForShape ?? await loadJsonOrNull<KCMapFile>(mapJsonPath);
           if (preservedTexturePlanes === undefined) preservedTexturePlanes = existingMap?.map?.texturePlanes ?? [];
+          if (preservedMinimapMarkers === undefined) {
+            preservedMinimapMarkers = normalizeMinimapMarkers(existingMap?.map?.minimapMarkers, mapWidth, mapHeight);
+          }
           if (preservedChunkWaterLevels === undefined || shouldPreserveEmptyChunkWaterLevels) {
             preservedChunkWaterLevels = existingMap?.map?.chunkWaterLevels ?? {};
           }
@@ -4327,6 +4355,7 @@ const server = Bun.serve<SocketData>({
             tiles: [],    // stripped — stored in tiles/ chunks
             heights: [],  // stripped — stored in heights/ chunks
             texturePlanes: preservedTexturePlanes,
+            minimapMarkers: preservedMinimapMarkers,
             chunkWaterLevels: preservedChunkWaterLevels,
             chunkWaterFlows: preservedChunkWaterFlows,
           },
@@ -4646,6 +4675,7 @@ const server = Bun.serve<SocketData>({
             chunkWaterLevels: {},
             chunkWaterFlows: {},
             texturePlanes: [],
+            minimapMarkers: [],
             tiles: [],    // metadata-only — no chunk files needed for default empty map
             heights: [],  // metadata-only — zeros are the default
           },

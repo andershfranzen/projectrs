@@ -27,3 +27,4 @@ export * from './targetPathing';
 export * from './bankNotes';
 export * from './npcEquipmentFit';
 export * from './objectShadows';
+export * from './minimapIcons';

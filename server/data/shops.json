@@ -38,19 +38,54 @@
     "name": "Weapon Shop",
     "items": [
       {
+        "itemId": 58,
+        "price": 35,
+        "stock": 10
+      },
+      {
+        "itemId": 59,
+        "price": 40,
+        "stock": 10
+      },
+      {
+        "itemId": 72,
+        "price": 70,
+        "stock": 9
+      },
+      {
         "itemId": 73,
         "price": 75,
-        "stock": 3
+        "stock": 9
       },
       {
-        "itemId": 31,
-        "price": 20,
-        "stock": 5
+        "itemId": 86,
+        "price": 140,
+        "stock": 8
       },
       {
-        "itemId": 32,
-        "price": 65,
-        "stock": 3
+        "itemId": 87,
+        "price": 150,
+        "stock": 8
+      },
+      {
+        "itemId": 100,
+        "price": 550,
+        "stock": 7
+      },
+      {
+        "itemId": 101,
+        "price": 600,
+        "stock": 7
+      },
+      {
+        "itemId": 114,
+        "price": 750,
+        "stock": 6
+      },
+      {
+        "itemId": 115,
+        "price": 850,
+        "stock": 6
       }
     ]
   },

@@ -1,4 +1,5 @@
 import type { PlayerAppearance } from './appearance';
+import type { MinimapMarker } from './minimapIcons';
 import type { NpcEquipmentFitOverrides } from './npcEquipmentFit';
 import type { SkillId } from './skills';
 
@@ -968,6 +969,7 @@ export interface KCMapData {
   /** "chunkX,chunkZ" -> normalized water flow direction for 64x64 editor chunks. */
   chunkWaterFlows?: Record<string, WaterFlow>;
   texturePlanes: TexturePlane[];
+  minimapMarkers?: MinimapMarker[];
   tiles: KCTile[][];       // [z][x]
   heights: number[][];     // [z][x] vertex heights, (height+1) x (width+1)
   activeChunks?: string[];

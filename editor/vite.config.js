@@ -29,6 +29,8 @@ export default defineConfig({
       // Proxy to the client's dev server so the editor can load them when an
       // asset path points into /models/...
       '/models': 'http://localhost:5173',
+      // Map-authored minimap marker PNGs live under client/public/minimap.
+      '/minimap': 'http://localhost:5173',
     }
   }
 })

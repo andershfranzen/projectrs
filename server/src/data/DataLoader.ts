@@ -95,8 +95,8 @@ export class DataLoader {
 
   private loadShops(): void {
     // Legacy fallback: shops.json keyed by NPC id. New authoring goes inline
-    // on the NpcDef's `shop` field (see getShop). shops.json wins for ids
-    // present in both files, so partial migration is safe.
+    // on the NpcDef's `shop` field (see getShop), so inline entries win when
+    // both files contain the same NPC id.
     try {
       const raw = readFileSync(resolve(DATA_DIR, 'shops.json'), 'utf-8');
       const data: Record<string, ShopDef> = JSON.parse(raw);
@@ -107,10 +107,10 @@ export class DataLoader {
     } catch {
       // No legacy file — npcs.json inline shops are the source of truth.
     }
-    // Index every shop's prices for sell-back lookup, drawing from both
-    // legacy shops.json AND inline NpcDef.shop entries.
+    // Index every shop's prices for sell-back lookup, using the same effective
+    // shop order as getShop().
     for (const def of this.npcs.values()) {
-      const shop = this.shops.get(def.id) ?? def.shop;
+      const shop = def.shop ?? this.shops.get(def.id);
       if (!shop) continue;
       for (const si of shop.items) {
         if (!this.shopItemPrices.has(si.itemId)) {

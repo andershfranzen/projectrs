@@ -35113,6 +35113,99 @@
         "texRotation": 0
       }
     ],
+    "minimapMarkers": [
+      {
+        "id": "marker_mq6rm4p2_1qv4",
+        "icon": "Bank_Icon_Small.png",
+        "x": 72.14403347590827,
+        "z": 26.688451590560156,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6rma5w_8at",
+        "icon": "Cooking_Range_Icon_Small.png",
+        "x": 87.44007552953795,
+        "z": 33.86964378592127,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6rmoya_1t0k",
+        "icon": "Woodcutting_Icon_Small-2.png",
+        "x": 75.37803655226216,
+        "z": 2.575523297047937,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6rmwkq_15da",
+        "icon": "Woodcutting_Icon_Small-2.png",
+        "x": 95.17531938053791,
+        "z": 85.23266610631634,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6rmzc6_7ev",
+        "icon": "Woodcutting_Icon_Small-2.png",
+        "x": 143.7032793289418,
+        "z": 63.26645748868499,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6rn4wi_tg2",
+        "icon": "Woodcutting_Icon_Small-2.png",
+        "x": 292.40042825368516,
+        "z": 149.3887310244566,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6rn909_20tc",
+        "icon": "Cooking_Range_Icon_Small.png",
+        "x": 208.32333949445862,
+        "z": 148.0657388562026,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6rnd2e_mw9",
+        "icon": "Mining_Icon_Small.png",
+        "x": 288.6827049411553,
+        "z": 185.6103593076773,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6rnewf_1un",
+        "icon": "Mining_Icon_Small.png",
+        "x": 266.9856096237134,
+        "z": 210.37822364549095,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6rnnwq_vo3",
+        "icon": "Bank_Icon_Small.png",
+        "x": 353.9893339475311,
+        "z": 171.2927516574748,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6robtn_1q2a",
+        "icon": "Weapon_Store_Icon_Small.png",
+        "x": 351.0988756629193,
+        "z": 185.1131871720024,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6royyq_1rh4",
+        "icon": "Armour_Store_Icon_Small.png",
+        "x": 220.96528036088577,
+        "z": 219.38000926182923,
+        "size": 16
+      },
+      {
+        "id": "marker_mq6rp9jd_1veh",
+        "icon": "Cooking_Range_Icon_Small.png",
+        "x": 248.04884251075137,
+        "z": 232.69279221916565,
+        "size": 16
+      }
+    ],
     "tiles": [],
     "heights": [],
     "terrainGeneration": 285259,

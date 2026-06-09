@@ -87,6 +87,8 @@ import {
   objectShadowBounds,
   objectShadowFactorAt,
   wallShadowRunsFromWallRecord,
+  isValidMinimapIconFilename,
+  minimapIconUrl,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -1668,6 +1670,348 @@ function tuneModelLighting(model) {
     return pick.pickedMesh.metadata.itemSpawn
   }
 
+  // --- Minimap marker system ---
+  const minimapMarkerGroup = new TransformNode('minimapMarkerGroup', scene)
+  minimapMarkerGroup.setEnabled(false)
+  const MINIMAP_MARKER_FACE_NORTH_Y = Math.PI
+  let minimapIconChoices = []
+  let selectedMinimapIcon = ''
+  let selectedMinimapMarker = null
+  const minimapMarkerMaterialCache = new Map()
+
+  function ensureMinimapMarkers() {
+    if (!Array.isArray(map.minimapMarkers)) map.minimapMarkers = []
+    return map.minimapMarkers
+  }
+
+  function markerFloorFromInput() {
+    const raw = sidebar.querySelector('#minimapMarkerFloor')?.value ?? ''
+    if (raw === '') return undefined
+    const floor = parseInt(raw, 10)
+    return Number.isInteger(floor) && floor >= 0 ? floor : undefined
+  }
+
+  function markerSizeFromInput() {
+    const raw = Number(sidebar.querySelector('#minimapMarkerSize')?.value ?? 16)
+    return Number.isFinite(raw) ? Math.max(8, Math.min(32, Math.round(raw))) : 16
+  }
+
+  function markerLabelFromInput() {
+    const label = String(sidebar.querySelector('#minimapMarkerLabel')?.value ?? '').trim()
+    return label ? label.slice(0, 80) : undefined
+  }
+
+  function minimapMarkerGroundY(marker) {
+    const x = Math.max(0, Math.min(map.width - 1, Math.floor(marker.x)))
+    const z = Math.max(0, Math.min(map.height - 1, Math.floor(marker.z)))
+    return map.getAverageTileHeight(x, z)
+  }
+
+  function minimapMarkerY(marker) {
+    return minimapMarkerGroundY(marker) + 1.25
+  }
+
+  function markerIconPreviewUrl(file) {
+    return minimapIconUrl(file) || ''
+  }
+
+  function getMinimapMarkerMaterial(icon, selected) {
+    const key = `${icon}|${selected ? 'selected' : 'normal'}`
+    const cached = minimapMarkerMaterialCache.get(key)
+    if (cached) return cached
+
+    const mat = new StandardMaterial(`minimapMarkerMat_${key.replace(/[^A-Za-z0-9_]+/g, '_')}`, scene)
+    mat.diffuseColor = new Color3(1, 1, 1)
+    mat.emissiveColor = selected ? new Color3(1, 1, 1) : new Color3(0.82, 0.82, 0.82)
+    mat.specularColor = new Color3(0, 0, 0)
+    mat.disableLighting = true
+    mat.backFaceCulling = false
+    mat.alpha = selected ? 1 : 0.86
+    mat.transparencyMode = 2
+    mat.zOffset = -2
+
+    const url = markerIconPreviewUrl(icon)
+    if (url) {
+      const tex = new Texture(url, scene, false, false, Texture.NEAREST_SAMPLINGMODE)
+      tex.hasAlpha = true
+      mat.diffuseTexture = tex
+      mat.emissiveTexture = tex
+      mat.opacityTexture = tex
+      mat.useAlphaFromDiffuseTexture = true
+    } else {
+      mat.diffuseColor = selected ? new Color3(0.2, 0.85, 1) : new Color3(0.15, 0.55, 0.8)
+      mat.emissiveColor = mat.diffuseColor
+    }
+    minimapMarkerMaterialCache.set(key, mat)
+    return mat
+  }
+
+  function rebuildMinimapMarkerMeshes() {
+    for (const child of [...minimapMarkerGroup.getChildren()]) child.dispose()
+    for (const marker of ensureMinimapMarkers()) {
+      const selected = marker === selectedMinimapMarker
+      const groundY = minimapMarkerGroundY(marker)
+      const iconY = minimapMarkerY(marker)
+      const guideColor = selected ? new Color3(1.0, 0.82, 0.25) : new Color3(0.25, 0.85, 1.0)
+
+      const stem = MeshBuilder.CreateLineSystem(`minimapMarkerStem_${marker.id}`, {
+        lines: [[
+          new Vector3(marker.x, groundY + 0.06, marker.z),
+          new Vector3(marker.x, iconY - 0.35, marker.z),
+        ]]
+      }, scene)
+      stem.color = guideColor
+      stem.isPickable = false
+      stem.renderingGroupId = 1
+      stem.parent = minimapMarkerGroup
+
+      const ringSegments = []
+      const ringRadius = selected ? 0.46 : 0.36
+      const ringY = groundY + 0.07
+      for (let i = 0; i < 24; i++) {
+        const a0 = (i / 24) * Math.PI * 2
+        const a1 = ((i + 1) / 24) * Math.PI * 2
+        ringSegments.push([
+          new Vector3(marker.x + Math.cos(a0) * ringRadius, ringY, marker.z + Math.sin(a0) * ringRadius),
+          new Vector3(marker.x + Math.cos(a1) * ringRadius, ringY, marker.z + Math.sin(a1) * ringRadius),
+        ])
+      }
+      const ring = MeshBuilder.CreateLineSystem(`minimapMarkerRing_${marker.id}`, { lines: ringSegments }, scene)
+      ring.color = guideColor
+      ring.isPickable = false
+      ring.renderingGroupId = 1
+      ring.parent = minimapMarkerGroup
+
+      const size = Math.max(0.48, Math.min(1.25, ((marker.size ?? 16) / 16) * 0.7))
+      const mesh = MeshBuilder.CreatePlane(`minimapMarker_${marker.id}`, { size }, scene)
+      // Editor-only preview: keep every icon facing world north (-Z), matching
+      // the minimap compass, instead of rotating with the camera.
+      mesh.rotationQuaternion = null
+      mesh.rotation.y = MINIMAP_MARKER_FACE_NORTH_Y
+      mesh.position = new Vector3(marker.x, iconY, marker.z)
+      mesh.material = getMinimapMarkerMaterial(marker.icon, selected)
+      mesh.metadata = { minimapMarker: marker }
+      mesh.renderingGroupId = 1
+      mesh.parent = minimapMarkerGroup
+    }
+    minimapMarkerGroup.setEnabled(state.tool === ToolMode.MINIMAP_MARKER)
+  }
+
+  function selectMinimapMarker(marker) {
+    selectedMinimapMarker = marker || null
+    if (selectedMinimapMarker) {
+      selectedMinimapIcon = selectedMinimapMarker.icon
+      const labelInput = sidebar.querySelector('#minimapMarkerLabel')
+      const floorInput = sidebar.querySelector('#minimapMarkerFloor')
+      const sizeInput = sidebar.querySelector('#minimapMarkerSize')
+      if (labelInput) labelInput.value = selectedMinimapMarker.label || ''
+      if (floorInput) floorInput.value = selectedMinimapMarker.floor === undefined ? '' : String(selectedMinimapMarker.floor)
+      if (sizeInput) sizeInput.value = String(selectedMinimapMarker.size ?? 16)
+      const sizeLabel = sidebar.querySelector('#minimapMarkerSizeLabel')
+      if (sizeLabel) sizeLabel.textContent = String(selectedMinimapMarker.size ?? 16)
+    }
+    refreshMinimapMarkerPanel()
+    rebuildMinimapMarkerMeshes()
+  }
+
+  function addMinimapMarker(x, z) {
+    if (!isValidMinimapIconFilename(selectedMinimapIcon)) {
+      showEditorNotice('Add PNG/WebP files to client/public/minimap/icons, then reopen or refresh the editor icon tool.')
+      return null
+    }
+    pushUndoState('terrain')
+    const marker = {
+      id: `marker_${Date.now().toString(36)}_${Math.floor(Math.random() * 100000).toString(36)}`,
+      icon: selectedMinimapIcon,
+      x,
+      z,
+      floor: markerFloorFromInput(),
+      label: markerLabelFromInput(),
+      size: markerSizeFromInput(),
+    }
+    if (marker.floor === undefined) delete marker.floor
+    if (!marker.label) delete marker.label
+    ensureMinimapMarkers().push(marker)
+    selectMinimapMarker(marker)
+    return marker
+  }
+
+  function deleteMinimapMarker(marker = selectedMinimapMarker) {
+    if (!marker) return
+    pushUndoState('terrain')
+    map.minimapMarkers = ensureMinimapMarkers().filter(m => m !== marker && m.id !== marker.id)
+    if (selectedMinimapMarker === marker) selectedMinimapMarker = null
+    refreshMinimapMarkerPanel()
+    rebuildMinimapMarkerMeshes()
+  }
+
+  function updateSelectedMinimapMarkerFromControls() {
+    if (!selectedMinimapMarker) {
+      const sizeLabel = sidebar.querySelector('#minimapMarkerSizeLabel')
+      if (sizeLabel) sizeLabel.textContent = String(markerSizeFromInput())
+      return
+    }
+    pushUndoState('terrain')
+    selectedMinimapMarker.label = markerLabelFromInput()
+    if (!selectedMinimapMarker.label) delete selectedMinimapMarker.label
+    const floor = markerFloorFromInput()
+    if (floor === undefined) delete selectedMinimapMarker.floor
+    else selectedMinimapMarker.floor = floor
+    selectedMinimapMarker.size = markerSizeFromInput()
+    const sizeLabel = sidebar.querySelector('#minimapMarkerSizeLabel')
+    if (sizeLabel) sizeLabel.textContent = String(selectedMinimapMarker.size)
+    refreshMinimapMarkerPanel()
+    rebuildMinimapMarkerMeshes()
+  }
+
+  function moveSelectedMinimapMarker(x, z) {
+    if (!selectedMinimapMarker) return false
+    pushUndoState('terrain')
+    selectedMinimapMarker.x = x
+    selectedMinimapMarker.z = z
+    refreshMinimapMarkerPanel()
+    rebuildMinimapMarkerMeshes()
+    return true
+  }
+
+  function applyActiveIconToSelectedMinimapMarker() {
+    if (!selectedMinimapMarker || !isValidMinimapIconFilename(selectedMinimapIcon)) return
+    if (selectedMinimapMarker.icon === selectedMinimapIcon) return
+    pushUndoState('terrain')
+    selectedMinimapMarker.icon = selectedMinimapIcon
+    refreshMinimapMarkerPanel()
+    rebuildMinimapMarkerMeshes()
+  }
+
+  function pickMinimapMarker(event) {
+    updateMouse(event)
+    const pick = scene.pick(scene.pointerX, scene.pointerY, (mesh) => {
+      return mesh.isDescendantOf(minimapMarkerGroup) && mesh.metadata?.minimapMarker
+    })
+    if (!pick.hit) return null
+    return pick.pickedMesh.metadata.minimapMarker
+  }
+
+  function findNearestMinimapMarker(x, z, maxDistance = 0.9) {
+    let best = null
+    let bestDistSq = maxDistance * maxDistance
+    for (const marker of ensureMinimapMarkers()) {
+      const dx = marker.x - x
+      const dz = marker.z - z
+      const distSq = dx * dx + dz * dz
+      if (distSq <= bestDistSq) {
+        best = marker
+        bestDistSq = distSq
+      }
+    }
+    return best
+  }
+
+  function renderMinimapIconGrid() {
+    const grid = sidebar.querySelector('#minimapIconGrid')
+    const empty = sidebar.querySelector('#minimapIconEmpty')
+    if (!grid) return
+    grid.innerHTML = ''
+    if (empty) empty.style.display = minimapIconChoices.length === 0 ? 'block' : 'none'
+    for (const choice of minimapIconChoices) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      const active = choice.file === selectedMinimapIcon
+      button.style.cssText = `height:42px;padding:3px;border-radius:4px;border:1px solid ${active ? '#6fd7ff' : '#555'};background:${active ? '#24465a' : '#252525'};cursor:pointer;display:flex;align-items:center;justify-content:center;`
+      button.title = choice.label || choice.file
+      const img = document.createElement('img')
+      img.src = choice.url || markerIconPreviewUrl(choice.file)
+      img.alt = choice.label || choice.file
+      img.style.cssText = 'max-width:30px;max-height:30px;image-rendering:pixelated;'
+      button.appendChild(img)
+      button.addEventListener('click', () => {
+        selectedMinimapIcon = choice.file
+        refreshMinimapMarkerPanel()
+      })
+      grid.appendChild(button)
+    }
+  }
+
+  function renderMinimapMarkerList() {
+    const listEl = sidebar.querySelector('#minimapMarkerList')
+    const countEl = sidebar.querySelector('#minimapMarkerCount')
+    const selectedLabel = sidebar.querySelector('#minimapMarkerSelectedLabel')
+    const markers = ensureMinimapMarkers()
+    if (countEl) countEl.textContent = markers.length
+    if (selectedLabel) {
+      selectedLabel.textContent = selectedMinimapMarker
+        ? `${selectedMinimapMarker.label || selectedMinimapMarker.icon} @ ${selectedMinimapMarker.x.toFixed(2)}, ${selectedMinimapMarker.z.toFixed(2)}`
+        : 'No marker selected'
+    }
+    if (!listEl) return
+    listEl.innerHTML = ''
+    if (markers.length === 0) {
+      const empty = document.createElement('div')
+      empty.className = 'hint'
+      empty.textContent = 'No minimap markers'
+      listEl.appendChild(empty)
+      return
+    }
+    for (const marker of markers) {
+      const row = document.createElement('div')
+      const active = marker === selectedMinimapMarker
+      row.style.cssText = `display:flex;align-items:center;gap:6px;padding:4px 5px;font-size:11px;cursor:pointer;border-radius:3px;margin-bottom:2px;background:${active ? '#263b4a' : '#222'};`
+      const img = document.createElement('img')
+      img.src = markerIconPreviewUrl(marker.icon)
+      img.alt = marker.icon
+      img.style.cssText = 'width:20px;height:20px;object-fit:contain;image-rendering:pixelated;flex:0 0 auto;'
+      row.appendChild(img)
+      const label = document.createElement('div')
+      label.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+      const floorText = marker.floor === undefined ? 'all floors' : `floor ${marker.floor}`
+      label.textContent = `${marker.label || marker.icon} (${marker.x.toFixed(1)}, ${marker.z.toFixed(1)}) · ${floorText}`
+      row.appendChild(label)
+      const del = document.createElement('button')
+      del.type = 'button'
+      del.textContent = 'x'
+      del.style.cssText = 'width:22px;height:22px;padding:0;background:#4a2222;color:#fff;border:1px solid #744;border-radius:3px;cursor:pointer;flex:0 0 auto;'
+      del.addEventListener('click', (e) => {
+        e.stopPropagation()
+        deleteMinimapMarker(marker)
+      })
+      row.appendChild(del)
+      row.addEventListener('click', () => selectMinimapMarker(marker))
+      listEl.appendChild(row)
+    }
+  }
+
+  function refreshMinimapMarkerPanel() {
+    const sizeLabel = sidebar.querySelector('#minimapMarkerSizeLabel')
+    if (sizeLabel) sizeLabel.textContent = String(markerSizeFromInput())
+    const applyIconBtn = sidebar.querySelector('#minimapMarkerApplyIconBtn')
+    if (applyIconBtn) {
+      applyIconBtn.disabled = !selectedMinimapMarker || !isValidMinimapIconFilename(selectedMinimapIcon)
+      applyIconBtn.style.opacity = applyIconBtn.disabled ? '0.45' : '1'
+    }
+    renderMinimapIconGrid()
+    renderMinimapMarkerList()
+  }
+
+  async function loadMinimapIconChoices() {
+    try {
+      const res = await fetch('/api/editor/minimap-icons')
+      const data = await res.json()
+      minimapIconChoices = Array.isArray(data.icons)
+        ? data.icons.filter(icon => isValidMinimapIconFilename(icon.file))
+        : []
+      if (!selectedMinimapIcon && minimapIconChoices.length > 0) {
+        selectedMinimapIcon = minimapIconChoices[0].file
+      }
+    } catch (e) {
+      console.warn('Failed to load minimap icons:', e)
+      minimapIconChoices = []
+    } finally {
+      refreshMinimapMarkerPanel()
+      rebuildMinimapMarkerMeshes()
+    }
+  }
+  loadMinimapIconChoices()
+
   // --- Collision / Wall system ---
   // Stores wall edges, blocked tiles, floors, stairs per floor level
   const collisionData = {
@@ -2534,7 +2878,8 @@ let selectedWaterFlowChunk = null
       <button id="toolNpcSpawn" class="tool-btn" title="NPC Spawn (6)">NPCs</button>
       <button id="toolCollision" class="tool-btn" title="Collision (7)">Collision</button>
       <button id="toolItemSpawn" class="tool-btn" title="Item Spawn (8)">Items</button>
-      <button id="toolBiome" class="tool-btn" title="Biome Paint (9)">Biome</button>
+      <button id="toolMinimapMarker" class="tool-btn" title="Minimap Icons (9)">Icons</button>
+      <button id="toolBiome" class="tool-btn" title="Biome Paint (0)">Biome</button>
       <!-- Layers panel removed -->
       <button id="heightCullBtn" class="tool-btn" title="Height cull cycle (H)">H: Off</button>
     </div>
@@ -2917,6 +3262,36 @@ let selectedWaterFlowChunk = null
       <div id="itemSpawnList" style="max-height:200px;overflow-y:auto;margin-top:4px;"></div>
     </div>
 
+    <div class="ctx-panel" id="ctx-minimap-marker" style="display:none">
+      <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px;">Minimap Icon</div>
+      <div id="minimapIconGrid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:6px;"></div>
+      <div id="minimapIconEmpty" class="hint" style="display:none;margin-bottom:6px;">Drop PNG or WebP files in client/public/minimap/icons</div>
+      <button id="minimapMarkerApplyIconBtn" style="width:100%;font-size:11px;padding:5px;background:#2d4050;color:#fff;cursor:pointer;border:1px solid #526b7e;border-radius:3px;margin-bottom:6px;">Apply icon to selected</button>
+      <label style="font-size:11px;color:rgba(255,255,255,0.45);">Label</label>
+      <input id="minimapMarkerLabel" type="text" maxlength="80" placeholder="Optional hover/name" style="width:100%;margin-top:3px;margin-bottom:6px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;" />
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+        <div>
+          <label style="font-size:11px;color:rgba(255,255,255,0.45);">Floor</label>
+          <select id="minimapMarkerFloor" style="width:100%;margin-top:3px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;">
+            <option value="">All</option>
+            <option value="0">Floor 0</option>
+            <option value="1">Floor 1</option>
+            <option value="2">Floor 2</option>
+            <option value="3">Floor 3</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:rgba(255,255,255,0.45);">Size <span id="minimapMarkerSizeLabel">16</span></label>
+          <input id="minimapMarkerSize" type="range" min="8" max="32" step="1" value="16" style="width:100%;margin-top:3px;" />
+        </div>
+      </div>
+      <div class="hint" style="margin-top:6px;">Click to place · Click marker to select · Ctrl+Click ground to move selected · Shift+Click marker to remove</div>
+      <div id="minimapMarkerSelectedLabel" style="font-size:10px;color:rgba(255,255,255,0.55);margin-top:6px;min-height:13px;"></div>
+      <button id="minimapMarkerDeleteBtn" style="width:100%;font-size:11px;padding:5px;background:#4a2222;color:#fff;cursor:pointer;border:1px solid #744;border-radius:3px;margin-top:5px;">Delete selected</button>
+      <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:10px;border-top:1px solid #444;padding-top:8px;">Markers <span id="minimapMarkerCount">0</span></div>
+      <div id="minimapMarkerList" style="max-height:190px;overflow-y:auto;margin-top:4px;"></div>
+    </div>
+
     <div class="ctx-panel" id="ctx-biome" style="display:none">
       <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px;">8x8 tile cells · Click + drag = rectangle fill · Shift+drag to erase · Ctrl+Z undo</div>
       <div id="biomeDefList" style="margin-bottom:8px;"></div>
@@ -3018,7 +3393,7 @@ let selectedWaterFlowChunk = null
       <button id="closeKeybinds">✕</button>
     </div>
     <div>
-      <b>Tools:</b> 1 Terrain · 2 Paint · 3 Place · 4 Select · 5 Texture · 6 Texture Plane<br>
+      <b>Tools:</b> 1 Terrain · 2 Paint · 3 Place · 4 Select · 5 Texture Plane · 6 NPCs · 7 Collision · 8 Items · 9 Icons · 0 Biome<br>
       <b>History:</b> Ctrl+Z undo · Ctrl+Shift+Z / Ctrl+Y redo<br>
       <b>Transform:</b> G move · R rotate · S scale · X/Y/Z axis · click confirm · Esc cancel<br>
       <b>While moving:</b> Q raise · E lower · Shift snap to grid · Ctrl/Cmd use upper surface · Alt disable edge snap<br>
@@ -3041,6 +3416,7 @@ let selectedWaterFlowChunk = null
     [ToolMode.NPC_SPAWN]: sidebar.querySelector('#toolNpcSpawn'),
     [ToolMode.COLLISION]: sidebar.querySelector('#toolCollision'),
     [ToolMode.ITEM_SPAWN]: sidebar.querySelector('#toolItemSpawn'),
+    [ToolMode.MINIMAP_MARKER]: sidebar.querySelector('#toolMinimapMarker'),
     [ToolMode.BIOME]: sidebar.querySelector('#toolBiome')
   }
 
@@ -3052,7 +3428,18 @@ let selectedWaterFlowChunk = null
   toolButtons[ToolMode.NPC_SPAWN]?.addEventListener('click', () => setTool(ToolMode.NPC_SPAWN))
   toolButtons[ToolMode.COLLISION]?.addEventListener('click', () => setTool(ToolMode.COLLISION))
   toolButtons[ToolMode.ITEM_SPAWN]?.addEventListener('click', () => setTool(ToolMode.ITEM_SPAWN))
+  toolButtons[ToolMode.MINIMAP_MARKER]?.addEventListener('click', () => setTool(ToolMode.MINIMAP_MARKER))
   toolButtons[ToolMode.BIOME]?.addEventListener('click', () => setTool(ToolMode.BIOME))
+
+  sidebar.querySelector('#minimapMarkerDeleteBtn')?.addEventListener('click', () => deleteMinimapMarker())
+  sidebar.querySelector('#minimapMarkerApplyIconBtn')?.addEventListener('click', () => applyActiveIconToSelectedMinimapMarker())
+  sidebar.querySelector('#minimapMarkerLabel')?.addEventListener('change', () => updateSelectedMinimapMarkerFromControls())
+  sidebar.querySelector('#minimapMarkerFloor')?.addEventListener('change', () => updateSelectedMinimapMarkerFromControls())
+  sidebar.querySelector('#minimapMarkerSize')?.addEventListener('input', () => {
+    const label = sidebar.querySelector('#minimapMarkerSizeLabel')
+    if (label) label.textContent = String(markerSizeFromInput())
+  })
+  sidebar.querySelector('#minimapMarkerSize')?.addEventListener('change', () => updateSelectedMinimapMarkerFromControls())
 
   // --- NPC Inspector: fetch defs + wire tabbed sidebar (must be after sidebar is created) ---
   // The inspector edits two kinds of state:
@@ -6987,10 +7374,12 @@ let selectedWaterFlowChunk = null
       [ToolMode.NPC_SPAWN]: 'ctx-npc-spawn',
       [ToolMode.COLLISION]: 'ctx-collision',
       [ToolMode.ITEM_SPAWN]: 'ctx-item-spawn',
+      [ToolMode.MINIMAP_MARKER]: 'ctx-minimap-marker',
       [ToolMode.BIOME]: 'ctx-biome',
     }
     biomeGroup.setEnabled(state.tool === ToolMode.BIOME)
-    for (const id of ['ctx-terrain', 'ctx-paint', 'ctx-place', 'ctx-select', 'ctx-texture', 'ctx-npc-spawn', 'ctx-item-spawn', 'ctx-collision', 'ctx-biome']) {
+    minimapMarkerGroup.setEnabled(state.tool === ToolMode.MINIMAP_MARKER)
+    for (const id of ['ctx-terrain', 'ctx-paint', 'ctx-place', 'ctx-select', 'ctx-texture', 'ctx-npc-spawn', 'ctx-item-spawn', 'ctx-minimap-marker', 'ctx-collision', 'ctx-biome']) {
       const el = sidebar.querySelector(`#${id}`)
       if (el) el.style.display = 'none'
     }
@@ -7074,6 +7463,12 @@ let selectedWaterFlowChunk = null
       if (npcName) status += ` · ${npcName}`
       status += ` · ${npcPlacementMode}`
       if (selectedNpcSpawn) status += ' · Spawn selected'
+    }
+    if (state.tool === ToolMode.MINIMAP_MARKER) {
+      const count = ensureMinimapMarkers().length
+      status += selectedMinimapMarker
+        ? ` · ${selectedMinimapMarker.label || selectedMinimapMarker.icon}`
+        : ` · ${count} marker${count === 1 ? '' : 's'}`
     }
     if (selectedTexturePlane) status += ` · Plane: ${selectedTexturePlane.textureId}`
     if (selectedPlacedObject) status += ' · Object selected'
@@ -7286,6 +7681,7 @@ let selectedWaterFlowChunk = null
     if (hoverEdgeHelper) { hoverEdgeHelper.dispose(); hoverEdgeHelper = null }
     npcSpawnGroup.setEnabled(mode === ToolMode.NPC_SPAWN)
     itemSpawnGroup.setEnabled(mode === ToolMode.ITEM_SPAWN)
+    minimapMarkerGroup.setEnabled(mode === ToolMode.MINIMAP_MARKER)
     collisionGroup.setEnabled(mode === ToolMode.COLLISION)
     if (mode === ToolMode.COLLISION) rebuildCollisionMeshes()
     if (mode === ToolMode.NPC_SPAWN) {
@@ -7293,6 +7689,10 @@ let selectedWaterFlowChunk = null
       refreshNpcSpawnList()
       syncNpcTypeInput()
       updateNpcPlacementControls()
+    }
+    if (mode === ToolMode.MINIMAP_MARKER) {
+      refreshMinimapMarkerPanel()
+      rebuildMinimapMarkerMeshes()
     }
     // X-ray mode: make placed objects transparent in collision tool
     if (mode === ToolMode.COLLISION && !wasCollision) setPlacedObjectsXray(true)
@@ -7572,6 +7972,7 @@ let selectedWaterFlowChunk = null
     selectedPlacedObjects = []
     selectedTexturePlane = null
     selectedTexturePlanes = []
+    selectedMinimapMarker = null
     isDragSelecting = false
     dragSelectStart = null
     if (dragSelectBox) dragSelectBox.style.display = 'none'
@@ -7583,6 +7984,8 @@ let selectedWaterFlowChunk = null
     transformLift = 0
     movePlaneStart = null
     updateSelectionHelper()
+    rebuildMinimapMarkerMeshes()
+    refreshMinimapMarkerPanel()
     updateToolUI()
   }
 
@@ -7798,12 +8201,13 @@ let selectedWaterFlowChunk = null
     const npcCount = Array.isArray(data.npcSpawns) ? data.npcSpawns.length : 0
     const itemCount = Array.isArray(data.itemSpawns) ? data.itemSpawns.length : 0
     const planeCount = Array.isArray(data.map?.texturePlanes) ? data.map.texturePlanes.length : 0
+    const minimapMarkerCount = Array.isArray(data.map?.minimapMarkers) ? data.map.minimapMarkers.length : 0
     const chunkCount = Array.isArray(data.map?.activeChunks) ? data.map.activeChunks.length : 0
     const tileEditCount = countTileEdits(data.map)
     const collisionCount = countCollisionEdits(data.collisionData)
     const biomeCount = countObjectEntries(data.biomesData?.cells) + (Array.isArray(data.biomesData?.defs) ? data.biomesData.defs.length : 0)
     const area = (data.map?.width || 0) * (data.map?.height || 0)
-    const weight = objectCount * 10 + npcCount * 3 + itemCount + planeCount * 2 + chunkCount + tileEditCount + collisionCount + biomeCount + Math.floor(area / 4096)
+    const weight = objectCount * 10 + npcCount * 3 + itemCount + minimapMarkerCount + planeCount * 2 + chunkCount + tileEditCount + collisionCount + biomeCount + Math.floor(area / 4096)
     return {
       weight,
       tileEdits: tileEditCount,
@@ -7940,6 +8344,7 @@ let selectedWaterFlowChunk = null
     for (const obj of placedGroup.getChildren()) includeMapFocusPoint(bounds, obj.position.x, obj.position.z)
     for (const spawn of npcSpawns) includeMapFocusPoint(bounds, spawn.x, spawn.z)
     for (const spawn of itemSpawns) includeMapFocusPoint(bounds, spawn.x, spawn.z)
+    for (const marker of ensureMinimapMarkers()) includeMapFocusPoint(bounds, marker.x, marker.z)
 
     if (bounds.count > 0) return bounds
 
@@ -7996,6 +8401,7 @@ let selectedWaterFlowChunk = null
     selectedPlacedObjects = []
     selectedTexturePlane = null
     selectedTexturePlanes = []
+    selectedMinimapMarker = null
     transformMode = null
     transformStart = null
     transformLift = 0
@@ -8018,6 +8424,8 @@ let selectedWaterFlowChunk = null
     loadItemSpawns(data.itemSpawns)
     loadCollisionData(data.collisionData)
     loadBiomesData(data.biomesData)
+    rebuildMinimapMarkerMeshes()
+    refreshMinimapMarkerPanel()
 
     mapSizeLabel.textContent = `${map.width} x ${map.height}`
     worldOffsetX.value = map.worldOffset.x
@@ -8165,13 +8573,19 @@ let selectedWaterFlowChunk = null
 
     if (snapshot.map) {
       const prevTerrainGen = map.terrainGeneration
+      const selectedMarkerId = selectedMinimapMarker?.id
       map = MapData.fromJSON(snapshot.map)
+      selectedMinimapMarker = selectedMarkerId
+        ? ensureMinimapMarkers().find(marker => marker.id === selectedMarkerId) || null
+        : null
       mapSizeLabel.textContent = `${map.width} x ${map.height}`
       if (map.terrainGeneration !== prevTerrainGen) {
         markTerrainDirty({ rebuildTexturePlanes: true, rebuildTextureOverlays: true })
       } else {
         markTerrainDirty({ skipShadows: true })
       }
+      rebuildMinimapMarkerMeshes()
+      refreshMinimapMarkerPanel()
     }
 
     if (snapshot.placedObjects) {
@@ -13447,16 +13861,22 @@ function applyToolAtTile(tile, eventLike = null) {
   }
 
   function afterChunkChange() {
+    const selectedMarkerId = selectedMinimapMarker?.id
     selectedPlacedObject = null
     selectedPlacedObjects = []
     selectedTexturePlane = null
     selectedTexturePlanes = []
+    selectedMinimapMarker = selectedMarkerId
+      ? ensureMinimapMarkers().find(marker => marker.id === selectedMarkerId) || null
+      : null
     transformMode = null
     transformStart = null
     transformLift = 0
     movePlaneStart = null
     mapSizeLabel.textContent = `${map.width} x ${map.height}`
     rebuildTexturePlanesOnly()
+    rebuildMinimapMarkerMeshes()
+    refreshMinimapMarkerPanel()
     updateSelectionHelper()
     updateToolUI()
     syncChunkWaterFlowControls()
@@ -14188,6 +14608,34 @@ function applyToolAtTile(tile, eventLike = null) {
       // mouse moves past the drag threshold before mouseup.
       if (!event.shiftKey) clearSelection()
       beginDragSelect(event)
+      return
+    }
+
+    if (state.tool === ToolMode.MINIMAP_MARKER) {
+      const pickedMarker = pickMinimapMarker(event)
+      if (pickedMarker) {
+        if (event.shiftKey) {
+          deleteMinimapMarker(pickedMarker)
+        } else {
+          selectMinimapMarker(pickedMarker)
+        }
+        return
+      }
+
+      const tile = pickTile(event)
+      if (!tile) return
+      const worldX = Math.max(0, Math.min(map.width, tile.x + tile.u))
+      const worldZ = Math.max(0, Math.min(map.height, tile.z + tile.v))
+      if (event.shiftKey) {
+        const nearest = findNearestMinimapMarker(worldX, worldZ)
+        if (nearest) deleteMinimapMarker(nearest)
+        return
+      }
+      if (event.ctrlKey && selectedMinimapMarker) {
+        moveSelectedMinimapMarker(worldX, worldZ)
+        return
+      }
+      addMinimapMarker(worldX, worldZ)
       return
     }
 
@@ -14973,6 +15421,10 @@ function applyToolAtTile(tile, eventLike = null) {
         updateToolUI()
         return
       }
+      if (selectedMinimapMarker && state.tool === ToolMode.MINIMAP_MARKER) {
+        deleteMinimapMarker()
+        return
+      }
       if (selectedTexturePlane) {
         pushUndoState('terrain')
         removeTexturePlaneMesh(selectedTexturePlane)
@@ -15098,6 +15550,8 @@ if (key === 'e') {
     if (key === '6') return setTool(ToolMode.NPC_SPAWN)
     if (key === '7') return setTool(ToolMode.COLLISION)
     if (key === '8') return setTool(ToolMode.ITEM_SPAWN)
+    if (key === '9') return setTool(ToolMode.MINIMAP_MARKER)
+    if (key === '0') return setTool(ToolMode.BIOME)
 
     if (key === 'v') {
       texturePlaneVertical = !texturePlaneVertical
