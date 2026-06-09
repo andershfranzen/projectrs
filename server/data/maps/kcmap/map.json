@@ -35200,17 +35200,24 @@
         "size": 16
       },
       {
-        "id": "marker_mq6rp9jd_1veh",
-        "icon": "Cooking_Range_Icon_Small.png",
-        "x": 248.04884251075137,
-        "z": 232.69279221916565,
-        "size": 16
-      },
-      {
         "id": "marker_mq6tqdvu_mvh",
         "icon": "Anvil_Icon_Small.png",
         "x": 80.99586064964056,
         "z": 42.31415205642779,
+        "size": 16
+      },
+      {
+        "id": "marker_mq7ahqga_zqn",
+        "icon": "Bank_Icon_Small.png",
+        "x": 237.89703496546292,
+        "z": 243.26455107708108,
+        "size": 16
+      },
+      {
+        "id": "marker_mq7ahzcc_1evd",
+        "icon": "Anvil_Icon_Small.png",
+        "x": 243.87957337024952,
+        "z": 242.12212107842265,
         "size": 16
       }
     ],
