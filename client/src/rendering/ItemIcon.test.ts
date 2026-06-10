@@ -290,17 +290,27 @@ describe('item thumbnail families', () => {
     }
   });
 
-  test('chicken items stay on legacy 2D PNG icons', () => {
+  test('chicken and cooked meat items resolve to 3D models instead of legacy PNGs', () => {
     const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
-    for (const id of [11, 12]) {
-      const def = defs.get(id);
-      if (!def) throw new Error(`missing chicken item ${id}`);
+    const expectedModels = new Map<number, string>([
+      [11, '/assets/models/ChickenRaw.glb'],
+      [12, '/assets/models/ChickenCooked.glb'],
+      [15, '/assets/models/BeefRat.glb'],
+    ]);
 
-      expect(def.model).toBeUndefined();
+    for (const [id, expectedModel] of expectedModels) {
+      const def = defs.get(id);
+      if (!def) throw new Error(`missing food item ${id}`);
+
+      expect(def.icon).toBeUndefined();
+      expect(def.sprite).toBeUndefined();
+      expect(def.model).toBe(expectedModel);
       expect(def.thumbnailModel).toBeUndefined();
-      expect(resolveItemModelPath(def, 1)).toBeNull();
-      expect(resolveGroundItemModelPath(def, 1)).toBeNull();
-      expect(getItemIconSyncUrl(def, 1)).toBe('/items/raw_chicken_133.png');
+      expect(resolveItemModelPath(def, 1)).toBe(expectedModel);
+      expect(resolveGroundItemModelPath(def, 1)).toBe(expectedModel);
+      expect(getItemIconSyncUrl(def, 1)).toBeNull();
+      expect(getItemLegacyIconUrl(def)).toBeNull();
+      expect(existsSync(`client/public${expectedModel}`)).toBe(true);
     }
   });
 

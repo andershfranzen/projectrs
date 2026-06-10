@@ -105,7 +105,7 @@
     "stackable": false,
     "equippable": false,
     "value": 2,
-    "icon": "raw_chicken_133.png"
+    "model": "/assets/models/ChickenRaw.glb"
   },
   {
     "id": 12,
@@ -115,7 +115,7 @@
     "equippable": false,
     "healAmount": 3,
     "value": 8,
-    "icon": "raw_chicken_133.png"
+    "model": "/assets/models/ChickenCooked.glb"
   },
   {
     "id": 13,
@@ -145,7 +145,7 @@
     "equippable": false,
     "healAmount": 4,
     "value": 10,
-    "icon": "cookedmeat_132.png"
+    "model": "/assets/models/BeefRat.glb"
   },
   {
     "id": 17,
