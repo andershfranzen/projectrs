@@ -3232,7 +3232,54 @@
         "beltColor": 1,
         "skinColor": 3,
         "hairStyle": 1
-      }
+      },
+      "shop": {
+        "name": "Zahir's Body Armour",
+        "restockTicks": 200,
+        "items": [
+          {
+            "itemId": 68,
+            "price": 68,
+            "stock": 5
+          },
+          {
+            "itemId": 71,
+            "price": 113,
+            "stock": 3
+          },
+          {
+            "itemId": 82,
+            "price": 190,
+            "stock": 4
+          },
+          {
+            "itemId": 85,
+            "price": 260,
+            "stock": 2
+          },
+          {
+            "itemId": 96,
+            "price": 450,
+            "stock": 3
+          },
+          {
+            "itemId": 99,
+            "price": 550,
+            "stock": 2
+          },
+          {
+            "itemId": 110,
+            "price": 4800,
+            "stock": 1
+          },
+          {
+            "itemId": 113,
+            "price": 6400,
+            "stock": 1
+          }
+        ]
+      },
+      "name": "Zahir"
     },
     {
       "id": 173,
