@@ -50,12 +50,7 @@
           },
           {
             "itemId": 265,
-            "price": 4,
-            "stock": 200
-          },
-          {
-            "itemId": 266,
-            "price": 10,
+            "price": 5,
             "stock": 200
           },
           {
@@ -82,9 +77,14 @@
             "itemId": 410,
             "price": 50,
             "stock": 5
+          },
+          {
+            "itemId": 550,
+            "price": 8,
+            "stock": 10
           }
         ],
-        "restockTicks": 30
+        "restockTicks": 100
       },
       "dialogue": {
         "root": "greet",

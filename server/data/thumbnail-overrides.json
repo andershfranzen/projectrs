@@ -1547,6 +1547,33 @@
     "rotationZ": 0,
     "iconScale": 0.85
   },
+  "460": {
+    "alpha": 0.6981317007977318,
+    "beta": 2.181661564992912,
+    "distanceMult": 0.8,
+    "rotationX": -0.8028514559173916,
+    "rotationY": -0.4886921905584123,
+    "rotationZ": -0.1832595714594046,
+    "iconScale": 0.85
+  },
+  "550": {
+    "alpha": -0.6544984694978736,
+    "beta": 0.8377580409572782,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1.05
+  },
+  "551": {
+    "alpha": -2.5569073541716927,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
   "_doc": "Thumbnail tuning. Top-level numeric keys are legacy item-specific overrides. _item_families is keyed by normalized equipment family (slot:family, e.g. weapon:battleaxe) and is the preferred item thumbnail source for future items. _thumbnail_assets is keyed by editor asset path. Pose fields are radians/multipliers.",
   "_thumbnail_manual_items": [
     31,
