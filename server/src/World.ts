@@ -2,7 +2,7 @@ import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANG
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
-import { addXp, MAX_SKILL_LEVEL, MAX_SKILL_XP, statRandom, spellSchoolSkill } from '@projectrs/shared';
+import { addXp, levelFromXp, MAX_SKILL_LEVEL, MAX_SKILL_XP, statRandom, spellSchoolSkill, xpForLevel } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot, type PlayerAmmo } from './entity/Player';
 import { Npc, type NpcOptions } from './entity/Npc';
@@ -7395,6 +7395,25 @@ export class World {
     player.syncDirty = true;
     this.sendSkills(player);
     this.savePlayerState(player);
+  }
+
+  setPlayerSkillLevel(player: Player, skillId: SkillId, level: number): { level: number; xp: number } {
+    const normalizedLevel = Math.max(1, Math.min(MAX_SKILL_LEVEL, Math.floor(level)));
+    return this.setPlayerSkillXp(player, skillId, xpForLevel(normalizedLevel));
+  }
+
+  setPlayerSkillXp(player: Player, skillId: SkillId, xp: number): { level: number; xp: number } {
+    const normalizedXp = Math.max(0, Math.min(MAX_SKILL_XP, Math.floor(xp)));
+    const newLevel = levelFromXp(normalizedXp);
+    const skill = player.skills[skillId];
+    skill.xp = normalizedXp;
+    skill.level = newLevel;
+    skill.currentLevel = newLevel;
+    if (skillId === 'hitpoints') player.syncHealthFromSkills();
+    player.syncDirty = true;
+    this.sendSkills(player);
+    this.savePlayerState(player);
+    return { level: newLevel, xp: normalizedXp };
   }
 
   private sendLevelUp(player: Player, skillIndex: number, newLevel: number): void {

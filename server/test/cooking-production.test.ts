@@ -414,6 +414,38 @@ describe('cooking range production', () => {
     expect(crafted).toEqual([]);
   });
 
+  test('using raw beef on a fire selects the cooked beef recipe', () => {
+    const data = new DataLoader();
+    const fireDef = data.getObject(FIRE_OBJECT_DEF_ID);
+    const world = Object.create(World.prototype) as any;
+    const player = makePlayer();
+    const obj = makeFire();
+    const started: Array<{ recipeIndex: number; outputItemId: number | undefined; quantity: number }> = [];
+
+    if (!fireDef?.recipes) throw new Error('missing fire cooking recipes');
+    obj.def = fireDef;
+    obj.currentActions = fireDef.actions ?? ['Cook', 'Examine'];
+    player.inventory[0] = { itemId: 263, quantity: 1 };
+    world.currentTick = 20;
+    world.players = new Map([[player.id, player]]);
+    world.worldObjects = new Map([[obj.id, obj]]);
+    world.canPlayerTargetObject = () => true;
+    world.interruptPlayerAction = () => {};
+    world.isAdjacentToObject = () => true;
+    world.supportsObjectRecipeProduction = () => true;
+    world.startObjectRecipeProduction = (_playerId: number, _player: Player, target: any, recipeIndex: number, quantity: number) => {
+      started.push({
+        recipeIndex,
+        outputItemId: target.def.recipes?.[recipeIndex]?.outputItemId,
+        quantity,
+      });
+    };
+
+    world.handlePlayerUseItemOnObject(player.id, 0, 263, obj.id);
+
+    expect(started).toEqual([{ recipeIndex: 2, outputItemId: 16, quantity: 1 }]);
+  });
+
   test('using stacked raw food on a fire cooks all matching food', () => {
     const world = Object.create(World.prototype) as any;
     const player = makePlayer();

@@ -1,5 +1,5 @@
 import { World } from '../World';
-import { ALL_SKILLS, MAX_SKILL_LEVEL, SKILL_NAMES, normalizeSkillId, type QuestDef, type SkillId } from '@projectrs/shared';
+import { ALL_SKILLS, MAX_SKILL_LEVEL, MAX_SKILL_XP, SKILL_NAMES, normalizeSkillId, type QuestDef, type SkillId } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 import type { GameEventLogInput, SocialEntry, SocialListKind, SocialLists } from '../Database';
 import type { Player } from '../entity/Player';
@@ -601,6 +601,42 @@ function handleCommand(
         world.grantXp(player, skillId, amount);
         sendSystem(ws, `Granted ${amount} ${SKILL_NAMES[skillId]} XP`);
       }
+      break;
+    }
+
+    case '/setlevel': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const skillId = parseSkillId(parts[1] ?? '');
+      const level = Number(parts[2]);
+      if (!skillId || !Number.isInteger(level) || level < 1 || level > MAX_SKILL_LEVEL) {
+        sendSystem(ws, `Usage: /setlevel <skill> <level 1-${MAX_SKILL_LEVEL}>. Skills: ${ALL_SKILLS.map(id => SKILL_NAMES[id]).join(', ')}`);
+        return;
+      }
+      const player = findPlayerByUsername(from, world);
+      if (!player) {
+        sendSystem(ws, 'You are not online.');
+        return;
+      }
+      const result = world.setPlayerSkillLevel(player, skillId, level);
+      sendSystem(ws, `Set ${SKILL_NAMES[skillId]} to level ${result.level} (${result.xp} XP).`);
+      break;
+    }
+
+    case '/setxp': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const skillId = parseSkillId(parts[1] ?? '');
+      const xp = Number(parts[2]);
+      if (!skillId || !Number.isInteger(xp) || xp < 0 || xp > MAX_SKILL_XP) {
+        sendSystem(ws, `Usage: /setxp <skill> <xp 0-${MAX_SKILL_XP}>. Skills: ${ALL_SKILLS.map(id => SKILL_NAMES[id]).join(', ')}`);
+        return;
+      }
+      const player = findPlayerByUsername(from, world);
+      if (!player) {
+        sendSystem(ws, 'You are not online.');
+        return;
+      }
+      const result = world.setPlayerSkillXp(player, skillId, xp);
+      sendSystem(ws, `Set ${SKILL_NAMES[skillId]} to ${result.xp} XP (level ${result.level}).`);
       break;
     }
 

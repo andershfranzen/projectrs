@@ -1634,12 +1634,17 @@ export class GameManager {
     // Previously these were four serial awaits, which on a cold start added
     // up to ~200–400ms of dead time over the lifetime of the constructor.
     const authHeaders = this.authHeaders();
+    const dataFetchOptions: RequestInit = {
+      headers: authHeaders,
+      credentials: 'same-origin',
+      cache: 'reload',
+    };
     const [objectsRes, itemsRes, npcsRes, gearRes, questsRes] = await Promise.all([
-      fetch('/data/objects.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load object definitions:', e); return null; }),
-      fetch('/data/items.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load item definitions:', e); return null; }),
-      fetch('/data/npcs.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load NPC definitions:', e); return null; }),
-      fetch('/data/gear-overrides.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load gear overrides:', e); return null; }),
-      fetch('/data/quests.json', { headers: authHeaders, credentials: 'same-origin' }).catch(() => null),
+      fetch('/data/objects.json', dataFetchOptions).catch((e) => { console.warn('Failed to load object definitions:', e); return null; }),
+      fetch('/data/items.json', dataFetchOptions).catch((e) => { console.warn('Failed to load item definitions:', e); return null; }),
+      fetch('/data/npcs.json', dataFetchOptions).catch((e) => { console.warn('Failed to load NPC definitions:', e); return null; }),
+      fetch('/data/gear-overrides.json', dataFetchOptions).catch((e) => { console.warn('Failed to load gear overrides:', e); return null; }),
+      fetch('/data/quests.json', dataFetchOptions).catch(() => null),
     ]);
 
     if (objectsRes) {
@@ -6977,6 +6982,7 @@ export class GameManager {
             { label: 'All', value: 'all' },
           ]
         : undefined,
+      primaryRecipePerInput: isCookingStationDef(def),
     });
   }
 
