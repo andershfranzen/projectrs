@@ -57,11 +57,11 @@
       },
       {
         "id": 1,
-        "description": "I found Sela, a young vampire, in the barn. She was turned and abandoned by Lord Mortrek. I need to decide how to handle this."
+        "description": "I found Sela, a young vampire, in the cow field. She was turned and abandoned by Lord Mortrek. I need to decide how to handle this."
       },
       {
         "id": 2,
-        "description": "I need to confront Lord Mortrek in his castle.",
+        "description": "I need to confront Lord Mortrek in the Graveyard.",
         "descriptionByVar": {
           "key": "BLOOD_PATH",
           "values": {
@@ -72,7 +72,7 @@
       },
       {
         "id": 3,
-        "description": "I'm facing Lord Mortrek in his castle.",
+        "description": "I'm facing Lord Mortrek in the Graveyard.",
         "descriptionByVar": {
           "key": "BLOOD_PATH",
           "values": {
@@ -87,7 +87,7 @@
       },
       {
         "id": 4,
-        "description": "I should return to Farmer Borin.",
+        "description": "I should return to Farmer Borin behind the cow field.",
         "descriptionByVar": {
           "key": "BLOOD_PATH",
           "values": {
@@ -96,6 +96,9 @@
           }
         }
       }
-    ]
+    ],
+    "rewards": {
+      "items": []
+    }
   }
 ]
