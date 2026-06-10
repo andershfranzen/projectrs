@@ -2,9 +2,10 @@ import {
   INVENTORY_SIZE, ClientOpcode, encodePacket,
   ALL_SKILLS, MAX_SKILL_LEVEL, MAX_SKILL_XP, SKILL_NAMES, SKILL_COLORS, xpForLevel,
   CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, SOFT_CLAY_WATER_CONTAINER_ITEM_IDS,
-  BUCKET_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID,
+  BUCKET_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID,
   LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES,
   ARROWHEAD_FLETCHING_RECIPES, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID,
+  SURVIVAL_FIREMAKING_LOG_ITEM_IDS,
   QUEST_STAGE_COMPLETED,
   isAutocastableSpell, spellReagentSummary, spellSchoolSkill,
   zeroBonuses, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, combatLevelFromLevels,
@@ -2859,6 +2860,10 @@ export class SidePanel {
       if (index === using.slot) { this.clearUsingInvItem(); return; }
       const target = this.invSlots[index];
       if (!target) { this.clearUsingInvItem(); return; }
+      if (this.trySendFiremakingUse(using.slot, using.itemId, index, target.itemId)) {
+        this.clearUsingInvItem();
+        return;
+      }
       if (this.promptLogCraftingMenu(using.slot, using.itemId, index, target.itemId)) {
         this.clearUsingInvItem();
         return;
@@ -3229,6 +3234,21 @@ export class SidePanel {
     return this.invSlots.reduce((total, slot) => total + (slot?.itemId === itemId ? slot.quantity : 0), 0);
   }
 
+  private findInventorySlot(itemId: number): number {
+    return this.invSlots.findIndex(slot => slot?.itemId === itemId);
+  }
+
+  private trySendFiremakingUse(fromSlot: number, fromItemId: number, toSlot: number, toItemId: number): boolean {
+    const canLight = (fromItemId === MATCHBOX_ITEM_ID && SURVIVAL_FIREMAKING_LOG_ITEM_IDS.has(toItemId))
+      || (toItemId === MATCHBOX_ITEM_ID && SURVIVAL_FIREMAKING_LOG_ITEM_IDS.has(fromItemId));
+    if (!canLight) return false;
+    this.network.sendRaw(encodePacket(
+      ClientOpcode.PLAYER_USE_ITEM_ON_ITEM,
+      fromSlot, fromItemId, toSlot, toItemId,
+    ));
+    return true;
+  }
+
   private onInvSlotRightClick(index: number, event: MouseEvent): void {
     const options = this.getInvSlotOptions(index);
     if (options.length === 0) return;
@@ -3328,6 +3348,19 @@ export class SidePanel {
         label: `Use ${name}`,
         action: () => this.setUsingInvItem(index, slot.itemId),
       });
+    }
+
+    if (SURVIVAL_FIREMAKING_LOG_ITEM_IDS.has(slot.itemId)) {
+      const matchboxSlot = this.findInventorySlot(MATCHBOX_ITEM_ID);
+      if (matchboxSlot >= 0) {
+        options.push({
+          label: `Light ${name}`,
+          action: () => this.network.sendRaw(encodePacket(
+            ClientOpcode.PLAYER_USE_ITEM_ON_ITEM,
+            matchboxSlot, MATCHBOX_ITEM_ID, index, slot.itemId,
+          )),
+        });
+      }
     }
 
     options.push({

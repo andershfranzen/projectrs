@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -18,6 +18,7 @@ import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
 import { consumeSpellCosts } from './magic/SpellCosts';
 import { DEFAULT_MAX_SEARCH_TILES, canTravel, expandAndValidateWaypointPath, findPathToAnyTile, findPathToReach, findPathToRectInteraction, findPathToTile, isRectInteractionTileReachable, type PathingCollision } from './pathing/Pathing';
+import { hasTileLineOfSight } from './visibility/LineOfSight';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import type { ServerWebSocket } from 'bun';
@@ -39,6 +40,12 @@ const SULTANS_MINE_EXPORT_DOOR_TILE_Z = 157;
 const SULTANS_MINE_EXPORT_DOOR_FLOOR = 0;
 const SULTANS_MINE_ORE_DOOR_WARNING = "Halt. Pay for your ore's transportation before you leave the mine.";
 const SULTANS_MINE_DOOR_TRANSIT_COMPLETE_MESSAGE = 'You walk through the door.';
+const STALL_MERCHANT_SPOT_RANGE_TILES = 6;
+const STALL_MERCHANT_GUARD_CALL_RANGE_TILES = 6;
+const STALL_GUARD_MIN_QUERY_RANGE_TILES = 6;
+const STALL_SPOT_WARNING = 'Hey! Get your hands off there!';
+const STALL_MERCHANT_GUARD_CALL = 'Guards guards!';
+const STALL_MERCHANT_BLOCK_MESSAGE = 'The merchant is watching you too closely.';
 type ItemQuantity = { itemId: number; quantity: number };
 type BankInventoryItemsForCoinsAction = Extract<import('@projectrs/shared').DialogueAction, { type: 'bankInventoryItemsForCoins' }>;
 type PlayerMovementLayerState = { floor: number; y: number; lastFloorChangeTile: number };
@@ -69,7 +76,8 @@ type ItemProductionAction =
   | { kind: 'itemOnItem'; recipe: ItemOnItemRecipe; remaining: number | null; nextTick: number; intervalTicks: number }
   | { kind: 'itemOnObject'; recipe: ItemOnObjectRecipe; objectEntityId: number; remaining: number | null; nextTick: number }
   | { kind: 'waterSource'; objectEntityId: number; nextTick: number }
-  | { kind: 'objectRecipe'; objectEntityId: number; recipeIndex: number; remaining: number | null; nextTick: number; intervalTicks: number };
+  | { kind: 'objectRecipe'; objectEntityId: number; recipeIndex: number; remaining: number | null; nextTick: number; intervalTicks: number }
+  | { kind: 'firemaking'; recipe: SurvivalFiremakingRecipe; tileX: number; tileZ: number; mapLevel: string; floor: number; nextTick: number; intervalTicks: number };
 type HarvestYield = {
   itemId: number;
   quantity: number;
@@ -350,6 +358,7 @@ interface RuntimeObjectSpawn {
   consumeKey?: boolean;
   lockedMessage?: string;
   altarTier?: number;
+  stallLoot?: WorldObject['stallLoot'];
   trigger?: WorldObject['trigger'];
   verticalLinks?: WorldObject['verticalLinks'];
   interactionTiles?: WorldObject['interactionTiles'];
@@ -515,6 +524,7 @@ export class World {
   private readonly options: WorldOptions;
   private readonly quests: QuestService;
   readonly players: Map<number, Player> = new Map();
+  private maxThievingGuardWanderRange: number = STALL_GUARD_MIN_QUERY_RANGE_TILES;
 
   /** True if there's an active session from `deviceId` belonging to a
    *  DIFFERENT account than `excludeAccountId`. Used by /api/login to enforce
@@ -624,6 +634,8 @@ export class World {
 
   /** World objects currently depleted and awaiting respawn */
   private depletedObjectIds: Set<number> = new Set();
+  /** Temporary player-made fires. They burn down into ashes and are not persisted. */
+  private runtimeFireObjectIds: Set<number> = new Set();
 
   /** Reusable set for health regen — avoids allocation every regen tick */
   private _playersUnderNpcAttack: Set<number> = new Set();
@@ -842,6 +854,7 @@ export class World {
       npc.currentMapLevel = mapId;
       npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
       this.npcs.set(npc.id, npc);
+      this.trackThievingGuardWanderRange(npc);
       cm.addEntity(npc.id, spawn.x, spawn.z, 'npc');
     }
     const objectSpawns = this.collectObjectSpawns(mapId, gameMap, spawns.objects ?? []);
@@ -1516,7 +1529,7 @@ export class World {
         interactionTileKeys.add(this.blockedKeyFor(mapId, tile.x, tile.z, floor));
       }
     }
-    for (const tile of getObjectFootprintTiles(x, z, def)) {
+    for (const tile of getObjectFootprintTiles(x, z, def, rotY)) {
       const key = this.blockedKeyFor(mapId, tile.x, tile.z, floor);
       if (interactionTileKeys?.has(key)) continue;
       if (blocked) this.blockedObjectTiles.add(key);
@@ -1594,10 +1607,11 @@ export class World {
     const explicit = this.explicitObjectInteractionTiles(obj);
     if (explicit.length > 0) return explicit;
     const allowedWorldSides = obj.interactionSides
-      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
+      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def)
       : undefined;
     return getObjectInteractionTiles(obj.x, obj.z, obj.def, {
       allowedWorldSides,
+      rotationY: obj.rotationY,
       includeCorners: this.usesCornerObjectInteraction(obj),
     });
   }
@@ -1648,7 +1662,7 @@ export class World {
     if (!this.requiresClearObjectInteractionEdge(obj)) return true;
     const gameMap = map ?? this.getPlayerMap(player);
     let hasAdjacentFootprintTile = false;
-    for (const footprintTile of getObjectFootprintTiles(obj.x, obj.z, obj.def)) {
+    for (const footprintTile of getObjectFootprintTiles(obj.x, obj.z, obj.def, obj.rotationY)) {
       const dx = footprintTile.x - tileX;
       const dz = footprintTile.z - tileZ;
       if (Math.abs(dx) + Math.abs(dz) !== 1) continue;
@@ -1679,8 +1693,9 @@ export class World {
       ? explicit.some(tile => tile.x === tileX && tile.z === tileZ)
       : isTileAdjacentToObject(tileX, tileZ, obj.x, obj.z, obj.def, {
           allowedWorldSides: obj.interactionSides
-            ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
+            ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def)
             : undefined,
+          rotationY: obj.rotationY,
           includeCorners: this.usesCornerObjectInteraction(obj),
         });
     return adjacent && this.hasClearObjectInteractionEdge(player, obj, tileX, tileZ, map, explicit.length > 0);
@@ -1751,6 +1766,7 @@ export class World {
         npc.currentMapLevel = mapId;
         npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
         this.npcs.set(npc.id, npc);
+        this.trackThievingGuardWanderRange(npc);
 
         // Sized NPCs need an unblocked NxN footprint at their anchor or
         // they spawn stuck (wander finds no goal, chase can't step). Spawns
@@ -1931,6 +1947,7 @@ export class World {
           consumeKey: placed.consumeKey === true,
           lockedMessage: placed.lockedMessage,
           altarTier: Number.isInteger(placed.altarTier) ? placed.altarTier : undefined,
+          stallLoot: placed.stallLoot,
           trigger: placed.trigger,
           verticalLinks: placed.verticalLinks,
           interactionTiles: placed.interactionTiles,
@@ -1968,6 +1985,7 @@ export class World {
     if (spawn.consumeKey) obj.doorConsumeKey = true;
     if (spawn.lockedMessage) obj.doorLockedMessage = spawn.lockedMessage;
     if (Number.isInteger(spawn.altarTier) && spawn.altarTier! > 0) obj.altarTier = Math.max(1, Math.floor(spawn.altarTier!));
+    if (spawn.stallLoot?.length) obj.stallLoot = spawn.stallLoot;
     if (spawn.trigger) obj.trigger = spawn.trigger;
     if (spawn.verticalLinks?.length) obj.verticalLinks = spawn.verticalLinks;
     if (spawn.interactionTiles?.length) obj.interactionTiles = spawn.interactionTiles;
@@ -5054,6 +5072,8 @@ export class World {
       // silent (their depleted variant is visually obvious).
       if (obj.def.category === 'chest') {
         this.sendChatSystem(player, `The ${obj.def.name.toLowerCase()} hasn't been restocked yet.`);
+      } else if (obj.def.category === 'stall') {
+        this.sendChatSystem(player, `The ${obj.def.name.toLowerCase()} is empty. Wait for it to be restocked.`);
       }
       return;
     }
@@ -5241,6 +5261,11 @@ export class World {
       return;
     }
 
+    if (obj.def.category === 'stall' && action === 'Steal-from') {
+      this.handleStallSteal(player, obj);
+      return;
+    }
+
     if (this.isHarvestableObjectDef(obj.def) && (obj.def.skill || obj.def.category === 'crop')) {
       this.handleHarvestInteraction(playerId, player, obj, action);
       return;
@@ -5262,7 +5287,7 @@ export class World {
         && this.supportsObjectRecipeProduction(obj)
         && (
           recipeQuantity !== 1
-          || obj.def.category === 'cookingrange'
+          || this.isCookingStationObject(obj)
           || obj.defId === SPINNING_WHEEL_OBJECT_DEF_ID
         )
       ) {
@@ -5282,8 +5307,12 @@ export class World {
     return BATCH_OBJECT_RECIPE_DEF_IDS.includes(obj.defId);
   }
 
+  private isCookingStationObject(obj: WorldObject): boolean {
+    return obj.def.category === 'cookingrange' || obj.defId === FIRE_OBJECT_DEF_ID;
+  }
+
   private objectRecipeProductionTicks(obj: WorldObject): number {
-    if (obj.defId === COOKING_RANGE_OBJECT_DEF_ID) return COOKING_RECIPE_TICKS;
+    if (this.isCookingStationObject(obj)) return COOKING_RECIPE_TICKS;
     if (obj.defId === SPINNING_WHEEL_OBJECT_DEF_ID) return SPINNING_WHEEL_RECIPE_TICKS;
     return 1;
   }
@@ -5574,6 +5603,356 @@ export class World {
       xpReward: def.xpReward ?? 0,
       levelRequired,
     };
+  }
+
+  private resolvePlacedStallYield(obj: WorldObject, rng: () => number = Math.random): HarvestYield | null | 'nothing' {
+    const entries = obj.stallLoot;
+    if (!entries?.length) return null;
+    let totalChance = 0;
+    for (const entry of entries) {
+      if (
+        Number.isInteger(entry.itemId)
+        && entry.itemId > 0
+        && Number.isFinite(entry.chance)
+        && entry.chance > 0
+      ) {
+        totalChance += entry.chance;
+      }
+    }
+    if (totalChance <= 0) return null;
+
+    const rollScale = totalChance > 1 ? totalChance : 1;
+    let roll = rng() * rollScale;
+    for (const entry of entries) {
+      if (
+        !Number.isInteger(entry.itemId)
+        || entry.itemId <= 0
+        || !Number.isFinite(entry.chance)
+        || entry.chance <= 0
+      ) {
+        continue;
+      }
+      roll -= entry.chance;
+      if (roll < 0) {
+        return {
+          itemId: entry.itemId,
+          quantity: Math.max(1, Math.floor(entry.quantity ?? 1)),
+          xpReward: Math.max(0, Math.floor(entry.xpReward ?? obj.def.xpReward ?? 0)),
+          levelRequired: obj.def.levelRequired ?? 1,
+        };
+      }
+    }
+
+    return 'nothing';
+  }
+
+  private resolveStallYield(obj: WorldObject, rng: () => number = Math.random): HarvestYield | null | 'nothing' {
+    const placedYield = this.resolvePlacedStallYield(obj, rng);
+    if (placedYield) return placedYield;
+
+    const def = obj.def;
+    const options = def.harvestOptions;
+    if (options?.length) {
+      const unlocked = options;
+      let totalWeight = 0;
+      for (const option of unlocked) totalWeight += Math.max(0, option.weight ?? 1);
+      const useEqualWeights = totalWeight <= 0;
+      if (useEqualWeights) totalWeight = unlocked.length;
+      let roll = rng() * totalWeight;
+      let selected = unlocked[unlocked.length - 1];
+      for (const option of unlocked) {
+        const weight = useEqualWeights ? 1 : Math.max(0, option.weight ?? 1);
+        roll -= weight;
+        if (roll < 0) {
+          selected = option;
+          break;
+        }
+      }
+      return {
+        itemId: selected.harvestItemId,
+        quantity: selected.harvestQuantity ?? def.harvestQuantity ?? 1,
+        xpReward: selected.xpReward,
+        levelRequired: def.levelRequired ?? selected.levelRequired,
+      };
+    }
+    if (def.harvestItemId === undefined) return null;
+    return {
+      itemId: def.harvestItemId,
+      quantity: def.harvestQuantity ?? 1,
+      xpReward: def.xpReward ?? 0,
+      levelRequired: def.levelRequired ?? 1,
+    };
+  }
+
+  private itemLootPhrase(itemId: number, quantity: number): string {
+    const itemName = this.itemEventName(itemId).toLowerCase();
+    return quantity > 1 ? `${quantity} ${itemName}` : `${indefiniteArticle(itemName)} ${itemName}`;
+  }
+
+  private npcSightOrigin(npc: Npc): { x: number; z: number } {
+    if (npc.size <= 1) return { x: npc.position.x, z: npc.position.y };
+    const minTileX = getObjectFootprintMinTile(npc.position.x, npc.size);
+    const minTileZ = getObjectFootprintMinTile(npc.position.y, npc.size);
+    return { x: minTileX + npc.size / 2, z: minTileZ + npc.size / 2 };
+  }
+
+  private npcChebyshevDistanceToPoint(npc: Npc, x: number, z: number): number {
+    const fp = npc.distToFootprint(x, z);
+    return Math.max(Math.abs(fp.dx), Math.abs(fp.dz));
+  }
+
+  private hasCollisionLineOfSight(
+    mapId: string,
+    floor: number,
+    fromX: number,
+    fromZ: number,
+    toX: number,
+    toZ: number,
+  ): boolean {
+    const map = this.maps?.get(mapId);
+    if (!map || !map.hasWallLineOfSight(fromX, fromZ, toX, toZ, floor)) return false;
+    return hasTileLineOfSight(fromX, fromZ, toX, toZ, (tileX, tileZ) => {
+      const key = this.blockedKeyFor(mapId, tileX, tileZ, floor);
+      return (this.blockedObjectTiles?.has(key) ?? false) || this.isCenteredDoorTileBlockedKey(key);
+    });
+  }
+
+  private canNpcSeePlayer(npc: Npc, player: Player, maxSightRange: number): boolean {
+    if (npc.dead || !player.alive || player.disconnected) return false;
+    if (npc.currentMapLevel !== player.currentMapLevel || npc.currentFloor !== player.currentFloor) return false;
+    if (this.npcChebyshevDistanceToPoint(npc, player.position.x, player.position.y) > maxSightRange + 0.5) return false;
+    const origin = this.npcSightOrigin(npc);
+    return this.hasCollisionLineOfSight(
+      npc.currentMapLevel,
+      npc.currentFloor,
+      origin.x,
+      origin.z,
+      player.position.x,
+      player.position.y,
+    );
+  }
+
+  private isThievingGuardNpc(npc: Npc): boolean {
+    const name = (npc.name || npc.def.name || '').toLowerCase();
+    if (!name.includes('guard')) return false;
+    return (npc.def.attack ?? 0) > 0 && (npc.def.strength ?? 0) > 0;
+  }
+
+  private trackThievingGuardWanderRange(npc: Npc): void {
+    if (!this.isThievingGuardNpc(npc)) return;
+    this.maxThievingGuardWanderRange = Math.max(
+      this.maxThievingGuardWanderRange,
+      Math.max(0, npc.wanderRange),
+    );
+  }
+
+  private forEachNpcNear(mapId: string, worldX: number, worldZ: number, radiusTiles: number, fn: (npc: Npc) => void): void {
+    const cm = this.chunkManagers?.get(mapId);
+    if (!cm) {
+      for (const [, npc] of this.npcs) {
+        if (npc.currentMapLevel === mapId) fn(npc);
+      }
+      return;
+    }
+
+    cm.forEachEntityKindNearRadius(worldX, worldZ, radiusTiles, (entityId, kind) => {
+      if (kind !== 'npc') return;
+      const npc = this.npcs.get(entityId);
+      if (npc) fn(npc);
+    });
+  }
+
+  private isPlayerWithinGuardWanderRange(guard: Npc, player: Player): boolean {
+    const range = Math.max(0, guard.wanderRange);
+    return Math.abs(player.position.x - guard.spawnX) <= range + 0.5
+      && Math.abs(player.position.y - guard.spawnZ) <= range + 0.5
+      && this.npcChebyshevDistanceToPoint(guard, player.position.x, player.position.y) <= range + 0.5;
+  }
+
+  private canStallGuardEngage(guard: Npc, player: Player): boolean {
+    if (!this.isThievingGuardNpc(guard)) return false;
+    if (guard.currentMapLevel !== player.currentMapLevel || guard.currentFloor !== player.currentFloor) return false;
+    if (guard.dead || guard.retreatTarget) return false;
+    if (guard.combatTarget && guard.combatTarget.id !== player.id) return false;
+    if (!player.alive || player.disconnected || player.requestIdleLogout) return false;
+    if (this.activeDuels?.has(player.id)) return false;
+    return this.canPlayerTargetNpc(player, guard);
+  }
+
+  private findVisibleStallGuard(player: Player): Npc | null {
+    let best: Npc | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    this.forEachNpcNear(player.currentMapLevel, player.position.x, player.position.y, this.maxThievingGuardWanderRange, (npc) => {
+      if (npc.currentMapLevel !== player.currentMapLevel || npc.currentFloor !== player.currentFloor) return;
+      if (!this.canStallGuardEngage(npc, player)) return;
+      if (!this.isPlayerWithinGuardWanderRange(npc, player)) return;
+      if (!this.canNpcSeePlayer(npc, player, Math.max(0, npc.wanderRange))) return;
+      const distance = this.npcChebyshevDistanceToPoint(npc, player.position.x, player.position.y);
+      if (distance < bestDistance) {
+        best = npc;
+        bestDistance = distance;
+      }
+    });
+    return best;
+  }
+
+  private findVisibleStallMerchant(player: Player, obj: WorldObject): Npc | null {
+    const merchantNpcId = obj.def.stallMerchantNpcId;
+    if (!merchantNpcId) return null;
+    let best: Npc | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    this.forEachNpcNear(obj.mapLevel, obj.x, obj.z, STALL_MERCHANT_SPOT_RANGE_TILES, (npc) => {
+      if (npc.npcId !== merchantNpcId || npc.dead) return;
+      if (npc.currentMapLevel !== obj.mapLevel || npc.currentFloor !== obj.floor) return;
+      if (this.npcChebyshevDistanceToPoint(npc, obj.x, obj.z) > STALL_MERCHANT_SPOT_RANGE_TILES + 0.5) return;
+      if (!this.canNpcSeePlayer(npc, player, STALL_MERCHANT_SPOT_RANGE_TILES)) return;
+      const distance = this.npcChebyshevDistanceToPoint(npc, player.position.x, player.position.y);
+      if (distance < bestDistance) {
+        best = npc;
+        bestDistance = distance;
+      }
+    });
+    return best;
+  }
+
+  private findMerchantCallableStallGuard(merchant: Npc, player: Player): Npc | null {
+    let best: Npc | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    const merchantOrigin = this.npcSightOrigin(merchant);
+    this.forEachNpcNear(merchant.currentMapLevel, merchant.position.x, merchant.position.y, STALL_MERCHANT_GUARD_CALL_RANGE_TILES, (guard) => {
+      if (guard.id === merchant.id) return;
+      if (guard.currentMapLevel !== merchant.currentMapLevel || guard.currentFloor !== merchant.currentFloor) return;
+      if (!this.canStallGuardEngage(guard, player)) return;
+      if (this.npcChebyshevDistanceToPoint(guard, merchant.position.x, merchant.position.y) > STALL_MERCHANT_GUARD_CALL_RANGE_TILES + 0.5) return;
+      if (!this.isPlayerWithinGuardWanderRange(guard, player)) return;
+      if (!this.canNpcSeePlayer(guard, player, Math.max(0, guard.wanderRange))) return;
+      const guardOrigin = this.npcSightOrigin(guard);
+      if (!this.hasCollisionLineOfSight(
+        merchant.currentMapLevel,
+        merchant.currentFloor,
+        merchantOrigin.x,
+        merchantOrigin.z,
+        guardOrigin.x,
+        guardOrigin.z,
+      )) return;
+      const distance = this.npcChebyshevDistanceToPoint(guard, player.position.x, player.position.y);
+      if (distance < bestDistance) {
+        best = guard;
+        bestDistance = distance;
+      }
+    });
+    return best;
+  }
+
+  private alertStallGuard(guard: Npc, player: Player): void {
+    this.broadcastNpcFacingPlayer(guard, player);
+    this.broadcastNpcOverheadMessage(guard, STALL_SPOT_WARNING);
+    this.enqueueNpcRetaliation(guard, player);
+  }
+
+  private blockStallStealByMerchant(player: Player, merchant: Npc, directGuard: Npc | null): void {
+    this.broadcastNpcFacingPlayer(merchant, player);
+    this.broadcastNpcOverheadMessage(merchant, STALL_SPOT_WARNING);
+
+    const calledGuard = this.findMerchantCallableStallGuard(merchant, player);
+    if (calledGuard) {
+      this.broadcastNpcOverheadMessage(merchant, STALL_MERCHANT_GUARD_CALL);
+      this.alertStallGuard(calledGuard, player);
+    }
+    if (directGuard && directGuard.id !== calledGuard?.id) {
+      this.alertStallGuard(directGuard, player);
+    }
+
+    this.sendChatSystem(player, STALL_MERCHANT_BLOCK_MESSAGE);
+    player.setDelay(this.currentTick, 1);
+  }
+
+  private handleStallSteal(player: Player, obj: WorldObject): void {
+    if (player.isStallStealBlockedByCombat(this.currentTick)) {
+      this.sendChatSystem(player, "You can't steal from the market stall during combat!");
+      return;
+    }
+
+    const skillId = (obj.def.skill ?? 'roguery') as SkillId;
+    const playerLevel = player.skills[skillId]?.level ?? 1;
+    const levelRequired = Math.max(1, Math.floor(obj.def.levelRequired ?? 1));
+    if (playerLevel < levelRequired) {
+      this.sendChatSystem(player, `You need level ${levelRequired} ${SKILL_NAMES[skillId] ?? 'Roguery'} to do that.`);
+      return;
+    }
+
+    const loot = this.resolveStallYield(obj);
+    if (!loot) {
+      this.sendChatSystem(player, `The ${obj.def.name.toLowerCase()} has no loot configured.`);
+      return;
+    }
+
+    const spottingGuard = this.findVisibleStallGuard(player);
+    const spottingMerchant = this.findVisibleStallMerchant(player, obj);
+    if (spottingMerchant) {
+      this.blockStallStealByMerchant(player, spottingMerchant, spottingGuard);
+      return;
+    }
+    if (spottingGuard) this.alertStallGuard(spottingGuard, player);
+
+    if (loot === 'nothing') {
+      this.sendChatSystem(player, 'You fail to find anything worth stealing.');
+      this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, obj.id, true);
+      player.setDelay(this.currentTick, 1);
+      this.persistAndBroadcastDepletion(obj);
+      return;
+    }
+
+    if (!player.canFit(loot.itemId, loot.quantity, this.data.itemDefs)) {
+      this.sendChatSystem(player, "Your inventory is too full to hold any more.");
+      return;
+    }
+
+    const added = player.addItem(loot.itemId, loot.quantity, this.data.itemDefs);
+    if (added.completed !== loot.quantity) {
+      this.sendChatSystem(player, "Your inventory is too full to hold any more.");
+      return;
+    }
+
+    if (loot.xpReward > 0) {
+      const result = addXp(player.skills, skillId, loot.xpReward);
+      const skillIdx = ALL_SKILLS.indexOf(skillId);
+      if (skillIdx >= 0) {
+        this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, loot.xpReward);
+        if (result.leveled) this.sendLevelUp(player, skillIdx, result.newLevel);
+        this.sendSingleSkill(player, skillIdx);
+      }
+    }
+
+    this.sendInventory(player);
+    this.sendChatSystem(player, `You steal ${this.itemLootPhrase(loot.itemId, loot.quantity)}.`);
+    this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId: loot.itemId, quantity: loot.quantity, source: 'harvest' });
+    this.recordGameEvent({
+      type: 'harvest',
+      severity: 'info',
+      message: `${player.name} stole ${loot.quantity} x ${this.itemEventName(loot.itemId)} from ${obj.def.name}`,
+      actorAccountId: player.accountId,
+      actorName: player.name,
+      itemId: loot.itemId,
+      itemName: this.itemEventName(loot.itemId),
+      quantity: loot.quantity,
+      mapLevel: obj.mapLevel,
+      floor: obj.floor,
+      x: obj.x,
+      z: obj.z,
+      details: {
+        source: 'stall',
+        objectEntityId: obj.id,
+        objectDefId: obj.defId,
+        objectName: obj.def.name,
+        skillId,
+        xpReward: loot.xpReward,
+      },
+    });
+
+    this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, obj.id, true);
+    player.setDelay(this.currentTick, 1);
+    this.persistAndBroadcastDepletion(obj);
   }
 
   private handleHarvestInteraction(playerId: number, player: Player, obj: WorldObject, action: string): void {
@@ -6074,6 +6453,7 @@ export class World {
     if (toSlot < 0 || toSlot >= player.inventory.length) return;
     if (player.inventory[toSlot]?.itemId !== toItemId) return;
     this.interruptPlayerAction(playerId, player);
+    if (this.startFiremakingIfRecipe(playerId, player, fromItemId, toItemId)) return;
     const recipe = this.findItemOnItemRecipe(fromItemId, toItemId, recipeIndex);
     if (recipe) {
       if (recipe.repeatable && (quantity !== 1 || (recipe.intervalTicks ?? 1) > 1)) {
@@ -6098,6 +6478,120 @@ export class World {
     const recipes = this.findItemOnItemRecipes(fromItemId, toItemId);
     const index = Number.isFinite(recipeIndex) ? Math.max(0, Math.trunc(recipeIndex)) : 0;
     return recipes[index] ?? null;
+  }
+
+  private startFiremakingIfRecipe(
+    playerId: number,
+    player: Player,
+    fromItemId: number,
+    toItemId: number,
+  ): boolean {
+    const recipe = this.firemakingRecipeFromItems(fromItemId, toItemId);
+    if (!recipe) return false;
+
+    const survivalLevel = player.skills.survival?.level ?? 1;
+    if (survivalLevel < recipe.levelRequired) {
+      this.sendChatSystem(player, `You need level ${recipe.levelRequired} Survival to light ${recipe.logLabel}.`);
+      return true;
+    }
+    if (this.countInventoryItem(player, MATCHBOX_ITEM_ID) <= 0) {
+      this.sendChatSystem(player, 'You need a matchbox to light a fire.');
+      return true;
+    }
+    if (this.countInventoryItem(player, recipe.logItemId) < FIREMAKING_LOG_COST) {
+      this.sendChatSystem(player, `You need ${FIREMAKING_LOG_COST} ${recipe.logLabel} to light a fire.`);
+      return true;
+    }
+
+    const map = this.getPlayerMap(player);
+    const tileX = Math.floor(player.position.x);
+    const tileZ = Math.floor(player.position.y);
+    if (!this.canLightFireAt(player.currentMapLevel, map, tileX, tileZ, player.currentFloor)) {
+      this.sendChatSystem(player, "You can't light a fire here.");
+      return true;
+    }
+
+    this.itemProductionActions.set(playerId, {
+      kind: 'firemaking',
+      recipe,
+      tileX,
+      tileZ,
+      mapLevel: player.currentMapLevel,
+      floor: player.currentFloor,
+      nextTick: this.currentTick + FIREMAKING_ATTEMPT_TICKS,
+      intervalTicks: FIREMAKING_ATTEMPT_TICKS,
+    });
+    player.setDelay(this.currentTick, FIREMAKING_ATTEMPT_TICKS);
+    this.sendChatSystem(player, 'You attempt to light the logs.');
+    return true;
+  }
+
+  private firemakingRecipeFromItems(fromItemId: number, toItemId: number): SurvivalFiremakingRecipe | null {
+    if (fromItemId === MATCHBOX_ITEM_ID) return firemakingRecipeForLog(toItemId);
+    if (toItemId === MATCHBOX_ITEM_ID) return firemakingRecipeForLog(fromItemId);
+    return null;
+  }
+
+  private canLightFireAt(mapId: string, map: GameMap, tileX: number, tileZ: number, floor: number): boolean {
+    if (tileX < 0 || tileZ < 0 || tileX >= map.width || tileZ >= map.height) return false;
+    if (this.mapTileBlockedOnFloor(map, tileX, tileZ, floor)) return false;
+    const key = this.blockedKeyFor(mapId, tileX, tileZ, floor);
+    if (this.blockedObjectTiles.has(key) || this.isCenteredDoorTileBlockedKey(key)) return false;
+    if (this.worldObjectOccupiesTile(mapId, floor, tileX, tileZ)) return false;
+    if (this.isFiremakingBankZone(mapId, floor, tileX, tileZ)) return false;
+    return true;
+  }
+
+  private forEachWorldObjectNearTile(
+    mapId: string,
+    tileX: number,
+    tileZ: number,
+    radiusTiles: number,
+    fn: (obj: WorldObject) => void,
+  ): void {
+    const cm = this.chunkManagers?.get(mapId);
+    if (cm && typeof cm.forEachEntityKindNearRadius === 'function') {
+      cm.forEachEntityKindNearRadius(tileX + 0.5, tileZ + 0.5, radiusTiles, (entityId, kind) => {
+        if (kind !== 'object') return;
+        const obj = this.worldObjects.get(entityId);
+        if (obj?.mapLevel === mapId) fn(obj);
+      });
+      return;
+    }
+
+    for (const [, obj] of this.worldObjects) {
+      if (obj.mapLevel === mapId) fn(obj);
+    }
+  }
+
+  private worldObjectOccupiesTile(mapId: string, floor: number, tileX: number, tileZ: number): boolean {
+    let occupied = false;
+    this.forEachWorldObjectNearTile(mapId, tileX, tileZ, 8, (obj) => {
+      if (occupied) return;
+      if (obj.mapLevel !== mapId || obj.floor !== floor) return;
+      for (const tile of getObjectFootprintTiles(obj.x, obj.z, obj.def, obj.rotationY)) {
+        if (tile.x === tileX && tile.z === tileZ) {
+          occupied = true;
+          return;
+        }
+      }
+    });
+    return occupied;
+  }
+
+  private isFiremakingBankZone(mapId: string, floor: number, tileX: number, tileZ: number): boolean {
+    let nearBank = false;
+    this.forEachWorldObjectNearTile(mapId, tileX, tileZ, 8, (obj) => {
+      if (nearBank) return;
+      if (obj.mapLevel !== mapId || obj.floor !== floor || obj.def.category !== 'bank') return;
+      for (const tile of getObjectFootprintTiles(obj.x, obj.z, obj.def, obj.rotationY)) {
+        if (Math.max(Math.abs(tile.x - tileX), Math.abs(tile.z - tileZ)) <= 4) {
+          nearBank = true;
+          return;
+        }
+      }
+    });
+    return nearBank;
   }
 
   private handleItemOnItemRecipe(
@@ -6270,7 +6764,7 @@ export class World {
   }
 
   private itemProductionStartMessage(obj: WorldObject): string {
-    if (obj.def.category === 'cookingrange') return 'You start cooking.';
+    if (this.isCookingStationObject(obj)) return 'You start cooking.';
     if (obj.defId === SPINNING_WHEEL_OBJECT_DEF_ID) return 'You start spinning.';
     return 'You start crafting.';
   }
@@ -6288,6 +6782,10 @@ export class World {
 
   private findSpinningWheelRecipeIndex(itemId: number, obj: WorldObject): number {
     if (obj.defId !== SPINNING_WHEEL_OBJECT_DEF_ID) return -1;
+    return obj.def.recipes?.findIndex(recipe => recipe.inputItemId === itemId) ?? -1;
+  }
+
+  private findObjectRecipeIndex(itemId: number, obj: WorldObject): number {
     return obj.def.recipes?.findIndex(recipe => recipe.inputItemId === itemId) ?? -1;
   }
 
@@ -6449,6 +6947,16 @@ export class World {
         this.sendToPlayer(player, ServerOpcode.SMITHING_OPEN, obj.id);
       } else {
         this.startObjectRecipeProduction(playerId, player, obj, spinningWheelRecipeIndex, 1);
+      }
+      return;
+    }
+    const objectRecipeIndex = this.findObjectRecipeIndex(itemId, obj);
+    if (objectRecipeIndex >= 0) {
+      if (this.supportsObjectRecipeProduction(obj)) {
+        const inputCount = this.countInventoryItem(player, itemId);
+        this.startObjectRecipeProduction(playerId, player, obj, objectRecipeIndex, inputCount > 1 ? -1 : 1);
+      } else {
+        this.handleCraftingInteraction(playerId, player, obj, objectRecipeIndex);
       }
       return;
     }
@@ -8566,6 +9074,67 @@ export class World {
       this.sendGroundItemUpdate(p, groundItem));
   }
 
+  private spawnGroundItemAt(
+    mapLevel: string,
+    floor: number,
+    x: number,
+    z: number,
+    itemId: number,
+    quantity: number,
+    despawnTimer: number,
+  ): void {
+    if (quantity <= 0) return;
+    const id = this.allocateGroundItemId();
+    if (id === null) return;
+    const groundItem: GroundItem = {
+      id,
+      itemId,
+      quantity,
+      x,
+      z,
+      floor,
+      mapLevel,
+      despawnTimer,
+    };
+    this.groundItems.set(groundItem.id, groundItem);
+    this.despawningItemIds.add(groundItem.id);
+    const cm = this.chunkManagers.get(mapLevel);
+    if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
+    this.forEachPlayerNearOnFloor(groundItem.mapLevel, groundItem.floor, groundItem.x, groundItem.z, p =>
+      this.sendGroundItemUpdate(p, groundItem));
+  }
+
+  private spawnRuntimeFire(mapLevel: string, floor: number, tileX: number, tileZ: number): WorldObject | null {
+    const def = this.data.getObject(FIRE_OBJECT_DEF_ID);
+    if (!def) return null;
+    const x = tileX + 0.5;
+    const z = tileZ + 0.5;
+    const fire = new WorldObject(def, x, z, mapLevel, floor, this.floorWorldY(mapLevel, x, z, floor));
+    fire.respawnTimer = FIRE_MIN_DURATION_TICKS + Math.floor(Math.random() * FIRE_RANDOM_DURATION_TICKS);
+    this.worldObjects.set(fire.id, fire);
+    this.runtimeFireObjectIds.add(fire.id);
+    this.setObjectTilesBlocked(mapLevel, fire.x, fire.z, fire.def, true, fire.floor, fire.interactionTiles, fire.rotationY);
+    const cm = this.chunkManagers.get(mapLevel);
+    if (cm) cm.addEntity(fire.id, fire.x, fire.z, 'object');
+    this.forEachPlayerNearOnFloor(mapLevel, floor, fire.x, fire.z, p => this.sendWorldObjectUpdate(p, fire));
+    return fire;
+  }
+
+  private pushPlayerOffFireTile(player: Player, tileX: number, tileZ: number): void {
+    if (Math.floor(player.position.x) !== tileX || Math.floor(player.position.y) !== tileZ) return;
+    const map = this.getPlayerMap(player);
+    const collision = this.playerPathCollision(player, map, player.currentFloor);
+    const directions: ReadonlyArray<readonly [number, number]> = [[-1, 0], [1, 0], [0, 1], [0, -1]];
+    for (const [dx, dz] of directions) {
+      if (!canTravel(collision, tileX, tileZ, dx, dz)) continue;
+      const x = tileX + dx + 0.5;
+      const z = tileZ + dz + 0.5;
+      player.setMoveQueue([{ x, z }]);
+      this.sendToPlayer(player, ServerOpcode.PLAYER_CONTROLLED_MOVE, qPos(x), qPos(z));
+      return;
+    }
+  }
+
   private spawnNpcLoot(npc: Npc, ownerPlayerId: number | null): void {
     const loot = rollLoot(npc, { rareDropTables: this.data.rareDropTableDefs });
     if (loot.length === 0) return;
@@ -8683,6 +9252,7 @@ export class World {
     if (this.currentTick % 40 === 0) this.tickHealthRegen();
     this.tickItemProductionActions();
     this.tickSkillingActions();
+    this.tickRuntimeFires();
     this.tickObjectRespawns();
     this.flushPendingObjectRespawnWrites();
     this.tickShopRestocks();
@@ -9665,6 +10235,17 @@ export class World {
       }
       if (this.currentTick < action.nextTick) continue;
 
+      if (action.kind === 'firemaking') {
+        const result = this.runFiremakingTick(player, action);
+        if (result !== 'continue') {
+          actions.delete(playerId);
+          continue;
+        }
+        action.nextTick = this.currentTick + action.intervalTicks;
+        player.setDelay(this.currentTick, action.intervalTicks);
+        continue;
+      }
+
       const produced = this.runItemProductionTick(playerId, player, action);
       if (!produced) {
         actions.delete(playerId);
@@ -9690,6 +10271,7 @@ export class World {
     if (action.kind === 'itemOnItem') {
       return this.handleItemOnItemRecipe(player, action.recipe, { sendMessage: false });
     }
+    if (action.kind === 'firemaking') return false;
 
     const obj = this.worldObjects.get(action.objectEntityId);
     if (!obj || !this.canPlayerTargetObject(player, obj) || !this.isAdjacentToObject(player, obj)) return false;
@@ -9719,14 +10301,95 @@ export class World {
     return false;
   }
 
+  private runFiremakingTick(
+    player: Player,
+    action: Extract<ItemProductionAction, { kind: 'firemaking' }>,
+  ): 'continue' | 'complete' | 'cancel' {
+    if (
+      player.currentMapLevel !== action.mapLevel
+      || player.currentFloor !== action.floor
+      || Math.floor(player.position.x) !== action.tileX
+      || Math.floor(player.position.y) !== action.tileZ
+    ) {
+      return 'cancel';
+    }
+
+    const map = this.maps.get(action.mapLevel);
+    if (!map || !this.canLightFireAt(action.mapLevel, map, action.tileX, action.tileZ, action.floor)) {
+      this.sendChatSystem(player, "You can't light a fire here.");
+      return 'cancel';
+    }
+
+    const survivalLevel = player.skills.survival?.level ?? 1;
+    if (survivalLevel < action.recipe.levelRequired) {
+      this.sendChatSystem(player, `You need level ${action.recipe.levelRequired} Survival to light ${action.recipe.logLabel}.`);
+      return 'cancel';
+    }
+    if (this.countInventoryItem(player, MATCHBOX_ITEM_ID) <= 0) {
+      this.sendChatSystem(player, 'You need a matchbox to light a fire.');
+      return 'cancel';
+    }
+    if (this.countInventoryItem(player, action.recipe.logItemId) < FIREMAKING_LOG_COST) {
+      this.sendChatSystem(player, `You need ${FIREMAKING_LOG_COST} ${action.recipe.logLabel} to light a fire.`);
+      this.sendInventory(player);
+      return 'cancel';
+    }
+
+    if (!statRandom(survivalLevel, FIREMAKING_ROLL_LOW, FIREMAKING_ROLL_HIGH)) {
+      return 'continue';
+    }
+
+    const removed = player.removeItemById(action.recipe.logItemId, FIREMAKING_LOG_COST);
+    if (removed.completed !== FIREMAKING_LOG_COST) {
+      player.revertRemove(removed);
+      this.sendInventory(player);
+      return 'cancel';
+    }
+
+    const fire = this.spawnRuntimeFire(action.mapLevel, action.floor, action.tileX, action.tileZ);
+    if (!fire) {
+      player.revertRemove(removed);
+      this.sendInventory(player);
+      this.sendChatSystem(player, "You can't light a fire here.");
+      return 'cancel';
+    }
+
+    this.sendInventory(player);
+    this.grantXp(player, 'survival', action.recipe.xpReward);
+    this.sendChatSystem(player, 'The fire catches and the logs begin to burn.');
+    this.recordGameEvent({
+      type: 'firemaking',
+      severity: 'info',
+      message: `${player.name} lit a fire using ${FIREMAKING_LOG_COST} x ${this.itemEventName(action.recipe.logItemId)}`,
+      actorAccountId: player.accountId,
+      actorName: player.name,
+      itemId: action.recipe.logItemId,
+      itemName: this.itemEventName(action.recipe.logItemId),
+      quantity: FIREMAKING_LOG_COST,
+      mapLevel: action.mapLevel,
+      floor: action.floor,
+      x: fire.x,
+      z: fire.z,
+      details: {
+        skillId: 'survival',
+        xpReward: action.recipe.xpReward,
+        objectEntityId: fire.id,
+        objectDefId: fire.defId,
+      },
+    });
+    this.pushPlayerOffFireTile(player, action.tileX, action.tileZ);
+    return 'complete';
+  }
+
   private itemProductionStopMessage(action: ItemProductionAction): string {
     if (action.kind === 'itemOnItem') return action.recipe.stopMessage ?? 'You stop producing items.';
     if (action.kind === 'objectRecipe') {
       const obj = this.worldObjects.get(action.objectEntityId);
-      if (obj?.def.category === 'cookingrange') return 'You stop cooking.';
+      if (obj && this.isCookingStationObject(obj)) return 'You stop cooking.';
       if (obj?.defId === SPINNING_WHEEL_OBJECT_DEF_ID) return 'You stop spinning.';
       return 'You stop crafting.';
     }
+    if (action.kind === 'firemaking') return 'You stop trying to light a fire.';
     return 'You stop filling containers.';
   }
 
@@ -10004,6 +10667,28 @@ export class World {
       }
     });
     return near;
+  }
+
+  private tickRuntimeFires(): void {
+    const fireIds = this.runtimeFireObjectIds;
+    if (!fireIds) return;
+    for (const objId of fireIds) {
+      const obj = this.worldObjects.get(objId);
+      if (!obj) {
+        fireIds.delete(objId);
+        continue;
+      }
+      obj.respawnTimer--;
+      if (obj.respawnTimer > 0) continue;
+
+      fireIds.delete(objId);
+      this.worldObjects.delete(objId);
+      this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, false, obj.floor, obj.interactionTiles, obj.rotationY);
+      const cm = this.chunkManagers.get(obj.mapLevel);
+      if (cm) cm.removeEntity(obj.id);
+      this.broadcastNearbyOnFloor(obj.mapLevel, obj.floor, obj.x, obj.z, ServerOpcode.ENTITY_DEATH, obj.id, EntityDeathKind.Despawn);
+      this.spawnGroundItemAt(obj.mapLevel, obj.floor, obj.x, obj.z, ASHES_ITEM_ID, 1, FIRE_ASHES_DESPAWN_TICKS);
+    }
   }
 
   private tickObjectRespawns(): void {

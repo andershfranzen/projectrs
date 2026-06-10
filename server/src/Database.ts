@@ -34,7 +34,7 @@ const STARTER_INVENTORY = [
   { itemId: 231, quantity: 1 }, // Cooked Rice
   { itemId: 231, quantity: 1 }, // Cooked Rice
   { itemId: 231, quantity: 1 }, // Cooked Rice
-  { itemId: 550, quantity: 1 }, // Tinderbox
+  { itemId: 550, quantity: 1 }, // Matchbox
   { itemId: 10, quantity: 30 }, // Coins
 ] as const;
 const FORUM_DEFAULT_CATEGORIES = [

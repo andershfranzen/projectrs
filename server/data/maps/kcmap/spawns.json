@@ -1621,9 +1621,9 @@
     {
       "id": 71,
       "npcId": 7,
-      "x": 70.5,
-      "z": 33.5,
-      "wanderRange": 6,
+      "x": 71.5,
+      "z": 40.5,
+      "wanderRange": 8,
       "aggressive": false,
       "appearance": {
         "shirtColor": 8,
@@ -3133,26 +3133,6 @@
       "name": "Banker"
     },
     {
-      "id": 170,
-      "npcId": 8,
-      "x": 237.5,
-      "z": 244.5,
-      "wanderRange": 0,
-      "aggressive": false,
-      "facing": 3.141592653589793,
-      "appearance": {
-        "bodyType": 0,
-        "shirtColor": 7,
-        "pantsColor": 4,
-        "shoesColor": 0,
-        "hairColor": 5,
-        "beltColor": 1,
-        "skinColor": 2,
-        "hairStyle": 1
-      },
-      "name": "Banker"
-    },
-    {
       "id": 171,
       "npcId": 111,
       "x": 247.5,
@@ -3605,9 +3585,9 @@
       "id": 186,
       "npcId": 102,
       "x": 244.5,
-      "z": 228.5,
+      "z": 230.5,
       "wanderRange": 3,
-      "facing": -1.3089969389957472,
+      "facing": 0,
       "appearance": {
         "bodyType": 1,
         "shirtColor": 10,
@@ -3647,10 +3627,10 @@
     {
       "id": 187,
       "npcId": 102,
-      "x": 237.5,
+      "x": 239.5,
       "z": 237.5,
       "wanderRange": 3,
-      "facing": -1.3089969389957472,
+      "facing": 0,
       "appearance": {
         "bodyType": 1,
         "shirtColor": 10,
@@ -3684,6 +3664,153 @@
           0.1450980392156863,
           0.20784313725490197,
           0.12941176470588237
+        ]
+      }
+    },
+    {
+      "id": 188,
+      "npcId": 116,
+      "x": 240.5,
+      "z": 231.5,
+      "wanderRange": 0,
+      "aggressive": false,
+      "facing": 1.5707963267948966,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 4,
+        "pantsColor": 1,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "customColors": {
+        "pantsColor": [
+          0.21568627450980393,
+          0.1843137254901961,
+          0.1843137254901961
+        ]
+      }
+    },
+    {
+      "id": 189,
+      "npcId": 114,
+      "x": 241.5,
+      "z": 234.5,
+      "wanderRange": 0,
+      "aggressive": false,
+      "facing": 0,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 6,
+        "pantsColor": 4,
+        "shoesColor": 0,
+        "hairColor": 5,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      }
+    },
+    {
+      "id": 190,
+      "npcId": 118,
+      "x": 237.5,
+      "z": 230.5,
+      "wanderRange": 0,
+      "aggressive": false,
+      "facing": 3.141592653589793,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 8,
+        "pantsColor": 4,
+        "shoesColor": 6,
+        "hairColor": 0,
+        "beltColor": 5,
+        "skinColor": 3,
+        "hairStyle": 1
+      }
+    },
+    {
+      "id": 191,
+      "npcId": 114,
+      "x": 234.5,
+      "z": 234.5,
+      "wanderRange": 0,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 7,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 0,
+        "hairStyle": 10
+      },
+      "customColors": {
+        "shirtColor": [
+          0.12549019607843137,
+          0.07450980392156863,
+          0.07450980392156863
+        ]
+      }
+    },
+    {
+      "id": 192,
+      "npcId": 16,
+      "x": 237.5,
+      "z": 244.5,
+      "wanderRange": 0,
+      "aggressive": false,
+      "facing": 3.141592653589793,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 7,
+        "pantsColor": 4,
+        "shoesColor": 0,
+        "hairColor": 5,
+        "beltColor": 1,
+        "skinColor": 2,
+        "hairStyle": 1
+      },
+      "name": "Banker"
+    },
+    {
+      "id": 194,
+      "npcId": 110,
+      "x": 239.5,
+      "z": 230.5,
+      "wanderRange": 10,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 6,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 7,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "equipment": [
+        89,
+        95,
+        79,
+        82,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "pantsColor": [
+          0.08235294117647059,
+          0.1803921568627451,
+          0.09803921568627451
         ]
       }
     }

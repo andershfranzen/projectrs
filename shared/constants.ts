@@ -41,8 +41,10 @@ export const KILN_OBJECT_DEF_ID = 39;
 export const SPINNING_WHEEL_OBJECT_DEF_ID = 40;
 export const STAIRS_OBJECT_DEF_ID = 43;
 export const GENERIC_SCENERY_OBJECT_DEF_ID = 45;
+export const FIRE_OBJECT_DEF_ID = 60;
 export const BATCH_OBJECT_RECIPE_DEF_IDS: readonly number[] = [
   COOKING_RANGE_OBJECT_DEF_ID,
+  FIRE_OBJECT_DEF_ID,
   POTTERY_WHEEL_OBJECT_DEF_ID,
   KILN_OBJECT_DEF_ID,
   SPINNING_WHEEL_OBJECT_DEF_ID,
@@ -93,6 +95,8 @@ export const WILLOW_SHORTBOW_HQ_ITEM_ID = 455;
 export const MAPLE_SHORTBOW_HQ_ITEM_ID = 456;
 export const YEW_SHORTBOW_HQ_ITEM_ID = 457;
 export const MAGIC_SHORTBOW_HQ_ITEM_ID = 458;
+export const MATCHBOX_ITEM_ID = 550;
+export const ASHES_ITEM_ID = 551;
 export const COW_HIDE_ITEM_ID = 296;
 export const BEAR_HIDE_ITEM_ID = 297;
 export const WOLF_HIDE_ITEM_ID = 298;

@@ -6147,7 +6147,17 @@
       "x": 1,
       "y": 1,
       "z": 1
-    }
+    },
+    "interactionTiles": [
+      {
+        "x": 0,
+        "z": 1
+      },
+      {
+        "x": 1,
+        "z": 1
+      }
+    ]
   },
   {
     "assetId": "BankBooth",
@@ -6166,7 +6176,17 @@
       "x": 1,
       "y": 1,
       "z": 1
-    }
+    },
+    "interactionTiles": [
+      {
+        "x": 0,
+        "z": 1
+      },
+      {
+        "x": -1,
+        "z": 1
+      }
+    ]
   },
   {
     "assetId": "stone pillar nice",

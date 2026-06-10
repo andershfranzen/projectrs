@@ -387,7 +387,7 @@
       {
         "inputItemId": 263,
         "inputQuantity": 1,
-        "outputItemId": 15,
+        "outputItemId": 16,
         "outputQuantity": 1,
         "skill": "cooking",
         "levelRequired": 1,
@@ -3222,5 +3222,622 @@
       95
     ],
     "examineText": "A piece of scenery placed to make the world feel lived in."
+  },
+  {
+    "id": 52,
+    "name": "Food Stall",
+    "category": "stall",
+    "actions": [
+      "Steal-from",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 2,
+    "depth": 1,
+    "height": 1.6,
+    "color": [
+      176,
+      110,
+      58
+    ],
+    "skill": "roguery",
+    "levelRequired": 5,
+    "xpReward": 30,
+    "harvestTime": 1,
+    "depletionChance": 1,
+    "respawnTime": 16,
+    "depletedAssetId": "depleted stall",
+    "stallMerchantNpcId": 114,
+    "harvestOptions": [
+      {
+        "levelRequired": 5,
+        "xpReward": 30,
+        "harvestItemId": 13,
+        "weight": 6
+      },
+      {
+        "levelRequired": 5,
+        "xpReward": 30,
+        "harvestItemId": 238,
+        "weight": 6
+      },
+      {
+        "levelRequired": 5,
+        "xpReward": 30,
+        "harvestItemId": 240,
+        "weight": 3
+      },
+      {
+        "levelRequired": 5,
+        "xpReward": 30,
+        "harvestItemId": 12,
+        "weight": 2
+      }
+    ],
+    "examineText": "A stall stacked with food. The owner looks briefly distracted."
+  },
+  {
+    "id": 53,
+    "name": "Crafting Stall",
+    "category": "stall",
+    "actions": [
+      "Steal-from",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 2,
+    "depth": 1,
+    "height": 1.6,
+    "color": [
+      150,
+      125,
+      88
+    ],
+    "skill": "roguery",
+    "levelRequired": 10,
+    "xpReward": 45,
+    "harvestTime": 1,
+    "depletionChance": 1,
+    "respawnTime": 32,
+    "depletedAssetId": "depleted stall",
+    "stallMerchantNpcId": 115,
+    "harvestOptions": [
+      {
+        "levelRequired": 10,
+        "xpReward": 45,
+        "harvestItemId": 242,
+        "weight": 6
+      },
+      {
+        "levelRequired": 10,
+        "xpReward": 45,
+        "harvestItemId": 243,
+        "weight": 4
+      },
+      {
+        "levelRequired": 10,
+        "xpReward": 45,
+        "harvestItemId": 247,
+        "weight": 3
+      },
+      {
+        "levelRequired": 10,
+        "xpReward": 45,
+        "harvestItemId": 248,
+        "weight": 2
+      },
+      {
+        "levelRequired": 10,
+        "xpReward": 45,
+        "harvestItemId": 244,
+        "weight": 2
+      },
+      {
+        "levelRequired": 10,
+        "xpReward": 45,
+        "harvestItemId": 252,
+        "weight": 1
+      },
+      {
+        "levelRequired": 10,
+        "xpReward": 45,
+        "harvestItemId": 253,
+        "weight": 1
+      }
+    ],
+    "examineText": "A stall covered in clay, buckets, and half-finished pottery."
+  },
+  {
+    "id": 54,
+    "name": "Hides Stall",
+    "category": "stall",
+    "actions": [
+      "Steal-from",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 2,
+    "depth": 1,
+    "height": 1.6,
+    "color": [
+      114,
+      84,
+      57
+    ],
+    "skill": "roguery",
+    "levelRequired": 20,
+    "xpReward": 70,
+    "harvestTime": 1,
+    "depletionChance": 1,
+    "respawnTime": 50,
+    "depletedAssetId": "depleted stall",
+    "stallMerchantNpcId": 116,
+    "harvestOptions": [
+      {
+        "levelRequired": 20,
+        "xpReward": 70,
+        "harvestItemId": 296,
+        "weight": 7
+      },
+      {
+        "levelRequired": 20,
+        "xpReward": 70,
+        "harvestItemId": 298,
+        "weight": 4
+      },
+      {
+        "levelRequired": 20,
+        "xpReward": 70,
+        "harvestItemId": 302,
+        "weight": 3
+      },
+      {
+        "levelRequired": 20,
+        "xpReward": 70,
+        "harvestItemId": 297,
+        "weight": 2
+      },
+      {
+        "levelRequired": 20,
+        "xpReward": 70,
+        "harvestItemId": 304,
+        "weight": 1
+      }
+    ],
+    "examineText": "A stall piled with raw and cured hides."
+  },
+  {
+    "id": 55,
+    "name": "Ranging Stall",
+    "category": "stall",
+    "actions": [
+      "Steal-from",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 2,
+    "depth": 1,
+    "height": 1.6,
+    "color": [
+      92,
+      120,
+      77
+    ],
+    "skill": "roguery",
+    "levelRequired": 20,
+    "xpReward": 70,
+    "harvestTime": 1,
+    "depletionChance": 1,
+    "respawnTime": 50,
+    "depletedAssetId": "depleted stall",
+    "stallMerchantNpcId": 117,
+    "harvestOptions": [
+      {
+        "levelRequired": 20,
+        "xpReward": 70,
+        "harvestItemId": 270,
+        "harvestQuantity": 15,
+        "weight": 6
+      },
+      {
+        "levelRequired": 20,
+        "xpReward": 70,
+        "harvestItemId": 272,
+        "harvestQuantity": 15,
+        "weight": 4
+      },
+      {
+        "levelRequired": 20,
+        "xpReward": 70,
+        "harvestItemId": 264,
+        "harvestQuantity": 10,
+        "weight": 4
+      },
+      {
+        "levelRequired": 20,
+        "xpReward": 70,
+        "harvestItemId": 265,
+        "harvestQuantity": 10,
+        "weight": 3
+      },
+      {
+        "levelRequired": 20,
+        "xpReward": 70,
+        "harvestItemId": 266,
+        "harvestQuantity": 10,
+        "weight": 2
+      },
+      {
+        "levelRequired": 20,
+        "xpReward": 70,
+        "harvestItemId": 273,
+        "weight": 2
+      }
+    ],
+    "examineText": "A stall with arrow parts and bowmaking supplies within reach."
+  },
+  {
+    "id": 56,
+    "name": "Low Level Smithing Stall",
+    "category": "stall",
+    "actions": [
+      "Steal-from",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 2,
+    "depth": 1,
+    "height": 1.6,
+    "color": [
+      112,
+      112,
+      108
+    ],
+    "skill": "roguery",
+    "levelRequired": 25,
+    "xpReward": 90,
+    "harvestTime": 1,
+    "depletionChance": 1,
+    "respawnTime": 100,
+    "depletedAssetId": "depleted stall",
+    "stallMerchantNpcId": 118,
+    "harvestOptions": [
+      {
+        "levelRequired": 25,
+        "xpReward": 90,
+        "harvestItemId": 25,
+        "weight": 5
+      },
+      {
+        "levelRequired": 25,
+        "xpReward": 90,
+        "harvestItemId": 34,
+        "weight": 5
+      },
+      {
+        "levelRequired": 25,
+        "xpReward": 90,
+        "harvestItemId": 26,
+        "weight": 4
+      },
+      {
+        "levelRequired": 25,
+        "xpReward": 90,
+        "harvestItemId": 35,
+        "weight": 3
+      },
+      {
+        "levelRequired": 25,
+        "xpReward": 90,
+        "harvestItemId": 29,
+        "weight": 3
+      },
+      {
+        "levelRequired": 25,
+        "xpReward": 90,
+        "harvestItemId": 30,
+        "weight": 2
+      },
+      {
+        "levelRequired": 25,
+        "xpReward": 90,
+        "harvestItemId": 48,
+        "weight": 1
+      }
+    ],
+    "examineText": "A stall stocked with low-tier ores and metal bars."
+  },
+  {
+    "id": 57,
+    "name": "High Level Smithing Stall",
+    "category": "stall",
+    "actions": [
+      "Steal-from",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 2,
+    "depth": 1,
+    "height": 1.6,
+    "color": [
+      82,
+      96,
+      122
+    ],
+    "skill": "roguery",
+    "levelRequired": 50,
+    "xpReward": 160,
+    "harvestTime": 1,
+    "depletionChance": 1,
+    "respawnTime": 166,
+    "depletedAssetId": "depleted stall",
+    "stallMerchantNpcId": 119,
+    "harvestOptions": [
+      {
+        "levelRequired": 50,
+        "xpReward": 160,
+        "harvestItemId": 142,
+        "weight": 5
+      },
+      {
+        "levelRequired": 50,
+        "xpReward": 160,
+        "harvestItemId": 45,
+        "weight": 4
+      },
+      {
+        "levelRequired": 50,
+        "xpReward": 160,
+        "harvestItemId": 143,
+        "weight": 3
+      },
+      {
+        "levelRequired": 50,
+        "xpReward": 160,
+        "harvestItemId": 49,
+        "weight": 2
+      },
+      {
+        "levelRequired": 50,
+        "xpReward": 160,
+        "harvestItemId": 407,
+        "weight": 2
+      },
+      {
+        "levelRequired": 50,
+        "xpReward": 160,
+        "harvestItemId": 408,
+        "weight": 2
+      },
+      {
+        "levelRequired": 50,
+        "xpReward": 160,
+        "harvestItemId": 50,
+        "weight": 1
+      },
+      {
+        "levelRequired": 50,
+        "xpReward": 160,
+        "harvestItemId": 310,
+        "weight": 1
+      },
+      {
+        "levelRequired": 50,
+        "xpReward": 160,
+        "harvestItemId": 311,
+        "weight": 1
+      }
+    ],
+    "examineText": "A stall of rarer ores and bars, watched more carefully than most."
+  },
+  {
+    "id": 58,
+    "name": "Relic Stall",
+    "category": "stall",
+    "actions": [
+      "Steal-from",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 2,
+    "depth": 1,
+    "height": 1.6,
+    "color": [
+      129,
+      95,
+      152
+    ],
+    "skill": "roguery",
+    "levelRequired": 35,
+    "xpReward": 120,
+    "harvestTime": 1,
+    "depletionChance": 1,
+    "respawnTime": 200,
+    "depletedAssetId": "depleted stall",
+    "stallMerchantNpcId": 120,
+    "harvestOptions": [
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 224,
+        "weight": 6
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 225,
+        "weight": 6
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 226,
+        "weight": 6
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 227,
+        "weight": 3
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 228,
+        "weight": 3
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 229,
+        "weight": 3
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 288,
+        "weight": 2
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 289,
+        "weight": 1
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 290,
+        "weight": 1
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 291,
+        "weight": 1
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 292,
+        "weight": 1
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 293,
+        "weight": 1
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 294,
+        "weight": 1
+      },
+      {
+        "levelRequired": 35,
+        "xpReward": 120,
+        "harvestItemId": 295,
+        "weight": 1
+      }
+    ],
+    "examineText": "A stall of relics whose labels look less secure than the relics."
+  },
+  {
+    "id": 59,
+    "name": "Gem Stall",
+    "category": "stall",
+    "actions": [
+      "Steal-from",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 2,
+    "depth": 1,
+    "height": 1.6,
+    "color": [
+      80,
+      150,
+      185
+    ],
+    "skill": "roguery",
+    "levelRequired": 75,
+    "xpReward": 160,
+    "harvestTime": 1,
+    "depletionChance": 1,
+    "respawnTime": 600,
+    "depletedAssetId": "depleted stall",
+    "stallMerchantNpcId": 121,
+    "harvestOptions": [
+      {
+        "levelRequired": 75,
+        "xpReward": 160,
+        "harvestItemId": 254,
+        "weight": 7
+      },
+      {
+        "levelRequired": 75,
+        "xpReward": 160,
+        "harvestItemId": 255,
+        "weight": 6
+      },
+      {
+        "levelRequired": 75,
+        "xpReward": 160,
+        "harvestItemId": 256,
+        "weight": 4
+      },
+      {
+        "levelRequired": 75,
+        "xpReward": 160,
+        "harvestItemId": 257,
+        "weight": 2
+      },
+      {
+        "levelRequired": 75,
+        "xpReward": 160,
+        "harvestItemId": 258,
+        "weight": 2
+      },
+      {
+        "levelRequired": 75,
+        "xpReward": 160,
+        "harvestItemId": 259,
+        "weight": 2
+      },
+      {
+        "levelRequired": 75,
+        "xpReward": 160,
+        "harvestItemId": 260,
+        "weight": 1
+      },
+      {
+        "levelRequired": 75,
+        "xpReward": 160,
+        "harvestItemId": 261,
+        "weight": 1
+      }
+    ],
+    "examineText": "A bright stall of gems. The owner probably counts them often."
+  },
+  {
+    "id": 60,
+    "name": "Fire",
+    "category": "scenery",
+    "actions": [
+      "Cook",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "depth": 1,
+    "height": 1,
+    "color": [
+      255,
+      132,
+      32
+    ],
+    "modelAssetId": "fire",
+    "examineText": "A warm fire."
   }
 ]

@@ -11,9 +11,11 @@ const WORLD_CAMERA_MASK = 0x0FFFFFFF;
 //
 // RS2 also couples radius to pitch (`distance = pitch * 3 + 600`, game.ts:1697):
 // the low, near-ground pitch is closest and the top-down pitch is furthest.
-// At our world scale the original 1.78× range is too aggressive, so we map
+// At our world scale the original 1.78x range is too aggressive, so we map
 // pitch into the small locked 8-13 radius range and keep wheel zoom as an
-// offset around that pitch-derived base.
+// offset around that pitch-derived base. When the player explicitly zooms all
+// the way out, pitch is only allowed a small inward pull so max zoom-out never
+// turns into the near-ground close-up.
 //
 // Mapping to Babylon's ArcRotateCamera (beta = angle from +Y axis):
 //   beta = π/2 − rs_pitch_in_radians
@@ -31,6 +33,7 @@ const LOCKED_DEFAULT_BETA = LOCKED_BETA_AT_PITCH_MIN;
 const LOCKED_MIN_RADIUS = 8;
 const LOCKED_MAX_RADIUS = 13;
 const LOCKED_DEFAULT_RADIUS = 11;
+const LOCKED_MAX_ZOOM_OUT_ALLOWED_PULL = 0.75;
 const LOCKED_PITCH_RADIUS_LERP = 0.18;
 const LOCKED_RADIUS_EPSILON = 0.001;
 const NORTH_ALPHA = Math.PI / 2;
@@ -53,11 +56,15 @@ export class GameCamera {
   private locked: boolean = true;
   private lockedRadiusScale: number = 1;
   private lockedZoomOffset: number = 0;
+  private lockedZoomedOutIntent: boolean = false;
   private lastLockedAppliedRadius: number = LOCKED_DEFAULT_RADIUS;
   private lastLockedRadiusInitialized: boolean = false;
   private debugZoom: boolean = false;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly wheelIntentHandler = (event: WheelEvent): void => this.trackWheelZoomIntent(event);
 
   constructor(scene: Scene, canvas: HTMLCanvasElement) {
+    this.canvas = canvas;
     this.targetPosition = new Vector3(32, 0, 32);
 
     this.camera = new ArcRotateCamera(
@@ -85,6 +92,7 @@ export class GameCamera {
     this.camera.wheelPrecision = 30;
 
     this.camera.attachControl(canvas, true);
+    canvas.addEventListener('wheel', this.wheelIntentHandler, { passive: true });
 
     // Middle-mouse only — left-click stays free for game input
     (this.camera.inputs.attached.pointers as any).buttons = [1];
@@ -172,11 +180,22 @@ export class GameCamera {
     return lower + (upper - lower) * this.lockedPitchRadiusRatio();
   }
 
-  private clampLockedZoomOffset(baseRadius: number, lowerRadius: number, upperRadius: number): void {
-    this.lockedZoomOffset = Math.min(
+  private clampedLockedZoomOffset(baseRadius: number, lowerRadius: number, upperRadius: number): number {
+    return Math.min(
       Math.max(this.lockedZoomOffset, lowerRadius - baseRadius),
       upperRadius - baseRadius,
     );
+  }
+
+  private lockedMaxZoomOutGuardRadius(): number {
+    return Math.max(
+      this.lockedMinRadius(),
+      this.lockedMaxRadius() - LOCKED_MAX_ZOOM_OUT_ALLOWED_PULL * this.lockedRadiusScale,
+    );
+  }
+
+  private isAtLockedZoomOutLimit(radius: number): boolean {
+    return radius >= this.lockedMaxRadius() - 0.05 * this.lockedRadiusScale;
   }
 
   private syncLockedRadiusToPitch(snap = false, preserveCurrentRadius = false): void {
@@ -194,16 +213,33 @@ export class GameCamera {
       const externalDelta = this.camera.radius - this.lastLockedAppliedRadius;
       if (Math.abs(externalDelta) > LOCKED_RADIUS_EPSILON) {
         this.lockedZoomOffset += externalDelta;
+        if (externalDelta < 0 && !this.isAtLockedZoomOutLimit(this.camera.radius)) {
+          this.lockedZoomedOutIntent = false;
+        } else if (externalDelta > 0 && this.isAtLockedZoomOutLimit(this.camera.radius)) {
+          this.lockedZoomedOutIntent = true;
+        }
       }
     }
 
-    this.clampLockedZoomOffset(base, lower, upper);
-    const desired = Math.min(Math.max(base + this.lockedZoomOffset, lower), upper);
+    const clampedOffset = this.clampedLockedZoomOffset(base, lower, upper);
+    let desired = Math.min(Math.max(base + clampedOffset, lower), upper);
+    if (this.lockedZoomedOutIntent) {
+      desired = Math.max(desired, this.lockedMaxZoomOutGuardRadius());
+    }
     const next = snap
       ? desired
       : this.camera.radius + (desired - this.camera.radius) * LOCKED_PITCH_RADIUS_LERP;
     this.camera.radius = next;
     this.lastLockedAppliedRadius = next;
+  }
+
+  private trackWheelZoomIntent(event: WheelEvent): void {
+    if (!this.locked || this.debugZoom || event.deltaY === 0) return;
+    if (event.deltaY > 0 && this.isAtLockedZoomOutLimit(this.camera.radius)) {
+      this.lockedZoomedOutIntent = true;
+    } else if (event.deltaY < 0) {
+      this.lockedZoomedOutIntent = false;
+    }
   }
 
   followTarget(position: Vector3): void {
@@ -264,7 +300,12 @@ export class GameCamera {
     if (this.locked && !this.debugZoom) {
       const base = this.lockedPitchBaseRadius();
       this.lockedZoomOffset = this.camera.radius - base;
-      this.clampLockedZoomOffset(base, this.lockedMinRadius(), this.lockedMaxRadius());
+      this.lockedZoomOffset = this.clampedLockedZoomOffset(
+        base,
+        this.lockedMinRadius(),
+        this.lockedMaxRadius(),
+      );
+      this.lockedZoomedOutIntent = this.isAtLockedZoomOutLimit(this.camera.radius);
       this.lastLockedRadiusInitialized = true;
       this.lastLockedAppliedRadius = this.camera.radius;
     }
@@ -311,6 +352,7 @@ export class GameCamera {
     if (this.locked) {
       this.targetRadius = -1;
       this.lockedZoomOffset = 0;
+      this.lockedZoomedOutIntent = false;
       this.lastLockedRadiusInitialized = false;
     } else {
       this.setTargetRadius(FREE_DEFAULT_RADIUS);
@@ -318,13 +360,16 @@ export class GameCamera {
     this.setTargetBeta(LOCKED_DEFAULT_BETA);
     // Re-apply limits per current lock state.
     this.applyLockState();
-    if (this.locked) {
-      this.lockedZoomOffset = 0;
-      this.syncLockedRadiusToPitch(true);
-    }
+    if (this.locked) this.syncLockedRadiusToPitch(true);
   }
 
   getCamera(): ArcRotateCamera {
     return this.camera;
+  }
+
+  dispose(): void {
+    this.canvas.removeEventListener('wheel', this.wheelIntentHandler);
+    this.camera.detachControl();
+    this.camera.dispose();
   }
 }

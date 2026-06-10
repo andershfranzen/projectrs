@@ -1991,5 +1991,657 @@
         }
       ]
     }
+  },
+  {
+    "id": 114,
+    "name": "Food Stall Merchant",
+    "examineText": "A merchant watching over the food stall.",
+    "modelNpcId": 8,
+    "stationary": true,
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 0,
+    "lootTable": [],
+    "shop": {
+      "name": "Food Stall Shop",
+      "restockTicks": 100,
+      "items": [
+        {
+          "itemId": 13,
+          "price": 10,
+          "stock": 10
+        },
+        {
+          "itemId": 238,
+          "price": 6,
+          "stock": 10
+        },
+        {
+          "itemId": 240,
+          "price": 16,
+          "stock": 10
+        },
+        {
+          "itemId": 12,
+          "price": 16,
+          "stock": 8
+        }
+      ]
+    },
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "The food stall is open for trade."
+          ],
+          "options": [
+            {
+              "label": "Show me what you sell.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "id": 115,
+    "name": "Crafting Stall Merchant",
+    "examineText": "A merchant watching over the crafting stall.",
+    "modelNpcId": 8,
+    "stationary": true,
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 0,
+    "lootTable": [],
+    "shop": {
+      "name": "Crafting Stall Shop",
+      "restockTicks": 100,
+      "items": [
+        {
+          "itemId": 242,
+          "price": 25,
+          "stock": 10
+        },
+        {
+          "itemId": 243,
+          "price": 40,
+          "stock": 10
+        },
+        {
+          "itemId": 247,
+          "price": 6,
+          "stock": 10
+        },
+        {
+          "itemId": 248,
+          "price": 8,
+          "stock": 10
+        },
+        {
+          "itemId": 244,
+          "price": 30,
+          "stock": 5
+        },
+        {
+          "itemId": 252,
+          "price": 6,
+          "stock": 10
+        },
+        {
+          "itemId": 253,
+          "price": 8,
+          "stock": 10
+        }
+      ]
+    },
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "The crafting stall is open for trade."
+          ],
+          "options": [
+            {
+              "label": "Show me what you sell.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "id": 116,
+    "name": "Hides Stall Merchant",
+    "examineText": "A merchant watching over the hides stall.",
+    "modelNpcId": 8,
+    "stationary": true,
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 0,
+    "lootTable": [],
+    "shop": {
+      "name": "Hides Stall Shop",
+      "restockTicks": 200,
+      "items": [
+        {
+          "itemId": 296,
+          "price": 45,
+          "stock": 10
+        },
+        {
+          "itemId": 298,
+          "price": 60,
+          "stock": 8
+        },
+        {
+          "itemId": 302,
+          "price": 24,
+          "stock": 6
+        },
+        {
+          "itemId": 297,
+          "price": 75,
+          "stock": 6
+        },
+        {
+          "itemId": 304,
+          "price": 48,
+          "stock": 4
+        }
+      ]
+    },
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "The hides stall is open for trade."
+          ],
+          "options": [
+            {
+              "label": "Show me what you sell.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "id": 117,
+    "name": "Ranging Stall Merchant",
+    "examineText": "A merchant watching over the ranging stall.",
+    "modelNpcId": 8,
+    "stationary": true,
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 0,
+    "lootTable": [],
+    "shop": {
+      "name": "Ranging Stall Shop",
+      "restockTicks": 200,
+      "items": [
+        {
+          "itemId": 270,
+          "price": 2,
+          "stock": 200
+        },
+        {
+          "itemId": 272,
+          "price": 2,
+          "stock": 200
+        },
+        {
+          "itemId": 264,
+          "price": 2,
+          "stock": 200
+        },
+        {
+          "itemId": 265,
+          "price": 4,
+          "stock": 200
+        },
+        {
+          "itemId": 266,
+          "price": 8,
+          "stock": 200
+        },
+        {
+          "itemId": 273,
+          "price": 8,
+          "stock": 20
+        }
+      ]
+    },
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "The ranging stall is open for trade."
+          ],
+          "options": [
+            {
+              "label": "Show me what you sell.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "id": 118,
+    "name": "Low Level Smithing Stall Merchant",
+    "examineText": "A merchant watching over the low level smithing stall.",
+    "modelNpcId": 8,
+    "stationary": true,
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 0,
+    "lootTable": [],
+    "shop": {
+      "name": "Low Level Smithing Stall Shop",
+      "restockTicks": 100,
+      "items": [
+        {
+          "itemId": 25,
+          "price": 15,
+          "stock": 10
+        },
+        {
+          "itemId": 34,
+          "price": 15,
+          "stock": 10
+        },
+        {
+          "itemId": 26,
+          "price": 35,
+          "stock": 8
+        },
+        {
+          "itemId": 35,
+          "price": 35,
+          "stock": 10
+        },
+        {
+          "itemId": 29,
+          "price": 30,
+          "stock": 12
+        },
+        {
+          "itemId": 30,
+          "price": 60,
+          "stock": 6
+        },
+        {
+          "itemId": 48,
+          "price": 120,
+          "stock": 6
+        }
+      ]
+    },
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "The low level smithing stall is open for trade."
+          ],
+          "options": [
+            {
+              "label": "Show me what you sell.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "id": 119,
+    "name": "High Level Smithing Stall Merchant",
+    "examineText": "A merchant watching over the high level smithing stall.",
+    "modelNpcId": 8,
+    "stationary": true,
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 0,
+    "lootTable": [],
+    "shop": {
+      "name": "High Level Smithing Stall Shop",
+      "restockTicks": 200,
+      "items": [
+        {
+          "itemId": 142,
+          "price": 50,
+          "stock": 12
+        },
+        {
+          "itemId": 45,
+          "price": 96,
+          "stock": 6
+        },
+        {
+          "itemId": 143,
+          "price": 100,
+          "stock": 6
+        },
+        {
+          "itemId": 49,
+          "price": 480,
+          "stock": 3
+        },
+        {
+          "itemId": 407,
+          "price": 384,
+          "stock": 3
+        },
+        {
+          "itemId": 408,
+          "price": 768,
+          "stock": 3
+        },
+        {
+          "itemId": 50,
+          "price": 240,
+          "stock": 3
+        },
+        {
+          "itemId": 310,
+          "price": 960,
+          "stock": 3
+        },
+        {
+          "itemId": 311,
+          "price": 1920,
+          "stock": 1
+        }
+      ]
+    },
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "The high level smithing stall is open for trade."
+          ],
+          "options": [
+            {
+              "label": "Show me what you sell.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "id": 120,
+    "name": "Relic Stall Merchant",
+    "examineText": "A merchant watching over the relic stall.",
+    "modelNpcId": 8,
+    "stationary": true,
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 0,
+    "lootTable": [],
+    "shop": {
+      "name": "Relic Stall Shop",
+      "restockTicks": 200,
+      "items": [
+        {
+          "itemId": 224,
+          "price": 100,
+          "stock": 6
+        },
+        {
+          "itemId": 225,
+          "price": 100,
+          "stock": 6
+        },
+        {
+          "itemId": 226,
+          "price": 100,
+          "stock": 6
+        },
+        {
+          "itemId": 227,
+          "price": 400,
+          "stock": 3
+        },
+        {
+          "itemId": 228,
+          "price": 400,
+          "stock": 3
+        },
+        {
+          "itemId": 229,
+          "price": 400,
+          "stock": 3
+        },
+        {
+          "itemId": 288,
+          "price": 400,
+          "stock": 3
+        },
+        {
+          "itemId": 289,
+          "price": 1600,
+          "stock": 1
+        },
+        {
+          "itemId": 290,
+          "price": 1600,
+          "stock": 1
+        },
+        {
+          "itemId": 291,
+          "price": 1600,
+          "stock": 1
+        },
+        {
+          "itemId": 292,
+          "price": 1600,
+          "stock": 1
+        },
+        {
+          "itemId": 293,
+          "price": 5000,
+          "stock": 1
+        },
+        {
+          "itemId": 294,
+          "price": 5000,
+          "stock": 1
+        },
+        {
+          "itemId": 295,
+          "price": 15000,
+          "stock": 1
+        }
+      ]
+    },
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "The relic stall is open for trade."
+          ],
+          "options": [
+            {
+              "label": "Show me what you sell.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "id": 121,
+    "name": "Gem Stall Merchant",
+    "examineText": "A merchant watching over the gem stall.",
+    "modelNpcId": 8,
+    "stationary": true,
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 0,
+    "lootTable": [],
+    "shop": {
+      "name": "Gem Stall Shop",
+      "restockTicks": 200,
+      "items": [
+        {
+          "itemId": 254,
+          "price": 320,
+          "stock": 3
+        },
+        {
+          "itemId": 255,
+          "price": 480,
+          "stock": 3
+        },
+        {
+          "itemId": 256,
+          "price": 640,
+          "stock": 3
+        },
+        {
+          "itemId": 257,
+          "price": 1000,
+          "stock": 3
+        },
+        {
+          "itemId": 258,
+          "price": 240,
+          "stock": 3
+        },
+        {
+          "itemId": 259,
+          "price": 360,
+          "stock": 3
+        },
+        {
+          "itemId": 260,
+          "price": 440,
+          "stock": 3
+        },
+        {
+          "itemId": 261,
+          "price": 520,
+          "stock": 3
+        }
+      ]
+    },
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "The gem stall is open for trade."
+          ],
+          "options": [
+            {
+              "label": "Show me what you sell.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        }
+      }
+    }
   }
 ]

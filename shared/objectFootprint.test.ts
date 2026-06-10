@@ -40,6 +40,7 @@ test('size two footprint uses shared center and perimeter convention', () => {
     minZ: 19,
     maxZ: 20,
     width: 2,
+    depth: 2,
   });
   expect(getObjectFootprintCenter(10.5, 20.5, { width: 2 })).toEqual({ x: 10, z: 20 });
   expect(getObjectFootprintTiles(10.5, 20.5, { width: 2 })).toEqual([
@@ -58,6 +59,37 @@ test('size two footprint uses shared center and perimeter convention', () => {
     { x: 8, z: 19 },
     { x: 8, z: 20 },
   ]);
+});
+
+test('rectangular footprints use depth and rotate in quarter turns', () => {
+  const def = { width: 2, depth: 1 };
+  expect(getObjectFootprintBounds(10.5, 20.5, def)).toEqual({
+    minX: 9,
+    maxX: 10,
+    minZ: 20,
+    maxZ: 20,
+    width: 2,
+    depth: 1,
+  });
+  expect(getObjectFootprintTiles(10.5, 20.5, def)).toEqual([
+    { x: 9, z: 20 },
+    { x: 10, z: 20 },
+  ]);
+  expect(getObjectInteractionTiles(10.5, 20.5, def)).toEqual([
+    { x: 9, z: 21 },
+    { x: 10, z: 21 },
+    { x: 11, z: 20 },
+    { x: 10, z: 19 },
+    { x: 9, z: 19 },
+    { x: 8, z: 20 },
+  ]);
+  expect(getObjectFootprintTiles(10.5, 20.5, def, Math.PI / 2)).toEqual([
+    { x: 10, z: 19 },
+    { x: 10, z: 20 },
+  ]);
+  expect(isTileInsideObjectFootprint(9, 20, 10.5, 20.5, def)).toBe(true);
+  expect(isTileInsideObjectFootprint(9, 19, 10.5, 20.5, def)).toBe(false);
+  expect(isTileAdjacentToObject(11, 20, 10.5, 20.5, def)).toBe(true);
 });
 
 test('interaction tiles are cardinal-only around larger footprints', () => {

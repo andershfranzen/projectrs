@@ -295,7 +295,9 @@ describe('item thumbnail families', () => {
     const expectedModels = new Map<number, string>([
       [11, '/assets/models/ChickenRaw.glb'],
       [12, '/assets/models/ChickenCooked.glb'],
-      [15, '/assets/models/BeefRat.glb'],
+      [14, '/assets/models/BeefRat.glb'],
+      [15, '/assets/models/BeefRatCooked.glb'],
+      [16, '/assets/models/BeefCooked.glb'],
     ]);
 
     for (const [id, expectedModel] of expectedModels) {

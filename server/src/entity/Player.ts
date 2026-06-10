@@ -21,6 +21,7 @@ export type PlayerDelayReason = 'generic' | 'eat';
 /** 17 ticks at 600ms is 10.2s, so the combat logout block is never shorter
  *  than the requested 10 seconds. */
 export const COMBAT_LOGOUT_BLOCK_TICKS = 17;
+export const POST_COMBAT_STEAL_BLOCK_TICKS = 8;
 
 export interface EquippedItem {
   itemId: number;
@@ -264,6 +265,10 @@ export class Player extends Entity {
    *  closes during this window, the Player stays in the world and remains
    *  attackable until the lockout expires. */
   logoutBlockedUntilTick: number = 0;
+  /** Tick before which stall stealing is blocked by recent combat. This is
+   *  intentionally shorter than the logout block so thieving can resume while
+   *  the account is still protected from combat logging. */
+  stallStealBlockedUntilTick: number = 0;
   /** Last server tick with an explicit player action. Heartbeats do not count.
    *  Used for the 4-minute warning and 5-minute AFK logout. */
   lastActivityTick: number = 0;
@@ -340,10 +345,16 @@ export class Player extends Entity {
     return currentTick < this.logoutBlockedUntilTick;
   }
 
+  isStallStealBlockedByCombat(currentTick: number): boolean {
+    return currentTick < this.stallStealBlockedUntilTick;
+  }
+
   /** Arm the post-combat logout block. */
   markInCombat(currentTick: number, ticks: number = COMBAT_LOGOUT_BLOCK_TICKS): void {
-    const until = currentTick + ticks;
-    if (until > this.logoutBlockedUntilTick) this.logoutBlockedUntilTick = until;
+    const logoutUntil = currentTick + ticks;
+    if (logoutUntil > this.logoutBlockedUntilTick) this.logoutBlockedUntilTick = logoutUntil;
+    const stealUntil = currentTick + POST_COMBAT_STEAL_BLOCK_TICKS;
+    if (stealUntil > this.stallStealBlockedUntilTick) this.stallStealBlockedUntilTick = stealUntil;
   }
 
   // Rate limiting: max messages per window

@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { ClientOpcode, COMBAT_BONUS_WIRE_KEYS, decodePacket, zeroBonuses, type ItemDef } from '@projectrs/shared';
+import {
+  ClientOpcode,
+  COMBAT_BONUS_WIRE_KEYS,
+  LOGS_ITEM_ID,
+  MATCHBOX_ITEM_ID,
+  decodePacket,
+  zeroBonuses,
+  type ItemDef,
+} from '@projectrs/shared';
 import { SidePanel } from './SidePanel';
 
 function makeSpellModePanel(): any {
@@ -176,6 +184,42 @@ describe('SidePanel inventory shortcuts', () => {
     const options = panel.getInvSlotOptions(3);
 
     expect(options.some((option: { label: string }) => option.label.startsWith('Delete '))).toBe(false);
+  });
+
+  test('firemaking light option remains visible below the three-log requirement', () => {
+    const panel = makeInventoryPanel();
+    panel.invSlots[0] = { itemId: MATCHBOX_ITEM_ID, quantity: 1 };
+    panel.invSlots[1] = { itemId: LOGS_ITEM_ID, quantity: 2 };
+    panel.itemDefs.set(MATCHBOX_ITEM_ID, {
+      id: MATCHBOX_ITEM_ID,
+      name: 'Matchbox',
+      description: 'Useful for lighting fires.',
+      stackable: false,
+      equippable: false,
+      value: 1,
+    });
+    panel.itemDefs.set(LOGS_ITEM_ID, {
+      id: LOGS_ITEM_ID,
+      name: 'Logs',
+      description: 'Some logs.',
+      stackable: false,
+      equippable: false,
+      value: 1,
+    });
+
+    const options = panel.getInvSlotOptions(1);
+    const lightOption = options.find((option: { label: string }) => option.label === 'Light Logs');
+    expect(lightOption).toBeDefined();
+    lightOption!.action();
+
+    expect(panel.sent).toHaveLength(1);
+    expect(decodePacket(panel.sent[0].buffer.slice(
+      panel.sent[0].byteOffset,
+      panel.sent[0].byteOffset + panel.sent[0].byteLength,
+    ))).toEqual({
+      opcode: ClientOpcode.PLAYER_USE_ITEM_ON_ITEM,
+      values: [0, MATCHBOX_ITEM_ID, 1, LOGS_ITEM_ID],
+    });
   });
 
   test('shop sell is right-click only and not the left-click inventory action', () => {

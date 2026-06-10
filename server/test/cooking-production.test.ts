@@ -2,14 +2,17 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  ASHES_ITEM_ID,
   BOWSTRING_ITEM_ID,
   COOKING_RANGE_OBJECT_DEF_ID,
+  FIRE_OBJECT_DEF_ID,
   LOW_QUALITY_SINEW_ITEM_ID,
   ServerOpcode,
   SPINNING_WHEEL_OBJECT_DEF_ID,
 } from '@projectrs/shared';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
+import { DataLoader } from '../src/data/DataLoader';
 
 const fakeWs = {
   sendBinary() {},
@@ -80,6 +83,23 @@ function makeCookingRange(): any {
   };
 }
 
+function makeFire(): any {
+  const obj = makeCookingRange();
+  obj.id = 10060;
+  obj.defId = FIRE_OBJECT_DEF_ID;
+  obj.displayName = 'Fire';
+  obj.examineText = 'A warm fire.';
+  obj.def = {
+    ...obj.def,
+    id: FIRE_OBJECT_DEF_ID,
+    name: 'Fire',
+    category: 'scenery',
+    actions: ['Cook', 'Examine'],
+    modelAssetId: 'fire',
+  };
+  return obj;
+}
+
 function makeSpinningWheel(): any {
   return {
     id: 10040,
@@ -113,20 +133,32 @@ function makeSpinningWheel(): any {
 }
 
 describe('cooking range production', () => {
-  test('actual cooking range data exposes beef sinew as a separate option', () => {
+  test('actual cooking range data separates rat meat, beef, and beef sinew outputs', () => {
     const dataDir = join(import.meta.dir, '..', 'data');
-    const items = JSON.parse(readFileSync(join(dataDir, 'items.json'), 'utf8')) as Array<{ id: number; name: string }>;
+    const items = JSON.parse(readFileSync(join(dataDir, 'items.json'), 'utf8')) as Array<{ id: number; name: string; model?: string }>;
     const objects = JSON.parse(readFileSync(join(dataDir, 'objects.json'), 'utf8')) as Array<{
       id: number;
       recipes?: Array<{ inputItemId: number; outputItemId: number; xpReward: number }>;
     }>;
 
+    const cookedRat = items.find((item) => item.id === 15);
+    const cookedBeef = items.find((item) => item.id === 16);
     const sinew = items.find((item) => item.id === 269);
     const range = objects.find((object) => object.id === COOKING_RANGE_OBJECT_DEF_ID);
+    const ratRecipes = range?.recipes?.filter((recipe) => recipe.inputItemId === 14) ?? [];
     const beefRecipes = range?.recipes?.filter((recipe) => recipe.inputItemId === 263) ?? [];
 
+    expect(cookedRat).toMatchObject({
+      name: 'Cooked Rat Meat',
+      model: '/assets/models/BeefRatCooked.glb',
+    });
+    expect(cookedBeef).toMatchObject({
+      name: 'Cooked Beef',
+      model: '/assets/models/BeefCooked.glb',
+    });
     expect(sinew?.name).toBe('Low Quality Sinew');
-    expect(beefRecipes.map((recipe) => recipe.outputItemId)).toEqual([15, 269]);
+    expect(ratRecipes.map((recipe) => recipe.outputItemId)).toEqual([15]);
+    expect(beefRecipes.map((recipe) => recipe.outputItemId)).toEqual([16, 269]);
     expect(beefRecipes.map((recipe) => recipe.xpReward)).toEqual([30, 5]);
   });
 
@@ -174,6 +206,30 @@ describe('cooking range production', () => {
     }
   });
 
+  test('actual fire object data reuses cooking range recipes at load time', () => {
+    const data = new DataLoader();
+    const range = data.getObject(COOKING_RANGE_OBJECT_DEF_ID);
+    const fire = data.getObject(FIRE_OBJECT_DEF_ID);
+
+    expect(fire?.actions).toEqual(['Cook', 'Examine']);
+    expect(fire?.recipes?.length).toBe(range?.recipes?.length);
+    expect(fire?.recipes?.[0]).toEqual(range?.recipes?.[0]);
+    expect(fire?.recipes?.[0]).not.toBe(range?.recipes?.[0]);
+  });
+
+  test('actual ashes item uses a GLB model instead of a legacy sprite', () => {
+    const dataDir = join(import.meta.dir, '..', 'data');
+    const items = JSON.parse(readFileSync(join(dataDir, 'items.json'), 'utf8')) as Array<{
+      id: number;
+      icon?: string;
+      model?: string;
+    }>;
+    const ashes = items.find(item => item.id === ASHES_ITEM_ID);
+
+    expect(ashes?.model).toBe('/assets/models/Ashes.glb');
+    expect(ashes?.icon).toBeUndefined();
+  });
+
   test('actual spinning wheel data spins sinew into bowstring', () => {
     const dataDir = join(import.meta.dir, '..', 'data');
     const items = JSON.parse(readFileSync(join(dataDir, 'items.json'), 'utf8')) as Array<{ id: number; name: string; model?: string }>;
@@ -212,6 +268,30 @@ describe('cooking range production', () => {
       objectEntityId: obj.id,
       recipeIndex: 0,
       remaining: 5,
+      nextTick: 24,
+      intervalTicks: 4,
+    });
+    expect((player as any).delayedUntilTick).toBe(24);
+    expect(messages).toEqual(['You start cooking.']);
+  });
+
+  test('starts cooking on fires with a 4-tick interval per item', () => {
+    const world = Object.create(World.prototype) as any;
+    const player = makePlayer();
+    const obj = makeFire();
+    const messages: string[] = [];
+
+    world.currentTick = 20;
+    world.itemProductionActions = new Map();
+    world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
+
+    world.startObjectRecipeProduction(player.id, player, obj, 0, 2);
+
+    expect(world.itemProductionActions.get(player.id)).toEqual({
+      kind: 'objectRecipe',
+      objectEntityId: obj.id,
+      recipeIndex: 0,
+      remaining: 2,
       nextTick: 24,
       intervalTicks: 4,
     });
@@ -273,6 +353,87 @@ describe('cooking range production', () => {
 
     expect(started).toEqual([{ recipeIndex: 0, quantity: 1 }]);
     expect(crafted).toEqual([]);
+  });
+
+  test('make-1 fire cooking packets queue production instead of crafting instantly', () => {
+    const world = Object.create(World.prototype) as any;
+    const player = makePlayer();
+    const obj = makeFire();
+    const started: Array<{ recipeIndex: number; quantity: number }> = [];
+    const crafted: number[] = [];
+
+    world.currentTick = 20;
+    world.players = new Map([[player.id, player]]);
+    world.worldObjects = new Map([[obj.id, obj]]);
+    world.canPlayerTargetObject = () => true;
+    world.rejectStaleDoorInteraction = () => false;
+    world.clearPendingObjectIntents = () => {};
+    world.cancelItemProduction = () => {};
+    world.closeNpcUiContext = () => {};
+    world.isAdjacentToObject = () => true;
+    world.clearCombatTarget = () => {};
+    world.runObjectInteractionEffects = () => {};
+    world.quests = { notifyQuestEvent() {} };
+    world.startObjectRecipeProduction = (_playerId: number, _player: Player, _obj: unknown, recipeIndex: number, quantity: number) => {
+      started.push({ recipeIndex, quantity });
+    };
+    world.handleCraftingInteraction = (_playerId: number, _player: Player, _obj: unknown, recipeIndex: number) => {
+      crafted.push(recipeIndex);
+    };
+
+    world.handlePlayerInteractObject(player.id, obj.id, 0, 0, null, 1);
+
+    expect(started).toEqual([{ recipeIndex: 0, quantity: 1 }]);
+    expect(crafted).toEqual([]);
+  });
+
+  test('using raw food on a fire starts cooking production', () => {
+    const world = Object.create(World.prototype) as any;
+    const player = makePlayer();
+    const obj = makeFire();
+    const started: Array<{ recipeIndex: number; quantity: number }> = [];
+    const crafted: number[] = [];
+
+    player.inventory[0] = { itemId: 11, quantity: 1 };
+    world.currentTick = 20;
+    world.players = new Map([[player.id, player]]);
+    world.worldObjects = new Map([[obj.id, obj]]);
+    world.canPlayerTargetObject = () => true;
+    world.interruptPlayerAction = () => {};
+    world.isAdjacentToObject = () => true;
+    world.startObjectRecipeProduction = (_playerId: number, _player: Player, _obj: unknown, recipeIndex: number, quantity: number) => {
+      started.push({ recipeIndex, quantity });
+    };
+    world.handleCraftingInteraction = (_playerId: number, _player: Player, _obj: unknown, recipeIndex: number) => {
+      crafted.push(recipeIndex);
+    };
+
+    world.handlePlayerUseItemOnObject(player.id, 0, 11, obj.id);
+
+    expect(started).toEqual([{ recipeIndex: 0, quantity: 1 }]);
+    expect(crafted).toEqual([]);
+  });
+
+  test('using stacked raw food on a fire cooks all matching food', () => {
+    const world = Object.create(World.prototype) as any;
+    const player = makePlayer();
+    const obj = makeFire();
+    const started: Array<{ recipeIndex: number; quantity: number }> = [];
+
+    player.inventory[0] = { itemId: 11, quantity: 3 };
+    world.currentTick = 20;
+    world.players = new Map([[player.id, player]]);
+    world.worldObjects = new Map([[obj.id, obj]]);
+    world.canPlayerTargetObject = () => true;
+    world.interruptPlayerAction = () => {};
+    world.isAdjacentToObject = () => true;
+    world.startObjectRecipeProduction = (_playerId: number, _player: Player, _obj: unknown, recipeIndex: number, quantity: number) => {
+      started.push({ recipeIndex, quantity });
+    };
+
+    world.handlePlayerUseItemOnObject(player.id, 0, 11, obj.id);
+
+    expect(started).toEqual([{ recipeIndex: 0, quantity: -1 }]);
   });
 
   test('make-1 spinning wheel packets queue production instead of crafting instantly', () => {

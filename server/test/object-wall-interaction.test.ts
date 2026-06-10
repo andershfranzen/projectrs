@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { COOKING_RANGE_OBJECT_DEF_ID, DOOR_EDGE_NEIGHBOR, GENERIC_SCENERY_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, ServerOpcode, WallEdge, type WorldObjectDef } from '@projectrs/shared';
+import { COOKING_RANGE_OBJECT_DEF_ID, DOOR_EDGE_NEIGHBOR, FIRE_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, ServerOpcode, WallEdge, type WorldObjectDef } from '@projectrs/shared';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { WorldObject } from '../src/entity/WorldObject';
@@ -553,6 +553,11 @@ describe('wall-gated station interaction', () => {
   test('cooking ranges cannot be used through a wall edge', () => {
     expect(canUseWithWallBlocked(COOKING_RANGE_OBJECT_DEF_ID, 'Cooking Range', true, 'cookingrange')).toBe(false);
     expect(canUseWithWallBlocked(COOKING_RANGE_OBJECT_DEF_ID, 'Cooking Range', false, 'cookingrange')).toBe(true);
+  });
+
+  test('fires cannot be cooked on through a wall edge', () => {
+    expect(canUseWithWallBlocked(FIRE_OBJECT_DEF_ID, 'Fire', true, 'scenery')).toBe(false);
+    expect(canUseWithWallBlocked(FIRE_OBJECT_DEF_ID, 'Fire', false, 'scenery')).toBe(true);
   });
 
   test('authored interaction tiles override loose cooking range adjacency', () => {

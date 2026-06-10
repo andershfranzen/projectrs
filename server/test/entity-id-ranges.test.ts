@@ -68,4 +68,23 @@ describe('entity id ranges', () => {
     chunks.forEachPlayerNear(10.5, 10.5, id => afterUnregister.push(id));
     expect(afterUnregister).toEqual([]);
   });
+
+  test('chunk radius iteration only visits chunks overlapped by the requested tile radius', () => {
+    const chunks = new ServerChunkManager(128, 128);
+    chunks.addEntity(1, 10.5, 10.5, 'npc');
+    chunks.addEntity(2, 40.5, 10.5, 'npc');
+    chunks.addEntity(3, 10.5, 40.5, 'object');
+
+    const close: Array<{ id: number; kind: string }> = [];
+    chunks.forEachEntityKindNearRadius(10.5, 10.5, 6, (id, kind) => close.push({ id, kind }));
+    expect(close).toEqual([{ id: 1, kind: 'npc' }]);
+
+    const wider: Array<{ id: number; kind: string }> = [];
+    chunks.forEachEntityKindNearRadius(10.5, 10.5, 30, (id, kind) => wider.push({ id, kind }));
+    expect(wider.sort((a, b) => a.id - b.id)).toEqual([
+      { id: 1, kind: 'npc' },
+      { id: 2, kind: 'npc' },
+      { id: 3, kind: 'object' },
+    ]);
+  });
 });
