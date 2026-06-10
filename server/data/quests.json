@@ -53,7 +53,7 @@
     "stages": [
       {
         "id": 0,
-        "description": "I should investigate the dead cattle by the old barn."
+        "description": "I should investigate the dead cattle in the Field."
       },
       {
         "id": 1,
@@ -65,8 +65,8 @@
         "descriptionByVar": {
           "key": "BLOOD_PATH",
           "values": {
-            "1": "I'm going to break Sela's curse. I must confront Lord Mortrek in his castle.",
-            "2": "Sela and I are going to the castle to get Lord Mortrek's power."
+            "1": "I'm going to break Sela's curse. I must confront Lord Mortrek in the Graveyard.",
+            "2": "Sela and I are going to the Graveyard to get Lord Mortrek's power."
           }
         }
       },
@@ -76,7 +76,7 @@
         "descriptionByVar": {
           "key": "BLOOD_PATH",
           "values": {
-            "1": "I'm facing Lord Mortrek in his castle. I need to defeat him to break Sela's curse.",
+            "1": "I'm facing Lord Mortrek in the Graveyard. I need to defeat him to break Sela's curse.",
             "2": "Lord Mortrek wants the prisoner's heart from the cells below before he gives me the dark blood."
           }
         },
@@ -98,7 +98,11 @@
       }
     ],
     "rewards": {
-      "items": []
+      "items": [],
+      "xp": {
+        "evilmagic": 850,
+        "goodmagic": 850
+      }
     }
   },
   {
