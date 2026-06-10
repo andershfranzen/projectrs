@@ -3516,6 +3516,176 @@
           0.09803921568627451
         ]
       }
+    },
+    {
+      "id": 184,
+      "npcId": 102,
+      "x": 247.5,
+      "z": 218.5,
+      "wanderRange": 3,
+      "appearance": {
+        "shirtColor": 11,
+        "pantsColor": 12,
+        "shoesColor": 6,
+        "hairColor": 9,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "equipment": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "name": "man",
+      "customColors": {
+        "shirtColor": [
+          0.27450980392156865,
+          0.24313725490196078,
+          0.1843137254901961
+        ],
+        "pantsColor": [
+          0.10980392156862745,
+          0.1607843137254902,
+          0.09803921568627451
+        ]
+      }
+    },
+    {
+      "id": 185,
+      "npcId": 102,
+      "x": 247.5,
+      "z": 225.5,
+      "wanderRange": 3,
+      "facing": -1.3089969389957472,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 10,
+        "pantsColor": 12,
+        "shoesColor": 6,
+        "hairColor": 7,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "equipment": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "name": "man",
+      "customColors": {
+        "shirtColor": [
+          0.16862745098039217,
+          0.1568627450980392,
+          0.12941176470588237
+        ],
+        "pantsColor": [
+          0.10980392156862745,
+          0.1607843137254902,
+          0.09803921568627451
+        ]
+      }
+    },
+    {
+      "id": 186,
+      "npcId": 102,
+      "x": 244.5,
+      "z": 228.5,
+      "wanderRange": 3,
+      "facing": -1.3089969389957472,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 10,
+        "pantsColor": 12,
+        "shoesColor": 6,
+        "hairColor": 7,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 10
+      },
+      "equipment": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "name": "man",
+      "customColors": {
+        "shirtColor": [
+          0.16862745098039217,
+          0.1568627450980392,
+          0.12941176470588237
+        ],
+        "pantsColor": [
+          0.10980392156862745,
+          0.1607843137254902,
+          0.09803921568627451
+        ]
+      }
+    },
+    {
+      "id": 187,
+      "npcId": 102,
+      "x": 237.5,
+      "z": 237.5,
+      "wanderRange": 3,
+      "facing": -1.3089969389957472,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 10,
+        "pantsColor": 12,
+        "shoesColor": 6,
+        "hairColor": 1,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 11
+      },
+      "equipment": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "name": "man",
+      "customColors": {
+        "shirtColor": [
+          0.3254901960784314,
+          0.27058823529411763,
+          0.13333333333333333
+        ],
+        "pantsColor": [
+          0.1450980392156863,
+          0.20784313725490197,
+          0.12941176470588237
+        ]
+      }
     }
   ],
   "objects": [],
