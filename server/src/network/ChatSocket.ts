@@ -61,6 +61,7 @@ const CHAT_RL_WINDOW_MS = 3000;
 const chatRateState = new WeakMap<ServerWebSocket<ChatSocketData>, { count: number; windowStart: number }>();
 const COMMAND_COOLDOWN_MS = 1000;
 const UNSTUCK_COOLDOWN_MS = 10 * 60 * 1000;
+const UNSTUCK_TARGET_MAP = 'kcmap';
 const commandCooldowns = new Map<string, number>();
 const unstuckCooldowns = new Map<number, number>();
 
@@ -763,9 +764,14 @@ function handleCommand(
       player.openShopNpcEntityId = null;
       world.closeDialogueForPlayer(player);
       player.pendingInteraction = null;
-      // teleportPlayer clears moveQueue + attackTarget + combat target.
-      const map = world.getMap(player.currentMapLevel);
-      world.teleportPlayer(player, map.meta.spawnPoint.x, map.meta.spawnPoint.z, undefined, 0);
+      // Cross-map unstucks must go through MAP_CHANGE so the client reloads chunks/entities.
+      const map = world.getMap(UNSTUCK_TARGET_MAP);
+      world.handleMapTransition(player, {
+        targetMap: UNSTUCK_TARGET_MAP,
+        targetX: map.meta.spawnPoint.x,
+        targetZ: map.meta.spawnPoint.z,
+        targetFloor: 0,
+      });
       sendSystem(ws, `Unstuck ${player.name}.`);
       if (player.name.toLowerCase() !== from.toLowerCase()) {
         sendSystemMessageToUser(player.name, 'An admin has unstuck you.');
