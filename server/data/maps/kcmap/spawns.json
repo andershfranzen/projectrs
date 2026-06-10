@@ -663,7 +663,7 @@
           "mortrek_default": {
             "id": "mortrek_default",
             "lines": [
-              "A cold-eyed vampire watches you from the throne."
+              "A cold-eyed vampire watches you."
             ],
             "options": [
               {
@@ -777,7 +777,7 @@
           "mortrek_evil_task": {
             "id": "mortrek_evil_task",
             "lines": [
-              "There's a prisoner in the cells below. Bring me his heart and the dark blood is yours."
+              "There's a prisoner across the river. Bring me his heart and the dark blood is yours."
             ],
             "options": [
               {
@@ -917,7 +917,7 @@
     },
     {
       "id": 138,
-      "npcId": 103,
+      "npcId": 102,
       "x": 319.5,
       "z": 150.5,
       "wanderRange": 1,
@@ -930,6 +930,22 @@
         "beltColor": 0,
         "skinColor": 2,
         "hairStyle": 4
+      },
+      "dialogue": {
+        "root": "start",
+        "nodes": {
+          "start": {
+            "id": "start",
+            "lines": [
+              "Save me from the Vampire Lord!"
+            ],
+            "options": [
+              {
+                "label": "Bye."
+              }
+            ]
+          }
+        }
       },
       "name": "Prisoner"
     },
@@ -1080,7 +1096,7 @@
           "borin_accept": {
             "id": "borin_accept",
             "lines": [
-              "Start at the old barn by the back field. Be careful."
+              "Start at the Cow field. Be careful."
             ],
             "options": [
               {
@@ -1091,7 +1107,7 @@
           "borin_investigate": {
             "id": "borin_investigate",
             "lines": [
-              "The dead ones are out by the barn. Go and look."
+              "The dead ones are out by the Cow Field. Go and look."
             ],
             "options": [
               {
@@ -1407,7 +1423,7 @@
           "sela_good_choice": {
             "id": "sela_good_choice",
             "lines": [
-              "You'd try? Then go to the castle. His hold still ties me to him. Break it and the curse breaks too."
+              "You'd try? Then go to the Graveyard. His hold still ties me to him. Break it and the curse breaks too."
             ],
             "options": [
               {
@@ -1418,7 +1434,7 @@
           "sela_evil_choice": {
             "id": "sela_evil_choice",
             "lines": [
-              "...Alright. Take me to the castle."
+              "...Alright. Take me to the Graveyard."
             ],
             "options": [
               {
@@ -1440,7 +1456,7 @@
           "sela_evil_hurry": {
             "id": "sela_evil_hurry",
             "lines": [
-              "The castle's this way. Come on."
+              "The Graveyard is this way. Come on."
             ],
             "options": [
               {
