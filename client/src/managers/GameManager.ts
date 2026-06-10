@@ -63,7 +63,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -102,6 +102,10 @@ const RECIPE_INPUT_NOUN_BY_CATEGORY: Readonly<Record<string, string>> = {
 };
 const NO_INTERACTION_ACTIONS: readonly string[] = [];
 
+function isCookingStationDef(def: WorldObjectDef): boolean {
+  return def.category === 'cookingrange' || def.id === FIRE_OBJECT_DEF_ID;
+}
+
 function devCacheBustGearFile(file: string): string {
   return GEAR_DEBUG_CACHE_BUST_TOKEN ? `${file}${GEAR_DEBUG_CACHE_BUST_TOKEN}` : file;
 }
@@ -114,6 +118,7 @@ function recipePanelSkillFor(def: WorldObjectDef): SkillId {
 }
 
 function recipePanelInputNounFor(def: WorldObjectDef): string {
+  if (isCookingStationDef(def)) return 'food';
   if (def.id === POTTERY_WHEEL_OBJECT_DEF_ID) return 'soft clay';
   if (def.id === KILN_OBJECT_DEF_ID) return 'unfired clay';
   if (def.id === SPINNING_WHEEL_OBJECT_DEF_ID) return 'sinew';
@@ -127,7 +132,8 @@ function supportsBatchObjectRecipe(def: WorldObjectDef): boolean {
 function isHarvestObjectDef(def: WorldObjectDef): boolean {
   return def.category === 'tree'
     || def.category === 'rock'
-    || def.category === 'fishingspot';
+    || def.category === 'fishingspot'
+    || def.category === 'stall';
 }
 
 type InteractionOption = {
@@ -1628,12 +1634,17 @@ export class GameManager {
     // Previously these were four serial awaits, which on a cold start added
     // up to ~200–400ms of dead time over the lifetime of the constructor.
     const authHeaders = this.authHeaders();
+    const dataFetchOptions: RequestInit = {
+      headers: authHeaders,
+      credentials: 'same-origin',
+      cache: 'reload',
+    };
     const [objectsRes, itemsRes, npcsRes, gearRes, questsRes] = await Promise.all([
-      fetch('/data/objects.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load object definitions:', e); return null; }),
-      fetch('/data/items.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load item definitions:', e); return null; }),
-      fetch('/data/npcs.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load NPC definitions:', e); return null; }),
-      fetch('/data/gear-overrides.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load gear overrides:', e); return null; }),
-      fetch('/data/quests.json', { headers: authHeaders, credentials: 'same-origin' }).catch(() => null),
+      fetch('/data/objects.json', dataFetchOptions).catch((e) => { console.warn('Failed to load object definitions:', e); return null; }),
+      fetch('/data/items.json', dataFetchOptions).catch((e) => { console.warn('Failed to load item definitions:', e); return null; }),
+      fetch('/data/npcs.json', dataFetchOptions).catch((e) => { console.warn('Failed to load NPC definitions:', e); return null; }),
+      fetch('/data/gear-overrides.json', dataFetchOptions).catch((e) => { console.warn('Failed to load gear overrides:', e); return null; }),
+      fetch('/data/quests.json', dataFetchOptions).catch(() => null),
     ]);
 
     if (objectsRes) {
@@ -1709,7 +1720,7 @@ export class GameManager {
       if (def?.category === 'door') {
         this.setCenteredDoorTileBlocked(objectEntityId, data, def, !data.depleted);
       } else if (def?.blocking) {
-        this.setObjectTilesBlocked(data.x, data.z, def, true, data.floor, data.interactionTiles);
+        this.setObjectTilesBlocked(data.x, data.z, def, true, data.floor, data.interactionTiles, data.rotY);
       }
     }
   }
@@ -1725,6 +1736,7 @@ export class GameManager {
     blocked: boolean,
     floor: number = 0,
     interactionTiles?: ReadonlyArray<{ x: number; z: number }>,
+    rotY: number = 0,
   ): void {
     if (!def.blocking || def.category === 'door' || usesMapAuthoredObjectCollision(def)) return;
     let interactionTileKeys: Set<string> | null = null;
@@ -1734,7 +1746,7 @@ export class GameManager {
         interactionTileKeys.add(this.blockedObjectKey(floor, tile.x, tile.z));
       }
     }
-    for (const tile of getObjectFootprintTiles(x, z, def)) {
+    for (const tile of getObjectFootprintTiles(x, z, def, rotY)) {
       const key = this.blockedObjectKey(floor, tile.x, tile.z);
       if (interactionTileKeys?.has(key)) continue;
       if (blocked) this.blockedObjectTiles.add(key);
@@ -1998,11 +2010,33 @@ export class GameManager {
       } else {
         const model = this.worldObjectModels.get(objectEntityId);
         if (model) {
-          model.position.y = h;
+          if (this.chunkManager.isPlacedObjectNode(model)) {
+            this.restorePlacedWorldObjectAuthoredTransform(model);
+          } else {
+            model.position.y = h;
+          }
         }
       }
     }
     this.entities.repositionEntities(this.playerX, this.playerZ, this.localPlayer);
+  }
+
+  private restorePlacedWorldObjectAuthoredTransform(model: TransformNode): void {
+    const authored = this.chunkManager.getPlacedObjectAuthoredPosition(model);
+    const rootWasFrozen = model.isWorldMatrixFrozen;
+    if (rootWasFrozen) model.unfreezeWorldMatrix();
+    model.position.set(authored.x, authored.y, authored.z);
+    model.computeWorldMatrix(true);
+    if (rootWasFrozen) model.freezeWorldMatrix();
+
+    const refreshFrozenNode = (node: TransformNode): void => {
+      const wasFrozen = node.isWorldMatrixFrozen;
+      if (wasFrozen) node.unfreezeWorldMatrix();
+      node.computeWorldMatrix(true);
+      if (wasFrozen) node.freezeWorldMatrix();
+    };
+    for (const child of model.getChildTransformNodes(false)) refreshFrozenNode(child);
+    for (const child of model.getChildMeshes(false)) refreshFrozenNode(child);
   }
 
   /** Clean up world object references to disposed placed nodes (after chunk unload) */
@@ -2112,10 +2146,14 @@ export class GameManager {
 
   private deleteWorldObjectModel(objectEntityId: number): void {
     this.disposeDoorVisualState(objectEntityId);
+    this.objectModels.deleteActiveModelAnimations(objectEntityId);
     const node = this.worldObjectModels.get(objectEntityId);
     if (node) {
       this.worldObjectIdByNode.delete(node);
       this.worldObjectPickState.delete(node);
+      if (!this.chunkManager.isPlacedObjectNode(node) && !node.isDisposed()) {
+        node.dispose(false, false);
+      }
     }
     this.worldObjectModels.delete(objectEntityId);
   }
@@ -2168,22 +2206,30 @@ export class GameManager {
 
   private reapplyWorldObjectVisualStates(): void {
     for (const [objectEntityId, model] of this.worldObjectModels) {
-      this.setPlacedWorldObjectEnabled(model, this.shouldPlacedWorldObjectBeEnabled(objectEntityId));
       const data = this.worldObjectDefs.get(objectEntityId);
-      if (!data) continue;
+      if (!data) {
+        this.setPlacedWorldObjectEnabled(model, this.shouldPlacedWorldObjectBeEnabled(objectEntityId));
+        continue;
+      }
       const def = this.objectDefsCache.get(data.defId);
-      const hasDepleteModel = def?.category === 'tree' || def?.category === 'rock' || def?.category === 'chest';
-      if (!hasDepleteModel) continue;
-      let depleted = this.objectModels.getStump(objectEntityId);
-      if (!depleted && data.depleted) {
-        depleted = this.objectModels.createDepletedModel(objectEntityId, data.defId, model);
+      const hasDepleteModel = this.objectDefHasDepletedModel(def);
+      if (hasDepleteModel) {
+        let depleted = this.objectModels.getStump(objectEntityId);
+        if (!depleted && data.depleted) {
+          depleted = this.objectModels.createDepletedModel(objectEntityId, data.defId, model);
+        }
+        if (depleted) {
+          this.objectModels.syncDepletedModelTransform(objectEntityId, model);
+          depleted.setEnabled(data.depleted);
+          this.setWorldObjectPickTarget(objectEntityId, false, depleted);
+        }
       }
-      if (depleted) {
-        this.objectModels.syncDepletedModelTransform(objectEntityId, model);
-        depleted.setEnabled(data.depleted);
-        this.setWorldObjectPickTarget(objectEntityId, false, depleted);
-      }
+      this.setPlacedWorldObjectEnabled(model, this.shouldPlacedWorldObjectBeEnabled(objectEntityId));
     }
+  }
+
+  private objectDefHasDepletedModel(def: WorldObjectDef | null | undefined): boolean {
+    return !!def && (def.category === 'tree' || def.category === 'rock' || !!def.depletedAssetId);
   }
 
   private refreshWorldAfterSameMapTeleport(): void {
@@ -2228,10 +2274,10 @@ export class GameManager {
       this.createDoorPickProxy(objectEntityId, data.x, data.z, modelRotY, placedNode.getAbsolutePosition().y, pickBounds);
       // Doors stay visible regardless of depleted state
     } else {
-      if (data.depleted) placedNode.setEnabled(false);
       if (data.depleted) {
         const depleted = this.objectModels.createDepletedModel(objectEntityId, data.defId, placedNode);
         if (depleted) this.setWorldObjectPickTarget(objectEntityId, false, depleted);
+        placedNode.setEnabled(false);
       }
     }
 
@@ -3282,7 +3328,7 @@ export class GameManager {
       const objectData = this.worldObjectDefs.get(entityId);
       if (objectData) {
         const def = this.objectDefsCache.get(objectData.defId);
-        if (def) this.setObjectTilesBlocked(objectData.x, objectData.z, def, false, objectData.floor, objectData.interactionTiles);
+        if (def) this.setObjectTilesBlocked(objectData.x, objectData.z, def, false, objectData.floor, objectData.interactionTiles, objectData.rotY);
         if (def?.category === 'door') this.setCenteredDoorTileBlocked(entityId, objectData, def, false);
         const model = this.worldObjectModels.get(entityId);
         if (model) this.setWorldObjectPickTarget(entityId, false, model);
@@ -3561,7 +3607,7 @@ export class GameManager {
       } else if (def) {
         // Depleted state intentionally ignored — depleted ores/stumps still
         // occupy their tile (matches server policy at the depletion site).
-        this.setObjectTilesBlocked(x, z, def, true, floor, interactionTiles.length ? interactionTiles : undefined);
+        this.setObjectTilesBlocked(x, z, def, true, floor, interactionTiles.length ? interactionTiles : undefined, objectData.rotY);
       }
 
       // Try to link to an editor-placed GLB model. Cached placed-node links are
@@ -3581,9 +3627,24 @@ export class GameManager {
           this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, floor, y, depleted: isDepleted, openDirection, locked }, placedNode);
           model = placedNode;
         }
-        // If no placed GLB and the chunk has finished loading, the world
-        // object simply isn't rendered. Pre-3D maps had a sprite fallback
-        // here; with the editor pipeline every object should now have a GLB.
+        if (!model && def?.modelAssetId) {
+          const activeModel = this.objectModels.createActiveModel(
+            objectEntityId,
+            def,
+            x,
+            z,
+            y,
+            rotY1000 / 1000,
+            isDepleted,
+          );
+          if (activeModel) {
+            this.setWorldObjectModel(objectEntityId, activeModel);
+            this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), activeModel);
+            model = activeModel;
+          }
+        }
+        // If no placed GLB exists, runtime-spawned object defs can provide a
+        // modelAssetId fallback (fires, temporary skill objects, etc.).
       } else if (def?.category === 'door' && !this.doorPivots.has(objectEntityId)) {
         this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, floor, y, depleted: isDepleted, openDirection, locked }, model);
       }
@@ -3598,11 +3659,8 @@ export class GameManager {
             const rotY = this.doorPivots.get(objectEntityId)?.closedRotY ?? (rotY1000 / 1000);
             this.createDoorPickProxy(objectEntityId, x, z, rotY, model.getAbsolutePosition().y);
           }
-        } else {
-          this.setPlacedWorldObjectEnabled(model, !isDepleted);
-          this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), model);
         }
-        const hasDepleteModel = def?.category === 'tree' || def?.category === 'rock' || def?.category === 'chest';
+        const hasDepleteModel = this.objectDefHasDepletedModel(def);
         let depletedModel = this.objectModels.getStump(objectEntityId);
         if (!depletedModel && hasDepleteModel && isDepleted) {
           depletedModel = this.objectModels.createDepletedModel(objectEntityId, objectDefId, model);
@@ -3611,6 +3669,10 @@ export class GameManager {
           this.objectModels.syncDepletedModelTransform(objectEntityId, model);
           depletedModel.setEnabled(isDepleted);
           this.setWorldObjectPickTarget(objectEntityId, false, depletedModel);
+        }
+        if (def?.category !== 'door') {
+          this.setPlacedWorldObjectEnabled(model, !isDepleted);
+          this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), model);
         }
       }
     });
@@ -3653,7 +3715,7 @@ export class GameManager {
       }
 
       const def = data ? this.objectDefsCache.get(data.defId) : null;
-      const hasDepleteModel = def?.category === 'tree' || def?.category === 'rock' || def?.category === 'chest';
+      const hasDepleteModel = this.objectDefHasDepletedModel(def);
 
       if (def?.category === 'door') {
         // Doors stay visible — animation is handled above
@@ -3670,9 +3732,6 @@ export class GameManager {
           );
           if (placedNode) {
             if (!model) this.setWorldObjectModel(objectEntityId, placedNode);
-            this.setPlacedWorldObjectEnabled(placedNode, isDepleted === 0);
-            this.setWorldObjectPickTarget(objectEntityId, isDepleted === 0, placedNode);
-
             let depleted = this.objectModels.getStump(objectEntityId);
             if (!depleted && isDepleted === 1) {
               depleted = this.objectModels.createDepletedModel(objectEntityId, data.defId, placedNode);
@@ -3682,6 +3741,8 @@ export class GameManager {
               depleted.setEnabled(isDepleted === 1);
               this.setWorldObjectPickTarget(objectEntityId, false, depleted);
             }
+            this.setPlacedWorldObjectEnabled(placedNode, isDepleted === 0);
+            this.setWorldObjectPickTarget(objectEntityId, isDepleted === 0, placedNode);
           }
         } else if (model) {
           this.setPlacedWorldObjectEnabled(model, isDepleted === 0);
@@ -4248,8 +4309,11 @@ export class GameManager {
         this.toolSwappedEntities.clear();
 
         // Only dispose models that GameManager created, not linked placed objects from ChunkManager
-        for (const [, model] of this.worldObjectModels) {
-          if (!this.chunkManager.isPlacedObjectNode(model)) model.dispose();
+        for (const [objectEntityId, model] of this.worldObjectModels) {
+          if (!this.chunkManager.isPlacedObjectNode(model)) {
+            this.objectModels.deleteActiveModelAnimations(objectEntityId);
+            model.dispose(false, false);
+          }
         }
         this.worldObjectModels.clear();
         this.worldObjectIdByNode = new WeakMap();
@@ -6661,12 +6725,13 @@ export class GameManager {
   private objectInteractionTileOptions(
     data: { interactionSides?: number; rotY?: number },
     def: WorldObjectDef,
-  ): { allowedWorldSides?: number; includeCorners: boolean } {
+  ): { allowedWorldSides?: number; rotationY: number; includeCorners: boolean } {
     const allowedWorldSides = data.interactionSides
-      ? localSidesToWorldSides(data.interactionSides, data.rotY ?? 0, def.width)
+      ? localSidesToWorldSides(data.interactionSides, data.rotY ?? 0, def)
       : undefined;
     return {
       allowedWorldSides,
+      rotationY: data.rotY ?? 0,
       includeCorners: this.usesCornerObjectInteraction(def, !!allowedWorldSides),
     };
   }
@@ -6682,12 +6747,13 @@ export class GameManager {
   private requiresClearObjectInteractionEdge(def: WorldObjectDef): boolean {
     return def.category === 'chest'
       || def.category === 'cookingrange'
+      || def.id === FIRE_OBJECT_DEF_ID
       || def.id === POTTERY_WHEEL_OBJECT_DEF_ID
       || def.id === KILN_OBJECT_DEF_ID;
   }
 
   private hasClearObjectInteractionEdge(
-    data: { x: number; z: number },
+    data: { x: number; z: number; rotY?: number },
     def: WorldObjectDef,
     tileX: number,
     tileZ: number,
@@ -6695,7 +6761,7 @@ export class GameManager {
   ): boolean {
     if (!this.requiresClearObjectInteractionEdge(def)) return true;
     let hasAdjacentFootprintTile = false;
-    for (const footprintTile of getObjectFootprintTiles(data.x, data.z, def)) {
+    for (const footprintTile of getObjectFootprintTiles(data.x, data.z, def, data.rotY ?? 0)) {
       if (Math.abs(footprintTile.x - tileX) + Math.abs(footprintTile.z - tileZ) !== 1) continue;
       hasAdjacentFootprintTile = true;
       if (!this.isWallBlockedForPath(tileX, tileZ, footprintTile.x, footprintTile.z)) return true;
@@ -6846,7 +6912,7 @@ export class GameManager {
     const stationLabel = def.name ?? 'Smithing';
     const inputNoun = recipePanelInputNounFor(def);
     const supportsBatch = supportsBatchObjectRecipe(def);
-    const usesInlineQuantities = def.category === 'cookingrange'
+    const usesInlineQuantities = isCookingStationDef(def)
       || def.id === SPINNING_WHEEL_OBJECT_DEF_ID;
     const actionVerb = def.id === SPINNING_WHEEL_OBJECT_DEF_ID
       ? 'Spin'
@@ -6916,6 +6982,7 @@ export class GameManager {
             { label: 'All', value: 'all' },
           ]
         : undefined,
+      primaryRecipePerInput: isCookingStationDef(def),
     });
   }
 
@@ -8338,12 +8405,13 @@ export class GameManager {
       this._roofHoverLeaveHandler = null;
     }
     this.clearHoverRoofPointer();
+    this.camera.dispose();
     this.arrowProjectiles.dispose();
     this.skybox.dispose();
     this.engine.stopRenderLoop();
     this.engine.dispose();
     this.chunkManager.disposeAll();
-    for (const [, model] of this.worldObjectModels) model.dispose();
+    for (const [, model] of this.worldObjectModels) model.dispose(false, false);
     this.worldObjectModels.clear();
     this.worldObjectIdByNode = new WeakMap();
     this.worldObjectPickState = new WeakMap();

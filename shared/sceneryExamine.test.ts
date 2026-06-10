@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import {
   GENERIC_SCENERY_OBJECT_DEF_ID,
+  WELL_OBJECT_DEF_ID,
   objectDefIdForPlacedAsset,
   sceneryExamineMetaForAsset,
 } from './index';
@@ -33,6 +34,24 @@ test('filler scenery has clean display names and authored examine text', () => {
 test('tree assets resolve to the right harvestable object definitions', () => {
   expect(objectDefIdForPlacedAsset('sTree 1')).toBe(1);
   expect(objectDefIdForPlacedAsset('dying tree')).toBe(10);
+});
+
+test('stall assets resolve to roguery stall object definitions', () => {
+  expect(objectDefIdForPlacedAsset('food stall')).toBe(52);
+  expect(objectDefIdForPlacedAsset('crafting stall')).toBe(53);
+  expect(objectDefIdForPlacedAsset('hides stall')).toBe(54);
+  expect(objectDefIdForPlacedAsset('Ranging stall')).toBe(55);
+  expect(objectDefIdForPlacedAsset('low level smithing stall')).toBe(56);
+  expect(objectDefIdForPlacedAsset('high level smithing stall')).toBe(57);
+  expect(objectDefIdForPlacedAsset('relic stall')).toBe(58);
+  expect(objectDefIdForPlacedAsset('Gem stall')).toBe(59);
+  expect(objectDefIdForPlacedAsset('depleted stall')).toBeUndefined();
+});
+
+test('water source assets resolve to the well object definition', () => {
+  expect(objectDefIdForPlacedAsset('well')).toBe(WELL_OBJECT_DEF_ID);
+  expect(objectDefIdForPlacedAsset('desert well')).toBe(WELL_OBJECT_DEF_ID);
+  expect(objectDefIdForPlacedAsset('desert fountain')).toBe(WELL_OBJECT_DEF_ID);
 });
 
 test('structural map pieces do not become generic examine objects', () => {

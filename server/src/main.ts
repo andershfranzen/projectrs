@@ -344,8 +344,9 @@ function editorExitLandingPoint(mapDir: string, obj: PlacedObject): { x: number;
     if (candidates.length === 0) {
       candidates.push(...getObjectInteractionTiles(center.x, center.z, def, {
         allowedWorldSides: obj.interactionSides
-          ? localSidesToWorldSides(obj.interactionSides, rotY, def.width)
+          ? localSidesToWorldSides(obj.interactionSides, rotY, def)
           : undefined,
+        rotationY: rotY,
       }));
     }
 
@@ -2454,12 +2455,12 @@ async function runForumAvatarBake(reason: string): Promise<void> {
     const proc = Bun.spawn([
       'sh',
       '-lc',
-      `Xvfb :99 -screen 0 1280x1024x24 >/tmp/forum-avatar-xvfb.log 2>&1 & xvfb_pid=$!; trap "kill $xvfb_pid 2>/dev/null || true" EXIT; sleep 0.2; DISPLAY=:99 bun scripts/bake-forum-avatars.ts --origin http://localhost:${SERVER_PORT}`,
+      `bun scripts/bake-forum-avatars.ts --origin http://localhost:${SERVER_PORT}`,
     ], {
       cwd: ROOT_DIR,
       stdout: 'pipe',
       stderr: 'pipe',
-      env: { ...process.env, FORUM_AVATAR_BAKE_SECRET, PROJECTRS_DB_PATH: DB_PATH, FORUM_AVATAR_DIR, FORUM_AVATAR_BAKE_HEADLESS: '0' },
+      env: { ...process.env, FORUM_AVATAR_BAKE_SECRET, PROJECTRS_DB_PATH: DB_PATH, FORUM_AVATAR_DIR, FORUM_AVATAR_BAKE_HEADLESS: process.env.FORUM_AVATAR_BAKE_HEADLESS ?? '1' },
     });
     void logForumAvatarBakeStream(proc.stdout, 'out');
     void logForumAvatarBakeStream(proc.stderr, 'err');

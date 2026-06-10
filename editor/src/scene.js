@@ -163,16 +163,36 @@ export function createEditorScene(container) {
   // Initialize asset loader with scene reference
   initAssetLoader(scene)
 
-function tuneModelLighting(model) {
+function assetUsesAlphaBlend(assetOrPath) {
+  if (assetOrPath && typeof assetOrPath === 'object') {
+    if (assetOrPath.alphaBlend === true) return true
+    if (Array.isArray(assetOrPath.tags)) {
+      return assetOrPath.tags.some(tag => {
+        const value = String(tag).toLowerCase().replace(/[\s_-]+/g, '')
+        return value === 'alphablend' || value === 'transparent'
+      })
+    }
+    return false
+  }
+  return /(?:^|\/)fire\.glb$/i.test(String(assetOrPath || ''))
+}
+
+function tuneModelLighting(model, assetOrPath = null) {
   // Match the game client: keep PBR materials as-is, just fix backface culling
   // and transparency mode. PBR works fine with hemispheric + directional lights.
+  const alphaBlend = assetUsesAlphaBlend(assetOrPath)
   const meshes = model.getChildMeshes ? model.getChildMeshes() : []
   for (const child of meshes) {
     const mat = child.material
     if (!mat) continue
     mat.backFaceCulling = false
-    if (mat.transparencyMode !== undefined) mat.transparencyMode = 1 // ALPHATEST
-    mat.alpha = 1
+    if (alphaBlend) {
+      if (mat.transparencyMode !== undefined) mat.transparencyMode = 2 // ALPHABLEND
+      if (mat.needDepthPrePass !== undefined) mat.needDepthPrePass = true
+    } else {
+      if (mat.transparencyMode !== undefined) mat.transparencyMode = 1 // ALPHATEST
+      mat.alpha = 1
+    }
   }
 }
 
@@ -3002,6 +3022,32 @@ let selectedWaterFlowChunk = null
             <option value="5">Tier 5 relics</option>
           </select>
         </label>
+        <div id="stallLootRow" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #333;">
+          <div style="font-size:11px;color:#aaa;margin-bottom:5px;">Stall loot chances</div>
+          <div id="stallLootRows" style="display:flex;flex-direction:column;gap:5px;margin-bottom:5px;"></div>
+          <div style="display:flex;gap:5px;margin-bottom:5px;">
+            <button id="stallLootAddBtn" style="flex:1;font-size:11px;padding:4px 6px;">Add loot</button>
+            <button id="stallLootDefaultBtn" style="flex:1;font-size:11px;padding:4px 6px;">Use defaults</button>
+            <button id="stallLootNormalizeBtn" style="flex:1;font-size:11px;padding:4px 6px;">Normalize</button>
+            <button id="stallLootClearBtn" style="font-size:11px;padding:4px 6px;color:#ffb0b0;">Clear</button>
+          </div>
+          <button id="stallLootSimulateBtn" style="width:100%;font-size:11px;padding:4px 6px;margin-bottom:5px;">Simulate 1000 thieves</button>
+          <div id="stallLootSummary" style="font-size:10px;color:#888;line-height:1.35;"></div>
+          <div id="stallLootSimulation" style="display:none;margin-top:6px;font-size:10px;color:#aaa;line-height:1.35;border:1px solid #333;border-radius:3px;background:#151515;padding:6px;"></div>
+          <div id="stallMerchantRow" style="margin-top:8px;padding-top:8px;border-top:1px solid #333;">
+            <div style="font-size:11px;color:#aaa;margin-bottom:5px;">Matching merchant shop</div>
+            <div id="stallMerchantSummary" style="font-size:10px;color:#888;line-height:1.35;margin-bottom:5px;"></div>
+            <div id="stallMerchantShopRows" style="display:flex;flex-direction:column;gap:5px;margin-bottom:5px;"></div>
+            <div style="display:flex;gap:5px;margin-bottom:5px;">
+              <button id="stallMerchantAddItemBtn" style="flex:1;font-size:11px;padding:4px 6px;">Add shop item</button>
+              <button id="stallMerchantSyncBtn" title="Explicitly replaces this merchant's shop item list with the selected stall loot table." style="flex:1;font-size:11px;padding:4px 6px;">Reset to loot</button>
+            </div>
+            <div style="display:flex;gap:5px;">
+              <button id="stallMerchantPlaceBtn" style="flex:1;font-size:11px;padding:4px 6px;">Place merchant</button>
+              <button id="stallMerchantSaveBtn" style="flex:1;font-size:11px;padding:4px 6px;">Save shop NPCs</button>
+            </div>
+          </div>
+        </div>
         <div id="ladderWiringRow" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #333;">
           <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Vertical link wiring</div>
           <div id="ladderWiringStatus" style="font-size:11px;margin-bottom:6px;color:#ddd;">(status)</div>
@@ -3642,6 +3688,7 @@ let selectedWaterFlowChunk = null
 
   function npcTypeHasShop(def) {
     if (def?.shop) return true
+    if (def?.hasShop === true) return true
     return npcSpawns.some(spawn => spawn.npcId === def?.id && !!spawn.shop)
   }
 
@@ -3763,6 +3810,14 @@ let selectedWaterFlowChunk = null
     return matches.length === 1 ? matches[0].id : 0
   }
 
+  function npcTypeSearchQueryFromInput(input) {
+    const value = String(input?.value || '')
+    if (!value) return ''
+    const selectedId = selectedNpcSpawn?.npcId ?? parseInt(sidebar?.querySelector?.('#npcTypeSelect')?.value || '0')
+    const selectedDef = npcDefById(selectedId)
+    return selectedDef && value === formatNpcTypeDisplay(selectedDef) ? '' : value
+  }
+
   function npcTypeMatches(query, options = {}) {
     const filter = options.filter ?? npcTypeFilter
     const limit = Number.isFinite(options.limit) ? options.limit : Infinity
@@ -3816,9 +3871,11 @@ let selectedWaterFlowChunk = null
         npcTypeResultIndex = 0
         npcTypeResultsOpen = true
         const input = sidebar.querySelector('#npcTypeSearch')
+        const query = npcTypeSearchQueryFromInput(input)
+        if (input && input.value !== query) input.value = query
         renderNpcTypeFilterControls()
-        renderNpcTypeResults(input?.value || '')
-        renderNpcTypeLibrary(input?.value || '')
+        renderNpcTypeResults(query)
+        renderNpcTypeLibrary(query)
       })
       root.appendChild(btn)
     }
@@ -3949,11 +4006,12 @@ let selectedWaterFlowChunk = null
     const def = npcDefById(selectedTypeId)
     if (input && def && document.activeElement !== input) input.value = formatNpcTypeDisplay(def)
     renderNpcTypeFilterControls()
-    renderNpcTypeResults(input?.value || '')
+    const query = document.activeElement === input ? npcTypeSearchQueryFromInput(input) : ''
+    renderNpcTypeResults(query)
     if (summary) {
       summary.textContent = formatNpcTypeSummary(def)
     }
-    renderNpcTypeLibrary(document.activeElement === input ? input?.value || '' : '')
+    renderNpcTypeLibrary(query)
   }
 
   function setNpcTypeSelection(npcId) {
@@ -6305,6 +6363,10 @@ let selectedWaterFlowChunk = null
     const def = placedObjectDef(obj)
     return def?.category === 'altar'
   }
+  function isStallPlacedObject(obj) {
+    const def = placedObjectDef(obj)
+    return def?.category === 'stall'
+  }
   function isLadderPlacedObject(obj) {
     const def = placedObjectDef(obj)
     return def?.category === 'ladder'
@@ -7188,6 +7250,608 @@ let selectedWaterFlowChunk = null
       delete selectedPlacedObject.userData.interactions
     }
   }
+  function defaultStallLootForSelectedObject() {
+    const def = placedObjectDef(selectedPlacedObject)
+    const options = Array.isArray(def?.harvestOptions) ? def.harvestOptions : []
+    if (!options.length) return []
+    let totalWeight = 0
+    for (const option of options) totalWeight += Math.max(0, Number(option.weight ?? 1))
+    const equalChance = options.length > 0 ? 1 / options.length : 0
+    return options
+      .filter(option => Number.isInteger(option.harvestItemId) && option.harvestItemId > 0)
+      .map(option => ({
+        itemId: option.harvestItemId,
+        quantity: Math.max(1, Math.floor(option.harvestQuantity ?? def.harvestQuantity ?? 1)),
+        chance: totalWeight > 0 ? Math.max(0, Number(option.weight ?? 1)) / totalWeight : equalChance,
+      }))
+  }
+  function customStallLootForSelectedObject() {
+    return Array.isArray(selectedPlacedObject?.userData?.stallLoot)
+      ? selectedPlacedObject.userData.stallLoot.filter(entry => entry && Number.isInteger(entry.itemId) && entry.itemId > 0 && Number(entry.chance) > 0)
+      : []
+  }
+  function activeStallLootForSelectedObject() {
+    const custom = customStallLootForSelectedObject()
+    if (custom.length) return { source: 'custom', entries: custom }
+    return { source: 'default', entries: defaultStallLootForSelectedObject() }
+  }
+  function sanitizeStallLootEntry(entry) {
+    const itemId = Math.floor(Number(entry?.itemId) || 0)
+    const quantity = Math.max(1, Math.floor(Number(entry?.quantity) || 1))
+    const chance = Math.max(0, Math.min(100, Number(entry?.chancePercent) || 0)) / 100
+    return itemId > 0 && chance > 0 ? { itemId, quantity, chance } : null
+  }
+  function formatChancePercent(value) {
+    return `${Math.round((Number(value) || 0) * 1000) / 10}%`
+  }
+  function selectedStallPanelObjectKey() {
+    if (!selectedPlacedObject) return ''
+    return `${selectedPlacedObject.uniqueId ?? selectedPlacedObject.id ?? selectedPlacedObject.name ?? ''}`
+  }
+  function stallLootRowsRenderKeyForSelectedObject() {
+    if (!selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) return ''
+    const def = placedObjectDef(selectedPlacedObject)
+    return stableJson({
+      object: selectedStallPanelObjectKey(),
+      defId: def?.id ?? null,
+      itemCount: itemDefs.length,
+      customLoot: selectedPlacedObject.userData?.stallLoot ?? null,
+      defaultLoot: def?.harvestOptions ?? null,
+      defaultQuantity: def?.harvestQuantity ?? null,
+    })
+  }
+  function stallMerchantShopRenderKeyForSelectedObject() {
+    if (!selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) return ''
+    const merchantId = stallMerchantNpcIdForSelectedObject()
+    const merchantDef = stallMerchantNpcDefForSelectedObject()
+    return stableJson({
+      object: selectedStallPanelObjectKey(),
+      merchantId,
+      merchantName: merchantDef?.name ?? null,
+      shop: merchantDef?.shop ?? null,
+      itemCount: itemDefs.length,
+    })
+  }
+  function clearStallPanelRenderKeys() {
+    stallLootRowsRenderKey = ''
+    stallMerchantShopRenderKey = ''
+  }
+  function clearStallLootSimulation() {
+    const sim = sidebar.querySelector('#stallLootSimulation')
+    if (!sim) return
+    sim.style.display = 'none'
+    sim.textContent = ''
+  }
+  function stallLootSummaryText(entries, source) {
+    if (!entries.length) return 'No loot table available for this stall.'
+    const total = entries.reduce((sum, entry) => sum + Math.max(0, Number(entry.chance) || 0), 0)
+    const pct = Math.round(total * 1000) / 10
+    const prefix = source === 'custom'
+      ? `${entries.length} custom row${entries.length === 1 ? '' : 's'}.`
+      : `Using ${entries.length} default row${entries.length === 1 ? '' : 's'}. Click Use defaults to edit this placed stall.`
+    if (total > 1.0001) return `${prefix} Total chance: ${pct}%. Totals above 100% are normalized as weights.`
+    if (total < 0.9999) return `${prefix} Total chance: ${pct}%. Remaining ${Math.round((1 - total) * 1000) / 10}% rolls no loot.`
+    return `${prefix} Total chance: 100%.`
+  }
+  function updateStallLootSummary() {
+    const summary = sidebar.querySelector('#stallLootSummary')
+    if (!summary) return
+    const { source, entries } = activeStallLootForSelectedObject()
+    summary.textContent = stallLootSummaryText(entries, source)
+    const total = entries.reduce((sum, entry) => sum + Math.max(0, Number(entry.chance) || 0), 0)
+    summary.style.color = !entries.length ? '#d88' : (total > 1.0001 ? '#ffd27a' : '#888')
+  }
+  function saveStallLootRowsFromUI() {
+    if (!selectedPlacedObject) return
+    const rows = [...(sidebar.querySelector('#stallLootRows')?.querySelectorAll('.stall-loot-row') || [])]
+    const entries = rows
+      .map(row => sanitizeStallLootEntry({
+        itemId: parseItemIdFromDisplay(row.querySelector('.stall-loot-item')?.value || ''),
+        quantity: row.querySelector('.stall-loot-qty')?.value,
+        chancePercent: row.querySelector('.stall-loot-chance')?.value,
+      }))
+      .filter(Boolean)
+    if (entries.length) selectedPlacedObject.userData.stallLoot = entries
+    else delete selectedPlacedObject.userData.stallLoot
+    clearStallLootSimulation()
+    updateStallLootSummary()
+  }
+  function renderStallLootHeader(rows) {
+    const header = document.createElement('div')
+    header.style.cssText = 'display:grid;grid-template-columns:1fr 46px 58px 24px;gap:4px;font-size:9px;color:#777;text-transform:uppercase;letter-spacing:0.02em;'
+    for (const text of ['Item', 'Qty', 'Chance', '']) {
+      const cell = document.createElement('div')
+      cell.textContent = text
+      header.appendChild(cell)
+    }
+    rows.appendChild(header)
+  }
+  function renderStallLootDefaultPreview(rows, defaults) {
+    if (!defaults.length) return
+    const preview = document.createElement('div')
+    preview.style.cssText = 'font-size:10px;color:#888;line-height:1.35;border:1px solid #282828;background:#111;padding:5px 6px;border-radius:3px;'
+    const parts = defaults.slice(0, 4).map(entry => `${formatItemDisplay(entry.itemId)} ${formatChancePercent(entry.chance)}`)
+    preview.textContent = `Default preview: ${parts.join(', ')}${defaults.length > 4 ? `, +${defaults.length - 4} more` : ''}.`
+    rows.appendChild(preview)
+  }
+  function renderStallLootRows() {
+    const rows = sidebar.querySelector('#stallLootRows')
+    if (!rows || !selectedPlacedObject) return
+    const renderKey = stallLootRowsRenderKeyForSelectedObject()
+    if (renderKey && renderKey === stallLootRowsRenderKey) {
+      updateStallLootSummary()
+      return
+    }
+    stallLootRowsRenderKey = renderKey
+    ensureShopItemDatalist()
+    rows.innerHTML = ''
+    const entries = Array.isArray(selectedPlacedObject.userData.stallLoot) ? selectedPlacedObject.userData.stallLoot : []
+    if (!entries.length) {
+      const defaults = defaultStallLootForSelectedObject()
+      const empty = document.createElement('div')
+      empty.style.cssText = 'font-size:10px;color:#888;line-height:1.35;border:1px dashed #333;padding:5px 6px;border-radius:3px;'
+      empty.textContent = defaults.length
+        ? 'This placed stall is using the stall type default table.'
+        : 'No custom loot rows on this placed stall.'
+      rows.appendChild(empty)
+      renderStallLootDefaultPreview(rows, defaults)
+      updateStallLootSummary()
+      return
+    }
+    renderStallLootHeader(rows)
+    for (const entry of entries) {
+      const row = document.createElement('div')
+      row.className = 'stall-loot-row'
+      row.style.cssText = 'display:grid;grid-template-columns:1fr 46px 58px 24px;gap:4px;align-items:center;'
+
+      const item = document.createElement('input')
+      item.className = 'stall-loot-item'
+      item.type = 'text'
+      item.setAttribute('list', 'shopItemDatalist')
+      item.placeholder = 'Item'
+      item.value = formatItemDisplay(entry.itemId)
+      item.style.cssText = 'width:100%;box-sizing:border-box;font-size:11px;'
+
+      const qty = document.createElement('input')
+      qty.className = 'stall-loot-qty'
+      qty.type = 'number'
+      qty.min = '1'
+      qty.step = '1'
+      qty.value = String(Math.max(1, Math.floor(entry.quantity || 1)))
+      qty.title = 'Quantity'
+      qty.style.cssText = 'width:100%;box-sizing:border-box;font-size:11px;'
+
+      const chance = document.createElement('input')
+      chance.className = 'stall-loot-chance'
+      chance.type = 'number'
+      chance.min = '0'
+      chance.max = '100'
+      chance.step = '0.1'
+      chance.value = String(Math.round((Number(entry.chance) || 0) * 1000) / 10)
+      chance.title = 'Chance percent'
+      chance.style.cssText = 'width:100%;box-sizing:border-box;font-size:11px;'
+
+      const remove = document.createElement('button')
+      remove.type = 'button'
+      remove.textContent = 'x'
+      remove.title = 'Remove loot row'
+      remove.style.cssText = 'width:24px;height:22px;padding:0;font-size:11px;'
+
+      const onChange = () => saveStallLootRowsFromUI()
+      item.addEventListener('change', () => {
+        const id = parseItemIdFromDisplay(item.value)
+        item.value = formatItemDisplay(id)
+        onChange()
+      })
+      qty.addEventListener('input', onChange)
+      chance.addEventListener('input', onChange)
+      remove.addEventListener('click', () => {
+        row.remove()
+        onChange()
+        renderStallLootRows()
+      })
+
+      row.append(item, qty, chance, remove)
+      rows.appendChild(row)
+    }
+    updateStallLootSummary()
+  }
+  function rollStallLootEntry(entries) {
+    const valid = entries.filter(entry => entry && Number.isInteger(entry.itemId) && entry.itemId > 0 && Number(entry.chance) > 0)
+    let totalChance = 0
+    for (const entry of valid) totalChance += Math.max(0, Number(entry.chance) || 0)
+    if (!valid.length || totalChance <= 0) return null
+    let roll = Math.random() * (totalChance > 1 ? totalChance : 1)
+    for (const entry of valid) {
+      roll -= Math.max(0, Number(entry.chance) || 0)
+      if (roll < 0) return entry
+    }
+    return null
+  }
+  function simulateSelectedStallLoot(trials = 1000) {
+    const sim = sidebar.querySelector('#stallLootSimulation')
+    if (!sim || !selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) return
+    const { source, entries } = activeStallLootForSelectedObject()
+    if (!entries.length) {
+      sim.style.display = 'block'
+      sim.textContent = 'No loot table to simulate.'
+      return
+    }
+
+    const counts = new Map()
+    let noLoot = 0
+    for (let i = 0; i < trials; i++) {
+      const entry = rollStallLootEntry(entries)
+      if (!entry) {
+        noLoot++
+        continue
+      }
+      const existing = counts.get(entry.itemId) || { itemId: entry.itemId, steals: 0, quantity: 0 }
+      existing.steals++
+      existing.quantity += Math.max(1, Math.floor(entry.quantity || 1))
+      counts.set(entry.itemId, existing)
+    }
+
+    sim.innerHTML = ''
+    sim.style.display = 'block'
+    const title = document.createElement('div')
+    title.style.cssText = 'color:#ddd;margin-bottom:5px;'
+    title.textContent = `1000 thief simulation (${source} table): ${trials - noLoot} successful, ${noLoot} no loot.`
+    sim.appendChild(title)
+
+    const grid = document.createElement('div')
+    grid.style.cssText = 'display:grid;grid-template-columns:1fr 52px 52px 44px;gap:4px;align-items:center;'
+    for (const text of ['Item', 'Steals', 'Items', '%']) {
+      const cell = document.createElement('div')
+      cell.style.cssText = 'font-size:9px;color:#777;text-transform:uppercase;'
+      cell.textContent = text
+      grid.appendChild(cell)
+    }
+    const sorted = [...counts.values()].sort((a, b) => b.steals - a.steals || formatItemDisplay(a.itemId).localeCompare(formatItemDisplay(b.itemId)))
+    for (const result of sorted) {
+      const cells = [
+        formatItemDisplay(result.itemId),
+        String(result.steals),
+        String(result.quantity),
+        `${Math.round((result.steals / trials) * 1000) / 10}%`,
+      ]
+      for (const text of cells) {
+        const cell = document.createElement('div')
+        cell.textContent = text
+        grid.appendChild(cell)
+      }
+    }
+    if (noLoot > 0) {
+      for (const text of ['No loot', String(noLoot), '-', `${Math.round((noLoot / trials) * 1000) / 10}%`]) {
+        const cell = document.createElement('div')
+        cell.style.color = '#999'
+        cell.textContent = text
+        grid.appendChild(cell)
+      }
+    }
+    sim.appendChild(grid)
+  }
+  function normalizeSelectedStallLootChances() {
+    if (!selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) return
+    const source = customStallLootForSelectedObject().length ? customStallLootForSelectedObject() : defaultStallLootForSelectedObject()
+    const entries = source
+      .map(entry => ({
+        itemId: entry.itemId,
+        quantity: Math.max(1, Math.floor(entry.quantity || 1)),
+        chance: Math.max(0, Number(entry.chance) || 0),
+      }))
+      .filter(entry => entry.itemId > 0 && entry.chance > 0)
+    const total = entries.reduce((sum, entry) => sum + entry.chance, 0)
+    if (!entries.length || total <= 0) {
+      showEditorNotice('No stall loot chances to normalize.', 'error')
+      return
+    }
+    selectedPlacedObject.userData.stallLoot = entries.map(entry => ({
+      itemId: entry.itemId,
+      quantity: entry.quantity,
+      chance: entry.chance / total,
+    }))
+    clearStallLootSimulation()
+    renderStallLootRows()
+  }
+  function stallMerchantNpcIdForSelectedObject() {
+    const def = placedObjectDef(selectedPlacedObject)
+    const authoredId = Math.floor(Number(def?.stallMerchantNpcId) || 0)
+    return authoredId > 0 ? authoredId : 0
+  }
+  function stallMerchantNpcDefForSelectedObject() {
+    const npcId = stallMerchantNpcIdForSelectedObject()
+    return npcId > 0 ? npcDefById(npcId) : null
+  }
+  function stallMerchantShopPriceForItem(itemId) {
+    const def = itemDefs.find(item => item.id === itemId)
+    const value = Math.max(1, Math.ceil(Number(def?.value) || 1))
+    return Math.max(1, value * 2)
+  }
+  function stallMerchantShopStockForItem(itemId) {
+    const def = itemDefs.find(item => item.id === itemId)
+    const value = Math.max(1, Number(def?.value) || 1)
+    let stock = 1
+    if (value <= 5) stock = 20
+    else if (value <= 25) stock = 12
+    else if (value <= 100) stock = 6
+    else if (value <= 500) stock = 3
+    if (def?.stackable) stock *= 10
+    return stock
+  }
+  function stallMerchantShopItemsFromLootEntries(entries, existingItems = []) {
+    const seen = new Set()
+    const existingByItemId = new Map()
+    for (const item of existingItems || []) {
+      const itemId = Math.floor(Number(item?.itemId) || 0)
+      if (itemId > 0 && !existingByItemId.has(itemId)) existingByItemId.set(itemId, item)
+    }
+    const items = []
+    for (const entry of entries || []) {
+      const itemId = Math.floor(Number(entry?.itemId) || 0)
+      if (itemId <= 0 || seen.has(itemId)) continue
+      seen.add(itemId)
+      const existing = existingByItemId.get(itemId)
+      items.push({
+        itemId,
+        price: Math.max(0, Math.floor(Number(existing?.price) || 0)) || stallMerchantShopPriceForItem(itemId),
+        stock: Math.max(0, Math.floor(Number(existing?.stock) || 0)) || stallMerchantShopStockForItem(itemId),
+      })
+    }
+    return items
+  }
+  function ensureStallMerchantShop(merchantDef, stallDef = placedObjectDef(selectedPlacedObject)) {
+    if (!merchantDef) return null
+    if (!merchantDef.shop) {
+      merchantDef.shop = {
+        name: `${stallDef?.name || merchantDef.name}'s Shop`,
+        restockTicks: 200,
+        items: [],
+      }
+    }
+    if (!Array.isArray(merchantDef.shop.items)) merchantDef.shop.items = []
+    if (!merchantDef.shop.name) merchantDef.shop.name = `${stallDef?.name || merchantDef.name}'s Shop`
+    if (merchantDef.shop.restockTicks == null) merchantDef.shop.restockTicks = 200
+    return merchantDef.shop
+  }
+  function renderStallMerchantShopHeader(rows) {
+    const header = document.createElement('div')
+    header.style.cssText = 'display:grid;grid-template-columns:1fr 52px 52px 24px;gap:4px;font-size:9px;color:#777;text-transform:uppercase;letter-spacing:0.02em;'
+    for (const text of ['Item', 'Price', 'Stock', '']) {
+      const cell = document.createElement('div')
+      cell.textContent = text
+      header.appendChild(cell)
+    }
+    rows.appendChild(header)
+  }
+  function renderStallMerchantShopPanel() {
+    const summary = sidebar.querySelector('#stallMerchantSummary')
+    const rows = sidebar.querySelector('#stallMerchantShopRows')
+    if (!summary || !rows) return
+    const renderKey = stallMerchantShopRenderKeyForSelectedObject()
+    if (renderKey && renderKey === stallMerchantShopRenderKey) return
+    stallMerchantShopRenderKey = renderKey
+    rows.innerHTML = ''
+    if (!selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) {
+      summary.textContent = ''
+      return
+    }
+
+    const stallDef = placedObjectDef(selectedPlacedObject)
+    const merchantId = stallMerchantNpcIdForSelectedObject()
+    const merchantDef = stallMerchantNpcDefForSelectedObject()
+    if (!merchantId || !merchantDef) {
+      summary.style.color = '#d88'
+      summary.textContent = merchantId
+        ? `Missing NPC def #${merchantId} for ${stallDef?.name || 'this stall'}.`
+        : `No merchant NPC is linked to ${stallDef?.name || 'this stall'}.`
+      return
+    }
+
+    summary.style.color = '#888'
+    const shop = merchantDef.shop || null
+    if (shop && !Array.isArray(shop.items)) shop.items = []
+    const itemCount = shop?.items?.length || 0
+    summary.textContent = `${merchantDef.name} (NPC ${merchantDef.id}) - ${shop ? `${itemCount} shop item${itemCount === 1 ? '' : 's'}` : 'no shop yet'}.`
+
+    if (itemDefs.length === 0) {
+      const loading = document.createElement('div')
+      loading.style.cssText = 'font-size:10px;color:#888;line-height:1.35;border:1px dashed #333;padding:5px 6px;border-radius:3px;'
+      loading.textContent = 'Loading item list...'
+      rows.appendChild(loading)
+      fetchItemDefsOnce().then(() => {
+        ensureShopItemDatalist()
+        renderStallMerchantShopPanel()
+      })
+      return
+    }
+    ensureShopItemDatalist()
+
+    if (!shop) {
+      const empty = document.createElement('div')
+      empty.style.cssText = 'font-size:10px;color:#888;line-height:1.35;border:1px dashed #333;padding:5px 6px;border-radius:3px;'
+      empty.textContent = 'No shop exists for this merchant yet. Add an item or sync from loot to create one.'
+      rows.appendChild(empty)
+      return
+    }
+
+    const meta = document.createElement('div')
+    meta.style.cssText = 'display:grid;grid-template-columns:1fr 70px;gap:5px;align-items:end;'
+
+    const nameWrap = document.createElement('label')
+    nameWrap.style.cssText = 'display:flex;flex-direction:column;gap:2px;font-size:9px;color:#777;text-transform:uppercase;'
+    const nameInput = document.createElement('input')
+    nameInput.type = 'text'
+    nameInput.value = shop.name || ''
+    nameInput.style.cssText = 'width:100%;box-sizing:border-box;font-size:11px;'
+    nameInput.addEventListener('input', () => {
+      shop.name = nameInput.value
+      markDefsDirty()
+    })
+    nameWrap.append('Shop name', nameInput)
+
+    const restockWrap = document.createElement('label')
+    restockWrap.style.cssText = 'display:flex;flex-direction:column;gap:2px;font-size:9px;color:#777;text-transform:uppercase;'
+    const restockInput = document.createElement('input')
+    restockInput.type = 'number'
+    restockInput.min = '0'
+    restockInput.step = '1'
+    restockInput.value = String(shop.restockTicks ?? 200)
+    restockInput.style.cssText = 'width:100%;box-sizing:border-box;font-size:11px;'
+    restockInput.addEventListener('change', () => {
+      shop.restockTicks = Math.max(0, Math.floor(Number(restockInput.value) || 0))
+      restockInput.value = String(shop.restockTicks)
+      markDefsDirty()
+    })
+    restockWrap.append('Restock', restockInput)
+
+    meta.append(nameWrap, restockWrap)
+    rows.appendChild(meta)
+
+    if (!shop.items.length) {
+      const empty = document.createElement('div')
+      empty.style.cssText = 'font-size:10px;color:#888;line-height:1.35;border:1px dashed #333;padding:5px 6px;border-radius:3px;'
+      empty.textContent = 'This shop has no items.'
+      rows.appendChild(empty)
+      return
+    }
+
+    renderStallMerchantShopHeader(rows)
+    for (let i = 0; i < shop.items.length; i++) {
+      const idx = i
+      const entry = shop.items[idx]
+      const row = document.createElement('div')
+      row.className = 'stall-merchant-shop-row'
+      row.style.cssText = 'display:grid;grid-template-columns:1fr 52px 52px 24px;gap:4px;align-items:center;'
+
+      const itemInput = document.createElement('input')
+      itemInput.type = 'text'
+      itemInput.setAttribute('list', 'shopItemDatalist')
+      itemInput.placeholder = 'Item'
+      itemInput.value = formatItemDisplay(entry.itemId)
+      itemInput.style.cssText = 'width:100%;box-sizing:border-box;font-size:11px;'
+
+      const priceInput = document.createElement('input')
+      priceInput.type = 'number'
+      priceInput.min = '0'
+      priceInput.step = '1'
+      priceInput.value = String(Math.max(0, Math.floor(Number(entry.price) || 0)))
+      priceInput.title = 'Price'
+      priceInput.style.cssText = 'width:100%;box-sizing:border-box;font-size:11px;'
+
+      const stockInput = document.createElement('input')
+      stockInput.type = 'number'
+      stockInput.min = '0'
+      stockInput.step = '1'
+      stockInput.value = String(Math.max(0, Math.floor(Number(entry.stock) || 0)))
+      stockInput.title = 'Stock'
+      stockInput.style.cssText = 'width:100%;box-sizing:border-box;font-size:11px;'
+
+      const remove = document.createElement('button')
+      remove.type = 'button'
+      remove.textContent = 'x'
+      remove.title = 'Remove shop item'
+      remove.style.cssText = 'width:24px;height:22px;padding:0;font-size:11px;'
+
+      itemInput.addEventListener('change', () => {
+        const id = parseItemIdFromDisplay(itemInput.value)
+        shop.items[idx].itemId = id
+        itemInput.value = formatItemDisplay(id)
+        const recognised = itemDefs.some(def => def.id === id)
+        itemInput.style.borderColor = (id > 0 && recognised) ? '' : '#aa5544'
+        markDefsDirty()
+      })
+      priceInput.addEventListener('change', () => {
+        shop.items[idx].price = Math.max(0, Math.floor(Number(priceInput.value) || 0))
+        priceInput.value = String(shop.items[idx].price)
+        markDefsDirty()
+      })
+      stockInput.addEventListener('change', () => {
+        shop.items[idx].stock = Math.max(0, Math.floor(Number(stockInput.value) || 0))
+        stockInput.value = String(shop.items[idx].stock)
+        markDefsDirty()
+      })
+      remove.addEventListener('click', () => {
+        shop.items.splice(idx, 1)
+        markDefsDirty()
+        renderStallMerchantShopPanel()
+      })
+
+      row.append(itemInput, priceInput, stockInput, remove)
+      rows.appendChild(row)
+    }
+  }
+  async function syncStallMerchantShopFromSelectedLoot() {
+    if (!selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) return
+    const merchantDef = stallMerchantNpcDefForSelectedObject()
+    if (!merchantDef) {
+      showEditorNotice('No merchant NPC is linked to this stall.', 'error')
+      return
+    }
+    await fetchItemDefsOnce()
+    const { entries } = activeStallLootForSelectedObject()
+    const shop = ensureStallMerchantShop(merchantDef)
+    const items = stallMerchantShopItemsFromLootEntries(entries, shop?.items || [])
+    if (!items.length) {
+      showEditorNotice('No stall loot items are available to sync.', 'error')
+      return
+    }
+    const currentCount = Array.isArray(shop.items) ? shop.items.length : 0
+    const confirmed = window.confirm(
+      `Reset ${merchantDef.name}'s shop items from this stall's loot table?\n\n`
+      + `This will replace the current ${currentCount} shop item${currentCount === 1 ? '' : 's'} with ${items.length} loot item${items.length === 1 ? '' : 's'}.\n`
+      + 'Matching items keep their current price and stock. Shop name and restock ticks are kept.'
+    )
+    if (!confirmed) return
+    shop.items = items
+    markDefsDirty()
+    renderStallMerchantShopPanel()
+    showEditorNotice(`Reset ${merchantDef.name}'s shop items from the selected stall loot.`, 'success')
+  }
+  async function addStallMerchantShopItem() {
+    if (!selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) return
+    const merchantDef = stallMerchantNpcDefForSelectedObject()
+    if (!merchantDef) {
+      showEditorNotice('No merchant NPC is linked to this stall.', 'error')
+      return
+    }
+    await fetchItemDefsOnce()
+    const shop = ensureStallMerchantShop(merchantDef)
+    const seed = activeStallLootForSelectedObject().entries[0] || { itemId: 0 }
+    const itemId = Math.floor(Number(seed.itemId) || 0)
+    shop.items.push({
+      itemId,
+      price: itemId > 0 ? stallMerchantShopPriceForItem(itemId) : 1,
+      stock: itemId > 0 ? stallMerchantShopStockForItem(itemId) : 1,
+    })
+    markDefsDirty()
+    renderStallMerchantShopPanel()
+  }
+  function placeStallMerchantNpcForSelectedObject() {
+    if (!selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) return
+    const merchantDef = stallMerchantNpcDefForSelectedObject()
+    if (!merchantDef) {
+      showEditorNotice('No merchant NPC is linked to this stall.', 'error')
+      return
+    }
+    const stallDef = placedObjectDef(selectedPlacedObject)
+    const px = Number(selectedPlacedObject.position?.x) || 0
+    const pz = Number(selectedPlacedObject.position?.z) || 0
+    const sideOffset = Math.max(1.25, (Number(stallDef?.width) || 1) * 0.5 + 0.75)
+    const x = Math.max(0.5, Math.min(map.width - 0.5, px + sideOffset))
+    const z = Math.max(0.5, Math.min(map.height - 0.5, pz))
+    pushUndoState('spawns')
+    const spawn = addNpcSpawn({
+      npcId: merchantDef.id,
+      x,
+      z,
+      wanderRange: 0,
+      aggressive: false,
+    })
+    setTool(ToolMode.NPC_SPAWN)
+    selectNpcSpawn(spawn, true)
+    showEditorNotice(`Placed ${merchantDef.name} beside the selected stall.`, 'success')
+  }
   function parseObjectSaySequence(raw) {
     return String(raw || '')
       .split(/\r?\n/)
@@ -7283,6 +7947,9 @@ let selectedWaterFlowChunk = null
     return effect.say || ''
   }
   let objectSayRowsRenderKey = ''
+  let stallLootPanelObjectKey = ''
+  let stallLootRowsRenderKey = ''
+  let stallMerchantShopRenderKey = ''
   let interactionTilesRenderKey = ''
   for (const id of ['#objectExamineText', '#objectEffectAction', '#objectEffectSay', '#objectEffectMessage']) {
     sidebar.querySelector(id)?.addEventListener('input', saveObjectQuestFieldsFromUI)
@@ -7293,6 +7960,71 @@ let selectedWaterFlowChunk = null
     const delay = getNextObjectSayDelay(say?.value || '')
     const row = addObjectSayRow(delay, '')
     row?.querySelector('.object-say-text')?.focus()
+  })
+  sidebar.querySelector('#stallLootAddBtn')?.addEventListener('click', () => {
+    if (!selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) return
+    const entries = Array.isArray(selectedPlacedObject.userData.stallLoot)
+      ? selectedPlacedObject.userData.stallLoot
+      : []
+    const seed = entries[entries.length - 1] || defaultStallLootForSelectedObject()[0] || { itemId: 13, quantity: 1, chance: 0.1 }
+    selectedPlacedObject.userData.stallLoot = [
+      ...entries,
+      {
+        itemId: seed.itemId,
+        quantity: Math.max(1, Math.floor(seed.quantity || 1)),
+        chance: Math.max(0.01, Math.min(1, Number(seed.chance) || 0.1)),
+      },
+    ]
+    clearStallLootSimulation()
+    renderStallLootRows()
+  })
+  sidebar.querySelector('#stallLootDefaultBtn')?.addEventListener('click', () => {
+    if (!selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) return
+    const defaults = defaultStallLootForSelectedObject()
+    if (!defaults.length) {
+      showEditorNotice('No default stall loot table is available for this object.', 'error')
+      return
+    }
+    selectedPlacedObject.userData.stallLoot = defaults
+    clearStallLootSimulation()
+    renderStallLootRows()
+  })
+  sidebar.querySelector('#stallLootNormalizeBtn')?.addEventListener('click', () => {
+    normalizeSelectedStallLootChances()
+  })
+  sidebar.querySelector('#stallLootSimulateBtn')?.addEventListener('click', () => {
+    simulateSelectedStallLoot(1000)
+  })
+  sidebar.querySelector('#stallLootClearBtn')?.addEventListener('click', () => {
+    if (!selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) return
+    delete selectedPlacedObject.userData.stallLoot
+    clearStallLootSimulation()
+    renderStallLootRows()
+  })
+  sidebar.querySelector('#stallMerchantAddItemBtn')?.addEventListener('click', () => {
+    addStallMerchantShopItem().catch(err => {
+      console.warn('[editor] failed to add stall merchant shop item', err)
+      showEditorNotice(err?.message || 'Failed to add stall merchant shop item.', 'error')
+    })
+  })
+  sidebar.querySelector('#stallMerchantSyncBtn')?.addEventListener('click', () => {
+    syncStallMerchantShopFromSelectedLoot().catch(err => {
+      console.warn('[editor] failed to sync stall merchant shop', err)
+      showEditorNotice(err?.message || 'Failed to sync stall merchant shop.', 'error')
+    })
+  })
+  sidebar.querySelector('#stallMerchantPlaceBtn')?.addEventListener('click', () => {
+    placeStallMerchantNpcForSelectedObject()
+  })
+  sidebar.querySelector('#stallMerchantSaveBtn')?.addEventListener('click', async () => {
+    try {
+      await saveNpcDefsToServer()
+      showEditorNotice('Saved stall merchant NPC shops.', 'success')
+    } catch (err) {
+      if (err?.cancelled) return
+      console.warn('[editor] failed to save stall merchant NPC shops', err)
+      showEditorNotice(err?.message || 'Failed to save stall merchant NPC shops.', 'error')
+    }
   })
 
   // Trigger metadata handlers
@@ -7909,12 +8641,33 @@ let selectedWaterFlowChunk = null
       const doorLockedMessageInput = sidebar.querySelector('#doorLockedMessageInput')
       const altarTierLabel = sidebar.querySelector('#altarTierLabel')
       const altarTierSelect = sidebar.querySelector('#altarTierSelect')
+      const stallLootRow = sidebar.querySelector('#stallLootRow')
+      const stallLootRows = sidebar.querySelector('#stallLootRows')
+      const stallMerchantRow = sidebar.querySelector('#stallMerchantRow')
       const showDoorDefault = showObjectName && isDoorPlacedObject(selectedPlacedObject)
       const showAltarTier = showObjectName && isAltarPlacedObject(selectedPlacedObject)
+      const showStallLoot = showObjectName && isStallPlacedObject(selectedPlacedObject)
       if (doorLabel) doorLabel.style.display = showDoorDefault ? 'flex' : 'none'
       if (doorDirectionLabel) doorDirectionLabel.style.display = showDoorDefault ? 'block' : 'none'
       if (doorLockedFields) doorLockedFields.style.display = showDoorDefault ? 'block' : 'none'
       if (altarTierLabel) altarTierLabel.style.display = showAltarTier ? 'block' : 'none'
+      if (stallLootRow) {
+        stallLootRow.style.display = showStallLoot ? 'block' : 'none'
+        if (showStallLoot) {
+          const stallKey = selectedStallPanelObjectKey()
+          if (stallKey !== stallLootPanelObjectKey) {
+            stallLootPanelObjectKey = stallKey
+            clearStallPanelRenderKeys()
+            clearStallLootSimulation()
+          }
+          if (stallLootRows && !stallLootRows.contains(document.activeElement)) renderStallLootRows()
+          if (!stallMerchantRow?.contains(document.activeElement)) renderStallMerchantShopPanel()
+        } else {
+          stallLootPanelObjectKey = ''
+          clearStallPanelRenderKeys()
+          clearStallLootSimulation()
+        }
+      }
       if (showDoorDefault && doorInput && document.activeElement !== doorInput) {
         doorInput.checked = selectedPlacedObject.userData.defaultOpen === true
       }
@@ -8460,6 +9213,7 @@ let selectedWaterFlowChunk = null
       if (obj.userData.lockedMessage) out.lockedMessage = obj.userData.lockedMessage
       if (obj.userData.noRoof) out.noRoof = true
       if (Number.isInteger(obj.userData.altarTier) && obj.userData.altarTier > 1) out.altarTier = obj.userData.altarTier
+      if (obj.userData.stallLoot?.length) out.stallLoot = JSON.parse(JSON.stringify(obj.userData.stallLoot))
       if (obj.userData.trigger) out.trigger = { ...obj.userData.trigger }
       if (obj.userData.verticalLinks?.length) out.verticalLinks = JSON.parse(JSON.stringify(obj.userData.verticalLinks))
       if (obj.userData.interactionTiles?.length) out.interactionTiles = JSON.parse(JSON.stringify(obj.userData.interactionTiles))
@@ -8499,7 +9253,7 @@ let selectedWaterFlowChunk = null
       }
 
       const model = cloneAssetModelSync(asset.path)
-      tuneModelLighting(model, asset.path)
+      tuneModelLighting(model, asset)
       if (rebuildToken !== placedObjectRebuildToken) {
         model.dispose()
         return
@@ -8523,6 +9277,7 @@ let selectedWaterFlowChunk = null
       if (placed.lockedMessage) model.userData.lockedMessage = placed.lockedMessage
       if (placed.noRoof) model.userData.noRoof = true
       if (Number.isInteger(placed.altarTier) && placed.altarTier > 0) model.userData.altarTier = placed.altarTier
+      if (placed.stallLoot?.length) model.userData.stallLoot = JSON.parse(JSON.stringify(placed.stallLoot))
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
       if (placed.verticalLinks?.length) model.userData.verticalLinks = JSON.parse(JSON.stringify(placed.verticalLinks))
       if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
@@ -8899,7 +9654,7 @@ let selectedWaterFlowChunk = null
         continue
       }
       const model = cloneAssetModelSync(asset.path)
-      tuneModelLighting(model, asset.path)
+      tuneModelLighting(model, asset)
       model.position.set(placed.position.x + offsetX, placed.position.y, placed.position.z + offsetZ)
       model.rotationQuaternion = null
       model.rotation.set(placed.rotation.x, placed.rotation.y, placed.rotation.z)
@@ -9796,7 +10551,7 @@ let selectedWaterFlowChunk = null
     }
 
     const model = cloneAssetModelSync(asset.path)
-    tuneModelLighting(model, asset.path)
+    tuneModelLighting(model, asset)
 
     model.position.set(
       placed.position.x + offsetX,
@@ -10784,7 +11539,7 @@ function applyToolAtTile(tile, eventLike = null) {
 
     const model = await loadAssetModel(asset.path, { doNotInstantiate: true })
     if (!model) return
-    tuneModelLighting(model, asset.path)
+    tuneModelLighting(model, asset)
 
     if (isStoneModularAsset(asset)) {
       model.scale.y = 1
@@ -10812,7 +11567,7 @@ function applyToolAtTile(tile, eventLike = null) {
     if (!asset) return
 
     const model = await loadAssetModel(asset.path)
-    tuneModelLighting(model, asset.path)
+    tuneModelLighting(model, asset)
 
     if (isStoneModularAsset(asset)) {
       model.scale.y = 1
@@ -10866,7 +11621,7 @@ function applyToolAtTile(tile, eventLike = null) {
       const newAsset = replacementAssetForRoofPiece(obj.userData?.assetId, requestedAsset.id) || requestedAsset
       if (newAsset.id !== requestedAsset.id) roofMappedCount++
       const model = await loadAssetModel(newAsset.path)
-      tuneModelLighting(model, newAsset.path)
+      tuneModelLighting(model, newAsset)
       model.position.copyFrom(obj.position)
       if (obj.rotationQuaternion) {
         model.rotationQuaternion = obj.rotationQuaternion.clone()
@@ -10937,7 +11692,7 @@ function applyToolAtTile(tile, eventLike = null) {
         const asset = assetRegistry.find((a) => a.id === src.userData.assetId)
         if (!asset) continue
         const model = await loadAssetModel(asset.path)
-        tuneModelLighting(model, asset.path)
+        tuneModelLighting(model, asset)
         if (src.rotationQuaternion) {
           model.rotationQuaternion = src.rotationQuaternion.clone()
         } else {
@@ -11049,7 +11804,7 @@ function applyToolAtTile(tile, eventLike = null) {
         if (!asset) continue
 
         const model = await loadAssetModel(asset.path)
-        tuneModelLighting(model, asset.path)
+        tuneModelLighting(model, asset)
         if (src.rotationQuaternion) {
           model.rotationQuaternion = src.rotationQuaternion.clone()
         } else {
@@ -11096,7 +11851,7 @@ function applyToolAtTile(tile, eventLike = null) {
       if (!asset) return
 
       const model = await loadAssetModel(asset.path)
-      tuneModelLighting(model, asset.path)
+      tuneModelLighting(model, asset)
 
       const targetFootprint = getObjectFootprint(selectedPlacedObject)
 

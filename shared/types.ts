@@ -233,6 +233,8 @@ export interface NpcDef {
    *  keyed by NPC id. The DataLoader still reads shops.json as a fallback
    *  for entries not yet migrated. */
   shop?: ShopDef;
+  /** Public-data hint used when shop contents are stripped from /data/npcs.json. */
+  hasShop?: boolean;
   /** Inline dialogue tree. When present, right-clicking the NPC offers a
    *  "Talk-to" option that opens the DialoguePanel with the root node. */
   dialogue?: DialogueTree;
@@ -454,13 +456,19 @@ export interface WallsFile extends FloorLayerData {
 export interface WorldObjectDef {
   id: number;
   name: string;
-  category: 'tree' | 'rock' | 'fishingspot' | 'furnace' | 'cookingrange' | 'anvil' | 'altar' | 'obelisk' | 'door' | 'ladder' | 'chest' | 'crop' | 'bank' | 'scenery';
+  category: 'tree' | 'rock' | 'fishingspot' | 'furnace' | 'cookingrange' | 'anvil' | 'altar' | 'obelisk' | 'door' | 'ladder' | 'chest' | 'crop' | 'bank' | 'stall' | 'scenery';
   actions: string[]; // e.g. ["Chop", "Examine"]
   blocking: boolean;
+  /** Tile footprint width in local X. */
   width: number;
+  /** Optional tile footprint depth in local Z. Defaults to width for square objects. */
+  depth?: number;
+  /** Visual height in world units. */
   height: number;
   color: [number, number, number]; // RGB 0-255 for client sprite
   examineText?: string;
+  /** Editor asset id used for runtime-spawned object visuals. */
+  modelAssetId?: string;
 
   // Harvesting (trees, rocks, fishing)
   skill?: string; // SkillId
@@ -492,6 +500,11 @@ export interface WorldObjectDef {
   // is in its depleted state. Used by chests (closed → open swap) and any
   // other category that wants a visual variant instead of just hiding.
   depletedAssetId?: string;
+
+  // For roguery stalls, the reusable NPC definition that owns the matching
+  // merchant shop. Editor-only metadata; runtime interaction still uses the
+  // placed object's stall loot table.
+  stallMerchantNpcId?: number;
 
   // Crafting station recipes (furnace, cooking range)
   recipes?: ObjectRecipe[];
@@ -862,6 +875,15 @@ export interface TexturePlane {
   bridge?: boolean; // If true, snap as a floor-0 bridge regardless of terrain classification
 }
 
+export interface PlacedObjectStallLootEntry {
+  itemId: number;
+  quantity?: number;
+  /** Absolute chance from 0-1. Totals over 1 are normalized as weights. */
+  chance: number;
+  /** Optional per-entry XP override. Falls back to the stall object's xpReward. */
+  xpReward?: number;
+}
+
 export interface PlacedObject {
   assetId: string;
   layerId: string;
@@ -887,6 +909,8 @@ export interface PlacedObject {
   noRoof?: boolean;
   /** Good-magic altar tier. Determines which relic tier can be sacrificed here. */
   altarTier?: number;
+  /** Per-instance stall reward table. Chance is 0-1; totals below 1 leave a no-loot chance. */
+  stallLoot?: PlacedObjectStallLootEntry[];
   position: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
   scale: { x: number; y: number; z: number };
@@ -899,8 +923,8 @@ export interface PlacedObject {
    *  When present, these override interactionSides and normal adjacency. */
   interactionTiles?: { x: number; z: number }[];
   /** Bitmask of allowed interaction tiles in OBJECT-LOCAL frame.
-   *  For width W this is a 4*W-bit perimeter mask around the footprint;
-   *  bit 0 starts at local +Z/front-left. 0 / undefined = any adjacent tile. */
+   *  For width W and depth D this is a 2*W+2*D-bit perimeter mask around the
+   *  footprint; bit 0 starts at local +Z/front-left. 0 / undefined = any adjacent tile. */
   interactionSides?: number;
 }
 

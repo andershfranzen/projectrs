@@ -96,6 +96,17 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'tier 4 chest': 35, // Mithril Chest
   'tier 5 chest': 36, // Steel Chest
   'tier 6 chest': 37, // Royal Gold Chest
+  // Market stalls (roguery)
+  'food stall': 52,
+  'crafting stall': 53,
+  'hides stall': 54,
+  'Ranging stall': 55,
+  'ranging stall': 55,
+  'low level smithing stall': 56,
+  'high level smithing stall': 57,
+  'relic stall': 58,
+  'Gem stall': 59,
+  'gem stall': 59,
   // Crops
   'rice': RICE_PLANT_OBJECT_DEF_ID, // Rice Plant
   'PotatoPlant': POTATO_PLANT_OBJECT_DEF_ID, // Potato Plant
@@ -111,6 +122,7 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'Paper': 26,
   'well': 27,
   'desert well': 27,
+  'desert fountain': 27,
 };
 
 /**

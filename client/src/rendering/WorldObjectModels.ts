@@ -1,10 +1,18 @@
 import { Scene } from '@babylonjs/core/scene';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
+import { Material } from '@babylonjs/core/Materials/material';
+import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import type { WorldObjectDef } from '@projectrs/shared';
 import { worldAABB } from './MeshBounds';
 
-interface ModelTemplate { template: TransformNode; scale: number; }
+interface ModelTemplate {
+  template: TransformNode;
+  scale: number;
+  alphaBlend?: boolean;
+  animationGroups?: AnimationGroup[];
+}
 
 const TREE_MODEL_CONFIG: { defId: number; files: string[]; targetHeight: number; stumpFile: string }[] = [
   { defId: 1, files: ['sTree_1.glb', 'sTree_2.glb', 'stree_3.glb', 'sTree4.glb', 'stree_autumn.glb'], targetHeight: 3.45, stumpFile: 'stump1.glb' },
@@ -27,10 +35,12 @@ export class WorldObjectModels {
   private depletedRockModel: ModelTemplate | null = null;
   private depletedRockModelsByFile: Map<string, ModelTemplate> = new Map();
   private depletedRockModelsByAsset: Map<string, ModelTemplate> = new Map();
-  /** Pre-loaded depleted-state templates for chests, keyed by depletedAssetId
-   *  from the object def. Multiple chest tiers can share the same open-chest
-   *  asset without re-importing. */
-  private chestDepletedModels: Map<string, ModelTemplate> = new Map();
+  private activeAssetModels: Map<string, ModelTemplate> = new Map();
+  private activeAnimationGroupsByObjectId: Map<number, AnimationGroup[]> = new Map();
+  private activeMaterialClonesByObjectId: Map<number, Material[]> = new Map();
+  /** Pre-loaded depleted-state templates keyed by depletedAssetId from the
+   *  object def. Multiple object defs can share one depleted GLB. */
+  private depletedAssetModels: Map<string, ModelTemplate> = new Map();
 
   private stumps: Map<number, TransformNode> = new Map();
 
@@ -64,20 +74,27 @@ export class WorldObjectModels {
     await Promise.all([
       this.loadTreeModels(),
       this.loadDepletedRockModel(),
-      this.loadChestDepletedModels(),
+      this.loadDepletedAssetModels(),
+      this.loadActiveAssetModels(),
     ]);
   }
 
-  /** Map an `depletedAssetId` (e.g. "open tier 1 chest") to the GLB file under
-   *  /models/ to import. Add entries here when a new chest tier introduces
-   *  a different open variant. */
-  private static readonly DEPLETED_ASSET_FILES: Record<string, string> = {
-    'open tier 1 chest': 'OpenChest.glb',
-    'open tier 2 chest': 'OpenTier2Chest.glb',
-    'open tier 3 chest': 'OpenTier3Chest.glb',
-    'open tier 4 chest': 'OpenTier4Chest.glb',
-    'open tier 5 chest': 'OpenTier5Chest.glb',
-    'open tier 6 chest': 'OpenTier6Chest.glb',
+  /** Runtime-spawned objects, keyed by WorldObjectDef.modelAssetId. */
+  private static readonly ACTIVE_ASSET_FILES: Record<string, { rootUrl: string; file: string; alphaBlend?: boolean }> = {
+    fire: { rootUrl: '/assets/models/', file: 'fire.glb', alphaBlend: true },
+  };
+
+  /** Map a `depletedAssetId` (e.g. "open tier 1 chest") to a GLB file to
+   *  pre-load. Add entries here for any object that swaps to a model while
+   *  depleted. */
+  private static readonly DEPLETED_ASSET_FILES: Record<string, { rootUrl: string; file: string }> = {
+    'open tier 1 chest': { rootUrl: '/models/', file: 'OpenChest.glb' },
+    'open tier 2 chest': { rootUrl: '/models/', file: 'OpenTier2Chest.glb' },
+    'open tier 3 chest': { rootUrl: '/models/', file: 'OpenTier3Chest.glb' },
+    'open tier 4 chest': { rootUrl: '/models/', file: 'OpenTier4Chest.glb' },
+    'open tier 5 chest': { rootUrl: '/models/', file: 'OpenTier5Chest.glb' },
+    'open tier 6 chest': { rootUrl: '/models/', file: 'OpenTier6Chest.glb' },
+    'depleted stall': { rootUrl: '/assets/models/', file: 'depleted stall.glb' },
   };
 
   private static readonly DEPLETED_ROCK_ASSET_FILES: Record<string, string> = {
@@ -104,35 +121,121 @@ export class WorldObjectModels {
     ClayRock3: 'DepletedRock3.glb',
   };
 
-  private async loadModelTemplate(rootUrl: string, file: string, templateName: string): Promise<ModelTemplate> {
+  private static prepareMaterial(mat: unknown, alphaBlend: boolean): void {
+    if (!mat || typeof mat !== 'object') return;
+    const material = mat as Material & { needDepthPrePass?: boolean };
+    material.backFaceCulling = false;
+    if (alphaBlend) {
+      if (WorldObjectModels.materialUsesAlpha(material)) {
+        if (material.transparencyMode !== undefined) material.transparencyMode = Material.MATERIAL_ALPHABLEND;
+        if (material.needDepthPrePass !== undefined) material.needDepthPrePass = false;
+      } else {
+        if (material.transparencyMode !== undefined) material.transparencyMode = Material.MATERIAL_OPAQUE;
+        material.alpha = 1;
+        if (material.needDepthPrePass !== undefined) material.needDepthPrePass = false;
+      }
+    } else if (material.transparencyMode !== undefined) {
+      material.transparencyMode = Material.MATERIAL_ALPHATEST;
+      material.alpha = 1;
+    }
+  }
+
+  private static materialUsesAlpha(material: Material): boolean {
+    const source = material as Material & {
+      needAlphaBlending?: () => boolean;
+      albedoTexture?: { hasAlpha?: boolean };
+      diffuseTexture?: { hasAlpha?: boolean };
+      opacityTexture?: { hasAlpha?: boolean };
+    };
+    if (typeof source.needAlphaBlending === 'function' && source.needAlphaBlending()) return true;
+    if (typeof source.alpha === 'number' && source.alpha < 0.999) return true;
+    return source.albedoTexture?.hasAlpha === true
+      || source.diffuseTexture?.hasAlpha === true
+      || source.opacityTexture?.hasAlpha === true;
+  }
+
+  private cloneActiveMaterial(
+    material: Material | null,
+    clones: Map<Material, Material>,
+    objectEntityId: number,
+    alphaBlend: boolean,
+  ): Material | null {
+    if (!material) return null;
+    let cloned = clones.get(material);
+    if (!cloned) {
+      const newClone = material.clone(`${material.name || 'material'}_active_${objectEntityId}`);
+      if (!newClone) {
+        WorldObjectModels.prepareMaterial(material, alphaBlend);
+        return material;
+      }
+      cloned = newClone;
+      WorldObjectModels.prepareMaterial(cloned, alphaBlend);
+      clones.set(material, cloned);
+    }
+    return cloned;
+  }
+
+  private async loadModelTemplate(rootUrl: string, file: string, templateName: string, alphaBlend: boolean = false): Promise<ModelTemplate> {
     const result = await SceneLoader.ImportMeshAsync('', rootUrl, file, this.scene);
     const bb = worldAABB(result.meshes);
     const centerX = (bb.minX + bb.maxX) / 2;
     const centerZ = (bb.minZ + bb.maxZ) / 2;
     const root = new TransformNode(templateName, this.scene);
+    const animationGroups = result.animationGroups.length > 0 ? result.animationGroups : undefined;
     for (const mesh of result.meshes) {
-      if (!mesh.parent) mesh.parent = root;
+      WorldObjectModels.prepareMaterial(mesh.material, alphaBlend);
     }
-    for (const child of root.getChildren()) {
-      const c = child as TransformNode;
-      c.position.x -= centerX;
-      c.position.y -= bb.minY;
-      c.position.z -= centerZ;
+    if (animationGroups) {
+      const offsetRoot = new TransformNode(`${templateName}_offset`, this.scene);
+      offsetRoot.parent = root;
+      offsetRoot.position.set(-centerX, -bb.minY, -centerZ);
+      const topLevelNodes = new Set<TransformNode>();
+      for (const mesh of result.meshes) {
+        if (!mesh.parent) topLevelNodes.add(mesh);
+      }
+      for (const node of result.transformNodes) {
+        if (!node.parent) topLevelNodes.add(node);
+      }
+      for (const node of topLevelNodes) node.parent = offsetRoot;
+      for (const group of animationGroups) {
+        group.stop();
+        group.reset();
+      }
+    } else {
+      for (const mesh of result.meshes) {
+        if (!mesh.parent) mesh.parent = root;
+      }
+      for (const child of root.getChildren()) {
+        const c = child as TransformNode;
+        c.position.x -= centerX;
+        c.position.y -= bb.minY;
+        c.position.z -= centerZ;
+      }
     }
     root.setEnabled(false);
-    return { template: root, scale: 1 };
+    return { template: root, scale: 1, alphaBlend, animationGroups };
   }
 
-  private async loadChestDepletedModels(): Promise<void> {
+  private async loadActiveAssetModels(): Promise<void> {
+    await Promise.all(Object.entries(WorldObjectModels.ACTIVE_ASSET_FILES).map(async ([assetId, cfg]) => {
+      try {
+        this.activeAssetModels.set(assetId, await this.loadModelTemplate(cfg.rootUrl, cfg.file, `activeTemplate_${assetId}`, cfg.alphaBlend === true));
+      } catch (e) {
+        console.warn(`[WorldObjectModels] Failed to load active model '${cfg.file}':`, e);
+      }
+    }));
+  }
+
+  private async loadDepletedAssetModels(): Promise<void> {
     // Iterate the static asset→file map rather than objectDefsCache: loadAll()
     // is called from the GameManager constructor before /data/objects.json
     // is fetched, so the defs cache is empty at this point. Every entry
-    // here gets pre-loaded; chest defs reference them via depletedAssetId.
-    await Promise.all(Object.entries(WorldObjectModels.DEPLETED_ASSET_FILES).map(async ([assetId, file]) => {
+    // here gets pre-loaded; object defs reference them via depletedAssetId.
+    await Promise.all(Object.entries(WorldObjectModels.DEPLETED_ASSET_FILES).map(async ([assetId, cfg]) => {
       try {
-        this.chestDepletedModels.set(assetId, await this.loadModelTemplate('/models/', file, `chestDepletedTemplate_${assetId}`));
+        this.depletedAssetModels.set(assetId, await this.loadModelTemplate(cfg.rootUrl, cfg.file, `depletedTemplate_${assetId}`));
       } catch (e) {
-        console.warn(`[WorldObjectModels] Failed to load chest depleted model '${file}':`, e);
+        console.warn(`[WorldObjectModels] Failed to load depleted model '${cfg.file}':`, e);
       }
     }));
   }
@@ -261,6 +364,88 @@ export class WorldObjectModels {
     return clone;
   }
 
+  createActiveModel(
+    objectEntityId: number,
+    def: WorldObjectDef,
+    x: number,
+    z: number,
+    y: number | undefined,
+    rotY: number,
+    isDepleted: boolean,
+  ): TransformNode | null {
+    const assetId = def.modelAssetId;
+    if (!assetId) return null;
+    const model = this.activeAssetModels.get(assetId);
+    if (!model) return null;
+    this.deleteActiveModelAnimations(objectEntityId);
+    const sourceToClone = new Map<unknown, unknown>();
+    const materialClones = new Map<Material, Material>();
+    const clone = model.template.instantiateHierarchy(null, undefined, (source, cloned) => {
+      cloned.name = source.name + `_active_${objectEntityId}`;
+      sourceToClone.set(source, cloned);
+    });
+    if (!clone) return null;
+    clone.setEnabled(!isDepleted);
+    clone.rotationQuaternion = null;
+    clone.rotation.y = rotY;
+    for (const child of clone.getChildMeshes()) {
+      child.setEnabled(true);
+      child.metadata = { ...(child.metadata ?? {}), objectEntityId };
+      child.material = this.cloneActiveMaterial(child.material, materialClones, objectEntityId, model.alphaBlend === true);
+    }
+    if (materialClones.size > 0) this.activeMaterialClonesByObjectId.set(objectEntityId, [...new Set(materialClones.values())]);
+    const s = model.scale;
+    clone.scaling.set(s, s, s);
+    clone.position.set(x, y ?? this.getHeight(x, z), z);
+    clone.metadata = { ...(clone.metadata ?? {}), objectEntityId, assetId, runtimeWorldObject: true };
+    this.startActiveModelAnimations(objectEntityId, model, sourceToClone, !isDepleted);
+    return clone;
+  }
+
+  private startActiveModelAnimations(
+    objectEntityId: number,
+    model: ModelTemplate,
+    sourceToClone: Map<unknown, unknown>,
+    enabled: boolean,
+  ): void {
+    const templateGroups = model.animationGroups;
+    if (!templateGroups || templateGroups.length === 0) return;
+    const groups: AnimationGroup[] = [];
+    for (const srcGroup of templateGroups) {
+      const clonedGroup = new AnimationGroup(`${srcGroup.name}_active_${objectEntityId}`, this.scene);
+      for (const targeted of srcGroup.targetedAnimations) {
+        const clonedTarget = sourceToClone.get(targeted.target);
+        if (clonedTarget) clonedGroup.addTargetedAnimation(targeted.animation, clonedTarget as any);
+      }
+      if (clonedGroup.targetedAnimations.length === 0) {
+        clonedGroup.dispose();
+        continue;
+      }
+      clonedGroup.stop();
+      if (enabled) clonedGroup.play(true);
+      groups.push(clonedGroup);
+    }
+    if (groups.length > 0) this.activeAnimationGroupsByObjectId.set(objectEntityId, groups);
+  }
+
+  deleteActiveModelAnimations(objectEntityId: number): void {
+    const groups = this.activeAnimationGroupsByObjectId.get(objectEntityId);
+    if (groups) {
+      for (const group of groups) group.dispose();
+      this.activeAnimationGroupsByObjectId.delete(objectEntityId);
+    }
+    const materials = this.activeMaterialClonesByObjectId.get(objectEntityId);
+    if (materials) {
+      for (const material of materials) material.dispose(false, false);
+      this.activeMaterialClonesByObjectId.delete(objectEntityId);
+    }
+  }
+
+  private static disposeModelTemplate(model: ModelTemplate): void {
+    for (const group of model.animationGroups ?? []) group.dispose();
+    model.template.dispose();
+  }
+
   createDepletedModel(objectEntityId: number, defId: number, placedNode: TransformNode): TransformNode | undefined {
     const existing = this.stumps.get(objectEntityId);
     if (existing) {
@@ -274,8 +459,8 @@ export class WorldObjectModels {
     } else if (def?.category === 'rock') {
       const assetId = typeof placedNode.metadata?.assetId === 'string' ? placedNode.metadata.assetId : undefined;
       depletedModel = (assetId ? this.depletedRockModelsByAsset.get(assetId) : null) ?? this.depletedRockModel;
-    } else if (def?.category === 'chest' && def.depletedAssetId) {
-      depletedModel = this.chestDepletedModels.get(def.depletedAssetId) ?? null;
+    } else if (def?.depletedAssetId) {
+      depletedModel = this.depletedAssetModels.get(def.depletedAssetId) ?? null;
     }
     if (!depletedModel) return undefined;
     const depleted = depletedModel.template.instantiateHierarchy(null, undefined, (source, cloned) => {
@@ -287,7 +472,7 @@ export class WorldObjectModels {
       const mat = child.material as any;
       if (mat && mat.transparencyMode !== undefined) mat.transparencyMode = 1;
     }
-    WorldObjectModels.copyNodeTransform(depleted, placedNode);
+    this.copyDepletedTransform(depleted, placedNode);
     this.stumps.set(objectEntityId, depleted);
     return depleted;
   }
@@ -295,20 +480,29 @@ export class WorldObjectModels {
   syncDepletedModelTransform(objectEntityId: number, placedNode: TransformNode): void {
     const depleted = this.stumps.get(objectEntityId);
     if (!depleted) return;
+    this.copyDepletedTransform(depleted, placedNode);
+  }
+
+  private copyDepletedTransform(
+    depleted: TransformNode,
+    placedNode: TransformNode,
+  ): void {
     WorldObjectModels.copyNodeTransform(depleted, placedNode);
   }
 
   private static copyNodeTransform(target: TransformNode, source: TransformNode): void {
-    target.scaling.copyFrom(source.scaling);
-    target.position.copyFrom(source.position);
-    if (source.rotationQuaternion) {
-      if (target.rotationQuaternion) target.rotationQuaternion.copyFrom(source.rotationQuaternion);
-      else target.rotationQuaternion = source.rotationQuaternion.clone();
-      target.rotation.set(0, 0, 0);
-    } else {
-      target.rotationQuaternion = null;
-      target.rotation.copyFrom(source.rotation);
-    }
+    const scaling = new Vector3();
+    const rotation = new Quaternion();
+    const position = new Vector3();
+    // Placed object roots may have frozen world matrices. Copy the rendered
+    // matrix, not mutable transform fields that can drift after freeze.
+    source.computeWorldMatrix(false);
+    source.getWorldMatrix().decompose(scaling, rotation, position);
+    target.scaling.copyFrom(scaling);
+    target.position.copyFrom(position);
+    if (target.rotationQuaternion) target.rotationQuaternion.copyFrom(rotation);
+    else target.rotationQuaternion = rotation;
+    target.rotation.set(0, 0, 0);
   }
 
   disposeStumps(): void {
@@ -317,18 +511,28 @@ export class WorldObjectModels {
   }
 
   dispose(): void {
-    for (const [, m] of this.treeModels) m.template.dispose();
+    for (const [, groups] of this.activeAnimationGroupsByObjectId) {
+      for (const group of groups) group.dispose();
+    }
+    this.activeAnimationGroupsByObjectId.clear();
+    for (const [, materials] of this.activeMaterialClonesByObjectId) {
+      for (const material of materials) material.dispose(false, false);
+    }
+    this.activeMaterialClonesByObjectId.clear();
+    for (const [, m] of this.treeModels) WorldObjectModels.disposeModelTemplate(m);
     this.treeModels.clear();
     this.treeModelVariants.clear();
-    for (const [, m] of this.stumpModels) m.template.dispose();
+    for (const [, m] of this.stumpModels) WorldObjectModels.disposeModelTemplate(m);
     this.stumpModels.clear();
     this.stumpModelsByName.clear();
-    for (const [, m] of this.depletedRockModelsByFile) m.template.dispose();
+    for (const [, m] of this.depletedRockModelsByFile) WorldObjectModels.disposeModelTemplate(m);
     this.depletedRockModelsByFile.clear();
     this.depletedRockModelsByAsset.clear();
     this.depletedRockModel = null;
-    for (const [, m] of this.chestDepletedModels) m.template.dispose();
-    this.chestDepletedModels.clear();
+    for (const [, m] of this.depletedAssetModels) WorldObjectModels.disposeModelTemplate(m);
+    this.depletedAssetModels.clear();
+    for (const [, m] of this.activeAssetModels) WorldObjectModels.disposeModelTemplate(m);
+    this.activeAssetModels.clear();
     this.disposeStumps();
   }
 }

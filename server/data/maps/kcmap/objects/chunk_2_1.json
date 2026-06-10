@@ -8302,5 +8302,62 @@
       "y": 1,
       "z": 1
     }
+  },
+  {
+    "assetId": "Ranging stall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 78.5,
+      "y": 0,
+      "z": 35
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948961,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "relic stall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 73,
+      "y": 0,
+      "z": 40.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "hides stall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 70.5,
+      "y": 0,
+      "z": 37
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
   }
 ]

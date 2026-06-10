@@ -171,6 +171,24 @@ export class ServerChunkManager {
     this.forEachEntityNearChunk(cx, cz, id => fn(id, this.entityKinds.get(id) ?? 'entity'));
   }
 
+  /** Zero-allocation: call fn for each entity in chunks overlapped by a world
+   *  position + tile radius. This is a coarse chunk query; callers that need
+   *  exact distance should still apply their own range check. */
+  forEachEntityKindNearRadius(worldX: number, worldZ: number, radiusTiles: number, fn: (entityId: number, kind: ServerEntityKind) => void): void {
+    const radius = Number.isFinite(radiusTiles) && radiusTiles > 0 ? radiusTiles : 0;
+    const minCx = Math.floor((worldX - radius) / CHUNK_SIZE);
+    const maxCx = Math.floor((worldX + radius) / CHUNK_SIZE);
+    const minCz = Math.floor((worldZ - radius) / CHUNK_SIZE);
+    const maxCz = Math.floor((worldZ + radius) / CHUNK_SIZE);
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      for (let cz = minCz; cz <= maxCz; cz++) {
+        const set = this.chunkEntities.get(this.chunkKey(cx, cz));
+        if (!set) continue;
+        for (const id of set) fn(id, this.entityKinds.get(id) ?? 'entity');
+      }
+    }
+  }
+
   /** Zero-allocation: call fn for each player within CHUNK_LOAD_RADIUS of world position */
   forEachPlayerNear(worldX: number, worldZ: number, fn: (playerId: number) => void): void {
     const cx = Math.floor(worldX / CHUNK_SIZE);

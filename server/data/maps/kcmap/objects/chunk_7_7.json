@@ -719,8 +719,7 @@
       "x": 1,
       "y": 0.9999999999999999,
       "z": 1
-    },
-    "defaultOpen": true
+    }
   },
   {
     "assetId": "desert well",
@@ -2375,7 +2374,21 @@
       "x": 1,
       "y": 1,
       "z": 1
-    }
+    },
+    "interactionTiles": [
+      {
+        "x": 0,
+        "z": 1
+      },
+      {
+        "x": 1,
+        "z": 1
+      },
+      {
+        "x": -1,
+        "z": 1
+      }
+    ]
   },
   {
     "assetId": "BankBooth",
@@ -2394,7 +2407,21 @@
       "x": 1,
       "y": 1,
       "z": 1
-    }
+    },
+    "interactionTiles": [
+      {
+        "x": -1,
+        "z": 1
+      },
+      {
+        "x": 0,
+        "z": 1
+      },
+      {
+        "x": 1,
+        "z": 1
+      }
+    ]
   },
   {
     "assetId": "stone pillar nice",
@@ -4067,6 +4094,101 @@
       "x": 0.7999999999999999,
       "y": 1.15,
       "z": 0.5499999999999999
+    }
+  },
+  {
+    "assetId": "crafting stall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 240,
+      "y": 0,
+      "z": 234.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "food stall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 236,
+      "y": 0,
+      "z": 234.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "hides stall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 241.5,
+      "y": 0,
+      "z": 232
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "low level smithing stall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 238,
+      "y": 0,
+      "z": 229.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "desert fountain",
+    "layerId": "layer_0",
+    "position": {
+      "x": 236,
+      "y": 0,
+      "z": 232
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1.2999999999999998,
+      "y": 1.2999999999999998,
+      "z": 1.2999999999999998
     }
   }
 ]

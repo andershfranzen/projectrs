@@ -2,6 +2,8 @@ import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
+import { Vector3 } from '@babylonjs/core/Maths/math.vector'
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer'
 import type { Scene } from '@babylonjs/core/scene'
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
 import type { AnimationGroup } from '@babylonjs/core/Animations/animationGroup'
@@ -22,15 +24,83 @@ interface CloneAssetOptions {
 }
 
 const cache = new Map<string, CacheEntry>()
+const STALL_FRAME_MATERIAL_NAMES = new Set(['material.001', 'material.002', 'material.003'])
 
 let _scene: Scene | null = null
+
+function shouldUseStallFrameBounds(path: string): boolean {
+  return path.toLowerCase().includes('stall')
+}
+
+function worldAABBForMaterials(meshes: AbstractMesh[], materialNames: ReadonlySet<string>): {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  minZ: number
+  maxZ: number
+} | null {
+  let minX = Infinity, maxX = -Infinity
+  let minY = Infinity, maxY = -Infinity
+  let minZ = Infinity, maxZ = -Infinity
+  const point = new Vector3()
+  const include = (x: number, y: number, z: number): void => {
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+    if (z < minZ) minZ = z
+    if (z > maxZ) maxZ = z
+  }
+
+  for (const mesh of meshes) {
+    const positions = mesh.getVerticesData(VertexBuffer.PositionKind)
+    if (!positions) continue
+    const indices = mesh.getIndices()
+    const world = mesh.computeWorldMatrix(true)
+    for (const subMesh of mesh.subMeshes ?? []) {
+      const materialName = subMesh.getMaterial()?.name?.toLowerCase()
+      if (!materialName || !materialNames.has(materialName)) continue
+      if (indices && subMesh.indexCount > 0) {
+        const end = subMesh.indexStart + subMesh.indexCount
+        for (let i = subMesh.indexStart; i < end; i++) {
+          const vertex = indices[i] * 3
+          Vector3.TransformCoordinatesFromFloatsToRef(
+            positions[vertex],
+            positions[vertex + 1],
+            positions[vertex + 2],
+            world,
+            point,
+          )
+          include(point.x, point.y, point.z)
+        }
+      } else {
+        const end = subMesh.verticesStart + subMesh.verticesCount
+        for (let i = subMesh.verticesStart; i < end; i++) {
+          const vertex = i * 3
+          Vector3.TransformCoordinatesFromFloatsToRef(
+            positions[vertex],
+            positions[vertex + 1],
+            positions[vertex + 2],
+            world,
+            point,
+          )
+          include(point.x, point.y, point.z)
+        }
+      }
+    }
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(minZ)) return null
+  return { minX, maxX, minY, maxY, minZ, maxZ }
+}
 
 /** Must be called once with the Babylon.js scene before loading any assets */
 export function initAssetLoader(scene: Scene): void {
   _scene = scene
 }
 
-async function buildCenteredPivotTemplate(meshes: AbstractMesh[], root: AbstractMesh): Promise<TransformNode> {
+async function buildCenteredPivotTemplate(meshes: AbstractMesh[], root: AbstractMesh, path: string): Promise<TransformNode> {
   // Compute world-space bounding box of all meshes
   let minX = Infinity, maxX = -Infinity
   let minY = Infinity, maxY = -Infinity
@@ -47,8 +117,17 @@ async function buildCenteredPivotTemplate(meshes: AbstractMesh[], root: Abstract
     if (bb.maximumWorld.z > maxZ) maxZ = bb.maximumWorld.z
   }
 
-  const centerX = (minX + maxX) / 2
-  const centerZ = (minZ + maxZ) / 2
+  const anchorBounds = shouldUseStallFrameBounds(path)
+    ? worldAABBForMaterials(meshes, STALL_FRAME_MATERIAL_NAMES)
+    : null
+  const anchorMinX = anchorBounds?.minX ?? minX
+  const anchorMaxX = anchorBounds?.maxX ?? maxX
+  const anchorMinY = anchorBounds?.minY ?? minY
+  const anchorMinZ = anchorBounds?.minZ ?? minZ
+  const anchorMaxZ = anchorBounds?.maxZ ?? maxZ
+
+  const centerX = (anchorMinX + anchorMaxX) / 2
+  const centerZ = (anchorMinZ + anchorMaxZ) / 2
   const sizeX = maxX - minX
   const sizeY = maxY - minY
   const sizeZ = maxZ - minZ
@@ -59,7 +138,7 @@ async function buildCenteredPivotTemplate(meshes: AbstractMesh[], root: Abstract
   // Offset root so model's bottom-center aligns with pivot's origin
   root.parent = pivot
   root.position.x -= centerX
-  root.position.y -= minY
+  root.position.y -= anchorMinY
   root.position.z -= centerZ
 
   pivot.metadata = {
@@ -80,7 +159,7 @@ export async function loadAssetModel(path: string, options: CloneAssetOptions = 
 
     const result: ISceneLoaderAsyncResult = await SceneLoader.ImportMeshAsync('', dir, file, _scene)
     const root = result.meshes[0]
-    const template = await buildCenteredPivotTemplate(result.meshes, root)
+    const template = await buildCenteredPivotTemplate(result.meshes, root, path)
 
     // Stop auto-played animations on template (they'll be cloned per instance)
     const animGroups = result.animationGroups || []

@@ -1,4 +1,4 @@
-import { mergeObjectActionLabels, type PlacedObjectInteraction, type PlacedObjectVerticalLink, type WorldObjectDef } from '@projectrs/shared';
+import { mergeObjectActionLabels, type PlacedObjectInteraction, type PlacedObjectStallLootEntry, type PlacedObjectVerticalLink, type WorldObjectDef } from '@projectrs/shared';
 
 let nextObjectEntityId = 10000; // Start high to avoid collision with NPC/player entity IDs
 
@@ -38,6 +38,8 @@ export class WorldObject {
   interactions?: PlacedObjectInteraction[];
   private interactionActionLabels: readonly string[] = [];
   private mergedActionCache: Map<readonly string[], readonly string[]> = new Map();
+  /** Per-instance market stall reward table from the editor. */
+  stallLoot?: PlacedObjectStallLootEntry[];
   /** Per-instance transition override from editor trigger data */
   trigger?: { type: string; destChunk: string; entryX: number; entryY: number; entryZ: number };
   /** Explicit vertical movement endpoints for ladder-like objects. */

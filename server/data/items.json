@@ -134,18 +134,27 @@
     "stackable": false,
     "equippable": false,
     "value": 2,
-    "model": "/assets/models/BeefRat.glb",
-    "icon": "cookedmeat_132.png"
+    "model": "/assets/models/BeefRat.glb"
   },
   {
     "id": 15,
-    "name": "Cooked Meat",
-    "description": "Some cooked meat. Heals 4 HP.",
+    "name": "Cooked Rat Meat",
+    "description": "Cooked rat meat. Heals 4 HP.",
     "stackable": false,
     "equippable": false,
     "healAmount": 4,
     "value": 10,
-    "model": "/assets/models/BeefRat.glb"
+    "model": "/assets/models/BeefRatCooked.glb"
+  },
+  {
+    "id": 16,
+    "name": "Cooked Beef",
+    "description": "Cooked beef. Heals 4 HP.",
+    "stackable": false,
+    "equippable": false,
+    "healAmount": 4,
+    "value": 12,
+    "model": "/assets/models/BeefCooked.glb"
   },
   {
     "id": 17,
@@ -6185,11 +6194,20 @@
   },
   {
     "id": 550,
-    "name": "Tinderbox",
+    "name": "Matchbox",
     "description": "Useful for lighting fires.",
     "stackable": false,
     "equippable": false,
     "value": 1,
-    "icon": "tinderbox_166.png"
+    "model": "/assets/models/Matchbox.glb"
+  },
+  {
+    "id": 551,
+    "name": "Ashes",
+    "description": "A heap of ashes.",
+    "stackable": false,
+    "equippable": false,
+    "value": 2,
+    "model": "/assets/models/Ashes.glb"
   }
 ]

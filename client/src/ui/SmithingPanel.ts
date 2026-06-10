@@ -5,6 +5,11 @@ import { renderItemSlot } from '../rendering/ItemIcon';
 
 export type RecipeQuantityButton = { label: string; value: number | 'all' };
 export type SmithCallback = (recipeIndex: number, quantity?: number) => void;
+export type FlatRecipeEntry<TRecipe extends Pick<ObjectRecipe, 'inputItemId'> = ObjectRecipe> = {
+  recipe: TRecipe;
+  index: number;
+  maxQuantity: number;
+};
 
 export interface SmithingPanelOptions {
   stationLabel?: string;
@@ -13,6 +18,18 @@ export interface SmithingPanelOptions {
   layout?: 'grouped' | 'flat';
   actionButtons?: RecipeQuantityButton[];
   actionVerb?: string;
+  primaryRecipePerInput?: boolean;
+}
+
+export function primaryRecipeEntriesPerInput<TEntry extends FlatRecipeEntry<Pick<ObjectRecipe, 'inputItemId'>>>(
+  entries: readonly TEntry[],
+): TEntry[] {
+  const seenInputIds = new Set<number>();
+  return entries.filter(({ recipe }) => {
+    if (seenInputIds.has(recipe.inputItemId)) return false;
+    seenInputIds.add(recipe.inputItemId);
+    return true;
+  });
 }
 
 /**
@@ -44,6 +61,7 @@ export class SmithingPanel {
   private layout: 'grouped' | 'flat' = 'grouped';
   private actionButtons: RecipeQuantityButton[] = [];
   private actionVerb: string = 'Make';
+  private primaryRecipePerInput: boolean = false;
 
   constructor() {
     const modal = createModalPanel({
@@ -93,6 +111,7 @@ export class SmithingPanel {
     this.layout = opts?.layout ?? 'grouped';
     this.actionButtons = [...(opts?.actionButtons ?? [])];
     this.actionVerb = opts?.actionVerb ?? 'Make';
+    this.primaryRecipePerInput = opts?.primaryRecipePerInput ?? false;
 
     // Which bar types does the player actually hold?
     const itemCounts = this.countInventory(inventory);
@@ -197,13 +216,17 @@ export class SmithingPanel {
     this.gridEl.innerHTML = '';
     const itemCounts = this.countInventory(this.allInventory);
     const toolOk = !this.requiresTool || this.cachedHasHammer;
-    const visibleRecipes = this.allRecipes
+    let visibleRecipes = this.allRecipes
       .map((recipe, index) => ({
         recipe,
         index,
         maxQuantity: this.maxQuantityForRecipe(recipe, itemCounts),
       }))
       .filter(({ maxQuantity }) => maxQuantity > 0);
+
+    if (this.primaryRecipePerInput) {
+      visibleRecipes = primaryRecipeEntriesPerInput(visibleRecipes);
+    }
 
     if (visibleRecipes.length === 0) {
       this.renderEmptyState(this.cachedHasHammer);

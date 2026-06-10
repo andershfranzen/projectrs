@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { withGeneratedBankNotes, type NpcDef, type ItemDef, type SpawnsFile, type WorldObjectDef, type ShopDef, type DialogueTree, type QuestDef, type SpellEffectDef, type RareDropTableDef } from '@projectrs/shared';
+import { COOKING_RANGE_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, withGeneratedBankNotes, type NpcDef, type ItemDef, type SpawnsFile, type WorldObjectDef, type ShopDef, type DialogueTree, type QuestDef, type SpellEffectDef, type RareDropTableDef } from '@projectrs/shared';
 
 const DATA_DIR = resolve(import.meta.dir, '../../data');
 const MAPS_DIR = resolve(DATA_DIR, 'maps');
@@ -90,7 +90,20 @@ export class DataLoader {
       throw new Error(`Failed to load ${path}: ${e instanceof Error ? e.message : e}`);
     }
   }
-  private loadObjects(): void { this.loadJsonMap<number, WorldObjectDef>('objects.json', this.objects, 'object definitions'); }
+  private loadObjects(): void {
+    this.loadJsonMap<number, WorldObjectDef>('objects.json', this.objects, 'object definitions');
+    this.normalizeFireObjectDef();
+  }
+
+  private normalizeFireObjectDef(): void {
+    const range = this.objects.get(COOKING_RANGE_OBJECT_DEF_ID);
+    const fire = this.objects.get(FIRE_OBJECT_DEF_ID);
+    if (!range || !fire) return;
+    if (!fire.actions.includes('Cook')) fire.actions = ['Cook', ...fire.actions.filter(action => action !== 'Cook')];
+    if ((!fire.recipes || fire.recipes.length === 0) && range.recipes?.length) {
+      fire.recipes = range.recipes.map(recipe => ({ ...recipe }));
+    }
+  }
   private loadRareDropTables(): void { this.loadJsonMap<string, RareDropTableDef>('rare-drop-tables.json', this.rareDropTables, 'rare drop tables'); }
 
   private loadShops(): void {

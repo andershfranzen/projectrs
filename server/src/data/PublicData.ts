@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
-import { npcCombatLevel } from '@projectrs/shared';
+import { COOKING_RANGE_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, npcCombatLevel } from '@projectrs/shared';
 
 const PUBLIC_DATA_FILES = new Set([
   'gear-overrides.json',
@@ -156,6 +156,29 @@ function sanitizeObjectRecipe(recipe: unknown): unknown {
   };
 }
 
+function objectRecipesForFire(data: readonly unknown[], sanitizeRecipes: boolean): unknown[] | undefined {
+  const range = data.find((object) => isRecord(object) && object.id === COOKING_RANGE_OBJECT_DEF_ID);
+  if (!isRecord(range) || !Array.isArray(range.recipes) || range.recipes.length === 0) return undefined;
+  return range.recipes.map((recipe) => {
+    if (sanitizeRecipes) return sanitizeObjectRecipe(recipe);
+    if (isRecord(recipe)) return { ...recipe };
+    return recipe;
+  });
+}
+
+function normalizeFireObjectRecipeSurface(data: unknown, sanitizeRecipes: boolean): unknown {
+  if (!Array.isArray(data)) return data;
+  const fireRecipes = objectRecipesForFire(data, sanitizeRecipes);
+  return data.map((object) => {
+    if (!isRecord(object) || object.id !== FIRE_OBJECT_DEF_ID) return object;
+    const actions = Array.isArray(object.actions)
+      ? ['Cook', ...object.actions.filter(action => action !== 'Cook')]
+      : object.actions;
+    if (Array.isArray(object.recipes) && object.recipes.length > 0) return { ...object, actions };
+    return fireRecipes ? { ...object, actions, recipes: fireRecipes } : { ...object, actions };
+  });
+}
+
 function sanitizeQuestStage(stage: unknown): unknown {
   if (!isRecord(stage)) return stage;
   const out: Record<string, unknown> = {
@@ -203,13 +226,14 @@ export function sanitizePublicData(filename: string, data: unknown): unknown {
         ...(defaultCustomColors !== undefined ? { defaultCustomColors } : {}),
         ...(defaultAttackAnim !== undefined ? { defaultAttackAnim } : {}),
         combatLevel: publicNpcCombatLevel(npc),
+        ...(npc.shop !== undefined ? { hasShop: true } : {}),
         ...(size !== undefined ? { size } : {}),
         ...(stationary !== undefined ? { stationary } : {}),
       };
     });
   }
   if (filename === 'objects.json' && Array.isArray(data)) {
-    return data.map((object) => {
+    return (normalizeFireObjectRecipeSurface(data, true) as unknown[]).map((object) => {
       if (!isRecord(object)) return object;
       const {
         id,
@@ -218,9 +242,12 @@ export function sanitizePublicData(filename: string, data: unknown): unknown {
         actions,
         blocking,
         width,
+        depth,
         height,
         color,
+        modelAssetId,
         depletedAssetId,
+        stallMerchantNpcId,
         recipes,
       } = object;
       return {
@@ -230,9 +257,12 @@ export function sanitizePublicData(filename: string, data: unknown): unknown {
         actions,
         blocking,
         width,
+        ...(depth !== undefined ? { depth } : {}),
         height,
         color,
+        ...(modelAssetId !== undefined ? { modelAssetId } : {}),
         ...(depletedAssetId !== undefined ? { depletedAssetId } : {}),
+        ...(stallMerchantNpcId !== undefined ? { stallMerchantNpcId } : {}),
         ...(Array.isArray(recipes) ? { recipes: recipes.map(sanitizeObjectRecipe) } : {}),
       };
     });
@@ -252,7 +282,11 @@ export function sanitizePublicData(filename: string, data: unknown): unknown {
 }
 
 export function readPublicDataContent(filename: string, filePath: string, sanitize: boolean): string {
-  if (!sanitize) return readFileSync(filePath, 'utf-8');
+  if (!sanitize) {
+    const raw = readFileSync(filePath, 'utf-8');
+    if (filename !== 'objects.json') return raw;
+    return JSON.stringify(normalizeFireObjectRecipeSurface(JSON.parse(raw), false));
+  }
   const stat = statSync(filePath);
   const cached = publicDataCache.get(filePath);
   if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {

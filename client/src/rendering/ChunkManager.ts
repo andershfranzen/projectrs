@@ -11,7 +11,7 @@ import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
-import { worldAABB } from './MeshBounds';
+import { worldAABB, worldAABBForMaterials } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, createObjectShadowCaster, createWallEdgeShadowCaster, isLinearCasterCoveredByWallRuns, isLinearShadowAsset, objectShadowBounds, objectShadowFactorAt, wallShadowRunsFromEntries } from '@projectrs/shared';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, DEFAULT_CUT_ANGLE, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, waterFlowUvFromTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
@@ -43,6 +43,7 @@ const ROOF_REVEAL_LAYER_HEIGHT_TOLERANCE = 1.25;
 const ROOF_REVEAL_NEARBY_TILE_PADDING = 2;
 const ROOF_REVEAL_OBJECT_LAYER_BELOW_TOLERANCE = 0.75;
 const ROOF_REVEAL_TEXTURE_PLANE_BBOX_PADDING = 10;
+const STALL_FRAME_MATERIAL_NAMES = new Set(['material.001', 'material.002', 'material.003']);
 
 export function isRoofLikePlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
@@ -81,6 +82,26 @@ function shouldSmoothPlacedObjectTextures(assetId: string, path: string): boolea
     || lowerPath.includes('/modular-assets/theodosian-limewall-modular/')
     || lowerId.startsWith('byzantine ')
     || lowerId.startsWith('theodosian limewall ');
+}
+
+function shouldUseStallFrameBounds(assetId: string, path: string): boolean {
+  const lowerId = assetId.toLowerCase();
+  const lowerPath = path.toLowerCase();
+  return lowerId.includes('stall') || lowerPath.includes('stall');
+}
+
+type AssetRegistryEntry = {
+  path: string;
+  alphaBlend: boolean;
+};
+
+function hasAlphaBlendAssetFlag(asset: { alphaBlend?: unknown; tags?: unknown }): boolean {
+  if (asset.alphaBlend === true) return true;
+  if (!Array.isArray(asset.tags)) return false;
+  return asset.tags.some((tag) => {
+    const value = String(tag).toLowerCase().replace(/[\s_-]+/g, '');
+    return value === 'alphablend' || value === 'transparent';
+  });
 }
 
 export function placedObjectThinGroupKey(assetId: string, visibility: 'ground' | 'elevated' | 'roof', originY: number): string {
@@ -401,7 +422,7 @@ export class ChunkManager {
   private texturePlaneRevealEntriesByChunk: Map<string, TexturePlaneRevealEntry[]> = new Map();
   private texturePlaneChunksEnabled: Map<string, boolean> = new Map();
   private textureOverlayMeshesByChunk: Map<string, Mesh[]> = new Map();
-  private assetRegistry: Map<string, { path: string }> = new Map();
+  private assetRegistry: Map<string, AssetRegistryEntry> = new Map();
   private loadedModelCache: Map<string, TransformNode | null> = new Map();
   private loadingModelPromises: Map<string, Promise<TransformNode | null>> = new Map();
   private modelAnimationGroups: Map<string, AnimationGroup[]> = new Map();
@@ -3510,7 +3531,10 @@ export class ChunkManager {
           if (import.meta.env.DEV) console.warn(`[ChunkManager] Duplicate asset id '${asset.id}' ignored: ${asset.path}`);
           continue;
         }
-        this.assetRegistry.set(asset.id, { path: asset.path });
+        this.assetRegistry.set(asset.id, {
+          path: asset.path,
+          alphaBlend: hasAlphaBlendAssetFlag(asset),
+        });
       }
       if (import.meta.env.DEV) console.log(`[ChunkManager] Loaded ${this.assetRegistry.size} asset definitions`);
     } catch (e) {
@@ -3526,6 +3550,23 @@ export class ChunkManager {
     } catch (e) {
       console.warn('[ChunkManager] Failed to load texture registry:', e);
     }
+  }
+
+  private isAlphaBlendAsset(assetId: string): boolean {
+    return this.assetRegistry.get(assetId)?.alphaBlend === true;
+  }
+
+  private preparePlacedObjectMaterial(mat: Material, alphaBlend: boolean, freeze: boolean = false): void {
+    mat.backFaceCulling = false;
+    const mutable = mat as any;
+    if (alphaBlend) {
+      if (mutable.transparencyMode !== undefined) mutable.transparencyMode = Material.MATERIAL_ALPHABLEND;
+      if (mutable.needDepthPrePass !== undefined) mutable.needDepthPrePass = true;
+    } else {
+      if (mutable.transparencyMode !== undefined) mutable.transparencyMode = Material.MATERIAL_ALPHATEST;
+      mutable.alpha = 1;
+    }
+    if (freeze) mutable.freeze?.();
   }
 
   private async loadObjectChunkManifest(mapId: string, cacheBust: string): Promise<void> {
@@ -3599,6 +3640,7 @@ export class ChunkManager {
       const samplingMode = shouldSmoothPlacedObjectTextures(assetId, path)
         ? Texture.TRILINEAR_SAMPLINGMODE
         : Texture.NEAREST_SAMPLINGMODE;
+      const alphaBlend = assetDef.alphaBlend;
       for (const mesh of result.meshes) {
         const mat = mesh.material;
         if (mat && 'diffuseTexture' in mat && (mat as any).diffuseTexture) {
@@ -3613,11 +3655,15 @@ export class ChunkManager {
             (mat as any).albedoTexture.anisotropicFilteringLevel = 4;
           }
         }
+        if (mat) this.preparePlacedObjectMaterial(mat, alphaBlend);
       }
 
       // KC editor's buildCenteredPivotGroup: model bottom-center → origin.
       const root = result.meshes[0];
-      const bb = worldAABB(result.meshes);
+      const fullBounds = worldAABB(result.meshes);
+      const bb = shouldUseStallFrameBounds(assetId, path)
+        ? worldAABBForMaterials(result.meshes, STALL_FRAME_MATERIAL_NAMES) ?? fullBounds
+        : fullBounds;
       const centerX = (bb.minX + bb.maxX) / 2;
       const centerZ = (bb.minZ + bb.maxZ) / 2;
 
@@ -3703,6 +3749,7 @@ export class ChunkManager {
     if (objectDefIdForPlacedAsset(obj.assetId) != null) return false;
     if (this.modelAnimationGroups.has(obj.assetId)) return false;
     if (this.isRoofLikeAsset(obj.assetId)) return false;
+    if (this.isAlphaBlendAsset(obj.assetId)) return false;
     // Doors must be unique pickable nodes — clicking one looks up its
     // metadata.objectEntityId to send PLAYER_INTERACT_OBJECT. Thin-instanced
     // source meshes share one mesh per asset across all instances, so per-
@@ -4216,12 +4263,7 @@ export class ChunkManager {
         src.setEnabled(false);
         if (src instanceof Mesh) src.makeGeometryUnique();
         const mat = src.material;
-        if (mat) {
-          if ((mat as any).transparencyMode !== undefined) (mat as any).transparencyMode = 1;
-          (mat as any).alpha = 1;
-          mat.backFaceCulling = false;
-          (mat as any).freeze?.();
-        }
+        if (mat) this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(assetId), true);
         src.isPickable = false;
 
         let maxOriginY = -Infinity;
@@ -4286,10 +4328,7 @@ export class ChunkManager {
         child.setEnabled(true);
         child.isPickable = false;
         const mat = child.material as any;
-        if (mat) {
-          if (mat.transparencyMode !== undefined) mat.transparencyMode = 1;
-          mat.alpha = 1;
-        }
+        if (mat) this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(obj.assetId));
       }
       const root = instance;
 

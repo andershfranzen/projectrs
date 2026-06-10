@@ -152,6 +152,7 @@ export class GameMap {
       consumeKey: o.consumeKey === true,
       lockedMessage: typeof o.lockedMessage === 'string' ? o.lockedMessage : undefined,
       altarTier: Number.isInteger(o.altarTier) ? o.altarTier : undefined,
+      stallLoot: Array.isArray(o.stallLoot) ? o.stallLoot : undefined,
       position: o.position,
       rotation: o.rotation,
       scale: o.scale,

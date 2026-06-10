@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { COOKING_RANGE_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID } from '@projectrs/shared';
 import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent, sanitizePublicData } from '../src/data/PublicData';
 
 describe('public data hardening', () => {
@@ -112,6 +113,7 @@ describe('public data hardening', () => {
     expect(sanitized[0].lootTable).toBeUndefined();
     expect(sanitized[0].rareDropTables).toBeUndefined();
     expect(sanitized[0].shop).toBeUndefined();
+    expect(sanitized[0].hasShop).toBe(true);
     expect(sanitized[0].dialogue).toBeUndefined();
     expect(sanitized[0].respawnTime).toBeUndefined();
     expect(sanitized[0].aggressive).toBeUndefined();
@@ -125,8 +127,11 @@ describe('public data hardening', () => {
       actions: ['Use', 'Examine'],
       blocking: true,
       width: 1,
+      depth: 1,
       height: 1,
       color: [1, 2, 3],
+      modelAssetId: 'fire',
+      stallMerchantNpcId: 114,
       respawnTime: 30,
       successChances: { 31: [64, 200] },
       recipes: [{
@@ -145,6 +150,9 @@ describe('public data hardening', () => {
     }]) as Array<Record<string, unknown>>;
 
     const recipe = (sanitized[0].recipes as Array<Record<string, unknown>>)[0];
+    expect(sanitized[0].depth).toBe(1);
+    expect(sanitized[0].modelAssetId).toBe('fire');
+    expect(sanitized[0].stallMerchantNpcId).toBe(114);
     expect(sanitized[0].respawnTime).toBeUndefined();
     expect(sanitized[0].successChances).toBeUndefined();
     expect(recipe.inputItemId).toBe(25);
@@ -153,6 +161,101 @@ describe('public data hardening', () => {
     expect(recipe.hqOutputItemId).toBeUndefined();
     expect(recipe.hqChance).toBeUndefined();
     expect(recipe.hqXpMultiplier).toBeUndefined();
+  });
+
+  test('object public data gives fire the cooking recipe surface', () => {
+    const sanitized = sanitizePublicData('objects.json', [
+      {
+        id: COOKING_RANGE_OBJECT_DEF_ID,
+        name: 'Cooking Range',
+        category: 'cookingrange',
+        actions: ['Cook', 'Examine'],
+        blocking: true,
+        width: 2,
+        height: 1,
+        color: [1, 2, 3],
+        recipes: [{
+          inputItemId: 11,
+          inputQuantity: 1,
+          outputItemId: 12,
+          outputQuantity: 1,
+          skill: 'cooking',
+          levelRequired: 1,
+          xpReward: 30,
+        }],
+      },
+      {
+        id: FIRE_OBJECT_DEF_ID,
+        name: 'Fire',
+        category: 'scenery',
+        actions: ['Cook', 'Examine'],
+        blocking: true,
+        width: 1,
+        height: 1,
+        color: [255, 132, 32],
+        modelAssetId: 'fire',
+      },
+    ]) as Array<Record<string, unknown>>;
+
+    const fire = sanitized.find(object => object.id === FIRE_OBJECT_DEF_ID)!;
+    const recipes = fire.recipes as Array<Record<string, unknown>>;
+    expect(fire.actions).toEqual(['Cook', 'Examine']);
+    expect(recipes).toHaveLength(1);
+    expect(recipes[0]).toMatchObject({
+      inputItemId: 11,
+      outputItemId: 12,
+      skill: 'cooking',
+      levelRequired: 1,
+    });
+    expect(recipes[0].xpReward).toBeUndefined();
+  });
+
+  test('raw object data response also gives fire the cooking recipe surface', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'eq-objects-'));
+    const file = join(dir, 'objects.json');
+    try {
+      writeFileSync(file, JSON.stringify([
+        {
+          id: COOKING_RANGE_OBJECT_DEF_ID,
+          name: 'Cooking Range',
+          category: 'cookingrange',
+          actions: ['Cook', 'Examine'],
+          blocking: true,
+          width: 2,
+          height: 1,
+          color: [1, 2, 3],
+          recipes: [{
+            inputItemId: 11,
+            inputQuantity: 1,
+            outputItemId: 12,
+            outputQuantity: 1,
+            skill: 'cooking',
+            levelRequired: 1,
+            xpReward: 30,
+          }],
+        },
+        {
+          id: FIRE_OBJECT_DEF_ID,
+          name: 'Fire',
+          category: 'scenery',
+          actions: ['Examine'],
+          blocking: true,
+          width: 1,
+          height: 1,
+          color: [255, 132, 32],
+          modelAssetId: 'fire',
+        },
+      ]));
+
+      const raw = JSON.parse(readPublicDataContent('objects.json', file, false)) as Array<Record<string, unknown>>;
+      const fire = raw.find(object => object.id === FIRE_OBJECT_DEF_ID)!;
+      const recipes = fire.recipes as Array<Record<string, unknown>>;
+      expect(fire.actions).toEqual(['Cook', 'Examine']);
+      expect(recipes).toHaveLength(1);
+      expect(recipes[0].xpReward).toBe(30);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('quest public data strips trigger internals but keeps journal progress thresholds', () => {

@@ -6,6 +6,7 @@ interface RawAssetData {
   group?: string
   tags?: string[]
   defaultScale?: number
+  alphaBlend?: boolean
 }
 
 export interface AssetEntry {
@@ -17,6 +18,7 @@ export interface AssetEntry {
   folderPath: string
   tags: string[]
   defaultScale: number | null
+  alphaBlend: boolean
 }
 
 function humanizeName(value: unknown): string {
@@ -61,6 +63,15 @@ function deriveAssetMeta(path: unknown): { section: string; group: string; folde
     group,
     folderPath: rel.slice(0, -1).map(humanizeName).join(' / ')
   }
+}
+
+function hasAlphaBlendAssetFlag(asset: RawAssetData): boolean {
+  if (asset.alphaBlend === true) return true;
+  if (!Array.isArray(asset.tags)) return false;
+  return asset.tags.some((tag) => {
+    const value = String(tag).toLowerCase().replace(/[\s_-]+/g, '')
+    return value === 'alphablend' || value === 'transparent'
+  })
 }
 
 export async function loadAssetRegistry(): Promise<AssetEntry[]> {
@@ -109,7 +120,8 @@ export async function loadAssetRegistry(): Promise<AssetEntry[]> {
         folderPath: meta.folderPath,
         tags: Array.isArray(asset.tags) ? asset.tags : [],
         // Per-asset placement scale override; the editor reads this when the asset is selected
-        defaultScale: typeof asset.defaultScale === 'number' ? asset.defaultScale : null
+        defaultScale: typeof asset.defaultScale === 'number' ? asset.defaultScale : null,
+        alphaBlend: hasAlphaBlendAssetFlag(asset)
       }
     })
     .sort((a, b) => {

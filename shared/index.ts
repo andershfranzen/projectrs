@@ -28,3 +28,4 @@ export * from './bankNotes';
 export * from './npcEquipmentFit';
 export * from './objectShadows';
 export * from './minimapIcons';
+export * from './firemaking';
