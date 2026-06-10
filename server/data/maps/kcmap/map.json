@@ -13251,14 +13251,14 @@
       },
       {
         "id": "plane_1775467648320_28646",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 245.49999974784436,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 240.49999997211728
         },
         "rotation": {
@@ -13281,14 +13281,14 @@
       },
       {
         "id": "plane_1775467648320_37134",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 245.49999973527213,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 241.49999989120735
         },
         "rotation": {
@@ -13311,14 +13311,14 @@
       },
       {
         "id": "plane_1775467648320_5179",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 245.4999997226999,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 242.49999981029745
         },
         "rotation": {
@@ -13341,14 +13341,14 @@
       },
       {
         "id": "plane_1775467648320_97672",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 245.4999997101277,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 243.49999972938755
         },
         "rotation": {
@@ -13371,14 +13371,14 @@
       },
       {
         "id": "plane_1775467648320_5503",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 244.49999982875426,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 240.49999995954505
         },
         "rotation": {
@@ -13401,14 +13401,14 @@
       },
       {
         "id": "plane_1775467648320_64954",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 243.49999990966415,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 240.49999994697285
         },
         "rotation": {
@@ -13431,14 +13431,14 @@
       },
       {
         "id": "plane_1775467648320_42314",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 243.49999989709193,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 241.49999986606292
         },
         "rotation": {
@@ -13461,14 +13461,14 @@
       },
       {
         "id": "plane_1775467648320_76882",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 243.4999998845197,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 242.49999978515305
         },
         "rotation": {
@@ -13491,14 +13491,14 @@
       },
       {
         "id": "plane_1775467648320_91093",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 243.4999998719475,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 243.49999970424312
         },
         "rotation": {
@@ -13521,14 +13521,14 @@
       },
       {
         "id": "plane_1775467648320_84913",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 244.49999981618203,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 241.49999987863515
         },
         "rotation": {
@@ -13551,14 +13551,14 @@
       },
       {
         "id": "plane_1775467648320_15731",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 244.49999980360982,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 242.49999979772525
         },
         "rotation": {
@@ -13581,14 +13581,14 @@
       },
       {
         "id": "plane_1775467648320_70146",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 244.4999997910376,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 243.49999971681535
         },
         "rotation": {
@@ -13611,14 +13611,14 @@
       },
       {
         "id": "plane_1775467648320_70711",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 242.4999999654296,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 242.49999977258082
         },
         "rotation": {
@@ -13641,14 +13641,14 @@
       },
       {
         "id": "plane_1775467648320_85081",
-        "textureId": "tex95",
+        "textureId": "tex-stretched-88",
         "width": 1,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
           "x": 242.4999999528574,
-          "y": 2.9786144664115586,
+          "y": 2.6786144664115588,
           "z": 243.49999969167092
         },
         "rotation": {
