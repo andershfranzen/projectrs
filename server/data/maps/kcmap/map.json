@@ -35219,6 +35219,62 @@
         "x": 243.87957337024952,
         "z": 242.12212107842265,
         "size": 16
+      },
+      {
+        "id": "marker_mq81dg1j_12op",
+        "icon": "Water_Icon.png",
+        "x": 76.10100866444965,
+        "z": 29.13893706038966,
+        "size": 16
+      },
+      {
+        "id": "marker_mq81dka6_22no",
+        "icon": "Good_Magic_Altar_Icon_Blue_v2.png",
+        "x": 71.97885017722486,
+        "z": 20.468110964583147,
+        "size": 16
+      },
+      {
+        "id": "marker_mq81dnaa_gy2",
+        "icon": "Good_Magic_Altar_Icon_Blue_v2.png",
+        "x": 156.55113122937527,
+        "z": 94.17292927536943,
+        "size": 16
+      },
+      {
+        "id": "marker_mq81dtys_z87",
+        "icon": "Fish_Icon.png",
+        "x": 99.89899137964824,
+        "z": 96.86323554973765,
+        "size": 16
+      },
+      {
+        "id": "marker_mq81dwx9_103b",
+        "icon": "Fish_Icon.png",
+        "x": 363.1827205889323,
+        "z": 175.58517280065277,
+        "size": 16
+      },
+      {
+        "id": "marker_mq81e82f_1kp0",
+        "icon": "Dungeon_Icon.png",
+        "x": 311.8126624692446,
+        "z": 159.06619453284733,
+        "size": 16
+      },
+      {
+        "id": "marker_mq81el32_weq",
+        "icon": "Furnace_Icon.png",
+        "x": 344.97928601909297,
+        "z": 181.6468115501703,
+        "size": 16
+      },
+      {
+        "id": "marker_mq81iqhr_b1h",
+        "icon": "Evil_Magic_Altar_Icon_v2.png",
+        "x": 313.35107466480895,
+        "z": 126.82652291559373,
+        "size": 16
       }
     ],
     "tiles": [],
