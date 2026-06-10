@@ -2029,7 +2029,7 @@
         {
           "itemId": 12,
           "price": 16,
-          "stock": 8
+          "stock": 4
         }
       ]
     },
@@ -2088,27 +2088,7 @@
         {
           "itemId": 247,
           "price": 6,
-          "stock": 10
-        },
-        {
-          "itemId": 248,
-          "price": 8,
-          "stock": 10
-        },
-        {
-          "itemId": 244,
-          "price": 30,
-          "stock": 5
-        },
-        {
-          "itemId": 252,
-          "price": 6,
-          "stock": 10
-        },
-        {
-          "itemId": 253,
-          "price": 8,
-          "stock": 10
+          "stock": 15
         }
       ]
     },
@@ -2165,19 +2145,9 @@
           "stock": 8
         },
         {
-          "itemId": 302,
-          "price": 24,
-          "stock": 6
-        },
-        {
           "itemId": 297,
           "price": 75,
           "stock": 6
-        },
-        {
-          "itemId": 304,
-          "price": 48,
-          "stock": 4
         }
       ]
     },
@@ -2221,7 +2191,7 @@
     "lootTable": [],
     "shop": {
       "name": "Ranging Stall Shop",
-      "restockTicks": 200,
+      "restockTicks": 100,
       "items": [
         {
           "itemId": 270,
@@ -2235,12 +2205,12 @@
         },
         {
           "itemId": 264,
-          "price": 2,
+          "price": 3,
           "stock": 200
         },
         {
           "itemId": 265,
-          "price": 4,
+          "price": 5,
           "stock": 200
         },
         {
@@ -2250,8 +2220,8 @@
         },
         {
           "itemId": 273,
-          "price": 8,
-          "stock": 20
+          "price": 30,
+          "stock": 5
         }
       ]
     },
@@ -2321,16 +2291,6 @@
           "itemId": 29,
           "price": 30,
           "stock": 12
-        },
-        {
-          "itemId": 30,
-          "price": 60,
-          "stock": 6
-        },
-        {
-          "itemId": 48,
-          "price": 120,
-          "stock": 6
         }
       ]
     },
@@ -2479,61 +2439,6 @@
           "itemId": 226,
           "price": 100,
           "stock": 6
-        },
-        {
-          "itemId": 227,
-          "price": 400,
-          "stock": 3
-        },
-        {
-          "itemId": 228,
-          "price": 400,
-          "stock": 3
-        },
-        {
-          "itemId": 229,
-          "price": 400,
-          "stock": 3
-        },
-        {
-          "itemId": 288,
-          "price": 400,
-          "stock": 3
-        },
-        {
-          "itemId": 289,
-          "price": 1600,
-          "stock": 1
-        },
-        {
-          "itemId": 290,
-          "price": 1600,
-          "stock": 1
-        },
-        {
-          "itemId": 291,
-          "price": 1600,
-          "stock": 1
-        },
-        {
-          "itemId": 292,
-          "price": 1600,
-          "stock": 1
-        },
-        {
-          "itemId": 293,
-          "price": 5000,
-          "stock": 1
-        },
-        {
-          "itemId": 294,
-          "price": 5000,
-          "stock": 1
-        },
-        {
-          "itemId": 295,
-          "price": 15000,
-          "stock": 1
         }
       ]
     },

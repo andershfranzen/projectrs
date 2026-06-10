@@ -3040,7 +3040,7 @@ let selectedWaterFlowChunk = null
             <div id="stallMerchantShopRows" style="display:flex;flex-direction:column;gap:5px;margin-bottom:5px;"></div>
             <div style="display:flex;gap:5px;margin-bottom:5px;">
               <button id="stallMerchantAddItemBtn" style="flex:1;font-size:11px;padding:4px 6px;">Add shop item</button>
-              <button id="stallMerchantSyncBtn" style="flex:1;font-size:11px;padding:4px 6px;">Sync from loot</button>
+              <button id="stallMerchantSyncBtn" title="Explicitly replaces this merchant's shop item list with the selected stall loot table." style="flex:1;font-size:11px;padding:4px 6px;">Reset to loot</button>
             </div>
             <div style="display:flex;gap:5px;">
               <button id="stallMerchantPlaceBtn" style="flex:1;font-size:11px;padding:4px 6px;">Place merchant</button>
@@ -7579,17 +7579,23 @@ let selectedWaterFlowChunk = null
     if (def?.stackable) stock *= 10
     return stock
   }
-  function stallMerchantShopItemsFromLootEntries(entries) {
+  function stallMerchantShopItemsFromLootEntries(entries, existingItems = []) {
     const seen = new Set()
+    const existingByItemId = new Map()
+    for (const item of existingItems || []) {
+      const itemId = Math.floor(Number(item?.itemId) || 0)
+      if (itemId > 0 && !existingByItemId.has(itemId)) existingByItemId.set(itemId, item)
+    }
     const items = []
     for (const entry of entries || []) {
       const itemId = Math.floor(Number(entry?.itemId) || 0)
       if (itemId <= 0 || seen.has(itemId)) continue
       seen.add(itemId)
+      const existing = existingByItemId.get(itemId)
       items.push({
         itemId,
-        price: stallMerchantShopPriceForItem(itemId),
-        stock: stallMerchantShopStockForItem(itemId),
+        price: Math.max(0, Math.floor(Number(existing?.price) || 0)) || stallMerchantShopPriceForItem(itemId),
+        stock: Math.max(0, Math.floor(Number(existing?.stock) || 0)) || stallMerchantShopStockForItem(itemId),
       })
     }
     return items
@@ -7784,16 +7790,23 @@ let selectedWaterFlowChunk = null
     }
     await fetchItemDefsOnce()
     const { entries } = activeStallLootForSelectedObject()
-    const items = stallMerchantShopItemsFromLootEntries(entries)
+    const shop = ensureStallMerchantShop(merchantDef)
+    const items = stallMerchantShopItemsFromLootEntries(entries, shop?.items || [])
     if (!items.length) {
       showEditorNotice('No stall loot items are available to sync.', 'error')
       return
     }
-    const shop = ensureStallMerchantShop(merchantDef)
+    const currentCount = Array.isArray(shop.items) ? shop.items.length : 0
+    const confirmed = window.confirm(
+      `Reset ${merchantDef.name}'s shop items from this stall's loot table?\n\n`
+      + `This will replace the current ${currentCount} shop item${currentCount === 1 ? '' : 's'} with ${items.length} loot item${items.length === 1 ? '' : 's'}.\n`
+      + 'Matching items keep their current price and stock. Shop name and restock ticks are kept.'
+    )
+    if (!confirmed) return
     shop.items = items
     markDefsDirty()
     renderStallMerchantShopPanel()
-    showEditorNotice(`Synced ${merchantDef.name}'s shop from the selected stall loot.`, 'success')
+    showEditorNotice(`Reset ${merchantDef.name}'s shop items from the selected stall loot.`, 'success')
   }
   async function addStallMerchantShopItem() {
     if (!selectedPlacedObject || !isStallPlacedObject(selectedPlacedObject)) return
@@ -7835,7 +7848,8 @@ let selectedWaterFlowChunk = null
       wanderRange: 0,
       aggressive: false,
     })
-    selectNpcSpawn(spawn, false)
+    setTool(ToolMode.NPC_SPAWN)
+    selectNpcSpawn(spawn, true)
     showEditorNotice(`Placed ${merchantDef.name} beside the selected stall.`, 'success')
   }
   function parseObjectSaySequence(raw) {

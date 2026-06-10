@@ -8,7 +8,6 @@ type StallObjectDef = {
   width?: number;
   depth?: number;
   stallMerchantNpcId?: number;
-  harvestOptions?: Array<{ harvestItemId?: number }>;
 };
 
 type NpcShopItem = {
@@ -34,10 +33,12 @@ type StallMerchantNpcDef = {
 
 const objectDefs = JSON.parse(readFileSync('server/data/objects.json', 'utf8')) as StallObjectDef[];
 const npcDefs = JSON.parse(readFileSync('server/data/npcs.json', 'utf8')) as StallMerchantNpcDef[];
+const itemDefs = JSON.parse(readFileSync('server/data/items.json', 'utf8')) as Array<{ id: number }>;
 
 describe('stall merchants', () => {
-  test('each roguery stall links to a matching merchant shop with the same item set', () => {
+  test('each roguery stall links to a valid independently editable merchant shop', () => {
     const stalls = objectDefs.filter(def => def.category === 'stall');
+    const validItemIds = new Set(itemDefs.map(item => item.id));
     expect(stalls.map(stall => stall.id)).toEqual([52, 53, 54, 55, 56, 57, 58, 59]);
 
     const merchantIds = new Set<number>();
@@ -54,11 +55,10 @@ describe('stall merchants', () => {
       expect(merchant!.shop?.name).toContain(stall.name);
       expect(merchant!.shop?.restockTicks).toBeGreaterThan(0);
 
-      const stallItems = (stall.harvestOptions || [])
-        .map(option => option.harvestItemId)
-        .filter((itemId): itemId is number => typeof itemId === 'number' && Number.isInteger(itemId) && itemId > 0);
       const shopItems = (merchant!.shop?.items || []).map(item => item.itemId);
-      expect(shopItems).toEqual([...new Set(stallItems)]);
+      expect(shopItems.length).toBeGreaterThan(0);
+      expect(new Set(shopItems).size).toBe(shopItems.length);
+      expect(shopItems.every(itemId => validItemIds.has(itemId))).toBe(true);
       expect((merchant!.shop?.items || []).every(item => item.price > 0 && item.stock > 0)).toBe(true);
 
       const root = merchant!.dialogue?.nodes?.[merchant!.dialogue.root];
