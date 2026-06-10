@@ -100,5 +100,89 @@
     "rewards": {
       "items": []
     }
+  },
+  {
+    "id": "quest_8ifl4",
+    "name": "Yes Chef",
+    "blurb": "Work in Progress",
+    "stages": [
+      {
+        "id": 0,
+        "description": ""
+      }
+    ],
+    "rewards": {
+      "items": []
+    }
+  },
+  {
+    "id": "quest_0f486",
+    "name": "The Quiet Cellar",
+    "blurb": "Work in Progress",
+    "stages": [
+      {
+        "id": 0,
+        "description": ""
+      }
+    ],
+    "rewards": {
+      "items": []
+    }
+  },
+  {
+    "id": "quest_no58f",
+    "name": "The Den",
+    "blurb": "Work in Progress",
+    "stages": [
+      {
+        "id": 0,
+        "description": ""
+      }
+    ],
+    "rewards": {
+      "items": []
+    }
+  },
+  {
+    "id": "quest_wzvwt",
+    "name": "The Elder's Bargain",
+    "blurb": "Work in Progress",
+    "stages": [
+      {
+        "id": 0,
+        "description": ""
+      }
+    ],
+    "rewards": {
+      "items": []
+    }
+  },
+  {
+    "id": "quest_lu067",
+    "name": "Bloodline",
+    "blurb": "Work in Progress",
+    "stages": [
+      {
+        "id": 0,
+        "description": ""
+      }
+    ],
+    "rewards": {
+      "items": []
+    }
+  },
+  {
+    "id": "quest_8djo2",
+    "name": "Please Brother",
+    "blurb": "Work in Progress",
+    "stages": [
+      {
+        "id": 0,
+        "description": ""
+      }
+    ],
+    "rewards": {
+      "items": []
+    }
   }
 ]

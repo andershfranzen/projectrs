@@ -13330,7 +13330,7 @@ function applyToolAtTile(tile, eventLike = null) {
               })
             }
           }
-        } else if (!['openShop', 'openBank', 'openAppearance', 'closeDialogue'].includes(action.type)) issue('error', questId, path, `Unknown action type "${action.type}".`)
+        } else if (!['openShop', 'openBank', 'openAppearance', 'closeDialogue', 'grantXp', 'setQuestVar', 'startNpcCombat'].includes(action.type)) issue('error', questId, path, `Unknown action type "${action.type}".`)
       }
 
       function questHasCompletionAction(questId) {
