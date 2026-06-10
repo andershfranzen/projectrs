@@ -3706,7 +3706,7 @@ export class GameManager {
         const message = objDef?.category === 'chest'
           ? `You attempt to lockpick the ${(objDef.name || 'chest').toLowerCase()}...`
           : `You begin to ${(objDef?.actions[0] ?? 'work').toLowerCase()}...`;
-        this.chatPanel.addSystemMessage(message, '#8cf');
+        this.chatPanel.addSystemMessage(message, '#8cf', { foldConsecutive: true });
       }
       // Chests have no skilling animation — the player stands still while
       // the lockpick cycle ticks on the server. All other harvestables get

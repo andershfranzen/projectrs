@@ -277,6 +277,11 @@ function ensureContextMenuGlobalListeners(): void {
   if (contextMenuGlobalsInstalled) return;
   contextMenuGlobalsInstalled = true;
 
+  const closeFloatingUi = () => {
+    closeActiveContextMenu();
+    closeActiveHoverTooltips();
+  };
+
   // Capture-phase right-click handling closes an old menu before a panel's
   // target handler can create the replacement. If the right-click lands on
   // empty UI, this still clears the old menu instead of leaving it stranded.
@@ -305,6 +310,11 @@ function ensureContextMenuGlobalListeners(): void {
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closeActiveContextMenu();
+  });
+
+  window.addEventListener('blur', closeFloatingUi);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') closeFloatingUi();
   });
 
   document.addEventListener('pointerdown', () => {
@@ -412,7 +422,9 @@ export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpt
     Math.max(0, viewportHeight - margin * 2),
   ));
   activeContextMenu = { el: menu, close };
-  setTimeout(() => document.addEventListener('click', close), 0);
+  setTimeout(() => {
+    if (!closed) document.addEventListener('click', close);
+  }, 0);
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   const optionsHeight = optionsWrap.scrollHeight;
   if (reduceMotion || optionsHeight <= 0) {

@@ -17,6 +17,15 @@ export type ChatSendCallback = (message: string) => void;
 export type ChatPrivateSendCallback = (to: string, message: string) => void;
 
 type ChatTab = 'all' | 'game' | 'public' | 'private';
+type ChatMessageType = 'game' | 'public' | 'private';
+type ChatMessageEntry = {
+  el: HTMLDivElement;
+  type: ChatMessageType;
+  repeatKey?: string;
+  repeatCount?: number;
+  setRepeatCount?: (count: number) => void;
+};
+
 const MAX_CHAT_MESSAGES = 300;
 const CHAT_PLACEHOLDER_STYLE_ID = 'evilquest-chat-placeholder-style';
 const MOBILE_CHAT_HINT_QUERY = '(max-width: 760px), (pointer: coarse) and (max-width: 900px), (max-height: 520px) and (max-width: 900px) and (orientation: landscape)';
@@ -49,7 +58,7 @@ export class ChatPanel {
   // Chat filtering
   private activeTab: ChatTab = 'all';
   private tabButtons: HTMLButtonElement[] = [];
-  private messages: { el: HTMLDivElement; type: 'game' | 'public' | 'private' }[] = [];
+  private messages: ChatMessageEntry[] = [];
 
   constructor() {
     installUiChromeStyles();
@@ -558,10 +567,31 @@ export class ChatPanel {
     this.appendMessage(el, 'private');
   }
 
-  addSystemMessage(message: string, color: string = UI_RED): void {
+  addSystemMessage(message: string, color: string = UI_RED, opts: { foldConsecutive?: boolean } = {}): void {
+    const repeatKey = opts.foldConsecutive ? `${color}\0${message}` : undefined;
+    if (repeatKey) {
+      const last = this.messages[this.messages.length - 1];
+      if (last?.repeatKey === repeatKey && last.setRepeatCount) {
+        const shouldStickToBottom = this.isScrolledToChatBottom();
+        last.repeatCount = (last.repeatCount ?? 1) + 1;
+        last.setRepeatCount(last.repeatCount);
+        if (shouldStickToBottom) this.log.scrollTop = this.log.scrollHeight;
+        return;
+      }
+    }
+
     const el = document.createElement('div');
-    el.innerHTML = `<span style="color: ${color};">${escapeHtml(message)}</span>`;
-    this.appendMessage(el, 'game');
+    const text = document.createElement('span');
+    text.style.color = color;
+    text.textContent = message;
+    el.appendChild(text);
+    this.appendMessage(el, 'game', repeatKey ? {
+      repeatKey,
+      repeatCount: 1,
+      setRepeatCount: (count) => {
+        text.textContent = count > 1 ? `${message} (x${count})` : message;
+      },
+    } : undefined);
   }
 
   addTradeRequestMessage(from: string, onAccept: () => void, onTradeBack: () => void): void {
@@ -628,11 +658,11 @@ export class ChatPanel {
     return el;
   }
 
-  private appendMessage(el: HTMLDivElement, type: 'game' | 'public' | 'private'): void {
+  private appendMessage(el: HTMLDivElement, type: ChatMessageType, repeat?: Omit<ChatMessageEntry, 'el' | 'type'>): void {
     if (this.activeTab !== 'all' && this.activeTab !== type) el.style.display = 'none';
     const shouldStickToBottom = this.isScrolledToChatBottom();
     this.log.appendChild(el);
-    this.messages.push({ el, type });
+    this.messages.push({ el, type, ...repeat });
     while (this.messages.length > MAX_CHAT_MESSAGES) {
       const old = this.messages.shift();
       old?.el.remove();

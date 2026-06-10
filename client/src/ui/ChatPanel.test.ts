@@ -28,6 +28,36 @@ function makeKeyEvent(): KeyboardEvent {
   } as KeyboardEvent;
 }
 
+function makeStubElement(tagName = 'DIV'): any {
+  return {
+    tagName,
+    style: {},
+    children: [] as any[],
+    textContent: '',
+    innerHTML: '',
+    appendChild(child: any) {
+      this.children.push(child);
+    },
+    remove() {},
+  };
+}
+
+function withCreateElementStub<T>(fn: () => T): T {
+  const hadDocument = 'document' in globalThis;
+  const prevDocument = (globalThis as any).document;
+
+  (globalThis as any).document = {
+    createElement: (tagName: string) => makeStubElement(tagName),
+  };
+
+  try {
+    return fn();
+  } finally {
+    if (hadDocument) (globalThis as any).document = prevDocument;
+    else delete (globalThis as any).document;
+  }
+}
+
 function makeElement(
   tagName = 'DIV',
   style: Partial<CSSStyleDeclaration> = { display: 'block', visibility: 'visible' },
@@ -97,6 +127,47 @@ describe('ChatPanel scroll behavior', () => {
     panel.appendMessage({ style: {}, remove() {} }, 'public');
 
     expect(log.scrollTop).toBe(1_040);
+  });
+});
+
+describe('ChatPanel repeat folding', () => {
+  test('folds repeated consecutive action messages into one row', () => {
+    const { panel, log } = makePanel(800);
+    const appended: any[] = [];
+    log.appendChild = function appendChild(el: any) {
+      appended.push(el);
+      this.scrollHeight += 40;
+    };
+
+    withCreateElementStub(() => {
+      panel.addSystemMessage('You begin to mine...', '#8cf', { foldConsecutive: true });
+      panel.addSystemMessage('You begin to mine...', '#8cf', { foldConsecutive: true });
+      panel.addSystemMessage('You begin to mine...', '#8cf', { foldConsecutive: true });
+    });
+
+    expect(appended).toHaveLength(1);
+    expect(panel.messages).toHaveLength(1);
+    expect(appended[0].children[0].textContent).toBe('You begin to mine... (x3)');
+  });
+
+  test('starts a new folded row after another chat message', () => {
+    const { panel, log } = makePanel(800);
+    const appended: any[] = [];
+    log.appendChild = function appendChild(el: any) {
+      appended.push(el);
+      this.scrollHeight += 40;
+    };
+
+    withCreateElementStub(() => {
+      panel.addSystemMessage('You begin to mine...', '#8cf', { foldConsecutive: true });
+      panel.addSystemMessage('You mine some copper.', '#ff0');
+      panel.addSystemMessage('You begin to mine...', '#8cf', { foldConsecutive: true });
+    });
+
+    expect(appended).toHaveLength(3);
+    expect(panel.messages).toHaveLength(3);
+    expect(appended[0].children[0].textContent).toBe('You begin to mine...');
+    expect(appended[2].children[0].textContent).toBe('You begin to mine...');
   });
 });
 
