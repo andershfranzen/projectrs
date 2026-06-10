@@ -13,6 +13,7 @@
     "chunkWaterFlows": {},
     "selectedTexturePlaneId": null,
     "texturePlanes": [],
+    "minimapMarkers": [],
     "tiles": [],
     "heights": [],
     "terrainGeneration": 20393273,
