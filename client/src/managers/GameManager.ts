@@ -4386,7 +4386,10 @@ export class GameManager {
       ) <= GameManager.WORLD_CONTEXT_MENU_DEDUPE_RADIUS_PX;
 
     if (suppressNativeFollowup) suppressNextContextMenuClick(canvas, event.clientX, event.clientY);
-    if (isDuplicate) return;
+    // Pointerdown/mousedown/contextmenu can all fire for one right-click. If a
+    // document-level capture listener already closed the pointerdown menu, the
+    // native contextmenu fallback must be allowed to recreate it.
+    if (isDuplicate && this.contextMenu) return;
 
     this.lastWorldContextMenuEventAt = now;
     this.lastWorldContextMenuEventX = event.clientX;
@@ -4900,9 +4903,14 @@ export class GameManager {
     // placed scenery to find an NPC along the ray, so clicking through a
     // fence/anvil at an NPC's lower body still surfaces the Talk-to / Attack
     // option.
-    const pickedNpcEntityId = this.pickNpcAtPoint(point.x, point.y).entityId;
+    const npcPick = this.pickNpcAtPoint(point.x, point.y);
+    const pickedNpcEntityId = npcPick.entityId;
     if (pickedNpcEntityId != null) {
       options.push(...this.getNpcInteractionOptions(pickedNpcEntityId));
+    }
+
+    if (npcPick.groundItem) {
+      options.push(...this.getGroundItemInteractionOptions(npcPick.groundItem, addedGroundItemIds));
     }
 
     if (pickResult?.pickedMesh) {

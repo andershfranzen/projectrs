@@ -8,9 +8,14 @@ function makeManager(): any {
   manager.lastWorldContextMenuEventY = -9999;
   manager.opens = [] as { x: number; y: number }[];
   manager.hideCount = 0;
-  manager.hideContextMenu = () => { manager.hideCount++; };
+  manager.contextMenu = null;
+  manager.hideContextMenu = () => {
+    manager.hideCount++;
+    manager.contextMenu = null;
+  };
   manager.openWorldContextMenuAt = (x: number, y: number) => {
     manager.opens.push({ x, y });
+    manager.contextMenu = {} as HTMLDivElement;
   };
   return manager;
 }
@@ -43,6 +48,21 @@ describe('GameManager world context-menu input', () => {
     expect(manager.hideCount).toBe(1);
     expect(followup.prevented).toBe(true);
     expect(followup.stopped).toBe(true);
+  });
+
+  test('reopens duplicate native contextmenu if capture handling already closed the first menu', () => {
+    const manager = makeManager();
+    const canvas = {} as HTMLCanvasElement;
+
+    manager.handleWorldContextMenuEvent(canvas, makeMouseEvent(100, 120), false);
+    manager.contextMenu = null;
+    manager.handleWorldContextMenuEvent(canvas, makeMouseEvent(101, 121), false);
+
+    expect(manager.opens).toEqual([
+      { x: 100, y: 120 },
+      { x: 101, y: 121 },
+    ]);
+    expect(manager.hideCount).toBe(2);
   });
 
   test('allows a distinct right-click point even inside the dedupe window', () => {

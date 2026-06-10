@@ -1012,7 +1012,8 @@ export function defaultGroundForMap(map?: { mapType?: string | null; defaultGrou
   return map?.defaultGround ?? (map?.mapType === 'dungeon' ? 'void' : 'grass');
 }
 
-/** Map KC ground type to game TileType (for collision/pathfinding) */
+/** Map KC ground type to game TileType. Ground paint is visual-only for movement;
+ *  authored wall/footprint collision should come from the collision tools. */
 export function groundTypeToTileType(ground: GroundType): TileType {
   switch (ground) {
     case 'void':  return TileType.WALL;
@@ -1035,9 +1036,9 @@ export function groundTypeToTileType(ground: GroundType): TileType {
     case 'dungeon-basalt': return TileType.STONE;
     case 'dungeon-moss': return TileType.STONE;
     case 'dungeon-torchlight': return TileType.STONE;
-    case 'dungeon-rock':  return TileType.WALL;
-    case 'dungeon-grey-rock': return TileType.WALL;
-    case 'dungeon-dark-rock': return TileType.WALL;
+    case 'dungeon-rock':  return TileType.STONE;
+    case 'dungeon-grey-rock': return TileType.STONE;
+    case 'dungeon-dark-rock': return TileType.STONE;
     default:          return TileType.GRASS;
   }
 }

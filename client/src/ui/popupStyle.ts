@@ -288,6 +288,11 @@ function ensureContextMenuGlobalListeners(): void {
       event.stopImmediatePropagation();
       return;
     }
+    // World right-click is owned by GameManager; closing here can erase the
+    // pointerdown menu before the canvas receives the native contextmenu event.
+    if (target?.closest('#game-canvas')) {
+      return;
+    }
     closeActiveContextMenu();
     closeActiveHoverTooltips();
   }, true);

@@ -33,4 +33,12 @@ describe('water tile classification', () => {
 
     expect(classifyTileType(tile, flatCorners, 0)).toBe(TileType.WATER);
   });
+
+  test('dungeon rock paint is visual-only for collision', () => {
+    for (const ground of ['dungeon-rock', 'dungeon-grey-rock', 'dungeon-dark-rock'] as const) {
+      const tile = defaultKCTile(ground);
+
+      expect(classifyTileType(tile, flatCorners, -1)).toBe(TileType.STONE);
+    }
+  });
 });
