@@ -133,6 +133,8 @@ For the Brave issue, compare `evilquest-snapshot.json` between Chrome and Brave.
 - `snapshot.canvas`
 - `snapshot.activeMeshes`, `snapshot.totalVertices`, `snapshot.totalIndices`
 - `snapshot.sceneBudget.summary.activePickableMeshes`
+- `snapshot.chunkMeshes.terrainDetail.grassBladeBatchMaxRebuildMs`
+- `snapshot.chunkMeshes.terrainDetail.grassBladeBatchRebuilds`
 - `snapshot.sceneBudget.activeByName`
 - `snapshot.sceneBudget.activePickableByName`
 

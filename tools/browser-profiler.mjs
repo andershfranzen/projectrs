@@ -489,6 +489,10 @@ function printEvilQuestSnapshot(snapshot) {
   console.log(`  Active meshes ${formatCount(snapshot.activeMeshes)} / total ${formatCount(snapshot.totalMeshes)}, vertices ${formatCount(snapshot.totalVertices)}, indices ${formatCount(snapshot.totalIndices)}`);
   console.log(`  Pickable ${formatCount(summary.activePickableMeshes)} active / ${formatCount(summary.pickableMeshes)} total, enabled ${formatCount(summary.enabledMeshes)}, textures ${formatCount(summary.textures)}, materials ${formatCount(summary.materials)}`);
   console.log(`  Terrain chunks ${formatCount(chunks.ground)}, grass ${formatCount(chunks.grass)} meshes / ${formatCount(chunks.grassVertices)} vertices, detail ${formatCount(chunks.detailVertices)} vertices`);
+  if (chunks.terrainDetail) {
+    const detail = chunks.terrainDetail;
+    console.log(`  Grass batch ${formatCount(detail.grassBladeEnabledInstances)} active instances, ${formatCount(detail.grassBladeBatchRebuilds)} rebuilds, last ${formatRate(detail.grassBladeBatchLastRebuildMs)}ms, max ${formatRate(detail.grassBladeBatchMaxRebuildMs)}ms`);
+  }
   console.log(`  Canvas: ${formatCanvas(snapshot.canvas)}`);
   console.log(`  Renderer: ${renderer}`);
   console.log(`  Flags: ${flags}`);
@@ -978,6 +982,9 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
       const grassMeshes = meshes.filter((mesh) => /^chunk_grass_/.test(mesh?.name || '') || mesh?.name === 'terrain_grass_blades');
       const rockMeshes = meshes.filter((mesh) => /^chunk_rocks_/.test(mesh?.name || ''));
       const detailMeshes = [...grassMeshes, ...rockMeshes];
+      const terrainDetail = typeof gm.chunkManager?.getTerrainDetailStats === 'function'
+        ? gm.chunkManager.getTerrainDetailStats()
+        : null;
 
       return {
         ok: true,
@@ -1026,6 +1033,7 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
             grassInstances: countThinInstances(grassMeshes),
             rockVertices: countVertices(rockMeshes),
             rockIndices: countIndices(rockMeshes),
+            terrainDetail,
           },
           sceneBudget,
           diagnosticFlags: flags,

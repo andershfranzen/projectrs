@@ -125,6 +125,12 @@ describe('procedural grass batching', () => {
       grassBladeChunks: new Map<string, { matrices: Float32Array; enabled: boolean }>(),
       grassBladeBatchDirty: false,
       grassBladeBatchRebuildScheduled: false,
+      grassBladeBatchRebuilds: 0,
+      grassBladeBatchLastRebuildMs: 0,
+      grassBladeBatchMaxRebuildMs: 0,
+      grassBladeBatchTotalRebuildMs: 0,
+      grassBladeBatchLastInstances: 0,
+      grassBladeBatchLastBufferBytes: 0,
       loadMapToken: 1,
       scheduleNextFrame: (callback: FrameRequestCallback) => {
         callbacks.push(callback);
@@ -140,12 +146,25 @@ describe('procedural grass batching', () => {
 
     expect(callbacks).toHaveLength(1);
     expect(rebuilds).toBe(0);
+    expect(manager.getTerrainDetailStats()).toMatchObject({
+      grassBladeChunks: 2,
+      grassBladeEnabledChunks: 2,
+      grassBladeStoredInstances: 3,
+      grassBladeEnabledInstances: 3,
+      grassBladeBatchDirty: true,
+      grassBladeBatchRebuildScheduled: true,
+      grassBladeBatchRebuilds: 0,
+    });
 
     callbacks[0](performance.now());
 
     expect(rebuilds).toBe(1);
     expect(manager.grassBladeBatchDirty).toBe(false);
     expect(manager.grassBladeBatchRebuildScheduled).toBe(false);
+    expect(manager.getTerrainDetailStats()).toMatchObject({
+      grassBladeBatchDirty: false,
+      grassBladeBatchRebuildScheduled: false,
+    });
   });
 });
 

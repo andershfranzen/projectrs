@@ -1478,6 +1478,7 @@ export class GameManager {
     const browser = this.getBrowserDiagnostics();
     const webgl = this.getWebGlDiagnostics();
     const sceneBudget = buildSceneBudget(this.scene);
+    const terrainDetail = this.chunkManager.getTerrainDetailStats();
 
     return {
       measuredFps: sample ? Math.round(sample.fps * 10) / 10 : null,
@@ -1523,6 +1524,7 @@ export class GameManager {
         grassInstances: countThinInstances(grassMeshes),
         rockVertices: countVertices(rockMeshes),
         rockIndices: countIndices(rockMeshes),
+        terrainDetail,
       },
       sceneBudget,
       diagnosticFlags: this.getPerformanceDiagnosticFlags(webgl, browser, canvas, sample?.fps ?? null),

@@ -706,6 +706,11 @@ function printSnapshotComparison(aSnapshot, bSnapshot) {
     ['Textures', ['sceneBudget', 'summary', 'textures']],
     ['Animatables', ['sceneBudget', 'summary', 'activeAnimatables']],
     ['Grass vertices', ['chunkMeshes', 'grassVertices']],
+    ['Grass instances', ['chunkMeshes', 'grassInstances']],
+    ['Grass batch enabled', ['chunkMeshes', 'terrainDetail', 'grassBladeEnabledInstances']],
+    ['Grass batch rebuilds', ['chunkMeshes', 'terrainDetail', 'grassBladeBatchRebuilds']],
+    ['Grass batch last ms', ['chunkMeshes', 'terrainDetail', 'grassBladeBatchLastRebuildMs']],
+    ['Grass batch max ms', ['chunkMeshes', 'terrainDetail', 'grassBladeBatchMaxRebuildMs']],
     ['Detail vertices', ['chunkMeshes', 'detailVertices']],
   ];
   for (const [label, path] of metrics) printMetric(label, left, right, path);

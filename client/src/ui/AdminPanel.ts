@@ -1022,6 +1022,7 @@ export class AdminPanel {
     const browser = this.recordObject(payload, 'browser');
     const canvas = this.recordObject(payload, 'canvas');
     const chunkMeshes = this.recordObject(payload, 'chunkMeshes');
+    const terrainDetail = this.recordObject(chunkMeshes, 'terrainDetail');
     const player = this.recordObject(payload, 'player');
     const flags = this.diagnosticFlags(entry);
 
@@ -1075,6 +1076,8 @@ export class AdminPanel {
       this.metricCell('Detail verts', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'detailVertices'))),
       this.metricCell('Grass verts', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'grassVertices'))),
       this.metricCell('Grass instances', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'grassInstances'))),
+      this.metricCell('Grass rebuilds', this.formatNullableNumber(this.recordNumber(terrainDetail, 'grassBladeBatchRebuilds'))),
+      this.metricCell('Grass max ms', this.formatRate(this.recordNumber(terrainDetail, 'grassBladeBatchMaxRebuildMs'))),
       this.metricCell('Client at', entry.clientAt === null ? '-' : new Date(entry.clientAt).toLocaleString()),
       this.metricCell('Server tick', entry.tick === null ? '-' : String(entry.tick)),
     );

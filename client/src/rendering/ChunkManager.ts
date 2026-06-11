@@ -472,6 +472,12 @@ export class ChunkManager {
   private grassBladeChunks: Map<string, GrassBladeChunkBatch> = new Map();
   private grassBladeBatchDirty: boolean = false;
   private grassBladeBatchRebuildScheduled: boolean = false;
+  private grassBladeBatchRebuilds: number = 0;
+  private grassBladeBatchLastRebuildMs: number = 0;
+  private grassBladeBatchMaxRebuildMs: number = 0;
+  private grassBladeBatchTotalRebuildMs: number = 0;
+  private grassBladeBatchLastInstances: number = 0;
+  private grassBladeBatchLastBufferBytes: number = 0;
 
   private doorEdgeKey(floor: number, tileIdx: number): string {
     return `${Math.floor(floor)}:${tileIdx}`;
@@ -509,6 +515,34 @@ export class ChunkManager {
   getMeta(): MapMeta | null { return this.meta; }
   getMapWidth(): number { return this.mapWidth; }
   getMapHeight(): number { return this.mapHeight; }
+
+  getTerrainDetailStats(): Record<string, unknown> {
+    let totalGrassInstances = 0;
+    let enabledGrassInstances = 0;
+    let enabledGrassChunks = 0;
+    for (const chunk of this.grassBladeChunks.values()) {
+      const instances = chunk.matrices.length / 16;
+      totalGrassInstances += instances;
+      if (chunk.enabled) {
+        enabledGrassChunks++;
+        enabledGrassInstances += instances;
+      }
+    }
+    return {
+      grassBladeChunks: this.grassBladeChunks.size,
+      grassBladeEnabledChunks: enabledGrassChunks,
+      grassBladeStoredInstances: totalGrassInstances,
+      grassBladeEnabledInstances: enabledGrassInstances,
+      grassBladeBatchDirty: this.grassBladeBatchDirty,
+      grassBladeBatchRebuildScheduled: this.grassBladeBatchRebuildScheduled,
+      grassBladeBatchRebuilds: this.grassBladeBatchRebuilds,
+      grassBladeBatchLastRebuildMs: Math.round(this.grassBladeBatchLastRebuildMs * 100) / 100,
+      grassBladeBatchMaxRebuildMs: Math.round(this.grassBladeBatchMaxRebuildMs * 100) / 100,
+      grassBladeBatchTotalRebuildMs: Math.round(this.grassBladeBatchTotalRebuildMs * 100) / 100,
+      grassBladeBatchLastInstances: this.grassBladeBatchLastInstances,
+      grassBladeBatchLastBufferBytes: this.grassBladeBatchLastBufferBytes,
+    };
+  }
 
   private scheduleNextFrame(callback: FrameRequestCallback): void {
     if (typeof requestAnimationFrame === 'function') {
@@ -2209,6 +2243,7 @@ export class ChunkManager {
   }
 
   private rebuildGrassBladeBatchNow(): void {
+    const startedAt = performance.now();
     const mesh = this.ensureGrassBladeBatch();
     let instanceCount = 0;
     for (const chunk of this.grassBladeChunks.values()) {
@@ -2217,6 +2252,7 @@ export class ChunkManager {
     if (instanceCount === 0) {
       mesh.thinInstanceSetBuffer('matrix', null);
       mesh.thinInstanceCount = 0;
+      this.recordGrassBladeBatchRebuild(startedAt, 0, 0);
       mesh.setEnabled(false);
       return;
     }
@@ -2233,11 +2269,28 @@ export class ChunkManager {
     mesh.thinInstanceRefreshBoundingInfo(true);
     mesh.doNotSyncBoundingInfo = true;
     mesh.setEnabled(true);
+    this.recordGrassBladeBatchRebuild(startedAt, instanceCount, matrixBuffer.byteLength);
+  }
+
+  private recordGrassBladeBatchRebuild(startedAt: number, instanceCount: number, bufferBytes: number): void {
+    const durationMs = performance.now() - startedAt;
+    this.grassBladeBatchRebuilds++;
+    this.grassBladeBatchLastRebuildMs = durationMs;
+    this.grassBladeBatchMaxRebuildMs = Math.max(this.grassBladeBatchMaxRebuildMs, durationMs);
+    this.grassBladeBatchTotalRebuildMs += durationMs;
+    this.grassBladeBatchLastInstances = instanceCount;
+    this.grassBladeBatchLastBufferBytes = bufferBytes;
   }
 
   private disposeGrassBladeBatch(): void {
     this.grassBladeBatchDirty = false;
     this.grassBladeBatchRebuildScheduled = false;
+    this.grassBladeBatchRebuilds = 0;
+    this.grassBladeBatchLastRebuildMs = 0;
+    this.grassBladeBatchMaxRebuildMs = 0;
+    this.grassBladeBatchTotalRebuildMs = 0;
+    this.grassBladeBatchLastInstances = 0;
+    this.grassBladeBatchLastBufferBytes = 0;
     this.grassBladeChunks.clear();
     if (this.grassBladeBatch && !this.grassBladeBatch.isDisposed()) {
       this.grassBladeBatch.dispose();

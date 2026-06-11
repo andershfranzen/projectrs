@@ -42,6 +42,10 @@ function formatShortUrl(value) {
   }
 }
 
+function finiteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function uniqueStrings(items) {
   return [...new Set((Array.isArray(items) ? items : [])
     .filter((item) => typeof item === 'string' && item.length > 0))];
@@ -310,6 +314,11 @@ function buildDiagnosis(run) {
   const gpuStatuses = gpuProblemStatuses(run);
   const relevantFlags = commandLineFlags(run.browserDiagnostics);
   const scripts = buildScriptFingerprint(run);
+  const terrainDetail = run.snapshot?.chunkMeshes?.terrainDetail && typeof run.snapshot.chunkMeshes.terrainDetail === 'object'
+    ? run.snapshot.chunkMeshes.terrainDetail
+    : null;
+  const grassBatchLastMs = finiteNumber(terrainDetail?.grassBladeBatchLastRebuildMs);
+  const grassBatchMaxMs = finiteNumber(terrainDetail?.grassBladeBatchMaxRebuildMs);
   const findings = [];
 
   if (!hasSnapshot || loginScreen || flags.includes('game-not-ready')) {
@@ -387,6 +396,23 @@ function buildDiagnosis(run) {
       gpuStatuses.map((row) => `${row.key}=${row.value}`),
       [
         'Open brave://gpu in the same browser session and check the Graphics Feature Status table.',
+      ],
+    ));
+  }
+
+  if ((grassBatchLastMs != null && grassBatchLastMs >= 8) || (grassBatchMaxMs != null && grassBatchMaxMs >= 8)) {
+    findings.push(finding(
+      'medium',
+      'grass-batch-rebuild-cost',
+      'Procedural grass batch rebuilds are taking a visible fraction of a frame.',
+      [
+        `last=${formatRate(grassBatchLastMs)}ms`,
+        `max=${formatRate(grassBatchMaxMs)}ms`,
+        `instances=${formatCount(terrainDetail?.grassBladeEnabledInstances)}`,
+        `rebuilds=${formatCount(terrainDetail?.grassBladeBatchRebuilds)}`,
+      ],
+      [
+        'If this appears during a low-FPS run, compare against a stationary capture after chunk streaming has settled.',
       ],
     ));
   }
@@ -487,6 +513,7 @@ function buildDiagnosis(run) {
       totalMeshes: run.snapshot?.totalMeshes ?? null,
       totalVertices: run.snapshot?.totalVertices ?? null,
       totalIndices: run.snapshot?.totalIndices ?? null,
+      terrainDetail,
       canvas: formatCanvas(run),
       canvasPixels: pixels,
       devicePixelRatio: dpr,
@@ -519,6 +546,10 @@ function renderDiagnosisText(diagnosis) {
   lines.push(`  FPS: measured ${formatRate(diagnosis.facts.measuredFps)}, engine ${formatRate(diagnosis.facts.engineFps)}`);
   lines.push(`  Canvas/View: ${diagnosis.facts.canvas}`);
   lines.push(`  Scene: ${formatCount(diagnosis.facts.activeMeshes)} active meshes, ${formatCount(diagnosis.facts.totalVertices)} vertices, ${formatCount(diagnosis.facts.totalIndices)} indices`);
+  if (diagnosis.facts.terrainDetail) {
+    const detail = diagnosis.facts.terrainDetail;
+    lines.push(`  Grass batch: ${formatCount(detail.grassBladeEnabledInstances)} active instances, ${formatCount(detail.grassBladeBatchRebuilds)} rebuilds, last ${formatRate(detail.grassBladeBatchLastRebuildMs)}ms, max ${formatRate(detail.grassBladeBatchMaxRebuildMs)}ms`);
+  }
   lines.push(`  Snapshot source: ${diagnosis.facts.snapshotSource}`);
   lines.push(`  Flags: ${diagnosis.facts.flags.length > 0 ? diagnosis.facts.flags.join(', ') : 'none'}`);
   if (diagnosis.facts.relevantCommandLineFlags.length > 0) {
