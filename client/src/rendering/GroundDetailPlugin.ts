@@ -6,10 +6,10 @@ import type { Material } from '@babylonjs/core/Materials/material';
  * StandardMaterial so the flat vertex-colored ground gains a living surface
  * pattern without any texture asset:
  *
- *   family 0 grass/moss  → fine organic speckle + faint blade streak
+ *   family 0 grass/moss  → fine organic speckle
  *   family 1 dirt/path   → soft clumps
  *   family 2 sand/desert → fine grain
- *   family 3 stone/rock  → cracked stone cells (voronoi edges)
+ *   family 3 stone/rock  → cheap cracked stone cells
  *
  * The family comes from a per-vertex `groundDetail` float attribute (see
  * ChunkManager.buildGroundMesh + shared groundDetailFamily). Patterns are keyed
@@ -49,23 +49,12 @@ float gdNoise(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// Distance between the two nearest feature points — small near cell borders,
-// giving "cracked stone" edge lines.
-float gdVoronoiEdge(vec2 p) {
-  vec2 g = floor(p);
-  vec2 f = fract(p);
-  float d1 = 8.0;
-  float d2 = 8.0;
-  for (int j = -1; j <= 1; j++) {
-    for (int i = -1; i <= 1; i++) {
-      vec2 o = vec2(float(i), float(j));
-      vec2 r = o + vec2(gdHash(g + o), gdHash(g + o + 19.7)) - f;
-      float d = dot(r, r);
-      if (d < d1) { d2 = d1; d1 = d; }
-      else if (d < d2) { d2 = d; }
-    }
-  }
-  return sqrt(d2) - sqrt(d1);
+float gdCellInterior(vec2 p) {
+  vec2 cell = floor(p);
+  vec2 f = abs(fract(p) - 0.5);
+  float edge = min(f.x, f.y);
+  float width = 0.035 + gdHash(cell) * 0.035;
+  return smoothstep(width, width + 0.045, edge);
 }
 `;
 
@@ -76,23 +65,26 @@ const FRAGMENT_MAIN_END = `
     vec2 wp = vGroundDetailPosW.xz;
     float m = 1.0;
     if (fam < 0.5) {
-      // grass: two-octave speckle plus a faint vertical blade streak
-      float n = gdNoise(wp * 6.5) * 0.55 + gdNoise(wp * 21.0) * 0.45;
-      float streak = gdNoise(vec2(wp.x * 38.0, wp.y * 5.0));
-      m = mix(0.88, 1.13, n) + (streak - 0.5) * 0.09;
+      // grass: one soft noise pass plus cell speckle
+      float n = gdNoise(wp * 7.5);
+      float speck = gdHash(floor(wp * 24.0));
+      m = mix(0.90, 1.12, n) + (speck - 0.5) * 0.05;
     } else if (fam < 1.5) {
-      // dirt: low-frequency clumps
-      float n = gdNoise(wp * 3.6) * 0.6 + gdNoise(wp * 15.0) * 0.4;
-      m = mix(0.89, 1.10, n);
+      // dirt: low-frequency clumps with a little dry grit
+      float n = gdNoise(wp * 4.0);
+      float grit = gdHash(floor(wp * 12.0));
+      m = mix(0.90, 1.09, n) + (grit - 0.5) * 0.04;
     } else if (fam < 2.5) {
-      // sand: fine even grain
-      float n = gdNoise(wp * 28.0) * 0.7 + gdNoise(wp * 9.0) * 0.3;
-      m = mix(0.94, 1.07, n);
+      // sand: mostly hash grain, with very light broad variation
+      float grain = gdHash(floor(wp * 30.0));
+      float n = gdNoise(wp * 5.5);
+      m = mix(0.95, 1.06, grain) + (n - 0.5) * 0.035;
     } else {
-      // stone: cracked cells darken the seams, plus light grain
-      float e = gdVoronoiEdge(wp * 3.2);
-      float grain = gdNoise(wp * 16.0);
-      m = mix(0.80, 1.04, smoothstep(0.0, 0.10, e)) + (grain - 0.5) * 0.05;
+      // stone: no Voronoi loop; one noise warp, one cell-line pass, one grain hash
+      vec2 sp = wp * 3.1 + vec2((gdNoise(wp * 0.75) - 0.5) * 0.35);
+      float interior = gdCellInterior(sp);
+      float grain = gdHash(floor(wp * 18.0));
+      m = mix(0.82, 1.04, interior) + (grain - 0.5) * 0.04;
     }
     gl_FragColor.rgb *= clamp(m, 0.6, 1.3);
   }
