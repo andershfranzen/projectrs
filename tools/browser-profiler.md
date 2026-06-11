@@ -55,7 +55,13 @@ close Brave fully between runs and capture the same scene with forced backends:
 If one forced backend is fast while the default run is slow, the issue is in
 Brave/Windows GPU backend selection rather than the game scene. The profiler
 records the command-line flags and `SystemInfo.getInfo()` GPU status in each
-run, so compare the run directories with `tools/compare-profiler-runs.mjs`.
+run, so summarize the backend test matrix with
+`tools/summarize-profiler-backends.mjs` or compare two run directories with
+`tools/compare-profiler-runs.mjs`.
+
+```powershell
+bun tools/summarize-profiler-backends.mjs tools/profiler-runs\default-run tools/profiler-runs\d3d11-run tools/profiler-runs\gl-run
+```
 
 The helper runs `diagnose-profiler-run.mjs` on the newly-created capture before
 it zips anything. That writes `diagnosis.txt` and `diagnosis.json` into the run
