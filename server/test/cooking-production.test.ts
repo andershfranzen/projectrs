@@ -212,6 +212,7 @@ describe('cooking range production', () => {
     const fire = data.getObject(FIRE_OBJECT_DEF_ID);
 
     expect(fire?.actions).toEqual(['Cook', 'Examine']);
+    expect(fire?.blocking).toBe(false);
     expect(fire?.recipes?.length).toBe(range?.recipes?.length);
     expect(fire?.recipes?.[0]).toEqual(range?.recipes?.[0]);
     expect(fire?.recipes?.[0]).not.toBe(range?.recipes?.[0]);

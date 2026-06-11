@@ -36,7 +36,7 @@ const fireDef: WorldObjectDef = {
   name: 'Fire',
   category: 'scenery',
   actions: ['Examine'],
-  blocking: true,
+  blocking: false,
   width: 1,
   depth: 1,
   height: 1,
@@ -150,7 +150,8 @@ test('matchbox and three logs create a temporary fire with Survival XP', () => {
   const fire = [...world.worldObjects.values()].find((obj: any) => obj.defId === FIRE_OBJECT_DEF_ID);
   expect(fire).toBeTruthy();
   expect(messages).toContain('The fire catches and the logs begin to burn.');
-  expect(player.hasMoveQueue()).toBe(true);
+  expect(player.hasMoveQueue()).toBe(false);
+  expect(world.blockedObjectTiles.size).toBe(0);
 });
 
 test('firemaking remains queued on a failed roll without consuming logs', () => {
