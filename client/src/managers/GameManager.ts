@@ -1828,6 +1828,21 @@ export class GameManager {
     this.chatPanel?.addSystemMessage(warning, '#ffb347');
   }
 
+  private async captureLowFpsDiagnosticSnapshot(initialSample: FrameRateSample): Promise<void> {
+    let sample = initialSample;
+    if (this.shouldCapturePerformanceDiagnostic()) {
+      sample = await this.sampleRafFps(LOW_FPS_DIAGNOSTIC_SAMPLE_MS);
+    }
+    if (!this.shouldCapturePerformanceDiagnostic()) return;
+
+    const snapshot = this.collectPerformanceSnapshot(sample);
+    snapshot.lowFpsAction = 'diagnostic-only';
+    snapshot.lowFpsInitialFps = Math.round(initialSample.fps * 10) / 10;
+    snapshot.lowFpsInitialDurationMs = initialSample.durationMs;
+    this.maybeShowLowFpsRendererWarning(snapshot);
+    this.reportClientLog('client_low_fps_snapshot', snapshot);
+  }
+
   private updateLowFpsDiagnostic(now: number): void {
     if (!this.shouldRunLowFpsDiagnostic()) {
       this.resetLowFpsDiagnosticWindow();
@@ -1853,15 +1868,12 @@ export class GameManager {
     const fps = this.lowFpsDiagnosticFrames / Math.max(0.001, elapsed / 1000);
     if (fps < LOW_FPS_DIAGNOSTIC_THRESHOLD && this.scene.getActiveMeshes().length > 100) {
       this.lowFpsDiagnosticSent = true;
-      const snapshot = this.collectPerformanceSnapshot({
+      void this.captureLowFpsDiagnosticSnapshot({
         frames: this.lowFpsDiagnosticFrames,
         durationMs: Math.round(elapsed),
         fps,
         framePacing: null,
       });
-      this.maybeShowLowFpsRendererWarning(snapshot);
-      snapshot.lowFpsAction = 'diagnostic-only';
-      this.reportClientLog('client_low_fps_snapshot', snapshot);
       return;
     }
 

@@ -275,4 +275,61 @@ describe('GameManager render quality command', () => {
       over100Ms: 2,
     })).toBe(false);
   });
+
+  test('automatic low FPS snapshot samples frame pacing without changing render scale', async () => {
+    installLocalStorageStub();
+    const { manager, hardwareScaleCalls } = makeQualityManager();
+    const reported: Array<{ event: string; snapshot: Record<string, unknown> }> = [];
+    manager.shouldCapturePerformanceDiagnostic = () => true;
+    manager.sampleRafFps = async () => ({
+      frames: 90,
+      durationMs: 3000,
+      fps: 30,
+      framePacing: {
+        intervals: 90,
+        meanMs: 33.3,
+        medianMs: 33.3,
+        p95Ms: 34.2,
+        maxMs: 37.5,
+        stddevMs: 1.1,
+        over16Ms: 90,
+        over33Ms: 88,
+        over50Ms: 0,
+        over100Ms: 0,
+      },
+    });
+    manager.collectPerformanceSnapshot = (sample: unknown) => ({
+      measuredFps: (sample as { fps: number }).fps,
+      framePacing: (sample as { framePacing: unknown }).framePacing,
+      diagnosticFlags: ['low-fps-with-hardware-renderer'],
+    });
+    manager.maybeShowLowFpsRendererWarning = () => {};
+    manager.reportClientLog = (event: string, snapshot: Record<string, unknown>) => reported.push({ event, snapshot });
+
+    await manager.captureLowFpsDiagnosticSnapshot({
+      frames: 95,
+      durationMs: 3000,
+      fps: 31.4,
+      framePacing: null,
+    });
+
+    expect(hardwareScaleCalls).toEqual([]);
+    expect(manager.renderHardwareScalingLevel).toBe(1);
+    expect(reported).toHaveLength(1);
+    expect(reported[0].event).toBe('client_low_fps_snapshot');
+    expect(reported[0].snapshot.lowFpsAction).toBe('diagnostic-only');
+    expect(reported[0].snapshot.lowFpsInitialFps).toBe(31.4);
+    expect(reported[0].snapshot.framePacing).toEqual({
+      intervals: 90,
+      meanMs: 33.3,
+      medianMs: 33.3,
+      p95Ms: 34.2,
+      maxMs: 37.5,
+      stddevMs: 1.1,
+      over16Ms: 90,
+      over33Ms: 88,
+      over50Ms: 0,
+      over100Ms: 0,
+    });
+  });
 });
