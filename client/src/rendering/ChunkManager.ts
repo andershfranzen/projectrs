@@ -583,11 +583,12 @@ export class ChunkManager {
 
   private ensureTerrainDetailMaterials(): void {
     if (!this.grassBladeMat) {
-      // Upright grass strands are only seam accents. They are unlit vertex-color
-      // triangles; the ground shader carries the actual grass texture.
+      // Upright grass strands are unlit vertex-color triangles; the ground
+      // shader carries the continuous grass texture.
       this.grassBladeMat = new StandardMaterial('chunkGrassBladeMat', this.scene);
+      this.grassBladeMat.diffuseColor = new Color3(1, 1, 1);
       this.grassBladeMat.specularColor = new Color3(0, 0, 0);
-      this.grassBladeMat.emissiveColor = new Color3(0, 0, 0);
+      this.grassBladeMat.emissiveColor = new Color3(1, 1, 1);
       this.grassBladeMat.disableLighting = true;
       this.grassBladeMat.backFaceCulling = false;
     }
@@ -2142,8 +2143,10 @@ export class ChunkManager {
     };
 
     // The fragment shader already gives grass its continuous fine pattern.
-    // These triangles are only silhouette/accent detail at ground-type seams;
-    // open fields stay shader-only so grass does not add a draw for every chunk.
+    // These triangles are sparse silhouette/accent detail; grass seams get extra
+    // density, while open fields get a light deterministic scatter.
+    const FIELD_BLADE_CHANCE = 0.22;
+    const FIELD_BLADES_PER_TILE = 1;
     const BOUNDARY_BLADES_PER_TILE = 1;
     const EDGE_SPILL_BLADES = 1;
     const HALF_WIDTH = 0.035;
@@ -2176,9 +2179,19 @@ export class ChunkManager {
         if (!this.isGrassBladeSurface(x, z)) continue;
 
         const hasNonGrassNeighbor = EDGES.some(([dx, dz]) => !isGrass(x + dx, z + dz));
-        if (!hasNonGrassNeighbor) continue;
+        const hasFieldBlade = rand(x * 5 + 19, z * 5 + 23) < FIELD_BLADE_CHANCE;
+        if (!hasNonGrassNeighbor && !hasFieldBlade) continue;
 
         const h = this.getTileCornerHeights(x, z);
+        if (hasFieldBlade) {
+          for (let b = 0; b < FIELD_BLADES_PER_TILE; b++) {
+            const bx = x + 0.18 + rand(x * 6 + b + 11, z * 6 + 7) * 0.64;
+            const bz = z + 0.18 + rand(x * 6 + b + 41, z * 6 + 29) * 0.64;
+            emitBlade(bx, bz, h, x, z, 20 + b);
+          }
+        }
+        if (!hasNonGrassNeighbor) continue;
+
         for (let b = 0; b < BOUNDARY_BLADES_PER_TILE; b++) {
           const bx = x + 0.15 + rand(x * 4 + b, z * 4) * 0.7;
           const bz = z + 0.15 + rand(x * 4 + b + 31, z * 4 + 17) * 0.7;

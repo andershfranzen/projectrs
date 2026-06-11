@@ -249,6 +249,23 @@ describe('procedural grass placement', () => {
       expect(matrices[offset + 14]).toBeLessThanOrEqual(1);
     }
   });
+
+  test('adds sparse field blades away from grass edges', () => {
+    const tiles = Array.from({ length: 12 }, () => (
+      Array.from({ length: 12 }, () => makeKCTile())
+    ));
+    const manager = makeGrassChunkManager(tiles);
+
+    const matrices = manager.buildGrassBladeMatrices(0, 0, 12, 12);
+    let interiorBlades = 0;
+    for (let offset = 0; offset < matrices.length; offset += 16) {
+      const x = matrices[offset + 12];
+      const z = matrices[offset + 14];
+      if (x > 1 && x < 11 && z > 1 && z < 11) interiorBlades++;
+    }
+
+    expect(interiorBlades).toBeGreaterThan(0);
+  });
 });
 
 describe('placed object thin-instance grouping', () => {
