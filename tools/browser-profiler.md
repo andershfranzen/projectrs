@@ -64,6 +64,13 @@ Each run writes a timestamped folder under `tools/profiler-runs/`:
 - `browser-stats.json` - long tasks, slow callbacks, resources, fetches, WebSockets.
 - `console.json` - browser console and exception logs.
 
+Older deployed client bundles may not include the in-client snapshot API yet.
+For those builds, the profiler falls back to `window.gm.engine` and
+`window.gm.scene` and writes `snapshot.snapshotSource: "profiler-fallback"`.
+That fallback still captures the high-signal live-vs-local fields: measured
+FPS, renderer, canvas scale, mesh/vertex/index counts, terrain detail counts,
+and scene-budget buckets.
+
 The command also prints the same high-signal snapshot fields to the terminal:
 FPS, renderer, flags, canvas/DPR, active/pickable mesh counts, terrain detail
 counts, and the top scene-budget buckets.

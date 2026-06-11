@@ -488,14 +488,16 @@ async function waitForEvilQuestGame(cdp, timeoutMs) {
       const startedAt = performance.now();
       const check = () => {
         const gm = window.gm;
+        const hasSnapshotApi = typeof gm?.collectPerformanceSnapshot === 'function'
+          && typeof gm?.sampleRafFps === 'function';
+        const hasFallbackSnapshotInputs = !!gm?.engine && !!gm?.scene;
         const ready = !!gm
           && gm._loginSettled === true
           && typeof gm.username === 'string'
           && gm.username.length > 0
           && typeof gm.localPlayerId === 'number'
           && gm.localPlayerId > 0
-          && typeof gm.collectPerformanceSnapshot === 'function'
-          && typeof gm.sampleRafFps === 'function'
+          && (hasSnapshotApi || hasFallbackSnapshotInputs)
           && document.visibilityState === 'visible';
         if (ready) {
           resolve({
@@ -503,6 +505,8 @@ async function waitForEvilQuestGame(cdp, timeoutMs) {
             waitedMs: Math.round(performance.now() - startedAt),
             username: gm.username || '',
             localPlayerId: gm.localPlayerId,
+            hasSnapshotApi,
+            snapshotMode: hasSnapshotApi ? 'client-api' : 'profiler-fallback',
           });
           return;
         }
@@ -515,6 +519,7 @@ async function waitForEvilQuestGame(cdp, timeoutMs) {
             username: gm?.username ?? null,
             localPlayerId: gm?.localPlayerId ?? null,
             hasSnapshotApi: !!gm && typeof gm.collectPerformanceSnapshot === 'function',
+            hasFallbackSnapshotInputs: !!gm?.engine && !!gm?.scene,
             visibilityState: document.visibilityState,
             title: document.title,
             bodyText: document.body?.innerText?.slice(0, 500) || '',
@@ -669,6 +674,7 @@ async function capturePageDiagnostics(cdp) {
           usernamePresent: typeof gm?.username === 'string' && gm.username.length > 0,
           localPlayerIdPresent: typeof gm?.localPlayerId === 'number' && gm.localPlayerId > 0,
           hasSnapshotApi: !!gm && typeof gm.collectPerformanceSnapshot === 'function',
+          hasFallbackSnapshotInputs: !!gm?.engine && !!gm?.scene,
         },
       };
     })()
@@ -679,8 +685,8 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
   return evaluateJson(cdp, `
     (async () => {
       const gm = window.gm;
-      if (!gm || typeof gm.collectPerformanceSnapshot !== 'function') {
-        return { ok: false, error: 'window.gm.collectPerformanceSnapshot unavailable' };
+      if (!gm) {
+        return { ok: false, error: 'window.gm unavailable' };
       }
       if (!gm.username || !(gm.localPlayerId > 0) || gm._loginSettled !== true) {
         return {
@@ -691,11 +697,311 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
           loginSettled: gm._loginSettled ?? null,
         };
       }
+      const durationMs = ${Math.max(250, Math.round(durationMs))};
+      const sampleRafFps = (ms) => new Promise((resolve) => {
+        let frames = 0;
+        const start = performance.now();
+        const tick = () => {
+          frames++;
+          const now = performance.now();
+          const elapsed = now - start;
+          if (elapsed >= ms) {
+            resolve({
+              frames,
+              durationMs: Math.round(elapsed),
+              fps: frames / Math.max(0.001, elapsed / 1000),
+            });
+            return;
+          }
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
       const sample = typeof gm.sampleRafFps === 'function'
-        ? await gm.sampleRafFps(${Math.max(250, Math.round(durationMs))})
+        ? await gm.sampleRafFps(durationMs)
+        : await sampleRafFps(durationMs);
+
+      if (typeof gm.collectPerformanceSnapshot === 'function') {
+        const snapshot = gm.collectPerformanceSnapshot(sample || undefined);
+        return { ok: true, snapshot };
+      }
+
+      const engine = gm.engine;
+      const scene = gm.scene;
+      if (!engine || !scene) {
+        return { ok: false, error: 'window.gm engine/scene unavailable' };
+      }
+
+      const roundRate = (value) => typeof value === 'number' && Number.isFinite(value)
+        ? Math.round(value * 10) / 10
         : null;
-      const snapshot = gm.collectPerformanceSnapshot(sample || undefined);
-      return { ok: true, snapshot };
+      const countVertices = (items) => items.reduce((sum, mesh) => (
+        sum + (typeof mesh?.getTotalVertices === 'function' ? mesh.getTotalVertices() : 0)
+      ), 0);
+      const countIndices = (items) => items.reduce((sum, mesh) => (
+        sum + (typeof mesh?.getTotalIndices === 'function' ? mesh.getTotalIndices() : 0)
+      ), 0);
+      const thinInstanceCount = (mesh) => {
+        const count = mesh?.thinInstanceCount;
+        return typeof count === 'number' && Number.isFinite(count) && count > 0 ? count : 0;
+      };
+      const effectiveMultiplier = (mesh) => {
+        const instances = thinInstanceCount(mesh);
+        return instances > 0 ? instances : 1;
+      };
+      const countEffectiveVertices = (items) => items.reduce((sum, mesh) => (
+        sum + (typeof mesh?.getTotalVertices === 'function' ? mesh.getTotalVertices() : 0) * effectiveMultiplier(mesh)
+      ), 0);
+      const countEffectiveIndices = (items) => items.reduce((sum, mesh) => (
+        sum + (typeof mesh?.getTotalIndices === 'function' ? mesh.getTotalIndices() : 0) * effectiveMultiplier(mesh)
+      ), 0);
+      const countThinInstances = (items) => items.reduce((sum, mesh) => sum + thinInstanceCount(mesh), 0);
+      const activeArray = (() => {
+        const active = typeof scene.getActiveMeshes === 'function' ? scene.getActiveMeshes() : null;
+        if (!active) return [];
+        const data = Array.isArray(active.data)
+          ? active.data
+          : Array.isArray(active)
+            ? active
+            : [];
+        const length = typeof active.length === 'number' ? active.length : data.length;
+        return data.slice(0, length).filter(Boolean);
+      })();
+      const meshes = Array.isArray(scene.meshes) ? scene.meshes : [];
+      const canvas = typeof engine.getRenderingCanvas === 'function'
+        ? engine.getRenderingCanvas()
+        : document.querySelector('canvas');
+      const gl = engine._gl
+        || canvas?.getContext?.('webgl2')
+        || canvas?.getContext?.('webgl')
+        || null;
+      const debugInfo = gl?.getExtension?.('WEBGL_debug_renderer_info') || null;
+      const webgl = gl ? {
+        context: typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext ? 'webgl2' : 'webgl',
+        version: gl.getParameter(gl.VERSION),
+        shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+        vendor: gl.getParameter(gl.VENDOR),
+        renderer: gl.getParameter(gl.RENDERER),
+        unmaskedVendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : null,
+        unmaskedRenderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : null,
+        maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+        maxVertexAttribs: gl.getParameter(gl.MAX_VERTEX_ATTRIBS),
+      } : { context: 'unavailable' };
+      const nav = window.navigator || {};
+      const browser = {
+        userAgent: nav.userAgent,
+        platform: nav.platform,
+        userAgentData: nav.userAgentData ? {
+          brands: nav.userAgentData.brands,
+          platform: nav.userAgentData.platform,
+          mobile: nav.userAgentData.mobile,
+        } : null,
+        brave: !!nav.brave,
+        hardwareConcurrency: nav.hardwareConcurrency,
+        deviceMemory: nav.deviceMemory ?? null,
+        language: nav.language,
+        languages: nav.languages,
+        visibilityState: document.visibilityState,
+        devicePixelRatio: window.devicePixelRatio,
+        crossOriginIsolated: window.crossOriginIsolated,
+        window: {
+          innerWidth: window.innerWidth,
+          innerHeight: window.innerHeight,
+          outerWidth: window.outerWidth,
+          outerHeight: window.outerHeight,
+        },
+        screen: window.screen ? {
+          width: window.screen.width,
+          height: window.screen.height,
+          availWidth: window.screen.availWidth,
+          availHeight: window.screen.availHeight,
+          colorDepth: window.screen.colorDepth,
+          pixelDepth: window.screen.pixelDepth,
+        } : null,
+      };
+      const softwareRenderer = [
+        webgl.unmaskedRenderer,
+        webgl.renderer,
+        webgl.unmaskedVendor,
+        webgl.vendor,
+      ].map((value) => String(value ?? '').toLowerCase()).join(' ');
+      const isSoftwareRenderer = [
+        'swiftshader',
+        'llvmpipe',
+        'software rasterizer',
+        'software renderer',
+        'microsoft basic render',
+        'basic render driver',
+        'warp',
+        'mesa offscreen',
+      ].some((pattern) => softwareRenderer.includes(pattern));
+      const renderScale = typeof gm.renderHardwareScalingLevel === 'number'
+        ? gm.renderHardwareScalingLevel
+        : typeof engine.getHardwareScalingLevel === 'function'
+          ? engine.getHardwareScalingLevel()
+          : null;
+      const flags = [];
+      const context = String(webgl.context ?? '');
+      if (!context || context === 'unavailable') flags.push('webgl-unavailable');
+      if (context === 'webgl') flags.push('webgl1-context');
+      if (browser.brave === true) flags.push('brave-browser');
+      if (!webgl.unmaskedRenderer) flags.push('renderer-info-masked');
+      if (isSoftwareRenderer) flags.push('software-renderer-likely');
+      const fps = typeof sample?.fps === 'number' && Number.isFinite(sample.fps) ? sample.fps : null;
+      if (canvas && window.devicePixelRatio >= 1.5 && (!renderScale || renderScale <= 1)) {
+        const renderPixels = canvas.width * canvas.height;
+        const clientPixels = canvas.clientWidth * canvas.clientHeight;
+        if (renderPixels > clientPixels * 1.4) flags.push('high-dpr-render-target');
+      }
+      if (fps !== null && fps < 50) {
+        flags.push('low-fps-measured');
+        if (browser.brave === true) flags.push('brave-low-fps');
+        if (!isSoftwareRenderer && context && context !== 'unavailable') flags.push('low-fps-with-hardware-renderer');
+        if (renderScale !== null && renderScale >= 1.99) flags.push('low-fps-after-render-scale');
+        if (renderScale !== null && renderScale >= 2.99) flags.push('emergency-render-scale');
+      }
+
+      const bucketName = (name) => {
+        const value = name || '<unnamed>';
+        const placed = /^(placed)_-?\\d+,-?\\d+_\\d+_(.+)$/.exec(value);
+        if (placed) return (placed[1] + '_*_' + placed[2]).slice(0, 56);
+        const thin = /^(thin)_-?\\d+,-?\\d+_(.+)$/.exec(value);
+        if (thin) return (thin[1] + '_*_' + thin[2]).slice(0, 56);
+        const npc = /^(npc3dsrc)_(.+)_\\d+_(.+)$/.exec(value);
+        if (npc) return (npc[1] + '_' + npc[2] + '_*_' + npc[3]).slice(0, 56);
+        return value.replace(/_[0-9]+_[0-9]+.*/, '_*').replace(/_[0-9]+$/, '_*').slice(0, 56);
+      };
+      const grouped = (items, limit = 30) => {
+        const counts = new Map();
+        for (const mesh of items) {
+          const key = bucketName(mesh?.name);
+          const prev = counts.get(key) || { count: 0, vertices: 0, indices: 0, instances: 0, effectiveVertices: 0, effectiveIndices: 0 };
+          const vertices = typeof mesh?.getTotalVertices === 'function' ? mesh.getTotalVertices() : 0;
+          const indices = typeof mesh?.getTotalIndices === 'function' ? mesh.getTotalIndices() : 0;
+          const instances = thinInstanceCount(mesh);
+          const multiplier = instances > 0 ? instances : 1;
+          prev.count++;
+          prev.vertices += vertices;
+          prev.indices += indices;
+          prev.instances += instances;
+          prev.effectiveVertices += vertices * multiplier;
+          prev.effectiveIndices += indices * multiplier;
+          counts.set(key, prev);
+        }
+        return Array.from(counts, ([name, value]) => ({ name, ...value }))
+          .sort((a, b) => b.effectiveVertices - a.effectiveVertices || b.effectiveIndices - a.effectiveIndices || b.vertices - a.vertices || b.count - a.count)
+          .slice(0, limit);
+      };
+      const groupedPlacedChunks = (items, limit = 30) => {
+        const counts = new Map();
+        for (const mesh of items) {
+          const match = /^(?:placed|thin)_(-?\\d+,-?\\d+)_/.exec(mesh?.name || '');
+          if (!match) continue;
+          counts.set(match[1], (counts.get(match[1]) || 0) + 1);
+        }
+        return Array.from(counts, ([chunk, count]) => ({ chunk, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, limit);
+      };
+      const enabledMeshes = meshes.filter((mesh) => typeof mesh?.isEnabled !== 'function' || mesh.isEnabled());
+      const disabledMeshes = meshes.filter((mesh) => typeof mesh?.isEnabled === 'function' && !mesh.isEnabled());
+      const pickableMeshes = meshes.filter((mesh) => !!mesh?.isPickable);
+      const activePickableMeshes = activeArray.filter((mesh) => !!mesh?.isPickable);
+      const sceneBudget = {
+        summary: {
+          meshes: meshes.length,
+          activeMeshes: activeArray.length,
+          enabledMeshes: enabledMeshes.length,
+          pickableMeshes: pickableMeshes.length,
+          activePickableMeshes: activePickableMeshes.length,
+          frozenWorldMatrices: meshes.filter((mesh) => !!mesh?._isWorldMatrixFrozen).length,
+          doNotSyncBoundingInfo: meshes.filter((mesh) => !!mesh?.doNotSyncBoundingInfo).length,
+          transformNodes: scene.transformNodes?.length ?? null,
+          materials: scene.materials?.length ?? null,
+          textures: scene.textures?.length ?? null,
+          skeletons: scene.skeletons?.length ?? null,
+          animationGroups: scene.animationGroups?.length ?? null,
+          activeAnimatables: scene._activeAnimatables?.length ?? null,
+          playingAnimationGroups: scene.animationGroups?.filter((group) => group.isPlaying).length ?? null,
+          particleSystems: scene.particleSystems?.length ?? null,
+        },
+        activeByName: grouped(activeArray),
+        enabledByName: grouped(enabledMeshes),
+        disabledByName: grouped(disabledMeshes),
+        enabledNotFrozenByName: grouped(enabledMeshes.filter((mesh) => !mesh?._isWorldMatrixFrozen)),
+        enabledPlacedByChunk: groupedPlacedChunks(enabledMeshes),
+        activePlacedByChunk: groupedPlacedChunks(activeArray),
+        pickableByName: grouped(pickableMeshes),
+        activePickableByName: grouped(activePickableMeshes),
+        playingAnimationGroups: (scene.animationGroups || [])
+          .filter((group) => group.isPlaying)
+          .map((group) => ({
+            name: group.name,
+            targetedAnimations: group.targetedAnimations?.length ?? null,
+            animatables: group._animatables?.length ?? null,
+          }))
+          .sort((a, b) => (b.animatables ?? 0) - (a.animatables ?? 0) || (b.targetedAnimations ?? 0) - (a.targetedAnimations ?? 0))
+          .slice(0, 30),
+      };
+      const groundMeshes = meshes.filter((mesh) => /^chunk_-?\\d+_-?\\d+$/.test(mesh?.name || ''));
+      const grassMeshes = meshes.filter((mesh) => /^chunk_grass_/.test(mesh?.name || '') || mesh?.name === 'terrain_grass_blades');
+      const rockMeshes = meshes.filter((mesh) => /^chunk_rocks_/.test(mesh?.name || ''));
+      const detailMeshes = [...grassMeshes, ...rockMeshes];
+
+      return {
+        ok: true,
+        snapshot: {
+          snapshotSource: 'profiler-fallback',
+          measuredFps: roundRate(sample?.fps),
+          measuredFrames: sample?.frames ?? null,
+          measuredDurationMs: sample?.durationMs ?? null,
+          engineFps: roundRate(typeof engine.getFps === 'function' ? engine.getFps() : null),
+          drawCalls: engine._drawCalls?.current ?? null,
+          activeMeshes: activeArray.length,
+          totalMeshes: meshes.length,
+          totalVertices: countVertices(meshes),
+          totalIndices: countIndices(meshes),
+          proceduralTerrainDetail: true,
+          renderScale,
+          baseRenderScale: typeof gm.baseHardwareScalingLevel === 'number' ? gm.baseHardwareScalingLevel : null,
+          currentMap: typeof gm.chunkManager?.getMapId === 'function' ? gm.chunkManager.getMapId() : null,
+          currentFloor: typeof gm.currentFloor === 'number' ? gm.currentFloor : null,
+          player: {
+            x: typeof gm.playerX === 'number' ? Math.round(gm.playerX * 10) / 10 : null,
+            z: typeof gm.playerZ === 'number' ? Math.round(gm.playerZ * 10) / 10 : null,
+          },
+          canvas: canvas ? {
+            width: canvas.width,
+            height: canvas.height,
+            clientWidth: canvas.clientWidth,
+            clientHeight: canvas.clientHeight,
+            devicePixelRatio: window.devicePixelRatio,
+            renderScale: canvas.dataset?.renderScale ?? (renderScale == null ? null : String(renderScale)),
+          } : null,
+          chunkMeshes: {
+            ground: groundMeshes.length,
+            detail: detailMeshes.length,
+            grass: grassMeshes.length,
+            rocks: rockMeshes.length,
+            groundDetailAttributes: groundMeshes.filter((mesh) => !!mesh?.getVerticesData?.('groundDetail')).length,
+            detailVertices: countEffectiveVertices(detailMeshes),
+            detailIndices: countEffectiveIndices(detailMeshes),
+            detailGeometryVertices: countVertices(detailMeshes),
+            detailGeometryIndices: countIndices(detailMeshes),
+            grassVertices: countEffectiveVertices(grassMeshes),
+            grassIndices: countEffectiveIndices(grassMeshes),
+            grassGeometryVertices: countVertices(grassMeshes),
+            grassGeometryIndices: countIndices(grassMeshes),
+            grassInstances: countThinInstances(grassMeshes),
+            rockVertices: countVertices(rockMeshes),
+            rockIndices: countIndices(rockMeshes),
+          },
+          sceneBudget,
+          diagnosticFlags: flags,
+          browser,
+          webgl,
+        },
+      };
     })()
   `);
 }
