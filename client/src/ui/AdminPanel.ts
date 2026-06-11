@@ -851,6 +851,8 @@ export class AdminPanel {
     const braveLow = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('brave-low-fps')).length;
     const hardwareLow = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('low-fps-with-hardware-renderer')).length;
     const emergencyScale = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('emergency-render-scale')).length;
+    const stable30 = this.diagnostics.filter(entry => this.isStableLowFrameCadence(entry)).length;
+    const uneven = this.diagnostics.filter(entry => this.hasUnevenFramePacing(entry)).length;
     const activeFilters = (this.diagnosticEventFilter ? 1 : 0)
       + (this.diagnosticSearchQuery ? 1 : 0)
       + (this.diagnosticUserFilter ? 1 : 0);
@@ -861,6 +863,8 @@ export class AdminPanel {
       this.summaryPill(`${perf} perf`, '#2f5f8f'),
       this.summaryPill(`${quality} quality`, quality > 0 ? '#2f5f8f' : '#4d5d45'),
       this.summaryPill(`${hardwareLow} hardware low`, hardwareLow > 0 ? '#8f6d2d' : '#4d5d45'),
+      this.summaryPill(`${stable30} stable 30`, stable30 > 0 ? '#7a5a25' : '#4d5d45'),
+      this.summaryPill(`${uneven} stalls`, uneven > 0 ? '#8f2f28' : '#4d5d45'),
       this.summaryPill(`${emergencyScale} emergency`, emergencyScale > 0 ? '#8f2f28' : '#4d5d45'),
       this.summaryPill(`${software} software`, software > 0 ? '#8f2f28' : '#4d5d45'),
       this.summaryPill(`${brave} Brave`, brave > 0 ? '#5f4a7d' : '#4d5d45'),
@@ -1024,6 +1028,7 @@ export class AdminPanel {
     const chunkMeshes = this.recordObject(payload, 'chunkMeshes');
     const terrainDetail = this.recordObject(chunkMeshes, 'terrainDetail');
     const player = this.recordObject(payload, 'player');
+    const framePacing = this.recordObject(payload, 'framePacing');
     const flags = this.diagnosticFlags(entry);
 
     const root = document.createElement('div');
@@ -1046,6 +1051,11 @@ export class AdminPanel {
         chips.appendChild(this.summaryPill(flag, this.diagnosticFlagColor(flag)));
       }
     }
+    if (this.isStableLowFrameCadence(entry)) {
+      chips.appendChild(this.summaryPill('stable ~30 FPS cadence', '#7a5a25'));
+    } else if (this.hasUnevenFramePacing(entry)) {
+      chips.appendChild(this.summaryPill('uneven frame stalls', '#8f2f28'));
+    }
     root.appendChild(chips);
 
     const metrics = document.createElement('div');
@@ -1058,6 +1068,11 @@ export class AdminPanel {
       this.metricCell('Time', this.formatDiagnosticTime(entry)),
       this.metricCell('FPS', this.formatRate(this.diagnosticFps(entry))),
       this.metricCell('Engine FPS', this.formatRate(this.recordNumber(payload, 'engineFps'))),
+      this.metricCell('Frame median', this.formatFrameMs(this.recordNumber(framePacing, 'medianMs'))),
+      this.metricCell('Frame p95', this.formatFrameMs(this.recordNumber(framePacing, 'p95Ms'))),
+      this.metricCell('Frame max', this.formatFrameMs(this.recordNumber(framePacing, 'maxMs'))),
+      this.metricCell('Frames >33ms', this.formatNullableNumber(this.recordNumber(framePacing, 'over33Ms'))),
+      this.metricCell('Frames >50ms', this.formatNullableNumber(this.recordNumber(framePacing, 'over50Ms'))),
       this.metricCell('Draw calls', this.formatNullableNumber(this.recordNumber(payload, 'drawCalls'))),
       this.metricCell('Active meshes', this.formatNullableNumber(this.recordNumber(payload, 'activeMeshes'))),
       this.metricCell('Total meshes', this.formatNullableNumber(this.recordNumber(payload, 'totalMeshes'))),
@@ -1894,6 +1909,40 @@ export class AdminPanel {
     return Array.isArray(flags) ? flags.filter((flag): flag is string => typeof flag === 'string') : [];
   }
 
+  private diagnosticFramePacing(entry: ClientDiagnosticLogEntry): Record<string, unknown> {
+    return this.recordObject(this.diagnosticPayload(entry), 'framePacing');
+  }
+
+  private isStableLowFrameCadence(entry: ClientDiagnosticLogEntry): boolean {
+    const fps = this.diagnosticFps(entry);
+    const pacing = this.diagnosticFramePacing(entry);
+    const median = this.recordNumber(pacing, 'medianMs');
+    const p95 = this.recordNumber(pacing, 'p95Ms');
+    const stddev = this.recordNumber(pacing, 'stddevMs');
+    return fps !== null
+      && fps >= 27
+      && fps <= 36
+      && median !== null
+      && median >= 27
+      && median <= 38
+      && p95 !== null
+      && p95 <= 42
+      && stddev !== null
+      && stddev <= 5;
+  }
+
+  private hasUnevenFramePacing(entry: ClientDiagnosticLogEntry): boolean {
+    const pacing = this.diagnosticFramePacing(entry);
+    const p95 = this.recordNumber(pacing, 'p95Ms');
+    const max = this.recordNumber(pacing, 'maxMs');
+    const stddev = this.recordNumber(pacing, 'stddevMs');
+    const over50 = this.recordNumber(pacing, 'over50Ms');
+    return (p95 !== null && p95 >= 50)
+      || (max !== null && max >= 100)
+      || (stddev !== null && stddev >= 12)
+      || (over50 !== null && over50 >= 3);
+  }
+
   private diagnosticFlagColor(flag: string): string {
     switch (flag) {
       case 'software-renderer-likely':
@@ -2225,6 +2274,10 @@ export class AdminPanel {
   private formatRate(value: number | null): string {
     if (value === null || !Number.isFinite(value)) return '-';
     return value >= 100 ? Math.round(value).toLocaleString() : value.toFixed(2);
+  }
+
+  private formatFrameMs(value: number | null): string {
+    return value === null || !Number.isFinite(value) ? '-' : `${value.toFixed(1)} ms`;
   }
 
   private formatMs(value: number | null): string {
