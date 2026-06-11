@@ -15,7 +15,6 @@ const autorun = process.env.PROFILE_AUTORUN === '1' || process.argv.includes('--
 const keepProfile = process.env.PROFILE_KEEP_PROFILE === '1' || process.argv.includes('--keep-profile') || autorun;
 const captureEvilQuestSnapshot = process.env.PROFILE_EVILQUEST_SNAPSHOT !== '0';
 const captureStartup = process.env.PROFILE_CAPTURE_STARTUP === '1';
-const reloadBeforeCapture = process.env.PROFILE_RELOAD_BEFORE_CAPTURE !== '0';
 const evilQuestSnapshotMs = Number(process.env.PROFILE_EVILQUEST_SNAPSHOT_MS || 3000);
 const gameReadyTimeoutMs = Number(process.env.PROFILE_GAME_READY_TIMEOUT_MS || 45000);
 const extraBrowserArgs = (process.env.PROFILE_BROWSER_ARGS || '').split(/\s+/).filter(Boolean);
@@ -24,6 +23,10 @@ const authUsername = process.env.PROFILE_AUTH_USERNAME || '';
 const wsSecret = process.env.PROFILE_WS_SECRET || '';
 const deviceId = process.env.PROFILE_DEVICE_ID || '';
 const allowExistingCdp = process.env.PROFILE_ALLOW_EXISTING_CDP === '1';
+const attachExistingCdp = process.env.PROFILE_ATTACH_EXISTING_CDP === '1' || process.argv.includes('--attach-existing');
+const reloadBeforeCapture = process.env.PROFILE_RELOAD_BEFORE_CAPTURE != null
+  ? process.env.PROFILE_RELOAD_BEFORE_CAPTURE !== '0'
+  : !attachExistingCdp;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let stdinEnded = false;
@@ -172,6 +175,33 @@ async function openFreshPageTarget(initialUrl = 'about:blank') {
     }
     throw new Error(`Fresh page target ${targetId} did not become debuggable`);
   });
+}
+
+async function listPageTargets() {
+  const targets = await cdpJson('/json/list');
+  return targets.filter((target) => (
+    target?.type === 'page'
+    && target.webSocketDebuggerUrl
+    && target.url !== 'devtools://devtools/bundled/devtools_app.html'
+  ));
+}
+
+function targetMatchesUrl(target, targetUrl) {
+  try {
+    const desired = new URL(targetUrl);
+    const current = new URL(String(target.url || ''));
+    return current.origin === desired.origin && current.pathname === desired.pathname;
+  } catch {
+    return String(target.url || '').startsWith(String(targetUrl || ''));
+  }
+}
+
+async function selectExistingPageTarget(targetUrl) {
+  const pages = await listPageTargets();
+  if (pages.length === 0) throw new Error('No debuggable page targets found on the existing CDP port');
+  return pages.find((target) => targetMatchesUrl(target, targetUrl))
+    ?? pages.find((target) => /^https?:\/\//.test(String(target.url || '')))
+    ?? pages[0];
 }
 
 async function captureBrowserDiagnostics() {
@@ -1009,34 +1039,44 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
 
 async function main() {
   await mkdir(outDir, { recursive: true });
-  if (!keepProfile) await rm(userDataDir, { recursive: true, force: true });
-  if (!allowExistingCdp && await isCdpPortOpen()) {
+  if (!attachExistingCdp && !keepProfile) await rm(userDataDir, { recursive: true, force: true });
+  const cdpPortWasOpen = await isCdpPortOpen();
+  if (attachExistingCdp && !cdpPortWasOpen) {
+    throw new Error(`PROFILE_ATTACH_EXISTING_CDP=1 requires an already-running Chromium/Brave with --remote-debugging-port=${port}.`);
+  }
+  if (!allowExistingCdp && !attachExistingCdp && cdpPortWasOpen) {
     throw new Error(`CDP port ${port} is already in use. Set CDP_PORT to a free port, close the other Chromium app, or set PROFILE_ALLOW_EXISTING_CDP=1 to intentionally attach.`);
   }
-  const chromeArgs = [
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${userDataDir}`,
-    '--no-first-run',
-    '--disable-background-timer-throttling',
-    '--disable-renderer-backgrounding',
-    '--enable-precise-memory-info',
-    ...extraBrowserArgs,
-    'about:blank',
-  ];
-  const chrome = spawn(browserBin, chromeArgs, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
-  chrome.on('error', (error) => {
-    console.error(`[evilquest-profiler] Failed to launch ${browserBin}: ${error.message}`);
-  });
-  chrome.stderr.on('data', (data) => {
-    const text = String(data);
-    if (!text.includes('DevTools listening')) process.stderr.write(text);
-  });
-  chrome.unref();
+  let launchedBrowser = false;
+  if (!cdpPortWasOpen) {
+    const chromeArgs = [
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${userDataDir}`,
+      '--no-first-run',
+      '--disable-background-timer-throttling',
+      '--disable-renderer-backgrounding',
+      '--enable-precise-memory-info',
+      ...extraBrowserArgs,
+      'about:blank',
+    ];
+    const chrome = spawn(browserBin, chromeArgs, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    launchedBrowser = true;
+    chrome.on('error', (error) => {
+      console.error(`[evilquest-profiler] Failed to launch ${browserBin}: ${error.message}`);
+    });
+    chrome.stderr.on('data', (data) => {
+      const text = String(data);
+      if (!text.includes('DevTools listening')) process.stderr.write(text);
+    });
+    chrome.unref();
+  }
 
   await waitForCdp();
   const browserDiagnostics = await captureBrowserDiagnostics();
   printBrowserDiagnostics(browserDiagnostics);
-  const pageTarget = await openFreshPageTarget('about:blank');
+  const pageTarget = attachExistingCdp
+    ? await selectExistingPageTarget(url)
+    : await openFreshPageTarget('about:blank');
   if (!pageTarget?.webSocketDebuggerUrl) throw new Error('No debuggable Chrome page target found');
   const cdp = new CdpClient(pageTarget.webSocketDebuggerUrl);
   await cdp.open();
@@ -1067,6 +1107,11 @@ async function main() {
     console.warn(`[evilquest-profiler] Runtime async stack depth unavailable: ${error.message}`);
   }
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: injectedProfiler });
+  await cdp.send('Runtime.evaluate', {
+    expression: injectedProfiler,
+    awaitPromise: true,
+    returnByValue: true,
+  });
   if (authToken && authUsername) {
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
       source: `
@@ -1095,8 +1140,10 @@ async function main() {
       httpOnly: true,
     });
   }
-  await cdp.send('Page.navigate', { url });
-  console.log(`Opened ${url} in ${browserBin}.`);
+  if (!attachExistingCdp) await cdp.send('Page.navigate', { url });
+  console.log(attachExistingCdp
+    ? `Attached to existing tab: ${pageTarget.url || 'unknown URL'}`
+    : `Opened ${url} in ${cdpPortWasOpen ? 'existing browser' : browserBin}.`);
   if (autorun) console.log(`Autorun enabled; recording ${seconds}s immediately.`);
   else console.log(`Type "go" to reload and record ${seconds}s, "capture" to record the current tab, or "quit" to exit.`);
 
@@ -1104,7 +1151,9 @@ async function main() {
     const answer = autorun ? 'go' : await readCommand('profiler> ');
     if (answer === 'quit' || answer === 'exit') break;
     const shouldReload = autorun ? reloadBeforeCapture : (answer === 'go' || answer === 'reload');
-    const shouldCaptureCurrent = !autorun && (answer === 'capture' || answer === 'record' || answer === 'current');
+    const shouldCaptureCurrent = autorun
+      ? !shouldReload
+      : (answer === 'capture' || answer === 'record' || answer === 'current');
     if (!shouldReload && !shouldCaptureCurrent) continue;
 
     await cdp.send('Performance.enable');
@@ -1148,6 +1197,13 @@ async function main() {
       url,
       browserBin,
       seconds,
+      target: {
+        attachExistingCdp,
+        cdpPortWasOpen,
+        launchedBrowser,
+        pageTargetUrl: pageTarget.url || '',
+        pageTargetTitle: pageTarget.title || '',
+      },
       capturedAt: new Date().toISOString(),
       gameReady,
       pageDiagnostics,
@@ -1179,11 +1235,14 @@ async function main() {
     }
     if (autorun) break;
   }
-  try {
-    await cdp.send('Browser.close');
-  } catch {
-    // Browser may already be gone if the user closed it manually.
+  if (launchedBrowser) {
+    try {
+      await cdp.send('Browser.close');
+    } catch {
+      // Browser may already be gone if the user closed it manually.
+    }
   }
+  cdp.close();
 }
 
 main().catch((error) => {

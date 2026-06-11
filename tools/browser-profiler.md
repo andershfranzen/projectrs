@@ -43,14 +43,32 @@ Log in inside the opened Brave tab, wait until the game is running, then type
 `capture` in the profiler terminal. `capture` records the current tab without a
 reload. Use `go` when you want a clean reload before recording.
 
+To profile the exact Brave profile/tab that already reproduces the low FPS,
+close Brave fully, start Brave with a DevTools port, open the game, log in,
+then attach to that tab instead of creating an isolated profile:
+
+```powershell
+Start-Process "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe" "--remote-debugging-port=9223 --enable-precise-memory-info https://evilquest.net/play"
+
+$env:CDP_PORT = "9223"
+$env:PROFILE_ATTACH_EXISTING_CDP = "1"
+$env:PROFILE_SECONDS = "20"
+bun tools/browser-profiler.mjs https://evilquest.net/play
+```
+
+In attach mode, `capture` records the current tab without reload, and autorun
+also captures without reload unless `PROFILE_RELOAD_BEFORE_CAPTURE=1` is set.
+The profiler does not close browsers it did not launch.
+
 If Brave is already using the default DevTools port, add a different one:
 
 ```powershell
 $env:CDP_PORT = "9223"
 ```
 
-The profiler creates a fresh tab through Chrome DevTools for every run, so
-extension tabs, startup tabs, and restored sessions should not steal the capture.
+Outside attach mode, the profiler creates a fresh tab through Chrome DevTools
+for every run, so extension tabs, startup tabs, and restored sessions should not
+steal the capture.
 
 ## Output
 
