@@ -135,6 +135,7 @@ function diagnosticUrl(input, options) {
 }
 
 async function readInputText(input, options) {
+  if (input === '-') return readFile(0, 'utf8');
   if (!isHttpInput(input)) return readFile(resolve(input), 'utf8');
 
   const url = diagnosticUrl(input, options);
@@ -263,6 +264,13 @@ function browserLabel(entry) {
   return brands.length > 0 ? brands.join(', ') : String(info.platform ?? 'unknown');
 }
 
+function isPlayerChromiumBrowser(label) {
+  return label === 'Chrome'
+    || label === 'Brave'
+    || label === 'Edge'
+    || label === 'Chromium';
+}
+
 function isLowFps(entry) {
   const fps = measuredFps(entry);
   return fps != null && fps < 55;
@@ -315,6 +323,92 @@ function formatPacing(entry) {
   return `med ${formatRate(pacing.medianMs)}ms p95 ${formatRate(pacing.p95Ms)}ms max ${formatRate(pacing.maxMs)}ms >33 ${formatCount(pacing.over33Ms)} >50 ${formatCount(pacing.over50Ms)}`;
 }
 
+function mapLabel(entry) {
+  return String(entry.payload?.currentMap ?? 'n/a');
+}
+
+function floorLabel(entry) {
+  return entry.payload?.currentFloor == null ? 'n/a' : String(entry.payload.currentFloor);
+}
+
+function ratioDelta(a, b) {
+  const left = finiteNumber(a);
+  const right = finiteNumber(b);
+  if (left == null || right == null) return null;
+  const larger = Math.max(Math.abs(left), Math.abs(right));
+  if (larger === 0) return 0;
+  return Math.abs(left - right) / larger;
+}
+
+function comparableScene(a, b) {
+  if (mapLabel(a) !== 'n/a' && mapLabel(b) !== 'n/a' && mapLabel(a) !== mapLabel(b)) return false;
+  if (floorLabel(a) !== 'n/a' && floorLabel(b) !== 'n/a' && floorLabel(a) !== floorLabel(b)) return false;
+  const meshDelta = ratioDelta(a.payload?.activeMeshes, b.payload?.activeMeshes);
+  const vertexDelta = ratioDelta(a.payload?.totalVertices, b.payload?.totalVertices);
+  return (meshDelta == null || meshDelta <= 0.35)
+    && (vertexDelta == null || vertexDelta <= 0.35);
+}
+
+function sceneComparisonText(a, b) {
+  const meshDelta = ratioDelta(a.payload?.activeMeshes, b.payload?.activeMeshes);
+  const vertexDelta = ratioDelta(a.payload?.totalVertices, b.payload?.totalVertices);
+  const parts = [
+    `map ${mapLabel(a) === mapLabel(b) ? mapLabel(a) : `${mapLabel(a)} vs ${mapLabel(b)}`}`,
+    meshDelta == null ? null : `meshes ${Math.round(meshDelta * 100)}% apart`,
+    vertexDelta == null ? null : `vertices ${Math.round(vertexDelta * 100)}% apart`,
+  ].filter(Boolean);
+  return parts.join(', ');
+}
+
+function browserGapFindings(entries, limit = 3) {
+  const measured = entries
+    .filter((entry) => measuredFps(entry) != null)
+    .filter((entry) => isPlayerChromiumBrowser(browserLabel(entry)));
+  const findings = [];
+  for (let i = 0; i < measured.length; i += 1) {
+    for (let j = i + 1; j < measured.length; j += 1) {
+      const a = measured[i];
+      const b = measured[j];
+      if (browserLabel(a) === browserLabel(b)) continue;
+      const aFps = measuredFps(a);
+      const bFps = measuredFps(b);
+      if (aFps == null || bFps == null) continue;
+      const high = aFps >= bFps ? a : b;
+      const low = high === a ? b : a;
+      const highFps = measuredFps(high);
+      const lowFps = measuredFps(low);
+      const ratio = highFps / Math.max(1, lowFps);
+      const comparable = comparableScene(high, low);
+      const sameUser = high.username === low.username && high.username !== 'unknown';
+      const strong = sameUser && comparable && highFps >= 100 && lowFps < 55 && ratio >= 1.5;
+      findings.push({ high, low, highFps, lowFps, ratio, comparable, sameUser, strong });
+    }
+  }
+  return findings
+    .sort((a, b) => Number(b.strong) - Number(a.strong) || b.ratio - a.ratio)
+    .slice(0, limit);
+}
+
+function renderBrowserGapVerdict(entries) {
+  const findings = browserGapFindings(entries);
+  const lines = ['Browser gap verdict'];
+  if (findings.length === 0) {
+    lines.push('- No cross-browser FPS pairs yet. Have the same tester run `/perf` in Chrome and Brave/Edge in the same place.');
+    return lines;
+  }
+
+  const strong = findings.find((finding) => finding.strong);
+  if (strong) {
+    lines.push(`- Strong browser/runtime signal: ${browserLabel(strong.high)} ${formatRate(strong.highFps)} FPS vs ${browserLabel(strong.low)} ${formatRate(strong.lowFps)} FPS (${strong.ratio.toFixed(1)}x) in a comparable scene.`);
+  } else {
+    lines.push('- No strong healthy-vs-low browser split found in comparable snapshots yet.');
+  }
+  for (const finding of findings) {
+    lines.push(`- ${browserLabel(finding.high)} ${formatRate(finding.highFps)} FPS vs ${browserLabel(finding.low)} ${formatRate(finding.lowFps)} FPS (${finding.ratio.toFixed(1)}x), sameUser=${finding.sameUser ? 'yes' : 'no'}, comparable=${finding.comparable ? 'yes' : 'no'}, ${sceneComparisonText(finding.high, finding.low)}`);
+  }
+  return lines;
+}
+
 function summarize(entries) {
   const counts = {
     total: entries.length,
@@ -336,6 +430,17 @@ function summarize(entries) {
     counts,
     byClass: Object.fromEntries([...byClass.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))),
     byBrowser: Object.fromEntries([...byBrowser.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))),
+    browserGaps: browserGapFindings(entries).map((finding) => ({
+      highBrowser: browserLabel(finding.high),
+      highFps: finding.highFps,
+      lowBrowser: browserLabel(finding.low),
+      lowFps: finding.lowFps,
+      ratio: Math.round(finding.ratio * 10) / 10,
+      comparable: finding.comparable,
+      sameUser: finding.sameUser,
+      strong: finding.strong,
+      scene: sceneComparisonText(finding.high, finding.low),
+    })),
   };
 }
 
@@ -373,6 +478,8 @@ function renderText(input, entries, options) {
   lines.push(`Entries: ${summary.counts.total}, low FPS: ${summary.counts.lowFps}, Brave low: ${summary.counts.braveLow}, software low: ${summary.counts.softwareLow}, stable 30: ${summary.counts.stable30}, stalls: ${summary.counts.uneven}`);
   lines.push(`Browsers: ${Object.entries(summary.byBrowser).map(([name, count]) => `${name}=${count}`).join(', ') || 'none'}`);
   lines.push(`Classes: ${Object.entries(summary.byClass).map(([name, count]) => `${name}=${count}`).join(', ') || 'none'}`);
+  lines.push('');
+  lines.push(...renderBrowserGapVerdict(entries));
   lines.push('');
   lines.push(`Latest ${Math.min(options.limit, entries.length)} entries`);
 

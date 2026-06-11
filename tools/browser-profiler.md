@@ -224,7 +224,10 @@ EVILQUEST_ADMIN_TOKEN=<admin-token> bun tools/summarize-client-diagnostics.mjs \
 ```
 
 The summary classifies snapshots as software-renderer low FPS, stable 30 Hz
-cadence, uneven frame stalls, hardware-backed low FPS, or healthy high FPS.
+cadence, uneven frame stalls, hardware-backed low FPS, or healthy high FPS. It
+also reports a browser-gap verdict when the same user has comparable Chrome,
+Brave, or Edge snapshots, which is the quickest check for a browser/backend
+split instead of a scene-size regression.
 
 If a live run reports `hasGameManager: false` and the body text is the login
 screen, it did not capture steady-state gameplay. Reuse a logged-in
