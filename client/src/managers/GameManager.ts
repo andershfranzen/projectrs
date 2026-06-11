@@ -110,6 +110,20 @@ interface FrameRateSample {
   frames: number;
   durationMs: number;
   fps: number;
+  framePacing: FramePacingSample | null;
+}
+
+interface FramePacingSample {
+  intervals: number;
+  meanMs: number;
+  medianMs: number;
+  p95Ms: number;
+  maxMs: number;
+  stddevMs: number;
+  over16Ms: number;
+  over33Ms: number;
+  over50Ms: number;
+  over100Ms: number;
 }
 const ROOF_HOVER_STRUCTURAL_SAMPLE_HEIGHT_OFFSETS = [1.1, 1.8, 2.5] as const;
 const NPC_FACING_NONE = -32768;
@@ -157,6 +171,35 @@ function isHarvestObjectDef(def: WorldObjectDef): boolean {
     || def.category === 'rock'
     || def.category === 'fishingspot'
     || def.category === 'stall';
+}
+
+function roundTiming(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function summarizeFramePacing(intervals: number[]): FramePacingSample | null {
+  if (intervals.length === 0) return null;
+  const sorted = [...intervals].sort((a, b) => a - b);
+  const percentile = (p: number): number => {
+    const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1));
+    return sorted[index];
+  };
+  const sum = intervals.reduce((total, value) => total + value, 0);
+  const mean = sum / intervals.length;
+  const variance = intervals.reduce((total, value) => total + ((value - mean) ** 2), 0) / intervals.length;
+
+  return {
+    intervals: intervals.length,
+    meanMs: roundTiming(mean),
+    medianMs: roundTiming(percentile(0.5)),
+    p95Ms: roundTiming(percentile(0.95)),
+    maxMs: roundTiming(sorted[sorted.length - 1]),
+    stddevMs: roundTiming(Math.sqrt(variance)),
+    over16Ms: intervals.filter(value => value > 16.7).length,
+    over33Ms: intervals.filter(value => value > 33.4).length,
+    over50Ms: intervals.filter(value => value > 50).length,
+    over100Ms: intervals.filter(value => value > 100).length,
+  };
 }
 
 function isSoftwareWebGlRenderer(webgl: Record<string, unknown>): boolean {
@@ -1431,16 +1474,21 @@ export class GameManager {
   private sampleRafFps(durationMs: number = 3000): Promise<FrameRateSample> {
     return new Promise((resolve) => {
       let frames = 0;
+      const intervals: number[] = [];
       const start = performance.now();
+      let lastFrame = start;
       const tick = () => {
         frames++;
         const now = performance.now();
+        intervals.push(now - lastFrame);
+        lastFrame = now;
         const elapsed = now - start;
         if (elapsed >= durationMs) {
           resolve({
             frames,
             durationMs: Math.round(elapsed),
             fps: frames / Math.max(0.001, elapsed / 1000),
+            framePacing: summarizeFramePacing(intervals),
           });
           return;
         }
@@ -1484,6 +1532,7 @@ export class GameManager {
       measuredFps: sample ? Math.round(sample.fps * 10) / 10 : null,
       measuredFrames: sample?.frames ?? null,
       measuredDurationMs: sample?.durationMs ?? null,
+      framePacing: sample?.framePacing ?? null,
       engineFps: Math.round(this.engine.getFps() * 10) / 10,
       drawCalls,
       activeMeshes: activeMeshes.length,
@@ -1812,6 +1861,7 @@ export class GameManager {
         frames: this.lowFpsDiagnosticFrames,
         durationMs: Math.round(elapsed),
         fps,
+        framePacing: null,
       });
       this.maybeShowLowFpsRendererWarning(snapshot);
       const appliedRenderScale = this.maybeApplyLowFpsRenderScale(fps);

@@ -128,6 +128,7 @@ PROFILE_CAPTURE_STARTUP=1
 For the Brave issue, compare `evilquest-snapshot.json` between Chrome and Brave. The highest-signal fields are:
 
 - `snapshot.measuredFps`
+- `snapshot.framePacing` (median/p95/max frame interval; separates a stable ~30 Hz cap from irregular stalls)
 - `snapshot.diagnosticFlags`
 - `snapshot.webgl.unmaskedRenderer`
 - `snapshot.canvas`

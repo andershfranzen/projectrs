@@ -401,6 +401,11 @@ function formatCanvas(canvas) {
   return `${renderSize} / ${clientSize}, DPR ${dpr}`;
 }
 
+function formatFramePacing(pacing) {
+  if (!pacing || typeof pacing !== 'object') return 'n/a';
+  return `median ${formatRate(pacing.medianMs)}ms, p95 ${formatRate(pacing.p95Ms)}ms, max ${formatRate(pacing.maxMs)}ms, >33ms ${formatCount(pacing.over33Ms)}`;
+}
+
 function formatBudgetRow(row) {
   if (!row || typeof row !== 'object') return 'n/a';
   const name = row.name || row.chunk || '<unnamed>';
@@ -493,6 +498,7 @@ function printEvilQuestSnapshot(snapshot) {
     const detail = chunks.terrainDetail;
     console.log(`  Grass batch ${formatCount(detail.grassBladeEnabledInstances)} active instances, ${formatCount(detail.grassBladeBatchRebuilds)} rebuilds, last ${formatRate(detail.grassBladeBatchLastRebuildMs)}ms, max ${formatRate(detail.grassBladeBatchMaxRebuildMs)}ms`);
   }
+  console.log(`  Frame pacing: ${formatFramePacing(snapshot.framePacing)}`);
   console.log(`  Canvas: ${formatCanvas(snapshot.canvas)}`);
   console.log(`  Renderer: ${renderer}`);
   console.log(`  Flags: ${flags}`);
@@ -733,18 +739,43 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
         };
       }
       const durationMs = ${Math.max(250, Math.round(durationMs))};
+      const roundTiming = (value) => Math.round(value * 10) / 10;
+      const summarizeFramePacing = (intervals) => {
+        if (!intervals.length) return null;
+        const sorted = [...intervals].sort((a, b) => a - b);
+        const percentile = (p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1))];
+        const mean = intervals.reduce((total, value) => total + value, 0) / intervals.length;
+        const variance = intervals.reduce((total, value) => total + ((value - mean) ** 2), 0) / intervals.length;
+        return {
+          intervals: intervals.length,
+          meanMs: roundTiming(mean),
+          medianMs: roundTiming(percentile(0.5)),
+          p95Ms: roundTiming(percentile(0.95)),
+          maxMs: roundTiming(sorted[sorted.length - 1]),
+          stddevMs: roundTiming(Math.sqrt(variance)),
+          over16Ms: intervals.filter((value) => value > 16.7).length,
+          over33Ms: intervals.filter((value) => value > 33.4).length,
+          over50Ms: intervals.filter((value) => value > 50).length,
+          over100Ms: intervals.filter((value) => value > 100).length,
+        };
+      };
       const sampleRafFps = (ms) => new Promise((resolve) => {
         let frames = 0;
         const start = performance.now();
+        let lastFrame = start;
+        const intervals = [];
         const tick = () => {
           frames++;
           const now = performance.now();
+          intervals.push(now - lastFrame);
+          lastFrame = now;
           const elapsed = now - start;
           if (elapsed >= ms) {
             resolve({
               frames,
               durationMs: Math.round(elapsed),
               fps: frames / Math.max(0.001, elapsed / 1000),
+              framePacing: summarizeFramePacing(intervals),
             });
             return;
           }
@@ -993,6 +1024,7 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
           measuredFps: roundRate(sample?.fps),
           measuredFrames: sample?.frames ?? null,
           measuredDurationMs: sample?.durationMs ?? null,
+          framePacing: sample?.framePacing ?? null,
           engineFps: roundRate(typeof engine.getFps === 'function' ? engine.getFps() : null),
           drawCalls: engine._drawCalls?.current ?? null,
           activeMeshes: activeArray.length,

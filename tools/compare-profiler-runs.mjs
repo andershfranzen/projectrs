@@ -69,6 +69,11 @@ function formatCanvas(snapshot) {
   return `${formatCount(canvas.width)}x${formatCount(canvas.height)} / ${formatCount(canvas.clientWidth)}x${formatCount(canvas.clientHeight)}, DPR ${formatRate(canvas.devicePixelRatio)}`;
 }
 
+function formatFramePacing(pacing) {
+  if (!pacing || typeof pacing !== 'object') return 'n/a';
+  return `median ${formatRate(pacing.medianMs)}ms, p95 ${formatRate(pacing.p95Ms)}ms, max ${formatRate(pacing.maxMs)}ms, >33ms ${formatCount(pacing.over33Ms)}`;
+}
+
 function formatViewport(pageDiagnostics) {
   const viewport = pageDiagnostics?.viewport;
   if (!viewport) return 'n/a';
@@ -292,6 +297,11 @@ function measuredFps(run) {
   return typeof fps === 'number' && Number.isFinite(fps) ? fps : null;
 }
 
+function framePacing(run) {
+  const pacing = run.snapshot?.framePacing;
+  return pacing && typeof pacing === 'object' ? pacing : null;
+}
+
 function activeMeshCount(run) {
   const meshes = run.snapshot?.activeMeshes;
   return typeof meshes === 'number' && Number.isFinite(meshes) ? meshes : null;
@@ -373,6 +383,25 @@ function printComparisonHints(aRun, bRun) {
     } else if (ratio >= 2) {
       hints.push(`FPS differs by ${ratio.toFixed(1)}x; compare renderer, canvas scale, active meshes, and bundle fingerprint before attributing it to the server.`);
     }
+  }
+
+  const aPacing = framePacing(aRun);
+  const bPacing = framePacing(bRun);
+  const stableLow = (fps, pacing) => (
+    fps != null
+    && pacing
+    && fps >= 27
+    && fps <= 36
+    && typeof pacing.medianMs === 'number'
+    && pacing.medianMs >= 27
+    && pacing.medianMs <= 38
+    && typeof pacing.p95Ms === 'number'
+    && pacing.p95Ms <= 42
+    && typeof pacing.stddevMs === 'number'
+    && pacing.stddevMs <= 5
+  );
+  if (stableLow(aFps, aPacing) !== stableLow(bFps, bPacing)) {
+    hints.push(`Frame cadence mismatch: A [${formatFramePacing(aPacing)}], B [${formatFramePacing(bPacing)}]. A stable ~30 Hz side points at browser/display scheduling, not scene complexity.`);
   }
 
   const aRenderer = rendererLabelForHint(aRun);
@@ -693,6 +722,11 @@ function printSnapshotComparison(aSnapshot, bSnapshot) {
   const metrics = [
     ['Measured FPS', ['measuredFps']],
     ['Engine FPS', ['engineFps']],
+    ['Frame median ms', ['framePacing', 'medianMs']],
+    ['Frame p95 ms', ['framePacing', 'p95Ms']],
+    ['Frame max ms', ['framePacing', 'maxMs']],
+    ['Frames >33ms', ['framePacing', 'over33Ms']],
+    ['Frames >50ms', ['framePacing', 'over50Ms']],
     ['Draw calls', ['drawCalls']],
     ['Active meshes', ['activeMeshes']],
     ['Total meshes', ['totalMeshes']],

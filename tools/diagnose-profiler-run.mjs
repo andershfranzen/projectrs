@@ -199,6 +199,39 @@ function canvasPixelCount(run) {
   return Number.isFinite(width) && Number.isFinite(height) ? width * height : null;
 }
 
+function framePacingFromRun(run) {
+  const pacing = run.snapshot?.framePacing;
+  return pacing && typeof pacing === 'object' ? pacing : null;
+}
+
+function isStableLowCadence(fps, pacing) {
+  if (fps == null || !pacing) return false;
+  const median = finiteNumber(pacing.medianMs);
+  const p95 = finiteNumber(pacing.p95Ms);
+  const stddev = finiteNumber(pacing.stddevMs);
+  return fps >= 27
+    && fps <= 36
+    && median != null
+    && median >= 27
+    && median <= 38
+    && p95 != null
+    && p95 <= 42
+    && stddev != null
+    && stddev <= 5;
+}
+
+function isUnevenFramePacing(pacing) {
+  if (!pacing) return false;
+  const p95 = finiteNumber(pacing.p95Ms);
+  const max = finiteNumber(pacing.maxMs);
+  const stddev = finiteNumber(pacing.stddevMs);
+  const over50 = finiteNumber(pacing.over50Ms);
+  return (p95 != null && p95 >= 50)
+    || (max != null && max >= 100)
+    || (stddev != null && stddev >= 12)
+    || (over50 != null && over50 >= 3);
+}
+
 function formatCanvas(run) {
   const canvas = run.snapshot?.canvas;
   if (canvas) {
@@ -207,6 +240,11 @@ function formatCanvas(run) {
   const viewport = run.pageDiagnostics?.viewport;
   if (!viewport) return 'n/a';
   return `${formatCount(viewport.innerWidth)}x${formatCount(viewport.innerHeight)} inner / ${formatCount(viewport.outerWidth)}x${formatCount(viewport.outerHeight)} outer, DPR ${formatRate(dprFromRun(run))}`;
+}
+
+function formatFramePacing(pacing) {
+  if (!pacing) return 'n/a';
+  return `median ${formatRate(pacing.medianMs)}ms, p95 ${formatRate(pacing.p95Ms)}ms, max ${formatRate(pacing.maxMs)}ms, stddev ${formatRate(pacing.stddevMs)}ms, >33ms ${formatCount(pacing.over33Ms)}, >50ms ${formatCount(pacing.over50Ms)}`;
 }
 
 function browserGlRenderer(run) {
@@ -311,6 +349,7 @@ function buildDiagnosis(run) {
   const lowFps = fps != null && fps < LOW_FPS_THRESHOLD;
   const dpr = dprFromRun(run);
   const pixels = canvasPixelCount(run);
+  const framePacing = framePacingFromRun(run);
   const gpuStatuses = gpuProblemStatuses(run);
   const relevantFlags = commandLineFlags(run.browserDiagnostics);
   const scripts = buildScriptFingerprint(run);
@@ -370,6 +409,33 @@ function buildDiagnosis(run) {
       softwareRenderer
         ? ['Retest after forcing Brave back onto hardware GPU acceleration.']
         : ['Compare this run against a good Chrome run from the same location and camera angle.'],
+    ));
+  }
+
+  if (isStableLowCadence(fps, framePacing)) {
+    findings.push(finding(
+      'high',
+      'stable-low-frame-cadence',
+      'Frame pacing looks like a stable low refresh/cap rather than random render stalls.',
+      [
+        `measuredFps=${formatRate(fps)}`,
+        `framePacing=${formatFramePacing(framePacing)}`,
+      ],
+      [
+        'Check Brave/Windows graphics acceleration, display refresh, battery/efficiency settings, and ANGLE backend before changing scene complexity.',
+      ],
+    ));
+  } else if (lowFps && isUnevenFramePacing(framePacing)) {
+    findings.push(finding(
+      'high',
+      'uneven-frame-pacing',
+      'Low FPS includes long or irregular frame intervals.',
+      [
+        `framePacing=${formatFramePacing(framePacing)}`,
+      ],
+      [
+        'Use the CPU profile and scene-budget sections to identify the slow frame work, then compare against a healthy Chrome run.',
+      ],
     ));
   }
 
@@ -509,6 +575,7 @@ function buildDiagnosis(run) {
       engineFps: run.snapshot?.engineFps ?? null,
       drawCalls: run.snapshot?.drawCalls ?? null,
       renderScale: run.snapshot?.renderScale ?? null,
+      framePacing,
       activeMeshes: run.snapshot?.activeMeshes ?? null,
       totalMeshes: run.snapshot?.totalMeshes ?? null,
       totalVertices: run.snapshot?.totalVertices ?? null,
@@ -544,6 +611,7 @@ function renderDiagnosisText(diagnosis) {
   lines.push(`  Browser GL: ${diagnosis.facts.browserGl}`);
   lines.push(`  Software renderer: ${formatBool(diagnosis.facts.softwareRenderer)}`);
   lines.push(`  FPS: measured ${formatRate(diagnosis.facts.measuredFps)}, engine ${formatRate(diagnosis.facts.engineFps)}`);
+  lines.push(`  Frame pacing: ${formatFramePacing(diagnosis.facts.framePacing)}`);
   lines.push(`  Canvas/View: ${diagnosis.facts.canvas}`);
   lines.push(`  Scene: ${formatCount(diagnosis.facts.activeMeshes)} active meshes, ${formatCount(diagnosis.facts.totalVertices)} vertices, ${formatCount(diagnosis.facts.totalIndices)} indices`);
   if (diagnosis.facts.terrainDetail) {
