@@ -1,6 +1,8 @@
 # EvilQuest Browser Profiler
 
 Use this to compare local vs live, or Chrome vs Brave, with the same in-game scene/FPS snapshot that `/perf` sends.
+By default CPU sampling starts after the game is logged in and ready, so the
+profile reflects steady-state gameplay rather than login/loading work.
 
 ## Live Chrome
 
@@ -16,10 +18,13 @@ PROFILE_AUTORUN=1 PROFILE_SECONDS=20 bun tools/browser-profiler.mjs http://local
 
 ## Windows Brave
 
-Run from PowerShell after logging into the game once in that browser profile:
+Run from PowerShell. By default the profiler uses an isolated temp profile, not
+your normal Brave profile. Either run it once without autorun and log in there,
+or set `CHROME_PROFILE_DIR` to a dedicated profile directory you want to reuse.
 
 ```powershell
 $env:BROWSER_BIN = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
+$env:CHROME_PROFILE_DIR = "$env:TEMP\evilquest-profiler-brave"
 $env:PROFILE_AUTORUN = "1"
 $env:PROFILE_SECONDS = "20"
 bun tools/browser-profiler.mjs https://evilquest.net/play
@@ -31,6 +36,9 @@ If Brave is already using the default DevTools port, add a different one:
 $env:CDP_PORT = "9223"
 ```
 
+The profiler creates a fresh tab through Chrome DevTools for every run, so
+extension tabs, startup tabs, and restored sessions should not steal the capture.
+
 ## Output
 
 Each run writes a timestamped folder under `tools/profiler-runs/`:
@@ -40,6 +48,12 @@ Each run writes a timestamped folder under `tools/profiler-runs/`:
 - `cpu-profile.json` - raw Chrome DevTools CPU profile.
 - `browser-stats.json` - long tasks, slow callbacks, resources, fetches, WebSockets.
 - `console.json` - browser console and exception logs.
+
+To include page load, asset loading, and login startup in the CPU profile, set:
+
+```bash
+PROFILE_CAPTURE_STARTUP=1
+```
 
 For the Brave issue, compare `evilquest-snapshot.json` between Chrome and Brave. The highest-signal fields are:
 

@@ -14,6 +14,7 @@ const outDir = process.env.PROFILE_OUT_DIR || join(process.cwd(), 'tools', 'prof
 const autorun = process.env.PROFILE_AUTORUN === '1' || process.argv.includes('--autorun');
 const keepProfile = process.env.PROFILE_KEEP_PROFILE === '1' || process.argv.includes('--keep-profile') || autorun;
 const captureEvilQuestSnapshot = process.env.PROFILE_EVILQUEST_SNAPSHOT !== '0';
+const captureStartup = process.env.PROFILE_CAPTURE_STARTUP === '1';
 const evilQuestSnapshotMs = Number(process.env.PROFILE_EVILQUEST_SNAPSHOT_MS || 3000);
 const gameReadyTimeoutMs = Number(process.env.PROFILE_GAME_READY_TIMEOUT_MS || 45000);
 const extraBrowserArgs = (process.env.PROFILE_BROWSER_ARGS || '').split(/\s+/).filter(Boolean);
@@ -41,8 +42,7 @@ async function cdpJson(path, init) {
 async function waitForCdp() {
   for (let i = 0; i < 80; i += 1) {
     try {
-      await cdpJson('/json/version');
-      return;
+      return await cdpJson('/json/version');
     } catch {
       await sleep(250);
     }
@@ -93,6 +93,40 @@ class CdpClient {
     list.push(handler);
     this.handlers.set(method, list);
   }
+
+  close() {
+    this.ws.close();
+  }
+}
+
+async function openFreshPageTarget(initialUrl = 'about:blank') {
+  const version = await cdpJson('/json/version');
+  if (!version?.webSocketDebuggerUrl) {
+    throw new Error('Chrome DevTools browser target is unavailable');
+  }
+
+  const browserCdp = new CdpClient(version.webSocketDebuggerUrl);
+  await browserCdp.open();
+  let created;
+  try {
+    created = await browserCdp.send('Target.createTarget', {
+      url: initialUrl,
+      newWindow: false,
+      background: false,
+    });
+  } finally {
+    browserCdp.close();
+  }
+  const targetId = created.targetId;
+  if (!targetId) throw new Error('Chrome DevTools did not create a page target');
+
+  for (let i = 0; i < 40; i += 1) {
+    const targets = await cdpJson('/json/list');
+    const target = targets.find((item) => item.id === targetId);
+    if (target?.webSocketDebuggerUrl) return target;
+    await sleep(100);
+  }
+  throw new Error(`Fresh page target ${targetId} did not become debuggable`);
 }
 
 const injectedProfiler = String.raw`
@@ -267,11 +301,20 @@ async function waitForEvilQuestGame(cdp, timeoutMs) {
         const gm = window.gm;
         const ready = !!gm
           && gm._loginSettled === true
+          && typeof gm.username === 'string'
+          && gm.username.length > 0
+          && typeof gm.localPlayerId === 'number'
+          && gm.localPlayerId > 0
           && typeof gm.collectPerformanceSnapshot === 'function'
           && typeof gm.sampleRafFps === 'function'
           && document.visibilityState === 'visible';
         if (ready) {
-          resolve({ ok: true, waitedMs: Math.round(performance.now() - startedAt), username: gm.username || '' });
+          resolve({
+            ok: true,
+            waitedMs: Math.round(performance.now() - startedAt),
+            username: gm.username || '',
+            localPlayerId: gm.localPlayerId,
+          });
           return;
         }
         if (performance.now() - startedAt >= ${Math.max(1000, Math.round(timeoutMs))}) {
@@ -280,6 +323,8 @@ async function waitForEvilQuestGame(cdp, timeoutMs) {
             waitedMs: Math.round(performance.now() - startedAt),
             hasGameManager: !!gm,
             loginSettled: gm?._loginSettled ?? null,
+            username: gm?.username ?? null,
+            localPlayerId: gm?.localPlayerId ?? null,
             hasSnapshotApi: !!gm && typeof gm.collectPerformanceSnapshot === 'function',
             visibilityState: document.visibilityState,
             title: document.title,
@@ -301,6 +346,15 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
       const gm = window.gm;
       if (!gm || typeof gm.collectPerformanceSnapshot !== 'function') {
         return { ok: false, error: 'window.gm.collectPerformanceSnapshot unavailable' };
+      }
+      if (!gm.username || !(gm.localPlayerId > 0) || gm._loginSettled !== true) {
+        return {
+          ok: false,
+          error: 'EvilQuest login is not settled',
+          username: gm.username || '',
+          localPlayerId: gm.localPlayerId ?? null,
+          loginSettled: gm._loginSettled ?? null,
+        };
       }
       const sample = typeof gm.sampleRafFps === 'function'
         ? await gm.sampleRafFps(${Math.max(250, Math.round(durationMs))})
@@ -335,8 +389,7 @@ async function main() {
   chrome.unref();
 
   await waitForCdp();
-  const targets = await cdpJson('/json/list');
-  const pageTarget = targets.find((target) => target.type === 'page') || targets[0];
+  const pageTarget = await openFreshPageTarget('about:blank');
   if (!pageTarget?.webSocketDebuggerUrl) throw new Error('No debuggable Chrome page target found');
   const cdp = new CdpClient(pageTarget.webSocketDebuggerUrl);
   await cdp.open();
@@ -401,18 +454,19 @@ async function main() {
     if (answer === 'quit' || answer === 'exit') break;
     if (answer !== 'go') continue;
 
-    browserLogs.length = 0;
-    await cdp.send('Profiler.setSamplingInterval', { interval: 100 });
-    await cdp.send('Profiler.start');
     await cdp.send('Performance.enable');
+    await cdp.send('Profiler.setSamplingInterval', { interval: 100 });
+    browserLogs.length = 0;
+    if (captureStartup) await cdp.send('Profiler.start');
     await cdp.send('Page.reload', { ignoreCache: true });
-    console.log(`Recording ${seconds}s...`);
     const gameReady = captureEvilQuestSnapshot
       ? await waitForEvilQuestGame(cdp, gameReadyTimeoutMs)
       : { ok: false, skipped: true };
     if (captureEvilQuestSnapshot && !gameReady?.ok) {
       console.log(`[evilquest-profiler] Game snapshot wait did not finish: ${JSON.stringify(gameReady)}`);
     }
+    if (!captureStartup) await cdp.send('Profiler.start');
+    console.log(`Recording ${seconds}s${captureStartup ? ' including startup' : ' after game ready'}...`);
     await sleep(seconds * 1000);
     const { profile } = await cdp.send('Profiler.stop');
     const perf = await cdp.send('Performance.getMetrics');

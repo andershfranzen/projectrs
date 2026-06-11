@@ -1,11 +1,15 @@
 {
   "version": 2,
-  "generatedAt": "2026-06-09T13:35:10.614Z",
+  "generatedAt": "2026-06-11T17:13:50.561Z",
   "ids": [
     1,
     8,
     10,
+    11,
+    12,
     14,
+    15,
+    16,
     19,
     20,
     23,
@@ -18,6 +22,7 @@
     32,
     33,
     34,
+    35,
     36,
     37,
     38,
@@ -102,6 +107,8 @@
     142,
     143,
     206,
+    216,
+    223,
     224,
     225,
     226,
@@ -331,7 +338,9 @@
     457,
     458,
     459,
-    460
+    460,
+    550,
+    551
   ],
   "entries": {
     "1": {
@@ -388,9 +397,29 @@
         }
       ]
     },
+    "11": {
+      "file": "/items/3d/11.png",
+      "poseKey": "thumb:v19|/assets/models/ChickenRaw.glb|id:item:11|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "12": {
+      "file": "/items/3d/12.png",
+      "poseKey": "thumb:v19|/assets/models/ChickenCooked.glb|id:item:12|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
     "14": {
       "file": "/items/3d/14.png",
       "poseKey": "thumb:v19|/assets/models/BeefRat.glb|id:item:14|cam:2.32129,1.17810,0.75000",
+      "rendererVersion": 19
+    },
+    "15": {
+      "file": "/items/3d/15.png",
+      "poseKey": "thumb:v19|/assets/models/BeefRatCooked.glb|id:item:15|cam:2.32129,1.17810,0.75000",
+      "rendererVersion": 19
+    },
+    "16": {
+      "file": "/items/3d/16.png",
+      "poseKey": "thumb:v19|/assets/models/BeefCooked.glb|id:item:16|cam:-0.78540,1.20830,0.75000",
       "rendererVersion": 19
     },
     "19": {
@@ -451,6 +480,11 @@
     "34": {
       "file": "/items/3d/34.png",
       "poseKey": "thumb:v19|/assets/models/TinRock.glb|id:item:34|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "35": {
+      "file": "/items/3d/35.png",
+      "poseKey": "thumb:v19|/assets/models/item-thumbnails/ore/CoalOreRock.glb|id:item:35:ore-recolors-v2|cam:-0.78540,1.20830,0.75000",
       "rendererVersion": 19
     },
     "36": {
@@ -871,6 +905,16 @@
     "206": {
       "file": "/items/3d/206.png",
       "poseKey": "thumb:v19|/assets/equipment/head/BlueWizardHat.glb|id:item:206|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "216": {
+      "file": "/items/3d/216.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/BanditMask.glb|id:item:216|cam:-1.96350,1.42080,0.85000",
+      "rendererVersion": 19
+    },
+    "223": {
+      "file": "/items/3d/223.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/BanditMask.glb|id:item:223|cam:-1.96350,1.42080,0.85000",
       "rendererVersion": 19
     },
     "224": {
@@ -2021,6 +2065,16 @@
     "460": {
       "file": "/items/3d/460.png",
       "poseKey": "thumb:v19|/assets/equipment/weapon/VampireDagger.glb|id:item:460|cam:-0.77667,2.32129,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "550": {
+      "file": "/items/3d/550.png",
+      "poseKey": "thumb:v19|/assets/models/Matchbox.glb|id:item:550|cam:-0.65450,0.83776,0.75000|scale:1.05000",
+      "rendererVersion": 19
+    },
+    "551": {
+      "file": "/items/3d/551.png",
+      "poseKey": "thumb:v19|/assets/models/Ashes.glb|id:item:551|cam:-2.55691,1.20830,0.75000",
       "rendererVersion": 19
     }
   }
