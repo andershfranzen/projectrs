@@ -2,7 +2,8 @@ import { Scene } from '@babylonjs/core/scene';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
-import type { Mesh } from '@babylonjs/core/Meshes/mesh';
+import { Mesh } from '@babylonjs/core/Meshes/mesh';
+import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import type { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import type { Material } from '@babylonjs/core/Materials/material';
@@ -379,6 +380,7 @@ export class Npc3DEntity {
   private originOffsetZ: number = 0;
   private renderEnabled: boolean = true;
   private groundShadow: Mesh | null = null;
+  private pickProxy: Mesh | null = null;
   /** Gameplay position is the authoritative footprint anchor. Render and aim
    *  from the footprint center so even-width mobs visually match melee tiles. */
   private footprintWidth: number = 1;
@@ -450,6 +452,30 @@ export class Npc3DEntity {
     if (Number.isFinite(this.modelBoundsHeight) && this.modelBoundsHeight > 0) {
       this.yOffset = this.modelBoundsHeight * this.modelScale / 2;
     }
+  }
+
+  private createPickProxy(label: string | undefined, localWidth: number, localDepth: number): void {
+    if (!this.root) return;
+    this.pickProxy?.dispose();
+    const minWorldSize = 0.75;
+    const scale = Math.max(0.001, this.modelScale);
+    const localHeight = Math.max(this.modelBoundsHeight, 1.1 / scale);
+    const proxy = MeshBuilder.CreateBox(`npc3d_${label ?? 'npc'}_pickProxy`, {
+      width: Math.max(localWidth, minWorldSize / scale),
+      depth: Math.max(localDepth, minWorldSize / scale),
+      height: localHeight,
+    }, this.scene);
+    proxy.parent = this.root;
+    proxy.position.y = localHeight * 0.5;
+    proxy.isVisible = true;
+    proxy.visibility = 0;
+    proxy.isPickable = true;
+    proxy.layerMask = 0;
+    proxy.doNotSyncBoundingInfo = true;
+    if (this.pendingEntityId !== null) {
+      proxy.metadata = { ...(proxy.metadata ?? {}), entityId: this.pendingEntityId, kind: 'npc' };
+    }
+    this.pickProxy = proxy;
   }
 
   setVisualScale(scale: number): void {
@@ -530,6 +556,7 @@ export class Npc3DEntity {
       this.applyRootRotation();
 
       this.meshes = result.meshes.filter(m => m.getTotalVertices() > 0);
+      for (const mesh of this.meshes) mesh.isPickable = false;
       this.skeletons = result.skeletons;
 
       // Compute bounds and offset so feet are at Y=0. Some authored GLBs
@@ -561,6 +588,7 @@ export class Npc3DEntity {
 
       this.modelBoundsHeight = Number.isFinite(maxY - minY) && maxY > minY ? maxY - minY : 1;
       this.updateModelScale();
+      this.createPickProxy(label, Math.max(0.1, maxX - minX), Math.max(0.1, maxZ - minZ));
       const boundsWidth = Number.isFinite(maxX - minX) ? (maxX - minX) * this.modelScale : 0;
       const boundsDepth = Number.isFinite(maxZ - minZ) ? (maxZ - minZ) * this.modelScale : 0;
       const footprintSize = this.footprintWidth * 0.72;
@@ -1029,8 +1057,10 @@ export class Npc3DEntity {
     if (this.pendingEntityId !== null) {
       clone.metadata = { ...(clone.metadata ?? {}), entityId: this.pendingEntityId, kind: 'npc' };
     }
+    if ('isPickable' in clone) clone.isPickable = false;
     for (const child of clone.getChildMeshes()) {
       child.setEnabled(true);
+      child.isPickable = false;
       if (this.pendingEntityId !== null) {
         child.metadata = { ...(child.metadata ?? {}), entityId: this.pendingEntityId, kind: 'npc' };
       }
@@ -1103,8 +1133,12 @@ export class Npc3DEntity {
     if (this.root) {
       this.root.metadata = { ...(this.root.metadata ?? {}), entityId, kind: 'npc' };
     }
+    if (this.pickProxy) {
+      this.pickProxy.metadata = { ...(this.pickProxy.metadata ?? {}), entityId, kind: 'npc' };
+    }
     for (const mesh of this.meshes) {
       mesh.metadata = { ...(mesh.metadata ?? {}), entityId, kind: 'npc' };
+      mesh.isPickable = false;
     }
   }
   isAnimating(): boolean { return this.currentAnim === 'attack'; }
@@ -1130,6 +1164,10 @@ export class Npc3DEntity {
     if (this.groundShadow) {
       this.groundShadow.dispose();
       this.groundShadow = null;
+    }
+    if (this.pickProxy) {
+      this.pickProxy.dispose();
+      this.pickProxy = null;
     }
     if (this.root) this.root.dispose();
     this.root = null;

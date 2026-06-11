@@ -505,6 +505,7 @@ export class GameManager {
   private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; openDirection?: -1 | 1; locked?: boolean; interactionTiles?: { x: number; z: number }[]; ladderActionMask?: number }> = new Map();
   /** Shared geometry for crop pick proxies, keyed by local proxy dimensions. */
   private cropProxyTemplates: Map<string, Mesh> = new Map();
+  private cropPickProxies: Map<number, Mesh> = new Map();
   private doorPivots: Map<number, DoorPivotEntry> = new Map();
   private doorPickProxies: Map<number, Mesh> = new Map();
   private doorTiles: Map<number, [number, number]> = new Map();
@@ -2432,10 +2433,12 @@ export class GameManager {
       this.worldObjectIdByNode.delete(previous);
       this.worldObjectPickState.delete(previous);
       this.disposeDoorVisualState(objectEntityId);
+      this.disposeCropPickProxy(objectEntityId);
     }
     const currentEntityId = this.worldObjectIdByNode.get(node);
     if (currentEntityId != null && currentEntityId !== objectEntityId) {
       this.disposeDoorVisualState(currentEntityId);
+      this.disposeCropPickProxy(currentEntityId);
       this.worldObjectModels.delete(currentEntityId);
       this.worldObjectPickState.delete(node);
     }
@@ -2445,6 +2448,7 @@ export class GameManager {
 
   private deleteWorldObjectModel(objectEntityId: number): void {
     this.disposeDoorVisualState(objectEntityId);
+    this.disposeCropPickProxy(objectEntityId);
     this.objectModels.deleteActiveModelAnimations(objectEntityId);
     const node = this.worldObjectModels.get(objectEntityId);
     if (node) {
@@ -2549,7 +2553,8 @@ export class GameManager {
     this.setWorldObjectModel(objectEntityId, placedNode);
 
     const def = this.objectDefsCache.get(data.defId);
-    this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, data.depleted), placedNode);
+    const isCrop = def?.category === 'crop';
+    this.setWorldObjectPickTarget(objectEntityId, isCrop ? false : this.isWorldObjectInteractable(def, data.depleted), placedNode);
     if (def?.category === 'door') {
       this.setWorldObjectPickTarget(objectEntityId, false, placedNode);
       const modelRotY = this.modelRotY(placedNode);
@@ -2582,6 +2587,7 @@ export class GameManager {
 
     if (def?.category === 'crop') {
       this.createCropPickProxy(objectEntityId, placedNode, def, data.depleted);
+      this.setCropPickTarget(objectEntityId, def, data.depleted, placedNode);
     }
   }
 
@@ -2613,18 +2619,46 @@ export class GameManager {
     def: WorldObjectDef,
     depleted: boolean,
   ): void {
+    this.disposeCropPickProxy(objectEntityId);
     const config = this.cropPickProxyConfig(def);
     const proxy = this.cropProxyTemplateFor(config).clone(`crop_pickProxy_${objectEntityId}`, placedNode)!;
-    proxy.setEnabled(true);
+    proxy.setEnabled(!depleted);
     proxy.position.y = config.y;
     proxy.isVisible = true;
     proxy.visibility = 0;
-    proxy.isPickable = true;
+    proxy.isPickable = false;
     proxy.layerMask = 0;
     proxy.doNotSyncBoundingInfo = true;
     proxy.freezeWorldMatrix();
     proxy.metadata = { objectEntityId };
-    this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, depleted), proxy);
+    this.cropPickProxies.set(objectEntityId, proxy);
+  }
+
+  private disposeCropPickProxy(objectEntityId: number): void {
+    const proxy = this.cropPickProxies.get(objectEntityId);
+    if (proxy) {
+      proxy.dispose();
+      this.worldObjectPickState.delete(proxy);
+      this.cropPickProxies.delete(objectEntityId);
+    }
+  }
+
+  private setCropPickTarget(
+    objectEntityId: number,
+    def: WorldObjectDef,
+    depleted: boolean,
+    model: TransformNode,
+  ): void {
+    this.setWorldObjectPickTarget(objectEntityId, false, model);
+    let proxy = this.cropPickProxies.get(objectEntityId);
+    if (!proxy) {
+      this.createCropPickProxy(objectEntityId, model, def, depleted);
+      proxy = this.cropPickProxies.get(objectEntityId);
+    }
+    if (!proxy) return;
+    const interactive = this.isWorldObjectInteractable(def, depleted);
+    proxy.setEnabled(interactive);
+    this.setWorldObjectPickTarget(objectEntityId, interactive, proxy);
   }
 
   /** Create a depleted model (stump/depleted rock) at the placed node's position */
@@ -3981,7 +4015,11 @@ export class GameManager {
         }
         if (def?.category !== 'door') {
           this.setPlacedWorldObjectEnabled(model, !isDepleted);
-          this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), model);
+          if (def?.category === 'crop') {
+            this.setCropPickTarget(objectEntityId, def, isDepleted, model);
+          } else {
+            this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), model);
+          }
         }
       }
     });
@@ -4051,11 +4089,19 @@ export class GameManager {
               this.setWorldObjectPickTarget(objectEntityId, false, depleted);
             }
             this.setPlacedWorldObjectEnabled(placedNode, isDepleted === 0);
-            this.setWorldObjectPickTarget(objectEntityId, isDepleted === 0, placedNode);
+            if (def?.category === 'crop') {
+              this.setCropPickTarget(objectEntityId, def, isDepleted === 1, placedNode);
+            } else {
+              this.setWorldObjectPickTarget(objectEntityId, isDepleted === 0, placedNode);
+            }
           }
         } else if (model) {
           this.setPlacedWorldObjectEnabled(model, isDepleted === 0);
-          this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted === 1), model);
+          if (def?.category === 'crop') {
+            this.setCropPickTarget(objectEntityId, def, isDepleted === 1, model);
+          } else {
+            this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted === 1), model);
+          }
         }
       }
     });
@@ -4635,6 +4681,8 @@ export class GameManager {
         this.blockedObjectTiles.clear();
         this.closedCenteredDoorTileCounts.clear();
         this.closedCenteredDoorTileKeysByObjectId.clear();
+        for (const [, proxy] of this.cropPickProxies) proxy.dispose();
+        this.cropPickProxies.clear();
         for (const [, proxy] of this.doorPickProxies) proxy.dispose();
         this.doorPickProxies.clear();
         for (const [, entry] of this.doorPivots) entry.pivot.dispose();
@@ -8734,6 +8782,8 @@ export class GameManager {
     this.worldObjectModels.clear();
     this.worldObjectIdByNode = new WeakMap();
     this.worldObjectPickState = new WeakMap();
+    for (const [, proxy] of this.cropPickProxies) proxy.dispose();
+    this.cropPickProxies.clear();
     for (const [, proxy] of this.doorPickProxies) proxy.dispose();
     this.doorPickProxies.clear();
     for (const [, entry] of this.doorPivots) entry.pivot.dispose();
