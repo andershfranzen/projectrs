@@ -86,9 +86,8 @@ const EMERGENCY_LOW_QUALITY_HARDWARE_SCALE = 3.0;
 const LOW_FPS_DIAGNOSTIC_WARMUP_MS = 5000;
 const LOW_FPS_DIAGNOSTIC_SAMPLE_MS = 3000;
 const LOW_FPS_DIAGNOSTIC_THRESHOLD = 50;
-const LOW_FPS_EXTRA_SCALE_THRESHOLD = 45;
 const MANUAL_LOW_QUALITY_STORAGE_KEY = 'projectrs_low_quality';
-const AUTO_LOW_QUALITY_STORAGE_KEY = 'projectrs_auto_low_quality';
+const LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY = 'projectrs_auto_low_quality';
 const SOFTWARE_RENDERER_PATTERNS = [
   'swiftshader',
   'llvmpipe',
@@ -1395,6 +1394,13 @@ export class GameManager {
   private getBrowserDiagnostics(): Record<string, unknown> {
     const nav = window.navigator as Navigator & {
       brave?: unknown;
+      connection?: {
+        downlink?: number;
+        effectiveType?: string;
+        rtt?: number;
+        saveData?: boolean;
+        type?: string;
+      };
       deviceMemory?: number;
       userAgentData?: {
         brands?: Array<{ brand: string; version: string }>;
@@ -1402,6 +1408,30 @@ export class GameManager {
         mobile?: boolean;
       };
     };
+    const media = typeof window.matchMedia === 'function' ? {
+      prefersReducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      prefersReducedData: window.matchMedia('(prefers-reduced-data: reduce)').matches,
+      prefersContrastMore: window.matchMedia('(prefers-contrast: more)').matches,
+      forcedColors: window.matchMedia('(forced-colors: active)').matches,
+    } : null;
+    const connection = nav.connection ? {
+      downlink: nav.connection.downlink ?? null,
+      effectiveType: nav.connection.effectiveType ?? null,
+      rtt: nav.connection.rtt ?? null,
+      saveData: nav.connection.saveData ?? null,
+      type: nav.connection.type ?? null,
+    } : null;
+    const visualViewport = window.visualViewport ? {
+      width: Math.round(window.visualViewport.width),
+      height: Math.round(window.visualViewport.height),
+      scale: window.visualViewport.scale,
+      offsetLeft: Math.round(window.visualViewport.offsetLeft),
+      offsetTop: Math.round(window.visualViewport.offsetTop),
+    } : null;
+    const screenOrientation = window.screen?.orientation ? {
+      type: window.screen.orientation.type,
+      angle: window.screen.orientation.angle,
+    } : null;
     return {
       userAgent: nav.userAgent,
       platform: nav.platform,
@@ -1413,17 +1443,20 @@ export class GameManager {
       brave: !!nav.brave,
       hardwareConcurrency: nav.hardwareConcurrency,
       deviceMemory: nav.deviceMemory ?? null,
+      connection,
       language: nav.language,
       languages: nav.languages,
       visibilityState: document.visibilityState,
       devicePixelRatio: window.devicePixelRatio,
       crossOriginIsolated: window.crossOriginIsolated,
+      media,
       window: {
         innerWidth: window.innerWidth,
         innerHeight: window.innerHeight,
         outerWidth: window.outerWidth,
         outerHeight: window.outerHeight,
       },
+      visualViewport,
       screen: window.screen ? {
         width: window.screen.width,
         height: window.screen.height,
@@ -1431,6 +1464,7 @@ export class GameManager {
         availHeight: window.screen.availHeight,
         colorDepth: window.screen.colorDepth,
         pixelDepth: window.screen.pixelDepth,
+        orientation: screenOrientation,
       } : null,
     };
   }
@@ -1614,11 +1648,10 @@ export class GameManager {
 
     try {
       if (localStorage.getItem(MANUAL_LOW_QUALITY_STORAGE_KEY) === '1') return LOW_QUALITY_HARDWARE_SCALE;
-      if (localStorage.getItem(AUTO_LOW_QUALITY_STORAGE_KEY) === '1') return LOW_QUALITY_HARDWARE_SCALE;
+      localStorage.removeItem(LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY);
     } catch {
       // Storage can be blocked in privacy modes; default to full quality.
     }
-    if (isSoftwareWebGlRenderer(this.getWebGlDiagnostics())) return LOW_QUALITY_HARDWARE_SCALE;
     return 1;
   }
 
@@ -1639,32 +1672,13 @@ export class GameManager {
     try {
       if (enabled) {
         localStorage.setItem(MANUAL_LOW_QUALITY_STORAGE_KEY, '1');
-        localStorage.removeItem(AUTO_LOW_QUALITY_STORAGE_KEY);
+        localStorage.removeItem(LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY);
       } else {
         localStorage.removeItem(MANUAL_LOW_QUALITY_STORAGE_KEY);
-        localStorage.removeItem(AUTO_LOW_QUALITY_STORAGE_KEY);
+        localStorage.removeItem(LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY);
       }
     } catch {
       // Storage can be blocked in privacy modes; the current session still changes.
-    }
-  }
-
-  private hasExplicitRenderQualityOverride(): boolean {
-    try {
-      return typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('quality');
-    } catch {
-      return false;
-    }
-  }
-
-  private rememberAdaptiveLowQualityPreference(): void {
-    if (this.hasExplicitRenderQualityOverride()) return;
-    try {
-      if (localStorage.getItem(MANUAL_LOW_QUALITY_STORAGE_KEY) !== '1') {
-        localStorage.setItem(AUTO_LOW_QUALITY_STORAGE_KEY, '1');
-      }
-    } catch {
-      // Best effort only; current-session scaling was already applied.
     }
   }
 
@@ -1714,26 +1728,6 @@ export class GameManager {
     this.setRenderHardwareScalingLevel(nextScale);
     this.chatPanel?.addSystemMessage(`Render quality set to ${requestedQuality} (scale ${this.renderHardwareScalingLevel.toFixed(1)}).`);
     this.reportRenderQualityChange(requestedQuality);
-  }
-
-  private maybeApplyLowFpsRenderScale(fps: number): number | null {
-    let nextScale: number | null = null;
-    let message = 'Low FPS detected; lowering render resolution.';
-    if (this.renderHardwareScalingLevel < LOW_QUALITY_HARDWARE_SCALE - 0.01) {
-      nextScale = LOW_QUALITY_HARDWARE_SCALE;
-    } else if (
-      fps < LOW_FPS_EXTRA_SCALE_THRESHOLD &&
-      this.renderHardwareScalingLevel < EMERGENCY_LOW_QUALITY_HARDWARE_SCALE - 0.01
-    ) {
-      nextScale = EMERGENCY_LOW_QUALITY_HARDWARE_SCALE;
-      message = 'FPS still low; lowering render resolution further.';
-    }
-    if (nextScale === null) return null;
-
-    this.setRenderHardwareScalingLevel(nextScale);
-    if (nextScale >= LOW_QUALITY_HARDWARE_SCALE - 0.01) this.rememberAdaptiveLowQualityPreference();
-    this.chatPanel?.addSystemMessage(message, '#ffb347');
-    return this.renderHardwareScalingLevel;
   }
 
   private setFpsCounterVisible(visible: boolean, announce: boolean = false): void {
@@ -1801,7 +1795,7 @@ export class GameManager {
       return 'Brave warning: FPS is low on a hardware renderer. Check Brave hardware acceleration, ANGLE/GPU settings, or compare Chrome.';
     }
     if (diagnosticFlags.includes('low-fps-with-hardware-renderer')) {
-      return 'Renderer warning: FPS is low on an apparently hardware-backed renderer. Try /quality low and send the perf snapshot.';
+      return 'Renderer warning: FPS is low on an apparently hardware-backed renderer. Send the perf snapshot so we can compare the browser/GPU backend.';
     }
     return null;
   }
@@ -1813,23 +1807,6 @@ export class GameManager {
     if (!warning) return;
     this.lowFpsRendererWarningSent = true;
     this.chatPanel?.addSystemMessage(warning, '#ffb347');
-  }
-
-  private schedulePostScaleLowFpsSnapshot(): void {
-    window.setTimeout(async () => {
-      if (!this.shouldCapturePerformanceDiagnostic()) return;
-      const sample = await this.sampleRafFps(3000);
-      const snapshot = this.collectPerformanceSnapshot(sample);
-      snapshot.lowFpsAction = 'post-lowered-render-resolution';
-      this.maybeShowLowFpsRendererWarning(snapshot);
-      const appliedRenderScale = this.maybeApplyLowFpsRenderScale(sample.fps);
-      if (appliedRenderScale !== null) {
-        snapshot.lowFpsAction = 'post-lowered-render-resolution-again';
-        snapshot.appliedRenderScale = appliedRenderScale;
-        this.schedulePostScaleLowFpsSnapshot();
-      }
-      this.reportClientLog('client_low_fps_post_scale_snapshot', snapshot);
-    }, 1000);
   }
 
   private updateLowFpsDiagnostic(now: number): void {
@@ -1864,12 +1841,7 @@ export class GameManager {
         framePacing: null,
       });
       this.maybeShowLowFpsRendererWarning(snapshot);
-      const appliedRenderScale = this.maybeApplyLowFpsRenderScale(fps);
-      if (appliedRenderScale !== null) {
-        snapshot.lowFpsAction = 'lowered-render-resolution';
-        snapshot.appliedRenderScale = appliedRenderScale;
-        this.schedulePostScaleLowFpsSnapshot();
-      }
+      snapshot.lowFpsAction = 'diagnostic-only';
       this.reportClientLog('client_low_fps_snapshot', snapshot);
       return;
     }

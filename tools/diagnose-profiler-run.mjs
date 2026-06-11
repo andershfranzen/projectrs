@@ -199,6 +199,90 @@ function canvasPixelCount(run) {
   return Number.isFinite(width) && Number.isFinite(height) ? width * height : null;
 }
 
+function browserRuntimeFromRun(run) {
+  return run.snapshot?.browser && typeof run.snapshot.browser === 'object'
+    ? run.snapshot.browser
+    : run.pageDiagnostics?.browser && typeof run.pageDiagnostics.browser === 'object'
+      ? run.pageDiagnostics.browser
+      : {};
+}
+
+function screenFromRun(run) {
+  const browser = browserRuntimeFromRun(run);
+  return browser.screen && typeof browser.screen === 'object'
+    ? browser.screen
+    : run.pageDiagnostics?.screen && typeof run.pageDiagnostics.screen === 'object'
+      ? run.pageDiagnostics.screen
+      : null;
+}
+
+function viewportFromRun(run) {
+  const browser = browserRuntimeFromRun(run);
+  return run.pageDiagnostics?.viewport && typeof run.pageDiagnostics.viewport === 'object'
+    ? run.pageDiagnostics.viewport
+    : browser.window && typeof browser.window === 'object'
+      ? browser.window
+      : null;
+}
+
+function formatDisplay(run) {
+  const screen = screenFromRun(run);
+  const viewport = viewportFromRun(run);
+  const orientation = screen?.orientation;
+  const parts = [];
+  if (screen) {
+    const label = `${formatCount(screen.width)}x${formatCount(screen.height)}`;
+    const available = screen.availWidth != null || screen.availHeight != null
+      ? `avail ${formatCount(screen.availWidth)}x${formatCount(screen.availHeight)}`
+      : null;
+    const orient = orientation?.type ? `${orientation.type}${orientation.angle != null ? ` ${orientation.angle}deg` : ''}` : null;
+    parts.push([label, available, orient].filter(Boolean).join(', '));
+  }
+  if (viewport) {
+    parts.push(`viewport ${formatCount(viewport.innerWidth)}x${formatCount(viewport.innerHeight)} inner / ${formatCount(viewport.outerWidth)}x${formatCount(viewport.outerHeight)} outer`);
+  }
+  return parts.length > 0 ? parts.join('; ') : 'n/a';
+}
+
+function formatConnection(run) {
+  const connection = browserRuntimeFromRun(run).connection;
+  if (!connection || typeof connection !== 'object') return 'n/a';
+  const parts = [
+    connection.effectiveType || connection.type || null,
+    connection.downlink != null ? `${formatRate(connection.downlink)}Mbps` : null,
+    connection.rtt != null ? `${formatCount(connection.rtt)}ms RTT` : null,
+    connection.saveData === true ? 'Save-Data on' : connection.saveData === false ? 'Save-Data off' : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(', ') : 'n/a';
+}
+
+function formatBattery(run) {
+  const battery = browserRuntimeFromRun(run).battery;
+  if (!battery || typeof battery !== 'object') return 'n/a';
+  const level = finiteNumber(battery.level);
+  const percent = level != null ? `${Math.round(level * 100)}%` : 'level n/a';
+  const charging = battery.charging === true ? 'charging' : battery.charging === false ? 'not charging' : 'charging n/a';
+  return `${percent}, ${charging}`;
+}
+
+function lowBattery(run) {
+  const battery = browserRuntimeFromRun(run).battery;
+  const level = finiteNumber(battery?.level);
+  return battery?.charging === false && level != null && level <= 0.25;
+}
+
+function formatMediaPreferences(run) {
+  const media = browserRuntimeFromRun(run).media;
+  if (!media || typeof media !== 'object') return 'n/a';
+  const active = [
+    media.prefersReducedMotion === true ? 'reduced-motion' : null,
+    media.prefersReducedData === true ? 'reduced-data' : null,
+    media.prefersContrastMore === true ? 'contrast-more' : null,
+    media.forcedColors === true ? 'forced-colors' : null,
+  ].filter(Boolean);
+  return active.length > 0 ? active.join(', ') : 'none';
+}
+
 function framePacingFromRun(run) {
   const pacing = run.snapshot?.framePacing;
   return pacing && typeof pacing === 'object' ? pacing : null;
@@ -356,6 +440,9 @@ function buildDiagnosis(run) {
   const terrainDetail = run.snapshot?.chunkMeshes?.terrainDetail && typeof run.snapshot.chunkMeshes.terrainDetail === 'object'
     ? run.snapshot.chunkMeshes.terrainDetail
     : null;
+  const browserRuntime = browserRuntimeFromRun(run);
+  const connection = browserRuntime.connection && typeof browserRuntime.connection === 'object' ? browserRuntime.connection : null;
+  const media = browserRuntime.media && typeof browserRuntime.media === 'object' ? browserRuntime.media : null;
   const grassBatchLastMs = finiteNumber(terrainDetail?.grassBladeBatchLastRebuildMs);
   const grassBatchMaxMs = finiteNumber(terrainDetail?.grassBladeBatchMaxRebuildMs);
   const findings = [];
@@ -466,6 +553,35 @@ function buildDiagnosis(run) {
     ));
   }
 
+  if (lowFps && lowBattery(run)) {
+    findings.push(finding(
+      'medium',
+      'low-battery-state',
+      'The bad-FPS run happened while the browser reported low battery and no charging.',
+      [
+        `battery=${formatBattery(run)}`,
+      ],
+      [
+        'Retest Brave while plugged in and with Windows/Brave efficiency mode disabled.',
+      ],
+    ));
+  }
+
+  if (connection?.saveData === true || media?.prefersReducedData === true) {
+    findings.push(finding(
+      lowFps ? 'medium' : 'info',
+      'reduced-data-mode',
+      'The browser reports a reduced-data or Save-Data preference.',
+      [
+        `connection=${formatConnection(run)}`,
+        `media=${formatMediaPreferences(run)}`,
+      ],
+      [
+        'This is not usually an FPS limiter by itself, but it is useful browser-state evidence when comparing Chrome and Brave.',
+      ],
+    ));
+  }
+
   if ((grassBatchLastMs != null && grassBatchLastMs >= 8) || (grassBatchMaxMs != null && grassBatchMaxMs >= 8)) {
     findings.push(finding(
       'medium',
@@ -567,6 +683,10 @@ function buildDiagnosis(run) {
         || run.browserDiagnostics?.devtoolsVersion?.Browser
         || null,
       primaryGpu: primaryGpuLabel(run.browserDiagnostics),
+      display: formatDisplay(run),
+      connection: formatConnection(run),
+      battery: formatBattery(run),
+      mediaPreferences: formatMediaPreferences(run),
       renderer: rendererFromWebGl(run.snapshot?.webgl ?? run.pageDiagnostics?.webgl),
       browserGl: browserGlRenderer(run),
       softwareRenderer,
@@ -606,6 +726,10 @@ function renderDiagnosisText(diagnosis) {
   lines.push('Key facts');
   lines.push(`  Browser: ${diagnosis.facts.browser}${diagnosis.facts.browserProduct ? ` (${diagnosis.facts.browserProduct})` : ''}`);
   lines.push(`  Platform: ${diagnosis.facts.platform || 'n/a'}`);
+  lines.push(`  Display: ${diagnosis.facts.display}`);
+  lines.push(`  Connection: ${diagnosis.facts.connection}`);
+  lines.push(`  Battery: ${diagnosis.facts.battery}`);
+  lines.push(`  Media prefs: ${diagnosis.facts.mediaPreferences}`);
   lines.push(`  GPU: ${diagnosis.facts.primaryGpu}`);
   lines.push(`  Renderer: ${diagnosis.facts.renderer}`);
   lines.push(`  Browser GL: ${diagnosis.facts.browserGl}`);

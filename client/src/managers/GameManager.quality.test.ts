@@ -99,21 +99,20 @@ describe('GameManager render quality command', () => {
     expect(qualityLogs).toEqual(['high']);
   });
 
-  test('auto quality clears the manual low preference and uses detected scale', () => {
+  test('auto quality clears low preferences and returns to full resolution', () => {
     const storage = installLocalStorageStub();
     storage.set('projectrs_low_quality', '1');
     storage.set('projectrs_auto_low_quality', '1');
     const { manager, hardwareScaleCalls, messages, qualityLogs } = makeQualityManager();
-    manager.detectBaseHardwareScalingLevel = () => 2;
 
     expect(manager.handleChatCommand('/quality auto')).toBe(true);
 
     expect(storage.has('projectrs_low_quality')).toBe(false);
     expect(storage.has('projectrs_auto_low_quality')).toBe(false);
-    expect(manager.baseHardwareScalingLevel).toBe(2);
-    expect(manager.renderHardwareScalingLevel).toBe(2);
-    expect(hardwareScaleCalls).toEqual([2]);
-    expect(messages.at(-1)).toBe('Render quality set to auto (scale 2.0).');
+    expect(manager.baseHardwareScalingLevel).toBe(1);
+    expect(manager.renderHardwareScalingLevel).toBe(1);
+    expect(hardwareScaleCalls).toEqual([]);
+    expect(messages.at(-1)).toBe('Render quality set to auto (scale 1.0).');
     expect(qualityLogs).toEqual(['auto']);
   });
 
@@ -130,53 +129,43 @@ describe('GameManager render quality command', () => {
     expect(qualityLogs).toEqual([]);
   });
 
-  test('low FPS adaptive scaling can step from normal to low quality', () => {
-    const storage = installLocalStorageStub();
-    const { manager, canvas, hardwareScaleCalls, messages } = makeQualityManager();
-
-    expect(manager.maybeApplyLowFpsRenderScale(35)).toBe(2);
-
-    expect(storage.get('projectrs_auto_low_quality')).toBe('1');
-    expect(manager.renderHardwareScalingLevel).toBe(2);
-    expect(hardwareScaleCalls).toEqual([2]);
-    expect(canvas.dataset.renderScale).toBe('2.00');
-    expect(messages.at(-1)).toBe('Low FPS detected; lowering render resolution.');
-  });
-
-  test('low FPS adaptive scaling can step further only when FPS remains very low', () => {
-    const storage = installLocalStorageStub();
-    const { manager, canvas, hardwareScaleCalls, messages } = makeQualityManager();
-    manager.renderHardwareScalingLevel = 2;
-
-    expect(manager.maybeApplyLowFpsRenderScale(48)).toBeNull();
-    expect(manager.maybeApplyLowFpsRenderScale(40)).toBe(3);
-    expect(manager.maybeApplyLowFpsRenderScale(30)).toBeNull();
-
-    expect(storage.get('projectrs_auto_low_quality')).toBe('1');
-    expect(manager.renderHardwareScalingLevel).toBe(3);
-    expect(hardwareScaleCalls).toEqual([3]);
-    expect(canvas.dataset.renderScale).toBe('3.00');
-    expect(messages.at(-1)).toBe('FPS still low; lowering render resolution further.');
-  });
-
-  test('auto low quality preference is used on the next auto-detected session', () => {
+  test('legacy auto low quality preference is ignored and cleared on startup detection', () => {
     const storage = installLocalStorageStub();
     storage.set('projectrs_auto_low_quality', '1');
     installWindowStub();
     const { manager } = makeQualityManager();
-    manager.getWebGlDiagnostics = () => ({ context: 'webgl2', unmaskedRenderer: 'ANGLE (NVIDIA)' });
+
+    expect(manager.detectBaseHardwareScalingLevel()).toBe(1);
+
+    expect(storage.has('projectrs_auto_low_quality')).toBe(false);
+  });
+
+  test('software renderers do not automatically lower startup resolution', () => {
+    installLocalStorageStub();
+    installWindowStub();
+    const { manager } = makeQualityManager();
+    manager.getWebGlDiagnostics = () => ({ context: 'webgl2', unmaskedRenderer: 'ANGLE (Google, SwiftShader driver)' });
+
+    expect(manager.detectBaseHardwareScalingLevel()).toBe(1);
+  });
+
+  test('explicit quality URL can still request low resolution', () => {
+    installLocalStorageStub();
+    installWindowStub(1, '?quality=low');
+    const { manager } = makeQualityManager();
 
     expect(manager.detectBaseHardwareScalingLevel()).toBe(2);
   });
 
-  test('explicit quality URL overrides are not replaced by adaptive persistence', () => {
+  test('explicit quality URL can still request high resolution', () => {
     const storage = installLocalStorageStub();
+    storage.set('projectrs_low_quality', '1');
     installWindowStub(1, '?quality=high');
     const { manager } = makeQualityManager();
 
-    expect(manager.maybeApplyLowFpsRenderScale(35)).toBe(2);
+    expect(manager.detectBaseHardwareScalingLevel()).toBe(1);
 
-    expect(storage.has('projectrs_auto_low_quality')).toBe(false);
+    expect(storage.get('projectrs_low_quality')).toBe('1');
   });
 
   test('diagnostic flags distinguish Brave low FPS on an apparently hardware renderer', () => {

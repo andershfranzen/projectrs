@@ -577,7 +577,7 @@ async function waitForEvilQuestGame(cdp, timeoutMs) {
 
 async function capturePageDiagnostics(cdp) {
   return evaluateJson(cdp, `
-    (() => {
+    (async () => {
       const nav = window.navigator || {};
       const clip = (value, max = 220) => String(value || '').slice(0, max);
       const shortUrl = (value) => {
@@ -636,6 +636,43 @@ async function capturePageDiagnostics(cdp) {
         maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
         maxVertexAttribs: gl.getParameter(gl.MAX_VERTEX_ATTRIBS),
       } : { context: 'unavailable' };
+      const media = typeof window.matchMedia === 'function' ? {
+        prefersReducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+        prefersReducedData: window.matchMedia('(prefers-reduced-data: reduce)').matches,
+        prefersContrastMore: window.matchMedia('(prefers-contrast: more)').matches,
+        forcedColors: window.matchMedia('(forced-colors: active)').matches,
+      } : null;
+      const connection = nav.connection || nav.mozConnection || nav.webkitConnection || null;
+      const browserConnection = connection ? {
+        downlink: connection.downlink ?? null,
+        effectiveType: connection.effectiveType ?? null,
+        rtt: connection.rtt ?? null,
+        saveData: connection.saveData ?? null,
+        type: connection.type ?? null,
+      } : null;
+      let battery = null;
+      try {
+        if (typeof nav.getBattery === 'function') {
+          const rawBattery = await nav.getBattery();
+          battery = rawBattery ? {
+            charging: rawBattery.charging,
+            level: rawBattery.level,
+            chargingTime: Number.isFinite(rawBattery.chargingTime) ? rawBattery.chargingTime : null,
+            dischargingTime: Number.isFinite(rawBattery.dischargingTime) ? rawBattery.dischargingTime : null,
+          } : null;
+        }
+      } catch {}
+      const screenOrientation = window.screen?.orientation ? {
+        type: window.screen.orientation.type,
+        angle: window.screen.orientation.angle,
+      } : null;
+      const visualViewport = window.visualViewport ? {
+        width: Math.round(window.visualViewport.width),
+        height: Math.round(window.visualViewport.height),
+        scale: window.visualViewport.scale,
+        offsetLeft: Math.round(window.visualViewport.offsetLeft),
+        offsetTop: Math.round(window.visualViewport.offsetTop),
+      } : null;
       const gm = window.gm;
       let storage = {
         hasAuthToken: false,
@@ -665,9 +702,12 @@ async function capturePageDiagnostics(cdp) {
           brave: !!nav.brave,
           hardwareConcurrency: nav.hardwareConcurrency,
           deviceMemory: nav.deviceMemory ?? null,
+          connection: browserConnection,
+          battery,
           language: nav.language,
           languages: nav.languages,
           devicePixelRatio: window.devicePixelRatio,
+          media,
         },
         screen: window.screen ? {
           width: window.screen.width,
@@ -676,12 +716,14 @@ async function capturePageDiagnostics(cdp) {
           availHeight: window.screen.availHeight,
           colorDepth: window.screen.colorDepth,
           pixelDepth: window.screen.pixelDepth,
+          orientation: screenOrientation,
         } : null,
         viewport: {
           innerWidth: window.innerWidth,
           innerHeight: window.innerHeight,
           outerWidth: window.outerWidth,
           outerHeight: window.outerHeight,
+          visualViewport,
         },
         build: {
           documentScripts,
@@ -854,6 +896,43 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
         maxVertexAttribs: gl.getParameter(gl.MAX_VERTEX_ATTRIBS),
       } : { context: 'unavailable' };
       const nav = window.navigator || {};
+      const media = typeof window.matchMedia === 'function' ? {
+        prefersReducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+        prefersReducedData: window.matchMedia('(prefers-reduced-data: reduce)').matches,
+        prefersContrastMore: window.matchMedia('(prefers-contrast: more)').matches,
+        forcedColors: window.matchMedia('(forced-colors: active)').matches,
+      } : null;
+      const connection = nav.connection || nav.mozConnection || nav.webkitConnection || null;
+      const browserConnection = connection ? {
+        downlink: connection.downlink ?? null,
+        effectiveType: connection.effectiveType ?? null,
+        rtt: connection.rtt ?? null,
+        saveData: connection.saveData ?? null,
+        type: connection.type ?? null,
+      } : null;
+      let battery = null;
+      try {
+        if (typeof nav.getBattery === 'function') {
+          const rawBattery = await nav.getBattery();
+          battery = rawBattery ? {
+            charging: rawBattery.charging,
+            level: rawBattery.level,
+            chargingTime: Number.isFinite(rawBattery.chargingTime) ? rawBattery.chargingTime : null,
+            dischargingTime: Number.isFinite(rawBattery.dischargingTime) ? rawBattery.dischargingTime : null,
+          } : null;
+        }
+      } catch {}
+      const visualViewport = window.visualViewport ? {
+        width: Math.round(window.visualViewport.width),
+        height: Math.round(window.visualViewport.height),
+        scale: window.visualViewport.scale,
+        offsetLeft: Math.round(window.visualViewport.offsetLeft),
+        offsetTop: Math.round(window.visualViewport.offsetTop),
+      } : null;
+      const screenOrientation = window.screen?.orientation ? {
+        type: window.screen.orientation.type,
+        angle: window.screen.orientation.angle,
+      } : null;
       const browser = {
         userAgent: nav.userAgent,
         platform: nav.platform,
@@ -865,17 +944,21 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
         brave: !!nav.brave,
         hardwareConcurrency: nav.hardwareConcurrency,
         deviceMemory: nav.deviceMemory ?? null,
+        connection: browserConnection,
+        battery,
         language: nav.language,
         languages: nav.languages,
         visibilityState: document.visibilityState,
         devicePixelRatio: window.devicePixelRatio,
         crossOriginIsolated: window.crossOriginIsolated,
+        media,
         window: {
           innerWidth: window.innerWidth,
           innerHeight: window.innerHeight,
           outerWidth: window.outerWidth,
           outerHeight: window.outerHeight,
         },
+        visualViewport,
         screen: window.screen ? {
           width: window.screen.width,
           height: window.screen.height,
@@ -883,6 +966,7 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
           availHeight: window.screen.availHeight,
           colorDepth: window.screen.colorDepth,
           pixelDepth: window.screen.pixelDepth,
+          orientation: screenOrientation,
         } : null,
       };
       const softwareRenderer = [

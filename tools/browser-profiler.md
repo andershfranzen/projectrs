@@ -116,8 +116,8 @@ FPS, renderer, canvas scale, mesh/vertex/index counts, terrain detail counts,
 and scene-budget buckets.
 
 The command also prints the same high-signal snapshot fields to the terminal:
-FPS, renderer, flags, canvas/DPR, active/pickable mesh counts, terrain detail
-counts, and the top scene-budget buckets.
+FPS, renderer, flags, canvas/DPR, frame pacing, active/pickable mesh counts,
+terrain detail counts, and the top scene-budget buckets.
 
 To include page load, asset loading, and login startup in the CPU profile, set:
 
@@ -131,6 +131,7 @@ For the Brave issue, compare `evilquest-snapshot.json` between Chrome and Brave.
 - `snapshot.framePacing` (median/p95/max frame interval; separates a stable ~30 Hz cap from irregular stalls)
 - `snapshot.diagnosticFlags`
 - `snapshot.webgl.unmaskedRenderer`
+- `snapshot.browser.connection`, `snapshot.browser.media`, `snapshot.browser.screen`
 - `snapshot.canvas`
 - `snapshot.activeMeshes`, `snapshot.totalVertices`, `snapshot.totalIndices`
 - `snapshot.sceneBudget.summary.activePickableMeshes`
@@ -168,7 +169,8 @@ bun tools/diagnose-profiler-run.mjs --write
 `--write` adds `diagnosis.txt` and `diagnosis.json` to the run directory. The
 single-run diagnosis is meant for the Windows Brave case where the first
 question is whether the bad tab is using SwiftShader/software rendering, a
-masked renderer, a high-DPR canvas, or an incomplete login-screen capture.
+stable 30 Hz cadence, a masked renderer, a high-DPR canvas, low-battery/browser
+efficiency conditions, or an incomplete login-screen capture.
 
 If a live run reports `hasGameManager: false` and the body text is the login
 screen, it did not capture steady-state gameplay. Reuse a logged-in
