@@ -4,6 +4,13 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 const profilerRoot = resolve('tools', 'profiler-runs');
+const SOFTWARE_RENDERER_PATTERNS = [
+  'swiftshader',
+  'llvmpipe',
+  'software rasterizer',
+  'software renderer',
+  'microsoft basic render',
+];
 
 function formatCount(value) {
   return typeof value === 'number' && Number.isFinite(value)
@@ -57,9 +64,16 @@ function formatByteDelta(a, b) {
 }
 
 function formatCanvas(snapshot) {
-  const canvas = snapshot.canvas;
+  const canvas = snapshot?.canvas;
   if (!canvas) return 'n/a';
   return `${formatCount(canvas.width)}x${formatCount(canvas.height)} / ${formatCount(canvas.clientWidth)}x${formatCount(canvas.clientHeight)}, DPR ${formatRate(canvas.devicePixelRatio)}`;
+}
+
+function formatViewport(pageDiagnostics) {
+  const viewport = pageDiagnostics?.viewport;
+  if (!viewport) return 'n/a';
+  const dpr = pageDiagnostics?.browser?.devicePixelRatio;
+  return `${formatCount(viewport.innerWidth)}x${formatCount(viewport.innerHeight)} inner / ${formatCount(viewport.outerWidth)}x${formatCount(viewport.outerHeight)} outer, DPR ${formatRate(dpr)}`;
 }
 
 function formatShortUrl(value) {
@@ -101,6 +115,90 @@ function readJsonIfPresent(file) {
     .catch(() => null);
 }
 
+function extractCompletedSnapshot(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.ok === true && raw.snapshot) return raw.snapshot;
+  if (raw.evilQuestSnapshot?.snapshot) return raw.evilQuestSnapshot.snapshot;
+  if (raw.evilQuestSnapshot && raw.evilQuestSnapshot.measuredFps != null) return raw.evilQuestSnapshot;
+  if (raw.measuredFps != null || raw.sceneBudget) return raw;
+  return null;
+}
+
+function extractPageDiagnostics(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.pageDiagnostics && typeof raw.pageDiagnostics === 'object') return raw.pageDiagnostics;
+  if (raw.webgl && raw.browser) return raw;
+  return null;
+}
+
+function rendererFromWebGl(webgl) {
+  return webgl?.unmaskedRenderer || webgl?.renderer || 'unknown';
+}
+
+function isSoftwareRenderer(webgl) {
+  if (!webgl || typeof webgl !== 'object') return null;
+  const rendererText = [
+    webgl?.unmaskedRenderer,
+    webgl?.renderer,
+    webgl?.unmaskedVendor,
+    webgl?.vendor,
+  ].filter(Boolean).join(' ').toLowerCase();
+  return SOFTWARE_RENDERER_PATTERNS.some((pattern) => rendererText.includes(pattern));
+}
+
+function rendererFromRun(run) {
+  return rendererFromWebGl(run.snapshot?.webgl ?? run.pageDiagnostics?.webgl);
+}
+
+function flagsFromRun(run) {
+  if (Array.isArray(run.snapshot?.diagnosticFlags)) return run.snapshot.diagnosticFlags;
+
+  const flags = [];
+  const page = run.pageDiagnostics;
+  const webgl = page?.webgl;
+  if (page) {
+    const context = String(webgl?.context ?? '');
+    if (page.browser?.brave === true) flags.push('brave-browser');
+    if (!context || context === 'unavailable') flags.push('webgl-unavailable');
+    if (context === 'webgl') flags.push('webgl1-context');
+    if (!webgl?.unmaskedRenderer) flags.push('renderer-info-masked');
+    if (isSoftwareRenderer(webgl)) flags.push('software-renderer-likely');
+    if (page.storage?.hasAuthToken === false) flags.push('no-auth-token');
+    if (page.game?.hasGameManager === false) flags.push('game-manager-missing');
+    if (page.game?.hasSnapshotApi === false) flags.push('snapshot-api-missing');
+  }
+  if (run.summary?.gameReady?.ok === false) flags.push('game-not-ready');
+  const bodyText = String(page?.bodyText ?? run.summary?.gameReady?.bodyText ?? '');
+  if (bodyText.includes('Login') && bodyText.includes('Password')) flags.push('login-screen');
+  return flags;
+}
+
+function formatRunViewport(run) {
+  return run.snapshot?.canvas ? formatCanvas(run.snapshot) : formatViewport(run.pageDiagnostics);
+}
+
+function browserLabel(pageDiagnostics) {
+  if (!pageDiagnostics) return 'n/a';
+  if (pageDiagnostics.browser?.brave === true) return 'Brave';
+  const brands = pageDiagnostics.browser?.userAgentData?.brands;
+  if (Array.isArray(brands) && brands.length > 0) {
+    return brands.map((brand) => `${brand.brand} ${brand.version}`).join(', ');
+  }
+  const ua = String(pageDiagnostics.browser?.userAgent ?? '');
+  const match = ua.match(/(Chrome|Chromium|Edg|Firefox|Safari)\/([0-9.]+)/);
+  return match ? `${match[1]} ${match[2]}` : 'Chromium';
+}
+
+function formatBool(value) {
+  if (value === true) return 'yes';
+  if (value === false) return 'no';
+  return 'n/a';
+}
+
+function printDiagnosticMetric(label, a, b, formatter = formatValue) {
+  console.log(`${label.padEnd(24)} ${formatter(a).padStart(24)} -> ${formatter(b)}`);
+}
+
 async function latestRunDirs(limit = 2) {
   const names = await readdir(profilerRoot);
   const dirs = [];
@@ -115,38 +213,35 @@ async function latestRunDirs(limit = 2) {
   return dirs.sort().slice(-limit);
 }
 
-async function snapshotPath(input) {
-  const candidate = resolve(input);
-  const info = await stat(candidate);
-  if (!info.isDirectory()) return candidate;
-  return join(candidate, 'evilquest-snapshot.json');
-}
-
 async function readRun(input) {
   const candidate = resolve(input);
   const info = await stat(candidate);
   const dir = info.isDirectory() ? candidate : null;
-  const summary = dir ? await readJsonIfPresent(join(dir, 'summary.json')) : null;
+  const raw = dir ? null : await readJsonIfPresent(candidate);
+  const summary = dir ? await readJsonIfPresent(join(dir, 'summary.json')) : raw;
   const browserStats = dir ? await readJsonIfPresent(join(dir, 'browser-stats.json')) : null;
-  const snapshot = await readSnapshot(input);
+  const pageDiagnostics = extractPageDiagnostics(summary)
+    ?? (dir ? await readJsonIfPresent(join(dir, 'page-diagnostics.json')) : extractPageDiagnostics(raw));
+  const snapshotFile = dir ? join(dir, 'evilquest-snapshot.json') : candidate;
+  const snapshotRaw = dir ? await readJsonIfPresent(snapshotFile) : raw;
+  const snapshot = extractCompletedSnapshot(snapshotRaw) ?? extractCompletedSnapshot(summary);
+  const file = snapshot
+    ? snapshotFile
+    : pageDiagnostics
+      ? (dir ? join(dir, 'page-diagnostics.json') : candidate)
+      : candidate;
+  if (!snapshot && !pageDiagnostics && !summary && !browserStats) {
+    throw new Error(`${input} does not contain a completed EvilQuest snapshot, page diagnostics, summary, or browser stats`);
+  }
   return {
     input,
     dir,
-    file: snapshot.file,
-    snapshot: snapshot.snapshot,
+    file,
+    snapshot,
+    pageDiagnostics,
     summary,
     browserStats,
   };
-}
-
-async function readSnapshot(input) {
-  const file = await snapshotPath(input);
-  const raw = JSON.parse(await readFile(file, 'utf8'));
-  if (raw.ok === true && raw.snapshot) return { file, snapshot: raw.snapshot };
-  if (raw.evilQuestSnapshot?.snapshot) return { file, snapshot: raw.evilQuestSnapshot.snapshot };
-  if (raw.evilQuestSnapshot && raw.evilQuestSnapshot.measuredFps != null) return { file, snapshot: raw.evilQuestSnapshot };
-  if (raw.measuredFps != null || raw.sceneBudget) return { file, snapshot: raw };
-  throw new Error(`${file} does not contain a completed EvilQuest snapshot`);
 }
 
 function printMetric(label, aSnapshot, bSnapshot, path) {
@@ -309,6 +404,60 @@ function printCpuComparison(aRun, bRun) {
   }, 10);
 }
 
+function printPageDiagnosticComparison(aRun, bRun) {
+  if (!aRun.pageDiagnostics && !bRun.pageDiagnostics) return;
+
+  const aPage = aRun.pageDiagnostics;
+  const bPage = bRun.pageDiagnostics;
+  console.log('\nPage diagnostics');
+  printDiagnosticMetric('Browser', browserLabel(aPage), browserLabel(bPage));
+  printDiagnosticMetric('Platform', aPage?.browser?.platform, bPage?.browser?.platform);
+  printDiagnosticMetric('Renderer', rendererFromWebGl(aPage?.webgl), rendererFromWebGl(bPage?.webgl));
+  printDiagnosticMetric('WebGL context', aPage?.webgl?.context, bPage?.webgl?.context);
+  printDiagnosticMetric('Software renderer', isSoftwareRenderer(aPage?.webgl), isSoftwareRenderer(bPage?.webgl), formatBool);
+  printDiagnosticMetric('Viewport', formatViewport(aPage), formatViewport(bPage));
+  printDiagnosticMetric('Auth token present', aPage?.storage?.hasAuthToken, bPage?.storage?.hasAuthToken, formatBool);
+  printDiagnosticMetric('Username stored', aPage?.storage?.hasStoredUsername, bPage?.storage?.hasStoredUsername, formatBool);
+  printDiagnosticMetric('Device ID stored', aPage?.storage?.hasDeviceId, bPage?.storage?.hasDeviceId, formatBool);
+  printDiagnosticMetric('Game manager', aPage?.game?.hasGameManager, bPage?.game?.hasGameManager, formatBool);
+  printDiagnosticMetric('Snapshot API', aPage?.game?.hasSnapshotApi, bPage?.game?.hasSnapshotApi, formatBool);
+  printDiagnosticMetric('Login settled', aPage?.game?.loginSettled, bPage?.game?.loginSettled);
+  printDiagnosticMetric('URL', formatShortUrl(aPage?.url), formatShortUrl(bPage?.url));
+}
+
+function printSnapshotComparison(aSnapshot, bSnapshot) {
+  if (!aSnapshot && !bSnapshot) {
+    console.log('\nEvilQuest snapshot: unavailable for both runs');
+    return;
+  }
+  const left = aSnapshot ?? {};
+  const right = bSnapshot ?? {};
+
+  const metrics = [
+    ['Measured FPS', ['measuredFps']],
+    ['Engine FPS', ['engineFps']],
+    ['Draw calls', ['drawCalls']],
+    ['Active meshes', ['activeMeshes']],
+    ['Total meshes', ['totalMeshes']],
+    ['Total vertices', ['totalVertices']],
+    ['Total indices', ['totalIndices']],
+    ['Render scale', ['renderScale']],
+    ['Active pickable', ['sceneBudget', 'summary', 'activePickableMeshes']],
+    ['Total pickable', ['sceneBudget', 'summary', 'pickableMeshes']],
+    ['Enabled meshes', ['sceneBudget', 'summary', 'enabledMeshes']],
+    ['Materials', ['sceneBudget', 'summary', 'materials']],
+    ['Textures', ['sceneBudget', 'summary', 'textures']],
+    ['Animatables', ['sceneBudget', 'summary', 'activeAnimatables']],
+    ['Grass vertices', ['chunkMeshes', 'grassVertices']],
+    ['Detail vertices', ['chunkMeshes', 'detailVertices']],
+  ];
+  for (const [label, path] of metrics) printMetric(label, left, right, path);
+
+  printBudget('Top active meshes', left.sceneBudget?.activeByName, right.sceneBudget?.activeByName);
+  printBudget('Top active pickable meshes', left.sceneBudget?.activePickableByName, right.sceneBudget?.activePickableByName);
+  printBudget('Top enabled meshes', left.sceneBudget?.enabledByName, right.sceneBudget?.enabledByName, 5);
+}
+
 async function main() {
   let [aArg, bArg] = process.argv.slice(2);
   if (!aArg || !bArg) {
@@ -331,37 +480,16 @@ async function main() {
     console.log(`URL B: ${b.summary?.url || 'n/a'}`);
   }
   console.log('');
-  console.log(`Renderer A: ${aSnapshot.webgl?.unmaskedRenderer || aSnapshot.webgl?.renderer || 'unknown'}`);
-  console.log(`Renderer B: ${bSnapshot.webgl?.unmaskedRenderer || bSnapshot.webgl?.renderer || 'unknown'}`);
-  console.log(`Flags A: ${formatValue(aSnapshot.diagnosticFlags)}`);
-  console.log(`Flags B: ${formatValue(bSnapshot.diagnosticFlags)}`);
-  console.log(`Canvas A: ${formatCanvas(aSnapshot)}`);
-  console.log(`Canvas B: ${formatCanvas(bSnapshot)}`);
+  console.log(`Renderer A: ${rendererFromRun(a)}`);
+  console.log(`Renderer B: ${rendererFromRun(b)}`);
+  console.log(`Flags A: ${formatValue(flagsFromRun(a))}`);
+  console.log(`Flags B: ${formatValue(flagsFromRun(b))}`);
+  console.log(`Canvas/View A: ${formatRunViewport(a)}`);
+  console.log(`Canvas/View B: ${formatRunViewport(b)}`);
   console.log('');
 
-  const metrics = [
-    ['Measured FPS', ['measuredFps']],
-    ['Engine FPS', ['engineFps']],
-    ['Draw calls', ['drawCalls']],
-    ['Active meshes', ['activeMeshes']],
-    ['Total meshes', ['totalMeshes']],
-    ['Total vertices', ['totalVertices']],
-    ['Total indices', ['totalIndices']],
-    ['Render scale', ['renderScale']],
-    ['Active pickable', ['sceneBudget', 'summary', 'activePickableMeshes']],
-    ['Total pickable', ['sceneBudget', 'summary', 'pickableMeshes']],
-    ['Enabled meshes', ['sceneBudget', 'summary', 'enabledMeshes']],
-    ['Materials', ['sceneBudget', 'summary', 'materials']],
-    ['Textures', ['sceneBudget', 'summary', 'textures']],
-    ['Animatables', ['sceneBudget', 'summary', 'activeAnimatables']],
-    ['Grass vertices', ['chunkMeshes', 'grassVertices']],
-    ['Detail vertices', ['chunkMeshes', 'detailVertices']],
-  ];
-  for (const [label, path] of metrics) printMetric(label, aSnapshot, bSnapshot, path);
-
-  printBudget('Top active meshes', aSnapshot.sceneBudget?.activeByName, bSnapshot.sceneBudget?.activeByName);
-  printBudget('Top active pickable meshes', aSnapshot.sceneBudget?.activePickableByName, bSnapshot.sceneBudget?.activePickableByName);
-  printBudget('Top enabled meshes', aSnapshot.sceneBudget?.enabledByName, bSnapshot.sceneBudget?.enabledByName, 5);
+  printPageDiagnosticComparison(a, b);
+  printSnapshotComparison(aSnapshot, bSnapshot);
   printResourceComparison(a, b);
   printCpuComparison(a, b);
 }

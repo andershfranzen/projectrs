@@ -90,10 +90,10 @@ You can diff two profiler run directories directly:
 bun tools/compare-profiler-runs.mjs tools/profiler-runs/<chrome-run> tools/profiler-runs/<brave-run>
 ```
 
-The comparison includes the in-game snapshot plus resource timing, fetch timing,
-long tasks, slow callbacks, and CPU self-time. That makes it useful for
-separating live/local network and asset-loading differences from renderer/GPU
-backend differences.
+The comparison includes page diagnostics, the in-game snapshot when available,
+resource timing, fetch timing, long tasks, slow callbacks, and CPU self-time.
+That makes it useful for separating live/local network and asset-loading
+differences from renderer/GPU backend differences.
 
 With no arguments it compares the latest two run directories:
 
@@ -106,7 +106,8 @@ screen, it did not capture steady-state gameplay. Reuse a logged-in
 `CHROME_PROFILE_DIR`, run once without autorun and log in there, or inject auth
 with the variables below. In that case, `page-diagnostics.json` can still show
 whether the browser is using SwiftShader/software WebGL, but it does not prove
-in-game FPS.
+in-game FPS. `compare-profiler-runs.mjs` can compare these partial runs
+directly, so keep the folder even when the snapshot is skipped.
 
 ## Optional Auth Injection
 
