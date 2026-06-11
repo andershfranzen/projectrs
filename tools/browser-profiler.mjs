@@ -139,6 +139,7 @@ const injectedProfiler = String.raw`
     setInterval: window.setInterval,
     requestAnimationFrame: window.requestAnimationFrame,
     fetch: window.fetch,
+    sendBeacon: navigator.sendBeacon,
     WebSocket: window.WebSocket,
   };
   const stats = window.__evilQuestProfiler = {
@@ -147,6 +148,7 @@ const injectedProfiler = String.raw`
     longTasks: [],
     websockets: [],
     fetches: [],
+    beacons: [],
     errors: [],
     marks: [],
   };
@@ -200,6 +202,15 @@ const injectedProfiler = String.raw`
       throw error;
     }
   };
+  if (original.sendBeacon) {
+    navigator.sendBeacon = function(url, data) {
+      const size = typeof data === 'string'
+        ? data.length
+        : data?.size ?? data?.byteLength ?? 0;
+      record('beacons', { url: clip(url), bytes: size, at: now() });
+      return original.sendBeacon.call(this, url, data);
+    };
+  }
   window.WebSocket = new Proxy(original.WebSocket, {
     construct(Target, args) {
       const start = now();
@@ -273,6 +284,7 @@ function summarizeBrowserStats(stats) {
     slowResources: [...(stats.resources || [])].sort((a, b) => b.duration - a.duration).slice(0, 50),
     slowFetches: [...(stats.fetches || [])].sort((a, b) => b.duration - a.duration).slice(0, 50),
     websockets: stats.websockets || [],
+    beacons: stats.beacons || [],
     errors: stats.errors || [],
   };
 }
