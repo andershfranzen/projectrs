@@ -531,12 +531,12 @@ export class ChunkManager {
 
   private ensureTerrainDetailMaterials(): void {
     if (!this.grassBladeMat) {
-      // Upright grass strands. Brighter emissive than ground so the thin, mostly
-      // edge-on blades still read as lit grass; double-sided since each blade is
-      // a single triangle.
+      // Upright grass strands are only seam accents. They are unlit vertex-color
+      // triangles; the ground shader carries the actual grass texture.
       this.grassBladeMat = new StandardMaterial('chunkGrassBladeMat', this.scene);
       this.grassBladeMat.specularColor = new Color3(0, 0, 0);
-      this.grassBladeMat.emissiveColor = new Color3(0.35, 0.35, 0.35);
+      this.grassBladeMat.emissiveColor = new Color3(0, 0, 0);
+      this.grassBladeMat.disableLighting = true;
       this.grassBladeMat.backFaceCulling = false;
     }
     if (!this.stoneRockMat) {
@@ -2065,12 +2065,9 @@ export class ChunkManager {
     };
 
     // The fragment shader already gives grass its continuous fine pattern.
-    // These triangles are only silhouette/accent detail, so keep them sparse:
-    // dense per-tile blades were adding hundreds of thousands of vertices around
-    // spawn and showed large GPU variance between Chromium builds.
-    const INTERIOR_BLADE_TILE_CHANCE = 0.07;
-    const INTERIOR_BLADES_PER_SELECTED_TILE = 1;
-    const BOUNDARY_BLADES_PER_TILE = 2;
+    // These triangles are only silhouette/accent detail at ground-type seams;
+    // open fields stay shader-only so grass does not add a draw for every chunk.
+    const BOUNDARY_BLADES_PER_TILE = 1;
     const EDGE_SPILL_BLADES = 1;
     const HALF_WIDTH = 0.035;
     const base = groundColor('grass', 0.80);
@@ -2108,12 +2105,10 @@ export class ChunkManager {
         if (tileType !== 'grass') continue;
 
         const hasNonGrassNeighbor = EDGES.some(([dx, dz]) => !isGrass(x + dx, z + dz));
-        const interiorBlades = hasNonGrassNeighbor
-          ? BOUNDARY_BLADES_PER_TILE
-          : (rand(x * 11 + 19, z * 11 + 23) < INTERIOR_BLADE_TILE_CHANCE ? INTERIOR_BLADES_PER_SELECTED_TILE : 0);
+        if (!hasNonGrassNeighbor) continue;
 
         const h = this.getTileCornerHeights(x, z);
-        for (let b = 0; b < interiorBlades; b++) {
+        for (let b = 0; b < BOUNDARY_BLADES_PER_TILE; b++) {
           const bx = x + 0.15 + rand(x * 4 + b, z * 4) * 0.7;
           const bz = z + 0.15 + rand(x * 4 + b + 31, z * 4 + 17) * 0.7;
           emitBlade(bx, bz, h, x, z, b);
@@ -2148,9 +2143,6 @@ export class ChunkManager {
     vertexData.positions = positions;
     vertexData.indices = indices;
     vertexData.colors = colors;
-    const normals: number[] = [];
-    VertexData.ComputeNormals(positions, indices, normals);
-    vertexData.normals = normals;
     vertexData.applyToMesh(mesh);
     mesh.material = this.grassBladeMat;
     mesh.hasVertexAlpha = false;

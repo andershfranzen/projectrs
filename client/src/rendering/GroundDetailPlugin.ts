@@ -60,8 +60,9 @@ float gdCellInterior(vec2 p) {
 float gdGrassStrands(vec2 p) {
   vec2 band = vec2(p.x * 8.0 + p.y * 1.7, p.y * 3.2);
   vec2 cell = floor(band);
-  float keep = step(0.42, gdHash(cell + vec2(19.7, 3.1)));
-  float offset = gdHash(cell) * 0.72;
+  float h = gdHash(cell + vec2(19.7, 3.1));
+  float keep = step(0.42, h);
+  float offset = fract(h * 7.13) * 0.72;
   float line = abs(fract(band.x + offset) - 0.5);
   float blade = 1.0 - smoothstep(0.020, 0.090, line);
   return blade * keep;
@@ -76,12 +77,11 @@ const FRAGMENT_MAIN_END = `
     float m = 1.0;
     if (fam < 0.5) {
       // grass: soft body noise plus cheap strand highlights. This carries most
-      // of the grass texture so geometry can stay sparse.
+      // of the grass texture so geometry can stay edge-only and sparse.
       float n = gdNoise(wp * 6.0);
-      float fine = gdNoise(wp * 18.0);
       float speck = gdHash(floor(wp * 23.0));
       float strands = gdGrassStrands(wp);
-      m = mix(0.88, 1.10, n) + (fine - 0.5) * 0.035 + (speck - 0.5) * 0.035 + strands * 0.075;
+      m = mix(0.88, 1.10, n) + (speck - 0.5) * 0.045 + strands * 0.085;
     } else if (fam < 1.5) {
       // dirt: low-frequency clumps with a little dry grit
       float n = gdNoise(wp * 4.0);
