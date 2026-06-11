@@ -1567,8 +1567,8 @@ export class GameManager {
     this.lowFpsDiagnosticFrames = 0;
   }
 
-  private shouldRunLowFpsDiagnostic(): boolean {
-    return !this.lowFpsDiagnosticSent
+  private shouldCapturePerformanceDiagnostic(): boolean {
+    return !this.destroyed
       && document.visibilityState === 'visible'
       && this._loginSettled
       && this.localPlayerId > 0
@@ -1576,6 +1576,21 @@ export class GameManager {
       && !this.reconnecting
       && !this.connectionFrozen
       && this.isGameFrameVisible();
+  }
+
+  private shouldRunLowFpsDiagnostic(): boolean {
+    return !this.lowFpsDiagnosticSent
+      && this.shouldCapturePerformanceDiagnostic();
+  }
+
+  private schedulePostScaleLowFpsSnapshot(): void {
+    window.setTimeout(async () => {
+      if (!this.shouldCapturePerformanceDiagnostic()) return;
+      const sample = await this.sampleRafFps(3000);
+      const snapshot = this.collectPerformanceSnapshot(sample);
+      snapshot.lowFpsAction = 'post-lowered-render-resolution';
+      this.reportClientLog('client_low_fps_post_scale_snapshot', snapshot);
+    }, 1000);
   }
 
   private updateLowFpsDiagnostic(now: number): void {
@@ -1612,6 +1627,7 @@ export class GameManager {
       if (appliedRenderScale !== null) {
         snapshot.lowFpsAction = 'lowered-render-resolution';
         snapshot.appliedRenderScale = appliedRenderScale;
+        this.schedulePostScaleLowFpsSnapshot();
       }
       this.reportClientLog('client_low_fps_snapshot', snapshot);
       return;
