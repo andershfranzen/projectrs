@@ -82,6 +82,9 @@ const NPC_TARGET_PATH_MAX_WAYPOINTS = 50;
 const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
+const LOW_FPS_DIAGNOSTIC_WARMUP_MS = 10000;
+const LOW_FPS_DIAGNOSTIC_SAMPLE_MS = 8000;
+const LOW_FPS_DIAGNOSTIC_THRESHOLD = 50;
 const GROUND_ITEM_TOOLTIP_MAX_LINES = 8;
 const ROOF_HOVER_REFRESH_MS = 75;
 const ROOF_HOVER_CLEAR_GRACE_MS = 120;
@@ -623,6 +626,10 @@ export class GameManager {
   private fpsFrameCount: number = 0;
   private fpsLastSampleAt: number = 0;
   private fpsCounterUserToggled: boolean = false;
+  private lowFpsDiagnosticWarmupUntil: number = 0;
+  private lowFpsDiagnosticSampleStartedAt: number = 0;
+  private lowFpsDiagnosticFrames: number = 0;
+  private lowFpsDiagnosticSent: boolean = false;
   private nativeContextMenuBlocker: ((event: MouseEvent) => void) | null = null;
   private lastWorldContextMenuEventAt: number = 0;
   private lastWorldContextMenuEventX: number = -9999;
@@ -1008,6 +1015,7 @@ export class GameManager {
       this.scene.render();
 
       this.updateFpsCounter(now);
+      this.updateLowFpsDiagnostic(now);
     });
 
     // Resize on window changes AND on canvas-element changes (catches CSS grid reflows
@@ -1199,6 +1207,8 @@ export class GameManager {
       this._pendingLoginGearLoads = [];
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
+      this.lowFpsDiagnosticSent = false;
+      this.resetLowFpsDiagnosticWindow();
       this._initialMapReadySent = false;
       this.suppressNextMapEntryMessage = false;
       this.lastSelfAuthorityAt = 0;
@@ -1269,6 +1279,7 @@ export class GameManager {
     const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
     const info: Record<string, unknown> = {
       context: gl instanceof WebGL2RenderingContext ? 'webgl2' : 'webgl',
+      contextAttributes: gl.getContextAttributes(),
       version: gl.getParameter(gl.VERSION),
       shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
       vendor: gl.getParameter(gl.VENDOR),
@@ -1458,6 +1469,65 @@ export class GameManager {
     this.setFpsCounterVisible(!this.fpsCounterEl, true);
   }
 
+  private isGameFrameVisible(): boolean {
+    const frame = document.getElementById('game-frame') as HTMLElement | null;
+    return !!frame && frame.style.display !== 'none' && frame.style.visibility !== 'hidden';
+  }
+
+  private resetLowFpsDiagnosticWindow(): void {
+    this.lowFpsDiagnosticWarmupUntil = 0;
+    this.lowFpsDiagnosticSampleStartedAt = 0;
+    this.lowFpsDiagnosticFrames = 0;
+  }
+
+  private shouldRunLowFpsDiagnostic(): boolean {
+    return !this.lowFpsDiagnosticSent
+      && document.visibilityState === 'visible'
+      && this._loginSettled
+      && this.localPlayerId > 0
+      && this.network.isConnected()
+      && !this.reconnecting
+      && !this.connectionFrozen
+      && this.isGameFrameVisible();
+  }
+
+  private updateLowFpsDiagnostic(now: number): void {
+    if (!this.shouldRunLowFpsDiagnostic()) {
+      this.resetLowFpsDiagnosticWindow();
+      return;
+    }
+
+    if (this.lowFpsDiagnosticWarmupUntil === 0) {
+      this.lowFpsDiagnosticWarmupUntil = now + LOW_FPS_DIAGNOSTIC_WARMUP_MS;
+      return;
+    }
+    if (now < this.lowFpsDiagnosticWarmupUntil) return;
+
+    if (this.lowFpsDiagnosticSampleStartedAt === 0) {
+      this.lowFpsDiagnosticSampleStartedAt = now;
+      this.lowFpsDiagnosticFrames = 0;
+      return;
+    }
+
+    this.lowFpsDiagnosticFrames++;
+    const elapsed = now - this.lowFpsDiagnosticSampleStartedAt;
+    if (elapsed < LOW_FPS_DIAGNOSTIC_SAMPLE_MS) return;
+
+    const fps = this.lowFpsDiagnosticFrames / Math.max(0.001, elapsed / 1000);
+    if (fps < LOW_FPS_DIAGNOSTIC_THRESHOLD && this.scene.getActiveMeshes().length > 100) {
+      this.lowFpsDiagnosticSent = true;
+      this.reportClientLog('client_low_fps_snapshot', this.collectPerformanceSnapshot({
+        frames: this.lowFpsDiagnosticFrames,
+        durationMs: Math.round(elapsed),
+        fps,
+      }));
+      return;
+    }
+
+    this.lowFpsDiagnosticSampleStartedAt = now;
+    this.lowFpsDiagnosticFrames = 0;
+  }
+
   private updateFpsCounter(now: number): void {
     if (!this.fpsCounterEl) return;
     this.fpsFrameCount++;
@@ -1584,6 +1654,8 @@ export class GameManager {
       this._pendingLoginGearLoads = [];
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
+      this.lowFpsDiagnosticSent = false;
+      this.resetLowFpsDiagnosticWindow();
       this._initialMapReadySent = false;
       this.suppressNextMapEntryMessage = true;
       this.lastSelfAuthorityAt = 0;
