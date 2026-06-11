@@ -193,6 +193,7 @@ describe('mob kill credit — magic (tickPendingSpells)', () => {
     world.tickPendingSpells();
 
     const hpIdx = ALL_SKILLS.indexOf('hitpoints');
-    expect(sent).toContainEqual({ opcode: ServerOpcode.XP_GAIN, values: [hpIdx, 4] });
+    // XP is sent as high/low 16-bit words: [skillIdx, xpHigh, xpLow].
+    expect(sent).toContainEqual({ opcode: ServerOpcode.XP_GAIN, values: [hpIdx, 0, 4] });
   });
 });

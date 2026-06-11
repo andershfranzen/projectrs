@@ -1,6 +1,37 @@
 import { mergeObjectActionLabels, type PlacedObjectInteraction, type PlacedObjectStallLootEntry, type PlacedObjectVerticalLink, type WorldObjectDef } from '@projectrs/shared';
 
-let nextObjectEntityId = 10000; // Start high to avoid collision with NPC/player entity IDs
+// World-object entity IDs are sent as int16 on the wire, so they must stay in
+// [10000, 19999]: above the player/NPC low range, below the ground-item range
+// (20000+), and within the positive int16 ceiling. Runtime objects (e.g.
+// firemaking fires) are created and destroyed constantly, so without recycling
+// a free counter would eventually cross 32767 and wrap negative. A live-id set
+// lets freed slots be reused; releaseObjectEntityId() must be called whenever an
+// object is removed from the world.
+const WORLD_OBJECT_ID_MIN = 10000;
+const WORLD_OBJECT_ID_MAX = 19999;
+const liveObjectIds = new Set<number>();
+let nextObjectEntityId = WORLD_OBJECT_ID_MIN;
+
+function allocateObjectEntityId(): number {
+  const poolSize = WORLD_OBJECT_ID_MAX - WORLD_OBJECT_ID_MIN + 1;
+  for (let attempts = 0; attempts < poolSize; attempts++) {
+    const id = nextObjectEntityId++;
+    if (nextObjectEntityId > WORLD_OBJECT_ID_MAX) nextObjectEntityId = WORLD_OBJECT_ID_MIN;
+    if (!liveObjectIds.has(id)) {
+      liveObjectIds.add(id);
+      return id;
+    }
+  }
+  // Pool exhausted (~10k simultaneously-live objects) — extremely unlikely.
+  // Reuse the current slot rather than crash; IDs stay in-range so the wire is safe.
+  liveObjectIds.add(nextObjectEntityId);
+  return nextObjectEntityId;
+}
+
+/** Reclaim a world-object entity id once the object is removed from the world. */
+export function releaseObjectEntityId(id: number): void {
+  liveObjectIds.delete(id);
+}
 
 const DOOR_ACTIONS_CLOSED: readonly string[] = ['Open', 'Examine'];
 const DOOR_ACTIONS_LOCKED: readonly string[] = ['Unlock', 'Examine'];
@@ -51,7 +82,7 @@ export class WorldObject {
   interactionSides?: number;
 
   constructor(def: WorldObjectDef, x: number, z: number, mapLevel: string, floor: number = 0, worldY: number = 0) {
-    this.id = nextObjectEntityId++;
+    this.id = allocateObjectEntityId();
     this.defId = def.id;
     this.def = def;
     this.x = x;

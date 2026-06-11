@@ -6,7 +6,7 @@ import { addXp, levelFromXp, MAX_SKILL_LEVEL, MAX_SKILL_XP, statRandom, spellSch
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot, type PlayerAmmo } from './entity/Player';
 import { Npc, type NpcOptions } from './entity/Npc';
-import { WorldObject } from './entity/WorldObject';
+import { WorldObject, releaseObjectEntityId } from './entity/WorldObject';
 import { DataLoader } from './data/DataLoader';
 import { ASSET_TO_GROUND_ITEM_SPAWN } from './data/AssetGroundItemSpawns';
 import { GameDatabase, type GameEventLogInput } from './Database';
@@ -837,6 +837,7 @@ export class World {
         this.setObjectTilesBlocked(mapId, obj.x, obj.z, obj.def, false, obj.floor, obj.interactionTiles, obj.rotationY);
         this.setCenteredDoorTileBlocked(obj, false);
         this.worldObjects.delete(id);
+        releaseObjectEntityId(id);
       }
     }
 
@@ -4240,7 +4241,9 @@ export class World {
     for (const si of shop.items) {
       const currentStock = this.shopItemCurrentStock(npc, si);
       const currentPrice = this.shopItemPrice(si, currentStock);
-      values.push(si.itemId, currentPrice ?? 0, currentPrice === null ? 0 : currentStock);
+      // price is split into high/low words — dynamic/scaled prices can exceed int16.
+      const price = currentPrice ?? 0;
+      values.push(si.itemId, (price >>> 16) & 0xFFFF, price & 0xFFFF, currentPrice === null ? 0 : currentStock);
     }
     this.sendToPlayer(player, ServerOpcode.SHOP_OPEN, ...values);
   }
@@ -4898,7 +4901,7 @@ export class World {
       if (itemCm) itemCm.removeEntity(groundItemId);
       // Map-wide broadcast: a viewer who saw the drop, walked OOR, and stays
       // away when someone else grabs it would otherwise keep the stale sprite.
-      const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, groundItemId, 0, 0, 0, 0, item.floor, qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)));
+      const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, groundItemId, 0, 0, 0, 0, 0, item.floor, qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)));
       for (const [, p] of this.players) {
         if (p.currentMapLevel !== item.mapLevel || p.currentFloor !== item.floor) continue;
         try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
@@ -5918,7 +5921,7 @@ export class World {
       const result = addXp(player.skills, skillId, loot.xpReward);
       const skillIdx = ALL_SKILLS.indexOf(skillId);
       if (skillIdx >= 0) {
-        this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, loot.xpReward);
+        this.sendXpGain(player, skillIdx, loot.xpReward);
         if (result.leveled) this.sendLevelUp(player, skillIdx, result.newLevel);
         this.sendSingleSkill(player, skillIdx);
       }
@@ -6106,7 +6109,7 @@ export class World {
       const result = addXp(player.skills, skillId, craftingOutput.xpReward);
       const skillIdx = ALL_SKILLS.indexOf(skillId);
       if (skillIdx >= 0) {
-        this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, craftingOutput.xpReward);
+        this.sendXpGain(player, skillIdx, craftingOutput.xpReward);
         if (result.leveled) {
           this.sendLevelUp(player, skillIdx, result.newLevel);
         }
@@ -6228,7 +6231,7 @@ export class World {
     const result = addXp(player.skills, 'goodmagic', xp);
     const skillIdx = ALL_SKILLS.indexOf('goodmagic');
     if (skillIdx >= 0) {
-      this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, xp);
+      this.sendXpGain(player, skillIdx, xp);
       if (result.leveled) this.sendLevelUp(player, skillIdx, result.newLevel);
       this.sendSingleSkill(player, skillIdx);
     }
@@ -7352,7 +7355,7 @@ export class World {
     for (const drop of simulatedDrops) {
       const skillIdx = ALL_SKILLS.indexOf(drop.skillId);
       if (skillIdx < 0) continue;
-      this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, drop.amount);
+      this.sendXpGain(player, skillIdx, drop.amount);
       total += drop.amount;
     }
     return total;
@@ -7372,7 +7375,7 @@ export class World {
     const r = addXp(player.skills, skillId, amount);
     const skillIdx = ALL_SKILLS.indexOf(skillId);
     if (skillIdx >= 0) {
-      this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, Math.floor(amount));
+      this.sendXpGain(player, skillIdx, Math.floor(amount));
       if (r.leveled) this.sendLevelUp(player, skillIdx, r.newLevel);
       this.sendSingleSkill(player, skillIdx);
     }
@@ -7447,7 +7450,7 @@ export class World {
     for (const xp of result.xpDrops) {
       const skillIdx = ALL_SKILLS.indexOf(xp.skill);
       if (skillIdx >= 0) {
-        this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, xp.amount);
+        this.sendXpGain(player, skillIdx, xp.amount);
       }
     }
 
@@ -10612,7 +10615,7 @@ export class World {
           const result = addXp(player.skills, skillId, xpReward);
           const skillIdx = ALL_SKILLS.indexOf(skillId);
           if (skillIdx >= 0) {
-            this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, xpReward);
+            this.sendXpGain(player, skillIdx, xpReward);
             if (result.leveled) {
               this.sendLevelUp(player, skillIdx, result.newLevel);
             }
@@ -10686,6 +10689,7 @@ export class World {
 
       fireIds.delete(objId);
       this.worldObjects.delete(objId);
+      releaseObjectEntityId(objId);
       this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, false, obj.floor, obj.interactionTiles, obj.rotationY);
       const cm = this.chunkManagers.get(obj.mapLevel);
       if (cm) cm.removeEntity(obj.id);
@@ -10804,7 +10808,7 @@ export class World {
         // A player who saw the drop and then walked OOR keeps a stale local
         // sprite if the despawn is filtered by chunk proximity. Cost is
         // negligible — items despawn at ~200-tick intervals.
-        const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, id, 0, 0, 0, 0, item.floor, qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)));
+        const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, id, 0, 0, 0, 0, 0, item.floor, qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)));
         for (const [, p] of this.players) {
           if (p.currentMapLevel !== item.mapLevel || p.currentFloor !== item.floor) continue;
           try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
@@ -11287,6 +11291,13 @@ export class World {
   private readonly _dirtyPlayerPackets: Map<number, Uint8Array> = new Map();
   private readonly _dirtyNpcPackets: Map<number, Uint8Array> = new Map();
 
+  // Above this much already-buffered outbound data, a client isn't draining;
+  // we skip its droppable sync this tick instead of growing Bun's buffer
+  // unbounded. At 4x we give up on the socket and close it.
+  private static readonly MAX_WS_BACKPRESSURE_BYTES = 1 << 20; // 1 MiB
+  // Reused per-flush so batching one viewer doesn't allocate a fresh array each tick.
+  private readonly _batchScratch: Uint8Array[] = [];
+
   private queueSyncPacket(out: SyncPacket[], opcode: ServerOpcode, ...values: number[]): void {
     out.push({ opcode, values, data: encodePacket(opcode, ...values) });
   }
@@ -11303,9 +11314,24 @@ export class World {
 
   private flushSyncPackets(player: Player, packets: SyncPacket[]): void {
     if (player.disconnected || packets.length === 0) return;
+    // Backpressure guard: sync packets are position/health snapshots, so if this
+    // socket's outbound buffer is already backed up we drop this tick's sync (the
+    // next tick re-sends current state). A wedged client otherwise grows Bun's
+    // send buffer without bound and can OOM the server.
+    const ws = player.ws as unknown as { getBufferedAmount?: () => number; close?: (code: number, reason?: string) => void };
+    const buffered = ws.getBufferedAmount?.() ?? 0;
+    if (buffered > World.MAX_WS_BACKPRESSURE_BYTES) {
+      if (buffered > World.MAX_WS_BACKPRESSURE_BYTES * 4) {
+        try { ws.close?.(1011, 'backpressure'); } catch { /* already closing */ }
+      }
+      return;
+    }
     try {
       if (packets.length > 1 && this.canBatchSyncPackets(player)) {
-        player.ws.sendBinary(encodePacketBatch(ServerOpcode.PACKET_BATCH, packets.map(packet => packet.data)));
+        const scratch = this._batchScratch;
+        scratch.length = 0;
+        for (const packet of packets) scratch.push(packet.data);
+        player.ws.sendBinary(encodePacketBatch(ServerOpcode.PACKET_BATCH, scratch));
         return;
       }
       const sendToPlayerOverridden = this.sendToPlayer !== World.prototype.sendToPlayer;
@@ -11822,7 +11848,8 @@ export class World {
     this.sendToPlayer(viewer, ServerOpcode.GROUND_ITEM_SYNC,
       item.id,
       item.itemId,
-      item.quantity,
+      (item.quantity >>> 16) & 0xFFFF,
+      item.quantity & 0xFFFF,
       qPos(item.x),
       qPos(item.z),
       item.floor,
@@ -11836,7 +11863,8 @@ export class World {
     this.queueSyncPacket(out, ServerOpcode.GROUND_ITEM_SYNC,
       item.id,
       item.itemId,
-      item.quantity,
+      (item.quantity >>> 16) & 0xFFFF,
+      item.quantity & 0xFFFF,
       qPos(item.x),
       qPos(item.z),
       item.floor,
@@ -11845,11 +11873,15 @@ export class World {
   }
 
   sendInventory(player: Player): void {
-    // Batch: [slot0_itemId, slot0_qty, slot1_itemId, slot1_qty, ...] — 1 packet instead of 28
+    // Batch: [slot0_itemId, slot0_qtyHigh, slot0_qtyLow, ...] — 1 packet instead of 28.
+    // Quantity is split into high/low 16-bit words so stacks past int16 (e.g. coins
+    // up to MAX_STACK) don't wrap on the wire, matching the bank/skill encoding.
     const values: number[] = [];
     for (let i = 0; i < player.inventory.length; i++) {
       const slot = player.inventory[i];
-      values.push(slot ? slot.itemId : 0, slot ? slot.quantity : 0);
+      const itemId = slot ? slot.itemId : 0;
+      const qty = slot ? slot.quantity : 0;
+      values.push(itemId, (qty >>> 16) & 0xFFFF, qty & 0xFFFF);
     }
     this.sendToPlayer(player, ServerOpcode.PLAYER_INVENTORY_BATCH, ...values);
   }
@@ -11862,6 +11894,14 @@ export class World {
       values.push(skill.level, skill.currentLevel, (skill.xp >> 16) & 0xFFFF, skill.xp & 0xFFFF);
     }
     this.sendToPlayer(player, ServerOpcode.PLAYER_SKILLS_BATCH, ...values);
+  }
+
+  /** Send an XP_GAIN popup. The amount is split into high/low 16-bit words so a
+   *  large single award (> int16) doesn't wrap on the wire; the client reconstructs
+   *  it via decodeQuantityValues. */
+  private sendXpGain(player: Player, skillIndex: number, amount: number): void {
+    const amt = Math.max(0, Math.floor(amount));
+    this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIndex, (amt >>> 16) & 0xFFFF, amt & 0xFFFF);
   }
 
   /** Send a single skill update (used for XP gains during gameplay) */

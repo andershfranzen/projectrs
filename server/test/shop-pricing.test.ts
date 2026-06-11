@@ -90,8 +90,9 @@ describe('shop stock pricing', () => {
     expect(player.inventory[0]?.quantity).toBe(450);
     expect(npc.shopNextRestockTick.get(1000)).toBe(12);
     expect(packets[packets.length - 1]).toMatchObject({
+      // Per-item layout: [itemId, priceHigh, priceLow, stock] — price split for >int16.
       opcode: ServerOpcode.SHOP_OPEN,
-      values: [npc.id, 1, 1000, 125, 5],
+      values: [npc.id, 1, 1000, 0, 125, 5],
     });
 
     world.currentTick = 11;

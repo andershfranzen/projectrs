@@ -38,6 +38,21 @@ const chatSocketsByUsername: Map<string, ServerWebSocket<ChatSocketData>> = new 
 const chatSocketsByAccountId: Map<number, ServerWebSocket<ChatSocketData>> = new Map();
 const ignoredAccountIdsByAccountId: Map<number, Set<number>> = new Map();
 
+// A chat socket buffering more than this much undrained data is effectively dead;
+// closing it stops Bun's outbound buffer from growing unbounded (OOM guard).
+const MAX_CHAT_BACKPRESSURE_BYTES = 2 * (1 << 20); // 2 MiB
+
+/** Send to a chat socket, dropping+closing it if its outbound buffer is backed up. */
+function chatSend(sock: ServerWebSocket<ChatSocketData>, payload: string): void {
+  try {
+    if (sock.getBufferedAmount() > MAX_CHAT_BACKPRESSURE_BYTES) {
+      sock.close(1011, 'backpressure');
+      return;
+    }
+    sock.send(payload);
+  } catch { /* ignore closed */ }
+}
+
 function parseSkillId(raw: string): SkillId | null {
   const normalized = raw.toLowerCase().replace(/[\s_-]+/g, '');
   if (normalized === 'ranging') return 'archery';
@@ -146,7 +161,7 @@ function adminTeleportPlayerToPlayer(world: World, traveler: Player, destination
 function sendSocialPresence(accountId: number, username: string, online: boolean): void {
   const payload = JSON.stringify({ type: 'social_presence', accountId, username, online });
   for (const sock of chatSockets) {
-    try { sock.send(payload); } catch { /* ignore closed */ }
+    chatSend(sock, payload);
   }
 }
 
@@ -244,9 +259,7 @@ export function broadcastLocalMessage(from: string, message: string, fromAccount
     if (fromAccountId != null && ignoredAccountIdsByAccountId.get(sock.data.accountId)?.has(fromAccountId)) {
       continue;
     }
-    try {
-      sock.send(payload);
-    } catch { /* ignore closed */ }
+    chatSend(sock, payload);
   }
 }
 
@@ -1028,9 +1041,7 @@ export function handleChatSocketClose(
 export function broadcastPlayerInfo(entityId: number, name: string, isAdmin: boolean = false, isModerator: boolean = false): void {
   const payload = JSON.stringify({ type: 'player_info', entityId, name, isAdmin, isModerator });
   for (const sock of chatSockets) {
-    try {
-      sock.send(payload);
-    } catch { /* ignore */ }
+    chatSend(sock, payload);
   }
 }
 

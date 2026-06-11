@@ -5,6 +5,7 @@ import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import type { Skeleton } from '@babylonjs/core/Bones/skeleton';
+import type { Material } from '@babylonjs/core/Materials/material';
 import type { AssetContainer, InstantiatedEntries } from '@babylonjs/core/assetContainer';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
@@ -360,6 +361,9 @@ export class Npc3DEntity {
   private root: TransformNode | null = null;
   private meshes: AbstractMesh[] = [];
   private skeletons: Skeleton[] = [];
+  /** Per-instance materials cloned for color-variant mobs (line ~509). Uniquely
+   *  owned by this NPC; plain mobs share cached template materials and add none. */
+  private clonedVariantMaterials: Material[] = [];
   private disposed: boolean = false;
   private _position: Vector3 = Vector3.Zero();
   private _rotationY: number = 0;
@@ -507,6 +511,7 @@ export class Npc3DEntity {
           if (!mat) {
             mat = original.clone(`${original.name}_${label ?? 'npc'}`);
             cloned.set(original, mat);
+            this.clonedVariantMaterials.push(mat);
           }
           mesh.material = mat;
           applyNpcMaterialRuntimeDefaults(mat);
@@ -765,7 +770,10 @@ export class Npc3DEntity {
     if (!group) return 0;
     const fps = group.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
     if (fps <= 0) return 0;
-    return ((group.to - group.from) / fps) * 1000 / this.getAnimSpeedRatio(role);
+    // Clamp the speed ratio to a small positive floor so a configured
+    // animSpeedRatio of 0 yields a finite duration instead of Infinity.
+    const speedRatio = Math.max(this.getAnimSpeedRatio(role), 0.01);
+    return ((group.to - group.from) / fps) * 1000 / speedRatio;
   }
 
   setAnimationEnabled(enabled: boolean): void {
@@ -1113,7 +1121,12 @@ export class Npc3DEntity {
     this.animGroups.clear();
     for (const skeleton of this.skeletons) skeleton.dispose();
     this.skeletons = [];
+    // No-arg dispose: leave the shared cached template materials intact (other
+    // NPC instances still reference them). Per-instance cloned variant materials
+    // are uniquely owned, so free them (with their textures) explicitly.
     for (const mesh of this.meshes) mesh.dispose();
+    for (const mat of this.clonedVariantMaterials) mat.dispose(false, true);
+    this.clonedVariantMaterials = [];
     if (this.groundShadow) {
       this.groundShadow.dispose();
       this.groundShadow = null;

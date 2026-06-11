@@ -114,6 +114,12 @@ export class NetworkManager {
   private lastRecvCipherCounter: number = -1;
   private sendCipherQueue: Promise<void> = Promise.resolve();
   private recvCipherQueue: Promise<void> = Promise.resolve();
+  // Inbound decrypt backpressure: if decryption can't keep up, the chained queue
+  // accumulates continuations + captured ArrayBuffers unbounded. Bounded by total
+  // queued BYTES (not frame count) so a large-but-finite login snapshot burst
+  // drains normally; only genuine runaway growth trips the guard.
+  private recvQueueBytes: number = 0;
+  private static readonly MAX_RECV_QUEUE_BYTES = 16 * (1 << 20); // 16 MiB
   private lastActivitySentAt: number = -Infinity;
   private lastCursorSentAt: number = -Infinity;
 
@@ -204,6 +210,7 @@ export class NetworkManager {
     this.lastRecvCipherCounter = -1;
     this.sendCipherQueue = Promise.resolve();
     this.recvCipherQueue = Promise.resolve();
+    this.recvQueueBytes = 0;
     this.lastCursorSentAt = -Infinity;
 
     void ensureDeviceKeyRegistered(token)
@@ -246,12 +253,20 @@ export class NetworkManager {
       if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
       if (!(event.data instanceof ArrayBuffer)) return;
       this.markGameMessageReceived();
+      if (this.recvQueueBytes > NetworkManager.MAX_RECV_QUEUE_BYTES) {
+        console.warn('[net] Inbound decrypt queue overflow — resetting socket');
+        this.failGameSocket(gameSocket, 4007, 'recv backlog');
+        return;
+      }
+      const frameBytes = event.data.byteLength;
+      this.recvQueueBytes += frameBytes;
       this.recvCipherQueue = this.recvCipherQueue
         .then(() => this.handleGameMessage(gameSocket, generation, event.data))
         .catch((e) => {
           console.warn('[net] Failed to process game packet:', e);
           this.failGameSocket(gameSocket, 4006, 'packet decrypt failed');
-        });
+        })
+        .finally(() => { this.recvQueueBytes -= frameBytes; });
     };
 
     const handlePlainMessage = (data: ArrayBuffer) => {
@@ -639,6 +654,7 @@ export class NetworkManager {
     this.lastRecvCipherCounter = -1;
     this.sendCipherQueue = Promise.resolve();
     this.recvCipherQueue = Promise.resolve();
+    this.recvQueueBytes = 0;
     this.openHandlers.length = 0;
   }
 

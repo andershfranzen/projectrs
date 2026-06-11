@@ -276,6 +276,7 @@ async function loadTemplate(scene: Scene, def: ItemDef, quantity: number): Promi
 export class GroundItemEntity {
   private readonly root: TransformNode;
   private readonly nodes: TransformNode[] = [];
+  private disposed = false;
 
   private constructor(scene: Scene, name: string, x: number, y: number, z: number, groundItemId: number, tileKey: string) {
     this.root = new TransformNode(name, scene);
@@ -296,6 +297,7 @@ export class GroundItemEntity {
 
     const entity = new GroundItemEntity(scene, `groundItemStack_${tileKey}`, primary.x, y, primary.z, primary.id, tileKey);
     const primaryTemplate = await loadTemplate(scene, primary.def, primary.quantity);
+    if (entity.disposed) { entity.dispose(); return null; }
     if (!primaryTemplate) {
       entity.dispose();
       return null;
@@ -305,6 +307,7 @@ export class GroundItemEntity {
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i];
       const template = i === 0 ? primaryTemplate : await loadTemplate(scene, entry.def, entry.quantity);
+      if (entity.disposed) { entity.dispose(); return null; }
       if (!template) continue;
 
       const clone = template.root.instantiateHierarchy(null, undefined, (source, cloned) => {
@@ -369,6 +372,7 @@ export class GroundItemEntity {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const node of this.nodes) node.dispose();
     this.nodes.length = 0;
     this.root.dispose();

@@ -14,6 +14,8 @@ import '@babylonjs/loaders/glTF';
 import { worldAABB, worldAABBForMaterials } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, createObjectShadowCaster, createWallEdgeShadowCaster, isLinearCasterCoveredByWallRuns, isLinearShadowAsset, objectShadowBounds, objectShadowFactorAt, wallShadowRunsFromEntries } from '@projectrs/shared';
+import { groundDetailFamily } from '@projectrs/shared';
+import { GroundDetailPluginMaterial } from './GroundDetailPlugin';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, DEFAULT_CUT_ANGLE, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, waterFlowUvFromTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB, TorchlightInfluenceGrid, TorchlightPaintTile } from '@projectrs/shared';
@@ -168,6 +170,8 @@ interface FloorMeshSet {
 
 interface ChunkMeshes {
   ground: Mesh;
+  grassBlades: Mesh | null;
+  stoneRocks: Mesh | null;
   overlays: Mesh[];
   water: Mesh | null;
   paddyWater: Mesh | null;
@@ -321,6 +325,8 @@ export class ChunkManager {
 
   // Shared materials
   private groundMat: StandardMaterial | null = null;
+  private grassBladeMat: StandardMaterial | null = null;
+  private stoneRockMat: StandardMaterial | null = null;
   private waterMat: StandardMaterial | null = null;
   private cliffMat: StandardMaterial | null = null;
   private wallMat: StandardMaterial | null = null;
@@ -597,6 +603,8 @@ export class ChunkManager {
     if (this.chunkMeshesEnabled.get(chunkKey) === enabled) return false;
     this.chunkMeshesEnabled.set(chunkKey, enabled);
     meshes.ground.setEnabled(enabled);
+    meshes.grassBlades?.setEnabled(enabled);
+    meshes.stoneRocks?.setEnabled(enabled);
     for (const overlay of meshes.overlays) overlay.setEnabled(enabled);
     meshes.water?.setEnabled(enabled);
     meshes.paddyWater?.setEnabled(enabled);
@@ -628,6 +636,8 @@ export class ChunkManager {
   private disposeChunkMeshes(key: string, meshes: ChunkMeshes): void {
     this.clearRoofObjectGridForChunk(this.terrainRoofChunkKey(key));
     meshes.ground.dispose();
+    meshes.grassBlades?.dispose();
+    meshes.stoneRocks?.dispose();
     this.disposeChunkTextureOverlays(key);
     meshes.water?.dispose();
     meshes.paddyWater?.dispose();
@@ -846,6 +856,27 @@ export class ChunkManager {
       this.groundMat = new StandardMaterial('chunkGroundMat', this.scene);
       this.groundMat.specularColor = new Color3(0, 0, 0);
       this.groundMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
+      // Procedural per-type surface detail (grass/dirt/sand/stone), driven by the
+      // per-vertex `groundDetail` attribute set in buildGroundMesh.
+      new GroundDetailPluginMaterial(this.groundMat);
+    }
+    if (!this.grassBladeMat) {
+      // Upright grass strands. Brighter emissive than ground so the thin, mostly
+      // edge-on blades still read as lit grass; double-sided since each blade is a
+      // single triangle.
+      this.grassBladeMat = new StandardMaterial('chunkGrassBladeMat', this.scene);
+      this.grassBladeMat.specularColor = new Color3(0, 0, 0);
+      this.grassBladeMat.emissiveColor = new Color3(0.35, 0.35, 0.35);
+      this.grassBladeMat.backFaceCulling = false;
+    }
+    if (!this.stoneRockMat) {
+      // Small scattered pebbles on stone ground. Its own material (not groundMat,
+      // whose detail plugin expects a per-vertex groundDetail attribute the rocks
+      // don't carry); matches ground emissive so pebbles sit in naturally.
+      this.stoneRockMat = new StandardMaterial('chunkStoneRockMat', this.scene);
+      this.stoneRockMat.specularColor = new Color3(0, 0, 0);
+      this.stoneRockMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
+      this.stoneRockMat.backFaceCulling = false;
     }
     if (!this.waterMat) {
       this.waterMat = new StandardMaterial('chunkWaterMat', this.scene);
@@ -909,7 +940,7 @@ export class ChunkManager {
     }
 
     // Freeze shared materials — they never change after setup (big perf win)
-    for (const mat of [this.groundMat, this.cliffMat, this.wallMat, this.roofMat, this.floorMat, this.stairMat]) {
+    for (const mat of [this.groundMat, this.grassBladeMat, this.stoneRockMat, this.cliffMat, this.wallMat, this.roofMat, this.floorMat, this.stairMat]) {
       if (mat) mat.freeze();
     }
 
@@ -1722,6 +1753,8 @@ export class ChunkManager {
     const endZ = Math.min(startZ + CHUNK_SIZE, this.mapHeight);
 
     const ground = this.buildGroundMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
+    const grassBlades = this.buildGrassBladeMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
+    const stoneRocks = this.buildStoneRockMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
     const overlays = this.buildTextureOverlays(chunkX, chunkZ, startX, startZ, endX, endZ);
     const water = this.buildWaterMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
     const paddyWater = this.buildPaddyWaterMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
@@ -1743,7 +1776,7 @@ export class ChunkManager {
     }
 
     // Freeze world matrices on all static chunk meshes — big perf win since these never move
-    const allMeshes = [ground, water, paddyWater, cliff, ceiling, wall, roof, floor, stairs];
+    const allMeshes = [ground, grassBlades, stoneRocks, water, paddyWater, cliff, ceiling, wall, roof, floor, stairs];
     for (const [, floorSet] of upperFloors) {
       allMeshes.push(floorSet.wall ?? null, floorSet.roof ?? null, floorSet.floor ?? null, floorSet.stairs ?? null);
     }
@@ -1754,7 +1787,7 @@ export class ChunkManager {
       }
     }
 
-    return { ground, overlays, water, paddyWater, cliff, ceiling, wall, roof, floor, stairs, upperFloors };
+    return { ground, grassBlades, stoneRocks, overlays, water, paddyWater, cliff, ceiling, wall, roof, floor, stairs, upperFloors };
   }
 
   // --- Ground mesh with KC editor shading ---
@@ -1772,6 +1805,8 @@ export class ChunkManager {
     cTR: RGB,
     cBL: RGB,
     cBR: RGB,
+    detail: number[],
+    detailFamily: number,
   ): number {
     const steps = TORCHLIGHT_GLOW_SUBDIVISIONS;
     const row = steps + 1;
@@ -1784,6 +1819,7 @@ export class ChunkManager {
         applyTorchlightTint(color, sampleTorchlightInfluenceGrid(grid, x + u, z + v));
         positions.push(x + u, bilerpCorners(h.tl, h.tr, h.bl, h.br, u, v), z + v);
         colors.push(color.r, color.g, color.b, 1);
+        detail.push(detailFamily);
       }
     }
 
@@ -1804,6 +1840,7 @@ export class ChunkManager {
     const positions: number[] = [];
     const indices: number[] = [];
     const colors: number[] = [];
+    const detail: number[] = []; // per-vertex ground-detail family for the procedural shader
     const torchlightGrid = this.buildTorchlightGridForRegion(startX, startZ, endX, endZ);
     let vertexIndex = 0;
 
@@ -1820,6 +1857,8 @@ export class ChunkManager {
         const isTorchlightPaint = hasTorchlightPaint(tileType, rawGroundBType);
         const renderTileType = visualGroundForTorchlight(tileType, rawGroundBType);
         const groundBType = rawGroundBType && !isTorchlightPaint ? rawGroundBType : null;
+        const detailFamily = groundDetailFamily(renderTileType);
+        const detailFamilyB = groundBType ? groundDetailFamily(groundBType) : detailFamily;
 
         // Compute per-vertex shading
         const shadeTL = this.getVertexSlopeShade(x, z);
@@ -1855,16 +1894,20 @@ export class ChunkManager {
             // Triangle A (CCW): TL, TR, BL
             positions.push(x, h.tl, z, x + 1, h.tr, z, x, h.bl, z + 1);
             colors.push(cA.r, cA.g, cA.b, 1, cA.r, cA.g, cA.b, 1, cA.r, cA.g, cA.b, 1);
+            detail.push(detailFamily, detailFamily, detailFamily);
             // Triangle B (CCW): TR, BR, BL
             positions.push(x + 1, h.tr, z, x + 1, h.br, z + 1, x, h.bl, z + 1);
             colors.push(cB.r, cB.g, cB.b, 1, cB.r, cB.g, cB.b, 1, cB.r, cB.g, cB.b, 1);
+            detail.push(detailFamilyB, detailFamilyB, detailFamilyB);
           } else {
             // Triangle A (CCW): TL, TR, BR
             positions.push(x, h.tl, z, x + 1, h.tr, z, x + 1, h.br, z + 1);
             colors.push(cA.r, cA.g, cA.b, 1, cA.r, cA.g, cA.b, 1, cA.r, cA.g, cA.b, 1);
+            detail.push(detailFamily, detailFamily, detailFamily);
             // Triangle B (CCW): TL, BR, BL
             positions.push(x, h.tl, z, x + 1, h.br, z + 1, x, h.bl, z + 1);
             colors.push(cB.r, cB.g, cB.b, 1, cB.r, cB.g, cB.b, 1, cB.r, cB.g, cB.b, 1);
+            detail.push(detailFamilyB, detailFamilyB, detailFamilyB);
           }
           indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex + 3, vertexIndex + 4, vertexIndex + 5);
           vertexIndex += 6;
@@ -1947,6 +1990,8 @@ export class ChunkManager {
             cTR,
             cBL,
             cBR,
+            detail,
+            detailFamily,
           );
           continue;
         }
@@ -1959,6 +2004,7 @@ export class ChunkManager {
           cBL.r, cBL.g, cBL.b, 1,
           cBR.r, cBR.g, cBR.b, 1,
         );
+        detail.push(detailFamily, detailFamily, detailFamily, detailFamily);
 
         if (splitDir === 'forward') {
           // 0=TL, 1=TR, 2=BL, 3=BR; diagonal TL-BR; CCW winding for upward normals
@@ -1986,9 +2032,199 @@ export class ChunkManager {
     VertexData.ComputeNormals(positions, indices, normals);
     vertexData.normals = normals;
     vertexData.applyToMesh(mesh);
+    // Custom per-vertex attribute feeding the procedural ground-detail shader.
+    mesh.setVerticesData('groundDetail', detail, false, 1);
     mesh.material = this.groundMat;
     mesh.hasVertexAlpha = false;
     mesh.isPickable = true;
+    return mesh;
+  }
+
+  // --- Grass strands: sparse upright blades on grass tiles ---
+
+  private buildGrassBladeMesh(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number): Mesh | null {
+    const positions: number[] = [];
+    const indices: number[] = [];
+    const colors: number[] = [];
+    let vi = 0;
+
+    // Deterministic per-position pseudo-random in [0,1) so blades don't shimmer
+    // or change between chunk rebuilds.
+    const rand = (a: number, b: number): number => {
+      const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+      return s - Math.floor(s);
+    };
+
+    const BLADES_PER_TILE = 8;
+    const HALF_WIDTH = 0.025;
+    const base = groundColor('grass', 0.80);
+    const tip = groundColor('grass', 1.18);
+
+    // Emit one blade at world (bx,bz); uses tile (tx,tz) corner heights for ground Y.
+    const emitBlade = (bx: number, bz: number, h: { tl: number; tr: number; bl: number; br: number }, tx: number, tz: number, seed: number): void => {
+      // Clamp to [0,1] so edge-spilled blades sample the seam height rather than
+      // extrapolating across a height step into the neighbouring tile.
+      const hu = Math.min(Math.max(bx - tx, 0), 1);
+      const hv = Math.min(Math.max(bz - tz, 0), 1);
+      const by = bilerpCorners(h.tl, h.tr, h.bl, h.br, hu, hv);
+      const height = 0.10 + rand(tx + seed * 7, tz * 3) * 0.14;
+      const leanX = (rand(tx * 2 + seed, tz) - 0.5) * 0.10;
+      const leanZ = (rand(tz * 2 + 5, tx + seed) - 0.5) * 0.10;
+      positions.push(bx - HALF_WIDTH, by, bz, bx + HALF_WIDTH, by, bz, bx + leanX, by + height, bz + leanZ);
+      colors.push(base.r, base.g, base.b, 1, base.r, base.g, base.b, 1, tip.r, tip.g, tip.b, 1);
+      indices.push(vi, vi + 1, vi + 2);
+      vi += 3;
+    };
+
+    const isGrass = (tx: number, tz: number): boolean =>
+      (this.getTileRaw(tx, tz)?.ground ?? this.defaultGround) === 'grass';
+
+    // Neighbour offsets for edge-spill (N/E/S/W), with the inward direction the
+    // spilled blades push toward the bordering non-grass tile.
+    const EDGES: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+
+    for (let x = startX; x < endX; x++) {
+      for (let z = startZ; z < endZ; z++) {
+        if (this.activeChunks && !this.activeChunks.has(`${Math.floor(x / EDITOR_CHUNK_SIZE)},${Math.floor(z / EDITOR_CHUNK_SIZE)}`)) continue;
+        if (this.holeTiles.has(z * this.mapWidth + x)) continue;
+        const tile = this.getTileRaw(x, z);
+        const tileType = tile?.ground ?? this.defaultGround;
+        if (tileType !== 'grass') continue;
+
+        const h = this.getTileCornerHeights(x, z);
+        for (let b = 0; b < BLADES_PER_TILE; b++) {
+          const bx = x + 0.15 + rand(x * 4 + b, z * 4) * 0.7;
+          const bz = z + 0.15 + rand(x * 4 + b + 31, z * 4 + 17) * 0.7;
+          emitBlade(bx, bz, h, x, z, b);
+        }
+
+        // Edge-spill: where this grass tile borders a non-grass tile, scatter a few
+        // blades straddling the seam so the straight tile boundary reads as a soft,
+        // organic grass fringe instead of a hard cut. Uses this tile's heights
+        // (terrain height is continuous across the edge).
+        for (let e = 0; e < EDGES.length; e++) {
+          const [dx, dz] = EDGES[e];
+          if (isGrass(x + dx, z + dz)) continue; // only spill onto non-grass neighbours
+          for (let s = 0; s < 3; s++) {
+            // along-edge position 0.1..0.9, spilled 0.05..0.35 past the edge
+            const along = 0.1 + rand(x * 9 + e * 3 + s, z * 9) * 0.8;
+            const over = 0.05 + rand(z * 9 + e * 3 + s, x * 9 + 5) * 0.30;
+            let bx: number, bz: number;
+            if (dz === -1) { bx = x + along; bz = z - over; }
+            else if (dz === 1) { bx = x + along; bz = z + 1 + over; }
+            else if (dx === -1) { bx = x - over; bz = z + along; }
+            else { bx = x + 1 + over; bz = z + along; }
+            emitBlade(bx, bz, h, x, z, 50 + e * 4 + s);
+          }
+        }
+      }
+    }
+
+    if (positions.length === 0) return null;
+
+    const mesh = new Mesh(`chunk_grass_${chunkX}_${chunkZ}`, this.scene);
+    const vertexData = new VertexData();
+    vertexData.positions = positions;
+    vertexData.indices = indices;
+    vertexData.colors = colors;
+    const normals: number[] = [];
+    VertexData.ComputeNormals(positions, indices, normals);
+    vertexData.normals = normals;
+    vertexData.applyToMesh(mesh);
+    mesh.material = this.grassBladeMat;
+    mesh.hasVertexAlpha = false;
+    mesh.isPickable = false;
+    return mesh;
+  }
+
+  // --- Stone pebbles: small round rocks scattered on stone-family ground ---
+
+  private buildStoneRockMesh(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number): Mesh | null {
+    const positions: number[] = [];
+    const indices: number[] = [];
+    const colors: number[] = [];
+    let vi = 0;
+
+    const rand = (a: number, b: number): number => {
+      const s = Math.sin(a * 269.5 + b * 183.3) * 43758.5453;
+      return s - Math.floor(s);
+    };
+
+    const RING = 6; // low-poly rounded dome
+    const TWO_PI = Math.PI * 2;
+
+    for (let x = startX; x < endX; x++) {
+      for (let z = startZ; z < endZ; z++) {
+        if (this.activeChunks && !this.activeChunks.has(`${Math.floor(x / EDITOR_CHUNK_SIZE)},${Math.floor(z / EDITOR_CHUNK_SIZE)}`)) continue;
+        if (this.holeTiles.has(z * this.mapWidth + x)) continue;
+        const tile = this.getTileRaw(x, z);
+        const tileType = tile?.ground ?? this.defaultGround;
+        if (groundDetailFamily(tileType) !== 3) continue; // stone/rock/road/dungeon family only
+
+        // Sparse + random: most tiles get none, some get one or two pebbles.
+        const roll = rand(x * 5 + 3, z * 5 + 9);
+        const rockCount = roll > 0.72 ? (roll > 0.92 ? 2 : 1) : 0;
+        if (rockCount === 0) continue;
+
+        const h = this.getTileCornerHeights(x, z);
+        for (let r = 0; r < rockCount; r++) {
+          const u = 0.2 + rand(x * 7 + r, z * 7) * 0.6;
+          const v = 0.2 + rand(x * 7 + r + 13, z * 7 + 4) * 0.6;
+          const cx = x + u;
+          const cz = z + v;
+          const gy = bilerpCorners(h.tl, h.tr, h.bl, h.br, u, v);
+          const radius = 0.06 + rand(x + r, z * 2) * 0.06;
+          const bodyH = radius * (0.7 + rand(z + r, x * 2) * 0.4); // flattened pebble, not spiky
+
+          const base = groundColor('rock', 0.70);
+          const mid = groundColor('rock', 0.88);
+          const top = groundColor('rock', 1.08);
+
+          // Squashed octahedron: top apex + raised mid ring + bottom apex. Gives
+          // the rock real 3D volume (rounded from every angle) instead of a flat fan.
+          const topIdx = vi;
+          positions.push(cx, gy + bodyH, cz);
+          colors.push(top.r, top.g, top.b, 1);
+          vi++;
+
+          const ringStart = vi;
+          for (let k = 0; k < RING; k++) {
+            const ang = (k / RING) * TWO_PI;
+            const rr = radius * (0.85 + rand(x * 3 + k, z * 3 + r) * 0.30); // mild irregular outline
+            positions.push(cx + Math.cos(ang) * rr, gy + bodyH * 0.38, cz + Math.sin(ang) * rr);
+            colors.push(mid.r, mid.g, mid.b, 1);
+            vi++;
+          }
+
+          const botIdx = vi;
+          positions.push(cx, gy, cz); // rests on the ground
+          colors.push(base.r, base.g, base.b, 1);
+          vi++;
+
+          for (let k = 0; k < RING; k++) {
+            const a = ringStart + k;
+            const bnext = ringStart + ((k + 1) % RING);
+            indices.push(topIdx, a, bnext);    // upper cap
+            indices.push(botIdx, bnext, a);    // lower cap
+          }
+        }
+      }
+    }
+
+    if (positions.length === 0) return null;
+
+    const mesh = new Mesh(`chunk_rocks_${chunkX}_${chunkZ}`, this.scene);
+    const vertexData = new VertexData();
+    vertexData.positions = positions;
+    vertexData.indices = indices;
+    vertexData.colors = colors;
+    const normals: number[] = [];
+    VertexData.ComputeNormals(positions, indices, normals);
+    vertexData.normals = normals;
+    vertexData.applyToMesh(mesh);
+    mesh.material = this.stoneRockMat;
+    mesh.hasVertexAlpha = false;
+    mesh.isPickable = false;
     return mesh;
   }
 
@@ -4043,9 +4279,17 @@ export class ChunkManager {
     }
   }
 
+  /** Clear the loading + queued markers for a chunk so a stale early-return
+   *  can't strand them (otherwise cleanup relied entirely on disposeAll, and a
+   *  later soft-reload would see the chunk as still loading and skip it). */
+  private clearObjectChunkMarkers(chunkKey: string): void {
+    this.loadingObjectChunks.delete(chunkKey);
+    this.queuedObjectChunks.delete(chunkKey);
+  }
+
   /** Load and instantiate placed objects for a single chunk */
   private async loadChunkPlacedObjects(chunkKey: string, generation: number = this.objectLoadGeneration): Promise<void> {
-    if (this.isObjectLoadStale(generation)) return;
+    if (this.isObjectLoadStale(generation)) { this.clearObjectChunkMarkers(chunkKey); return; }
     if (this.chunkPlacedNodes.has(chunkKey)) {
       this.loadingObjectChunks.delete(chunkKey);
       return;
@@ -4069,10 +4313,10 @@ export class ChunkManager {
         const [cx, cz] = chunkKey.split(',').map(Number);
         const resource = `${this.mapId}/objects/chunk_${cx}_${cz}.json`;
         const res = await fetchOptionalMapResource(`/maps/${resource}`, resource);
-        if (this.isObjectLoadStale(generation)) return;
+        if (this.isObjectLoadStale(generation)) { this.clearObjectChunkMarkers(chunkKey); return; }
         if (res.ok) {
           const fetched: PlacedObject[] = await res.json();
-          if (this.isObjectLoadStale(generation)) return;
+          if (this.isObjectLoadStale(generation)) { this.clearObjectChunkMarkers(chunkKey); return; }
           if (fetched.length > 0) {
             this.placedObjectsByChunk.set(chunkKey, fetched);
             objects = fetched;
@@ -4096,7 +4340,7 @@ export class ChunkManager {
       return;
     }
     this.registerShootOverFenceWalls(objects);
-    if (this.isObjectLoadStale(generation)) return;
+    if (this.isObjectLoadStale(generation)) { this.clearObjectChunkMarkers(chunkKey); return; }
     if (!this.shouldLoadObjectChunkNow(chunkKey)) {
       this.disposeChunkPlacedObjects(chunkKey);
       this.loadingObjectChunks.delete(chunkKey);
@@ -5940,6 +6184,8 @@ export class ChunkManager {
 
     for (const [, meshes] of this.chunks) {
       meshes.ground.dispose();
+      meshes.grassBlades?.dispose();
+      meshes.stoneRocks?.dispose();
       meshes.water?.dispose();
       meshes.paddyWater?.dispose();
       meshes.cliff?.dispose();

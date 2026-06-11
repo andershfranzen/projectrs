@@ -2330,7 +2330,9 @@ export class GameManager {
 
   /** Create a depleted model (stump/depleted rock) at the placed node's position */
   private setupKeyboard(): void {
-    window.addEventListener('keydown', (e) => {
+    // Stored on `this` so destroy() can remove them — inline arrows would leak
+    // the entire GameManager (closure captures `this`) across logout/re-login.
+    this._keydownHandler = (e) => {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
       if (e.key === 'Escape' && this.bankPanel?.isVisible()) {
         this.keysDown.delete('escape');
@@ -2348,11 +2350,16 @@ export class GameManager {
         return;
       }
       this.keysDown.add(e.key.toLowerCase());
-    });
-    window.addEventListener('keyup', (e) => {
+    };
+    this._keyupHandler = (e) => {
       this.keysDown.delete(e.key.toLowerCase());
-    });
+    };
+    window.addEventListener('keydown', this._keydownHandler);
+    window.addEventListener('keyup', this._keyupHandler);
   }
+
+  private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+  private _keyupHandler: ((e: KeyboardEvent) => void) | null = null;
 
   /** Apply an equipment-slot array (matches PLAYER_REMOTE_EQUIPMENT layout)
    *  to a CharacterEntity. Each slot is loaded asynchronously; ordering
@@ -3277,16 +3284,18 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.GROUND_ITEM_SYNC, (_op, v) => {
-      const [groundItemId, itemId, quantity, x10, z10] = v;
+      // Layout: [groundItemId, itemId, qtyHigh, qtyLow, x10, z10, floor, y10]
+      const [groundItemId, itemId, qtyHi, qtyLo] = v;
       if (itemId === 0) {
         this.entities.removeGroundItem(groundItemId);
         return;
       }
 
-      const x = x10 / 10;
-      const z = z10 / 10;
-      const floor = v.length >= 6 ? Math.floor(v[5] ?? 0) : 0;
-      const y = v.length >= 7 ? (v[6] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
+      const quantity = (qtyHi & 0xFFFF) * 0x10000 + (qtyLo & 0xFFFF);
+      const x = (v[4] ?? 0) / 10;
+      const z = (v[5] ?? 0) / 10;
+      const floor = v.length >= 7 ? Math.floor(v[6] ?? 0) : 0;
+      const y = v.length >= 8 ? (v[7] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
       this.entities.createGroundItem(groundItemId, itemId, quantity, x, z, floor, y);
     });
 
@@ -3507,10 +3516,11 @@ export class GameManager {
       const itemCount = v[1];
       const items: ShopItem[] = [];
       for (let i = 0; i < itemCount; i++) {
+        const base = 2 + i * 4;
         items.push({
-          itemId: v[2 + i * 3],
-          price: v[2 + i * 3 + 1],
-          stock: v[2 + i * 3 + 2],
+          itemId: v[base],
+          price: (v[base + 1] & 0xFFFF) * 0x10000 + (v[base + 2] & 0xFFFF),
+          stock: v[base + 3],
         });
       }
       if (this.shopPanel) {
@@ -3826,14 +3836,17 @@ export class GameManager {
       this.sidePanel?.setRenown(v[0] ?? 0);
     });
 
-    // Batch inventory: [slot0_itemId, slot0_qty, slot1_itemId, slot1_qty, ...]
+    // Batch inventory: [slot0_itemId, slot0_qtyHigh, slot0_qtyLow, ...] — quantity
+    // is split into high/low words so stacks past int16 don't wrap (see sendInventory).
     this.network.on(ServerOpcode.PLAYER_INVENTORY_BATCH, (_op, v) => {
-      for (let i = 0; i < v.length; i += 2) {
-        const slot = i / 2;
-        if (this.sidePanel) this.sidePanel.updateInvSlot(slot, v[i], v[i + 1]);
-        if (this.bankPanel) this.bankPanel.updateInventorySlot(slot, v[i], v[i + 1]);
-        if (this.tradePanel) this.tradePanel.updateInventorySlot(slot, v[i], v[i + 1]);
-        if (this.duelPanel) this.duelPanel.updateInventorySlot(slot, v[i], v[i + 1]);
+      for (let i = 0; i + 3 <= v.length; i += 3) {
+        const slot = i / 3;
+        const itemId = v[i];
+        const qty = (v[i + 1] & 0xFFFF) * 0x10000 + (v[i + 2] & 0xFFFF);
+        if (this.sidePanel) this.sidePanel.updateInvSlot(slot, itemId, qty);
+        if (this.bankPanel) this.bankPanel.updateInventorySlot(slot, itemId, qty);
+        if (this.tradePanel) this.tradePanel.updateInventorySlot(slot, itemId, qty);
+        if (this.duelPanel) this.duelPanel.updateInventorySlot(slot, itemId, qty);
       }
       this.noteLoginBootstrapPacket('inventory');
     });
@@ -8380,6 +8393,8 @@ export class GameManager {
       this.onWindowResize = null;
     }
     this.clearHiddenCatchupTimer();
+    if (this._keydownHandler) { window.removeEventListener('keydown', this._keydownHandler); this._keydownHandler = null; }
+    if (this._keyupHandler) { window.removeEventListener('keyup', this._keyupHandler); this._keyupHandler = null; }
     if (this._visibilityHandler) { document.removeEventListener('visibilitychange', this._visibilityHandler); this._visibilityHandler = null; }
     if (this.nativeContextMenuBlocker) {
       document.removeEventListener('contextmenu', this.nativeContextMenuBlocker, true);

@@ -46,6 +46,7 @@ describe('broadcast sync batching', () => {
     world.currentTick = 42;
     world._dirtyPlayerPackets = new Map();
     world._dirtyNpcPackets = new Map();
+    world._batchScratch = [];
     world.chunkManagers = new Map([['kcmap', {
       forEachEntityNearChunk(_cx: number, _cz: number, fn: (id: number) => void) {
         fn(viewer.player.id);

@@ -26,9 +26,16 @@ export function isAllowedWsOrigin(req: Request, opts: WsSecurityOptions = {}): b
   const origin = req.headers.get('origin');
   const allowedOrigins = new Set(opts.allowedOrigins ?? parseAllowedOrigins(opts.clientOriginsEnv ?? process.env.CLIENT_ORIGINS));
   if (!origin) {
-    if (opts.allowMissingOrigin !== undefined) return opts.allowMissingOrigin;
-    if (process.env.ALLOW_MISSING_WS_ORIGIN === '1') return true;
-    return !isProductionLike(opts.nodeEnv);
+    // A missing Origin header is only accepted when explicitly opted in (in any
+    // environment), never defaulted-on for non-production. Browsers always send
+    // Origin on WS upgrades; absence means a non-browser client.
+    const allowMissing = opts.allowMissingOrigin !== undefined
+      ? opts.allowMissingOrigin
+      : process.env.ALLOW_MISSING_WS_ORIGIN === '1';
+    if (allowMissing) {
+      console.warn('[ws] accepting WebSocket upgrade with missing Origin header (ALLOW_MISSING_WS_ORIGIN)');
+    }
+    return allowMissing;
   }
   return allowedOrigins.has(origin);
 }

@@ -391,7 +391,10 @@ export class QuestService {
     const skillIdx = ALL_SKILLS.indexOf(skillKey);
     if (skillIdx < 0) return;
     const result = addXp(player.skills, skillKey, amount);
-    this.senders.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, Math.floor(amount));
+    // Split XP into high/low words so a large award doesn't wrap int16 (client
+    // reconstructs via decodeQuantityValues).
+    const amt = Math.floor(amount);
+    this.senders.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, (amt >>> 16) & 0xFFFF, amt & 0xFFFF);
     if (result.leveled) {
       this.senders.sendLevelUp(player, skillIdx, result.newLevel);
     }
