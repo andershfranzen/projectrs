@@ -172,6 +172,17 @@ question is whether the bad tab is using SwiftShader/software rendering, a
 stable 30 Hz cadence, a masked renderer, a high-DPR canvas, low-battery/browser
 efficiency conditions, or an incomplete login-screen capture.
 
+To summarize `/perf` and automatic low-FPS snapshots from the server audit log
+or from `/api/admin/client-diagnostics` JSON:
+
+```bash
+bun tools/summarize-client-diagnostics.mjs server/data/audit.log --limit 20
+bun tools/summarize-client-diagnostics.mjs diagnostics.json --event client_perf_snapshot --query brave
+```
+
+The summary classifies snapshots as software-renderer low FPS, stable 30 Hz
+cadence, uneven frame stalls, hardware-backed low FPS, or healthy high FPS.
+
 If a live run reports `hasGameManager: false` and the body text is the login
 screen, it did not capture steady-state gameplay. Reuse a logged-in
 `CHROME_PROFILE_DIR`, run once without autorun and log in there, or inject auth
