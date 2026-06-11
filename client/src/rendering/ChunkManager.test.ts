@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Matrix, Vector3 } from '@babylonjs/core/Maths/math.vector';
-import type { Mesh } from '@babylonjs/core/Meshes/mesh';
+import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { ChunkManager, assertOptionalMapResourceResponse, isInteractiveDoorPlacedAsset, isObjectShadowReceiverGround, isRoofLikePlacedAsset, placedObjectThinGroupKey } from './ChunkManager';
 import type { GroundType } from '@projectrs/shared';
@@ -117,74 +116,7 @@ describe('terrain object shadow receivers', () => {
   });
 });
 
-describe('procedural grass batching', () => {
-  test('coalesces grass thin-instance rebuilds across chunk changes', () => {
-    const callbacks: FrameRequestCallback[] = [];
-    let rebuilds = 0;
-    const manager = Object.assign(Object.create(ChunkManager.prototype), {
-      grassBladeChunks: new Map<string, { matrices: Float32Array; enabled: boolean }>(),
-      grassBladeBatchDirty: false,
-      grassBladeBatchRebuildScheduled: false,
-      grassBladeBatchRebuilds: 0,
-      grassBladeBatchLastRebuildMs: 0,
-      grassBladeBatchMaxRebuildMs: 0,
-      grassBladeBatchTotalRebuildMs: 0,
-      grassBladeBatchLastInstances: 0,
-      grassBladeBatchLastBufferBytes: 0,
-      loadMapToken: 1,
-      scheduleNextFrame: (callback: FrameRequestCallback) => {
-        callbacks.push(callback);
-      },
-      rebuildGrassBladeBatchNow: () => {
-        rebuilds++;
-      },
-    }) as any;
-
-    manager.registerGrassBladeChunk('0,0', new Float32Array(16), true);
-    manager.registerGrassBladeChunk('0,1', new Float32Array(32), false);
-    manager.setGrassBladeChunkEnabled('0,1', true);
-
-    expect(callbacks).toHaveLength(1);
-    expect(rebuilds).toBe(0);
-    expect(manager.getTerrainDetailStats()).toMatchObject({
-      grassBladeChunks: 2,
-      grassBladeEnabledChunks: 2,
-      grassBladeStoredInstances: 3,
-      grassBladeEnabledInstances: 3,
-      grassBladeBatchDirty: true,
-      grassBladeBatchRebuildScheduled: true,
-      grassBladeBatchRebuilds: 0,
-    });
-
-    callbacks[0](performance.now());
-
-    expect(rebuilds).toBe(1);
-    expect(manager.grassBladeBatchDirty).toBe(false);
-    expect(manager.grassBladeBatchRebuildScheduled).toBe(false);
-    expect(manager.getTerrainDetailStats()).toMatchObject({
-      grassBladeBatchDirty: false,
-      grassBladeBatchRebuildScheduled: false,
-    });
-  });
-});
-
 describe('placed object thin-instance grouping', () => {
-  test('batches static world-object visuals but keeps doors unique', () => {
-    const manager = Object.assign(Object.create(ChunkManager.prototype), {
-      modelAnimationGroups: new Map(),
-      assetRegistry: new Map(),
-    }) as any;
-    const basePlacement = {
-      position: { x: 1, y: 0, z: 2 },
-      rotation: { x: 0, y: 0, z: 0 },
-      scale: { x: 1, y: 1, z: 1 },
-    };
-
-    expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'sTree 1' })).toBe(true);
-    expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'wheat2' })).toBe(true);
-    expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'castleTruedoor' })).toBe(false);
-  });
-
   test('separates elevated scenery by storey height for indoor culling', () => {
     const firstFloorWall = placedObjectThinGroupKey('stone wall', 'elevated', 2.73);
     const upperWall = placedObjectThinGroupKey('stone wall', 'elevated', 5.49);
@@ -202,40 +134,6 @@ describe('placed object thin-instance grouping', () => {
       .toBe(placedObjectThinGroupKey('stone wall', 'ground', 2.73));
     expect(placedObjectThinGroupKey('tile roofing', 'roof', 2.73))
       .toBe(placedObjectThinGroupKey('tile roofing', 'roof', 5.49));
-  });
-
-  test('toggles a batched placed visual through its thin-instance matrix', () => {
-    const manager = Object.create(ChunkManager.prototype) as any;
-    const node = {} as TransformNode;
-    const visibleMatrix = Matrix.Translation(1, 2, 3);
-    const hiddenMatrix = Matrix.Translation(4, 5, 6);
-    const matrixCalls: Array<{ index: number; matrix: Matrix; refresh: boolean }> = [];
-    const bufferUpdates: string[] = [];
-    const mesh = {
-      thinInstanceSetMatrixAt: (index: number, matrix: Matrix, refresh: boolean) => {
-        matrixCalls.push({ index, matrix, refresh });
-      },
-      thinInstanceBufferUpdated: (kind: string) => {
-        bufferUpdates.push(kind);
-      },
-    } as unknown as Mesh;
-
-    manager.placedObjectVisualRefs = new WeakMap([[node, [{
-      mesh,
-      index: 7,
-      visibleMatrix,
-      hiddenMatrix,
-    }]]]);
-
-    expect(manager.setPlacedObjectVisualEnabled(node, false)).toBe(true);
-    expect(manager.setPlacedObjectVisualEnabled(node, true)).toBe(true);
-    expect(manager.setPlacedObjectVisualEnabled({} as TransformNode, true)).toBe(false);
-
-    expect(matrixCalls).toEqual([
-      { index: 7, matrix: hiddenMatrix, refresh: false },
-      { index: 7, matrix: visibleMatrix, refresh: false },
-    ]);
-    expect(bufferUpdates).toEqual(['matrix', 'matrix']);
   });
 });
 

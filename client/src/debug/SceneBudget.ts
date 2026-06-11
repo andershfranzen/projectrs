@@ -2,7 +2,6 @@ import type { Scene } from '@babylonjs/core/scene';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 
 type MeshInternals = AbstractMesh & { _isWorldMatrixFrozen?: boolean };
-type ThinInstanceInternals = AbstractMesh & { thinInstanceCount?: number };
 type AnimationGroupInternals = {
   name: string;
   isPlaying: boolean;
@@ -10,44 +9,25 @@ type AnimationGroupInternals = {
   _animatables?: unknown[];
 };
 
-export function bucketName(name: string | undefined): string {
-  const value = name || '<unnamed>';
-  const placed = /^(placed)_-?\d+,-?\d+_\d+_(.+)$/.exec(value);
-  if (placed) return `${placed[1]}_*_${placed[2]}`.slice(0, 56);
-  const thin = /^(thin)_-?\d+,-?\d+_(.+)$/.exec(value);
-  if (thin) return `${thin[1]}_*_${thin[2]}`.slice(0, 56);
-  const npc = /^(npc3dsrc)_(.+)_\d+_(.+)$/.exec(value);
-  if (npc) return `${npc[1]}_${npc[2]}_*_${npc[3]}`.slice(0, 56);
-  return value
+function bucketName(name: string | undefined): string {
+  return (name || '<unnamed>')
     .replace(/_[0-9]+_[0-9]+.*/, '_*')
     .replace(/_[0-9]+$/, '_*')
     .slice(0, 56);
 }
 
-function thinInstanceCount(mesh: AbstractMesh): number {
-  const count = (mesh as ThinInstanceInternals).thinInstanceCount;
-  return typeof count === 'number' && Number.isFinite(count) && count > 0 ? count : 0;
-}
-
-function grouped(meshes: readonly AbstractMesh[], limit = 30): Array<{ name: string; count: number; vertices: number; indices: number; instances: number; effectiveVertices: number; effectiveIndices: number }> {
-  const counts = new Map<string, { count: number; vertices: number; indices: number; instances: number; effectiveVertices: number; effectiveIndices: number }>();
+function grouped(meshes: readonly AbstractMesh[], limit = 30): Array<{ name: string; count: number; vertices: number; indices: number }> {
+  const counts = new Map<string, { count: number; vertices: number; indices: number }>();
   for (const mesh of meshes) {
     const key = bucketName(mesh.name);
-    const prev = counts.get(key) ?? { count: 0, vertices: 0, indices: 0, instances: 0, effectiveVertices: 0, effectiveIndices: 0 };
-    const vertices = mesh.getTotalVertices?.() ?? 0;
-    const indices = mesh.getTotalIndices?.() ?? 0;
-    const instances = thinInstanceCount(mesh);
-    const multiplier = instances > 0 ? instances : 1;
+    const prev = counts.get(key) ?? { count: 0, vertices: 0, indices: 0 };
     prev.count++;
-    prev.vertices += vertices;
-    prev.indices += indices;
-    prev.instances += instances;
-    prev.effectiveVertices += vertices * multiplier;
-    prev.effectiveIndices += indices * multiplier;
+    prev.vertices += mesh.getTotalVertices?.() ?? 0;
+    prev.indices += mesh.getTotalIndices?.() ?? 0;
     counts.set(key, prev);
   }
   return Array.from(counts, ([name, value]) => ({ name, ...value }))
-    .sort((a, b) => b.effectiveVertices - a.effectiveVertices || b.effectiveIndices - a.effectiveIndices || b.vertices - a.vertices || b.count - a.count)
+    .sort((a, b) => b.vertices - a.vertices || b.indices - a.indices || b.count - a.count)
     .slice(0, limit);
 }
 

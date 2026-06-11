@@ -2,7 +2,6 @@ import { expect, test } from 'bun:test';
 import {
   GENERIC_SCENERY_OBJECT_DEF_ID,
   WELL_OBJECT_DEF_ID,
-  isCropPlacedAssetId,
   objectDefIdForPlacedAsset,
   sceneryExamineMetaForAsset,
 } from './index';
@@ -47,15 +46,6 @@ test('stall assets resolve to roguery stall object definitions', () => {
   expect(objectDefIdForPlacedAsset('relic stall')).toBe(58);
   expect(objectDefIdForPlacedAsset('Gem stall')).toBe(59);
   expect(objectDefIdForPlacedAsset('depleted stall')).toBeUndefined();
-});
-
-test('crop assets are identified for batched crop rendering', () => {
-  expect(isCropPlacedAssetId('rice')).toBe(true);
-  expect(isCropPlacedAssetId('PotatoPlant')).toBe(true);
-  expect(isCropPlacedAssetId('CauliflowerPlant')).toBe(true);
-  expect(isCropPlacedAssetId('wheat2rotated3')).toBe(true);
-  expect(isCropPlacedAssetId('sTree 1')).toBe(false);
-  expect(isCropPlacedAssetId('bookcase2')).toBe(false);
 });
 
 test('water source assets resolve to the well object definition', () => {

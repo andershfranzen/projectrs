@@ -154,9 +154,7 @@ const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
 const CLIENT_DIAGNOSTIC_EVENTS: Array<{ value: string; label: string }> = [
   { value: '', label: 'All events' },
   { value: 'client_low_fps_snapshot', label: 'Low FPS' },
-  { value: 'client_low_fps_post_scale_snapshot', label: 'Post-scale FPS' },
   { value: 'client_perf_snapshot', label: 'Perf' },
-  { value: 'client_quality_change', label: 'Quality' },
   { value: 'game_connection_lost', label: 'Disconnects' },
 ];
 const BAN_DURATIONS = [
@@ -843,28 +841,18 @@ export class AdminPanel {
     this.diagnosticFilterEl.style.display = 'grid';
     this.setGridHeader(DIAGNOSTIC_GRID_COLUMNS, ['Time', 'Event', 'User', 'Renderer', 'FPS']);
     const lowFps = this.diagnostics.filter(entry => entry.event === 'client_low_fps_snapshot').length;
-    const postScale = this.diagnostics.filter(entry => entry.event === 'client_low_fps_post_scale_snapshot').length;
     const perf = this.diagnostics.filter(entry => entry.event === 'client_perf_snapshot').length;
-    const quality = this.diagnostics.filter(entry => entry.event === 'client_quality_change').length;
     const software = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('software-renderer-likely')).length;
     const brave = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('brave-browser')).length;
-    const braveLow = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('brave-low-fps')).length;
-    const hardwareLow = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('low-fps-with-hardware-renderer')).length;
-    const emergencyScale = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('emergency-render-scale')).length;
     const activeFilters = (this.diagnosticEventFilter ? 1 : 0)
       + (this.diagnosticSearchQuery ? 1 : 0)
       + (this.diagnosticUserFilter ? 1 : 0);
     this.summaryEl.replaceChildren(
       this.summaryPill(`${this.diagnostics.length} snapshots`, '#6c5c43'),
       this.summaryPill(`${lowFps} low FPS`, lowFps > 0 ? '#8f2f28' : '#4d5d45'),
-      this.summaryPill(`${postScale} post-scale`, postScale > 0 ? '#8f6d2d' : '#4d5d45'),
       this.summaryPill(`${perf} perf`, '#2f5f8f'),
-      this.summaryPill(`${quality} quality`, quality > 0 ? '#2f5f8f' : '#4d5d45'),
-      this.summaryPill(`${hardwareLow} hardware low`, hardwareLow > 0 ? '#8f6d2d' : '#4d5d45'),
-      this.summaryPill(`${emergencyScale} emergency`, emergencyScale > 0 ? '#8f2f28' : '#4d5d45'),
       this.summaryPill(`${software} software`, software > 0 ? '#8f2f28' : '#4d5d45'),
       this.summaryPill(`${brave} Brave`, brave > 0 ? '#5f4a7d' : '#4d5d45'),
-      this.summaryPill(`${braveLow} Brave low`, braveLow > 0 ? '#5f4a7d' : '#4d5d45'),
       this.summaryPill(`${Math.round(this.diagnosticBytesScanned / 1024)} KB`, '#564428'),
       this.summaryPill(`${activeFilters} filters`, activeFilters > 0 ? '#7a5a25' : '#4d5d45'),
     );
@@ -995,7 +983,11 @@ export class AdminPanel {
       padding: 6px 7px;
       border: 0;
       border-bottom: 1px solid rgba(74, 64, 53, 0.55);
-      background: ${this.diagnosticRowBackground(flags, selected)};
+      background: ${selected
+        ? 'rgba(122, 50, 40, 0.48)'
+        : flags.includes('software-renderer-likely')
+          ? 'rgba(73, 17, 13, 0.5)'
+          : 'rgba(22, 16, 12, 0.38)'};
       color: #f1d6b6;
       font: 11px Arial, Helvetica, sans-serif;
       text-align: left;
@@ -1022,7 +1014,6 @@ export class AdminPanel {
     const browser = this.recordObject(payload, 'browser');
     const canvas = this.recordObject(payload, 'canvas');
     const chunkMeshes = this.recordObject(payload, 'chunkMeshes');
-    const terrainDetail = this.recordObject(chunkMeshes, 'terrainDetail');
     const player = this.recordObject(payload, 'player');
     const flags = this.diagnosticFlags(entry);
 
@@ -1043,7 +1034,7 @@ export class AdminPanel {
       chips.appendChild(this.summaryPill('no diagnostic flags', '#4d5d45'));
     } else {
       for (const flag of flags.slice(0, 10)) {
-        chips.appendChild(this.summaryPill(flag, this.diagnosticFlagColor(flag)));
+        chips.appendChild(this.summaryPill(flag, flag === 'software-renderer-likely' ? '#8f2f28' : '#4d535f'));
       }
     }
     root.appendChild(chips);
@@ -1075,9 +1066,6 @@ export class AdminPanel {
       this.metricCell('Detail attrs', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'groundDetailAttributes'))),
       this.metricCell('Detail verts', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'detailVertices'))),
       this.metricCell('Grass verts', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'grassVertices'))),
-      this.metricCell('Grass instances', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'grassInstances'))),
-      this.metricCell('Grass rebuilds', this.formatNullableNumber(this.recordNumber(terrainDetail, 'grassBladeBatchRebuilds'))),
-      this.metricCell('Grass max ms', this.formatRate(this.recordNumber(terrainDetail, 'grassBladeBatchMaxRebuildMs'))),
       this.metricCell('Client at', entry.clientAt === null ? '-' : new Date(entry.clientAt).toLocaleString()),
       this.metricCell('Server tick', entry.tick === null ? '-' : String(entry.tick)),
     );
@@ -1894,35 +1882,6 @@ export class AdminPanel {
     return Array.isArray(flags) ? flags.filter((flag): flag is string => typeof flag === 'string') : [];
   }
 
-  private diagnosticFlagColor(flag: string): string {
-    switch (flag) {
-      case 'software-renderer-likely':
-      case 'emergency-render-scale':
-        return '#8f2f28';
-      case 'low-fps-after-render-scale':
-      case 'low-fps-with-hardware-renderer':
-      case 'low-fps-measured':
-        return '#8f6d2d';
-      case 'brave-browser':
-      case 'brave-low-fps':
-        return '#5f4a7d';
-      case 'high-dpr-render-target':
-      case 'renderer-info-masked':
-      case 'webgl1-context':
-        return '#7a5a25';
-      default:
-        return '#4d535f';
-    }
-  }
-
-  private diagnosticRowBackground(flags: readonly string[], selected: boolean): string {
-    if (selected) return 'rgba(122, 50, 40, 0.48)';
-    if (flags.includes('emergency-render-scale') || flags.includes('software-renderer-likely')) return 'rgba(73, 17, 13, 0.5)';
-    if (flags.includes('low-fps-after-render-scale') || flags.includes('low-fps-with-hardware-renderer')) return 'rgba(88, 49, 17, 0.48)';
-    if (flags.includes('brave-low-fps')) return 'rgba(62, 37, 82, 0.46)';
-    return 'rgba(22, 16, 12, 0.38)';
-  }
-
   private diagnosticFps(entry: ClientDiagnosticLogEntry): number | null {
     const payload = this.diagnosticPayload(entry);
     return this.recordNumber(payload, 'measuredFps') ?? this.recordNumber(payload, 'engineFps');
@@ -1954,9 +1913,7 @@ export class AdminPanel {
   private diagnosticEventLabel(event: string): string {
     switch (event) {
       case 'client_low_fps_snapshot': return 'Low FPS';
-      case 'client_low_fps_post_scale_snapshot': return 'Post-scale FPS';
       case 'client_perf_snapshot': return 'Perf';
-      case 'client_quality_change': return 'Quality';
       case 'game_connection_lost': return 'Disconnect';
       default: return event.replace(/_/g, ' ');
     }
@@ -1965,15 +1922,11 @@ export class AdminPanel {
   private diagnosticEventPill(event: string): HTMLDivElement {
     const color = event === 'client_low_fps_snapshot'
       ? '#8f2f28'
-      : event === 'client_low_fps_post_scale_snapshot'
-        ? '#8f6d2d'
       : event === 'client_perf_snapshot'
         ? '#2f5f8f'
-        : event === 'client_quality_change'
-          ? '#2f5f8f'
-          : event === 'game_connection_lost'
-            ? '#7a5a25'
-            : '#6c5c43';
+        : event === 'game_connection_lost'
+          ? '#7a5a25'
+          : '#6c5c43';
     return this.summaryPill(this.diagnosticEventLabel(event), color);
   }
 

@@ -22,38 +22,14 @@ const authToken = process.env.PROFILE_AUTH_TOKEN || '';
 const authUsername = process.env.PROFILE_AUTH_USERNAME || '';
 const wsSecret = process.env.PROFILE_WS_SECRET || '';
 const deviceId = process.env.PROFILE_DEVICE_ID || '';
-const allowExistingCdp = process.env.PROFILE_ALLOW_EXISTING_CDP === '1';
-const attachExistingCdp = process.env.PROFILE_ATTACH_EXISTING_CDP === '1' || process.argv.includes('--attach-existing');
-const reloadBeforeCapture = process.env.PROFILE_RELOAD_BEFORE_CAPTURE != null
-  ? process.env.PROFILE_RELOAD_BEFORE_CAPTURE !== '0'
-  : !attachExistingCdp;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-let stdinEnded = false;
-input.on('end', () => { stdinEnded = true; });
 
 function readCommand(prompt) {
-  if (stdinEnded) return Promise.resolve('quit');
   output.write(prompt);
   input.resume();
   return new Promise((resolve) => {
-    const cleanup = () => {
-      input.off('data', onData);
-      input.off('end', onEnd);
-      input.off('error', onEnd);
-    };
-    const onData = (data) => {
-      cleanup();
-      resolve(String(data).trim().toLowerCase());
-    };
-    const onEnd = () => {
-      stdinEnded = true;
-      cleanup();
-      resolve('quit');
-    };
-    input.once('data', onData);
-    input.once('end', onEnd);
-    input.once('error', onEnd);
+    input.once('data', (data) => resolve(String(data).trim().toLowerCase()));
   });
 }
 
@@ -72,40 +48,6 @@ async function waitForCdp() {
     }
   }
   throw new Error(`Chrome DevTools endpoint did not appear on port ${port}`);
-}
-
-async function isCdpPortOpen() {
-  try {
-    await cdpJson('/json/version');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function withBrowserCdp(callback) {
-  const version = await cdpJson('/json/version');
-  if (!version?.webSocketDebuggerUrl) {
-    return { error: 'Chrome DevTools browser target is unavailable', version };
-  }
-
-  const browserCdp = new CdpClient(version.webSocketDebuggerUrl);
-  await browserCdp.open();
-  try {
-    return await callback(browserCdp, version);
-  } finally {
-    browserCdp.close();
-  }
-}
-
-async function safeCdpSend(cdp, method, params = {}) {
-  try {
-    return await cdp.send(method, params);
-  } catch (error) {
-    return {
-      error: error?.message || String(error),
-    };
-  }
 }
 
 class CdpClient {
@@ -127,9 +69,9 @@ class CdpClient {
   onMessage(raw) {
     const msg = JSON.parse(raw);
     if (msg.id && this.pending.has(msg.id)) {
-      const { resolve, reject, method } = this.pending.get(msg.id);
+      const { resolve, reject } = this.pending.get(msg.id);
       this.pending.delete(msg.id);
-      if (msg.error) reject(new Error(`${method}: ${msg.error.message}: ${msg.error.data || ''}`));
+      if (msg.error) reject(new Error(`${msg.error.message}: ${msg.error.data || ''}`));
       else resolve(msg.result || {});
       return;
     }
@@ -142,7 +84,7 @@ class CdpClient {
     this.nextId += 1;
     this.ws.send(JSON.stringify({ id, method, params }));
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, method });
+      this.pending.set(id, { resolve, reject });
     });
   }
 
@@ -158,67 +100,33 @@ class CdpClient {
 }
 
 async function openFreshPageTarget(initialUrl = 'about:blank') {
-  return withBrowserCdp(async (browserCdp) => {
-    const created = await browserCdp.send('Target.createTarget', {
+  const version = await cdpJson('/json/version');
+  if (!version?.webSocketDebuggerUrl) {
+    throw new Error('Chrome DevTools browser target is unavailable');
+  }
+
+  const browserCdp = new CdpClient(version.webSocketDebuggerUrl);
+  await browserCdp.open();
+  let created;
+  try {
+    created = await browserCdp.send('Target.createTarget', {
       url: initialUrl,
       newWindow: false,
       background: false,
     });
-    const targetId = created.targetId;
-    if (!targetId) throw new Error('Chrome DevTools did not create a page target');
-
-    for (let i = 0; i < 40; i += 1) {
-      const targets = await cdpJson('/json/list');
-      const target = targets.find((item) => item.id === targetId);
-      if (target?.webSocketDebuggerUrl) return target;
-      await sleep(100);
-    }
-    throw new Error(`Fresh page target ${targetId} did not become debuggable`);
-  });
-}
-
-async function listPageTargets() {
-  const targets = await cdpJson('/json/list');
-  return targets.filter((target) => (
-    target?.type === 'page'
-    && target.webSocketDebuggerUrl
-    && target.url !== 'devtools://devtools/bundled/devtools_app.html'
-  ));
-}
-
-function targetMatchesUrl(target, targetUrl) {
-  try {
-    const desired = new URL(targetUrl);
-    const current = new URL(String(target.url || ''));
-    return current.origin === desired.origin && current.pathname === desired.pathname;
-  } catch {
-    return String(target.url || '').startsWith(String(targetUrl || ''));
+  } finally {
+    browserCdp.close();
   }
-}
+  const targetId = created.targetId;
+  if (!targetId) throw new Error('Chrome DevTools did not create a page target');
 
-async function selectExistingPageTarget(targetUrl) {
-  const pages = await listPageTargets();
-  if (pages.length === 0) throw new Error('No debuggable page targets found on the existing CDP port');
-  return pages.find((target) => targetMatchesUrl(target, targetUrl))
-    ?? pages.find((target) => /^https?:\/\//.test(String(target.url || '')))
-    ?? pages[0];
-}
-
-async function captureBrowserDiagnostics() {
-  return withBrowserCdp(async (browserCdp, devtoolsVersion) => {
-    const browserVersion = await safeCdpSend(browserCdp, 'Browser.getVersion');
-    const systemInfo = await safeCdpSend(browserCdp, 'SystemInfo.getInfo');
-    const processInfo = await safeCdpSend(browserCdp, 'SystemInfo.getProcessInfo');
-    const commandLine = await safeCdpSend(browserCdp, 'Browser.getBrowserCommandLine');
-    return {
-      capturedAt: new Date().toISOString(),
-      devtoolsVersion,
-      browserVersion,
-      systemInfo,
-      processInfo,
-      commandLine,
-    };
-  });
+  for (let i = 0; i < 40; i += 1) {
+    const targets = await cdpJson('/json/list');
+    const target = targets.find((item) => item.id === targetId);
+    if (target?.webSocketDebuggerUrl) return target;
+    await sleep(100);
+  }
+  throw new Error(`Fresh page target ${targetId} did not become debuggable`);
 }
 
 const injectedProfiler = String.raw`
@@ -231,7 +139,6 @@ const injectedProfiler = String.raw`
     setInterval: window.setInterval,
     requestAnimationFrame: window.requestAnimationFrame,
     fetch: window.fetch,
-    sendBeacon: navigator.sendBeacon,
     WebSocket: window.WebSocket,
   };
   const stats = window.__evilQuestProfiler = {
@@ -240,7 +147,6 @@ const injectedProfiler = String.raw`
     longTasks: [],
     websockets: [],
     fetches: [],
-    beacons: [],
     errors: [],
     marks: [],
   };
@@ -294,15 +200,6 @@ const injectedProfiler = String.raw`
       throw error;
     }
   };
-  if (original.sendBeacon) {
-    navigator.sendBeacon = function(url, data) {
-      const size = typeof data === 'string'
-        ? data.length
-        : data?.size ?? data?.byteLength ?? 0;
-      record('beacons', { url: clip(url), bytes: size, at: now() });
-      return original.sendBeacon.call(this, url, data);
-    };
-  }
   window.WebSocket = new Proxy(original.WebSocket, {
     construct(Target, args) {
       const start = now();
@@ -376,129 +273,8 @@ function summarizeBrowserStats(stats) {
     slowResources: [...(stats.resources || [])].sort((a, b) => b.duration - a.duration).slice(0, 50),
     slowFetches: [...(stats.fetches || [])].sort((a, b) => b.duration - a.duration).slice(0, 50),
     websockets: stats.websockets || [],
-    beacons: stats.beacons || [],
     errors: stats.errors || [],
   };
-}
-
-function formatCount(value) {
-  return typeof value === 'number' && Number.isFinite(value)
-    ? Math.round(value).toLocaleString()
-    : 'n/a';
-}
-
-function formatRate(value) {
-  return typeof value === 'number' && Number.isFinite(value)
-    ? (value >= 100 ? Math.round(value).toLocaleString() : value.toFixed(1))
-    : 'n/a';
-}
-
-function formatCanvas(canvas) {
-  if (!canvas) return 'n/a';
-  const renderSize = `${formatCount(canvas.width)}x${formatCount(canvas.height)}`;
-  const clientSize = `${formatCount(canvas.clientWidth)}x${formatCount(canvas.clientHeight)}`;
-  const dpr = formatRate(canvas.devicePixelRatio);
-  return `${renderSize} / ${clientSize}, DPR ${dpr}`;
-}
-
-function formatBudgetRow(row) {
-  if (!row || typeof row !== 'object') return 'n/a';
-  const name = row.name || row.chunk || '<unnamed>';
-  const vertices = row.vertices == null ? '' : `, ${formatCount(row.vertices)}v`;
-  const indices = row.indices == null ? '' : `, ${formatCount(row.indices)}i`;
-  const instances = row.instances == null || row.instances === 0 ? '' : `, ${formatCount(row.instances)} inst`;
-  const effectiveVertices = row.effectiveVertices == null || row.effectiveVertices === row.vertices ? '' : `, ${formatCount(row.effectiveVertices)} eff-v`;
-  return `${name} (${formatCount(row.count)}x${vertices}${indices}${instances}${effectiveVertices})`;
-}
-
-function printBudgetRows(label, rows, limit = 5) {
-  const items = Array.isArray(rows) ? rows.slice(0, limit) : [];
-  if (items.length === 0) return;
-  console.log(`  ${label}:`);
-  for (const row of items) console.log(`    ${formatBudgetRow(row)}`);
-}
-
-function printPageDiagnostics(pageDiagnostics) {
-  if (!pageDiagnostics || typeof pageDiagnostics !== 'object') return;
-  const renderer = pageDiagnostics.webgl?.unmaskedRenderer || pageDiagnostics.webgl?.renderer || 'unknown';
-  const context = pageDiagnostics.webgl?.context || 'unavailable';
-  const browserName = pageDiagnostics.browser?.brave ? 'Brave' : 'Chromium';
-  const authText = pageDiagnostics.storage?.hasAuthToken
-    ? 'auth token present'
-    : 'no auth token';
-  console.log('Page diagnostics:');
-  console.log(`  ${browserName}, ${context}, renderer: ${renderer}`);
-  console.log(`  ${authText}, has game manager: ${pageDiagnostics.game?.hasGameManager ? 'yes' : 'no'}, title: ${pageDiagnostics.title || 'n/a'}`);
-}
-
-function gpuDevicesFromBrowserDiagnostics(browserDiagnostics) {
-  return Array.isArray(browserDiagnostics?.systemInfo?.gpu?.devices)
-    ? browserDiagnostics.systemInfo.gpu.devices
-    : [];
-}
-
-function gpuFeatureStatusFromBrowserDiagnostics(browserDiagnostics) {
-  const status = browserDiagnostics?.systemInfo?.gpu?.featureStatus;
-  return status && typeof status === 'object' ? status : {};
-}
-
-function printBrowserDiagnostics(browserDiagnostics) {
-  if (!browserDiagnostics || typeof browserDiagnostics !== 'object') return;
-  if (browserDiagnostics.error) {
-    console.log(`Browser diagnostics unavailable: ${browserDiagnostics.error}`);
-    return;
-  }
-
-  const browser = browserDiagnostics.browserVersion?.product
-    || browserDiagnostics.devtoolsVersion?.Browser
-    || 'unknown browser';
-  const devices = gpuDevicesFromBrowserDiagnostics(browserDiagnostics);
-  const primaryGpu = devices[0];
-  const gpuLabel = primaryGpu
-    ? `${[
-      primaryGpu.vendorString || primaryGpu.vendorId,
-      primaryGpu.deviceString || primaryGpu.deviceId,
-    ].filter(Boolean).join(' ')}${primaryGpu.driverVendor || primaryGpu.driverVersion
-      ? ` (${[primaryGpu.driverVendor, primaryGpu.driverVersion].filter(Boolean).join(' ')})`
-      : ''}`
-    : 'unknown GPU';
-  const aux = browserDiagnostics.systemInfo?.gpu?.auxAttributes || {};
-  const featureStatus = gpuFeatureStatusFromBrowserDiagnostics(browserDiagnostics);
-  const webglStatus = featureStatus.webgl || featureStatus.webgl2 || 'unknown';
-  const gpuCompositingStatus = featureStatus.gpu_compositing || 'unknown';
-
-  console.log('Browser process diagnostics:');
-  console.log(`  ${browser}, GPU: ${gpuLabel}`);
-  console.log(`  WebGL feature: ${webglStatus}, GPU compositing: ${gpuCompositingStatus}`);
-  if (aux.glRenderer || aux.glVendor) {
-    console.log(`  GL: ${[aux.glVendor, aux.glRenderer].filter(Boolean).join(' / ')}`);
-  }
-}
-
-function printEvilQuestSnapshot(snapshot) {
-  const flags = Array.isArray(snapshot.diagnosticFlags) && snapshot.diagnosticFlags.length > 0
-    ? snapshot.diagnosticFlags.join(', ')
-    : 'none';
-  const renderer = snapshot.webgl?.unmaskedRenderer || snapshot.webgl?.renderer || 'unknown';
-  const summary = snapshot.sceneBudget?.summary || {};
-  const chunks = snapshot.chunkMeshes || {};
-
-  console.log('EvilQuest snapshot:');
-  if (snapshot.snapshotSource) console.log(`  Source: ${snapshot.snapshotSource}`);
-  console.log(`  ${formatRate(snapshot.measuredFps)} FPS, engine ${formatRate(snapshot.engineFps)}, draw calls ${formatCount(snapshot.drawCalls)}`);
-  console.log(`  Active meshes ${formatCount(snapshot.activeMeshes)} / total ${formatCount(snapshot.totalMeshes)}, vertices ${formatCount(snapshot.totalVertices)}, indices ${formatCount(snapshot.totalIndices)}`);
-  console.log(`  Pickable ${formatCount(summary.activePickableMeshes)} active / ${formatCount(summary.pickableMeshes)} total, enabled ${formatCount(summary.enabledMeshes)}, textures ${formatCount(summary.textures)}, materials ${formatCount(summary.materials)}`);
-  console.log(`  Terrain chunks ${formatCount(chunks.ground)}, grass ${formatCount(chunks.grass)} meshes / ${formatCount(chunks.grassVertices)} vertices, detail ${formatCount(chunks.detailVertices)} vertices`);
-  if (chunks.terrainDetail) {
-    const detail = chunks.terrainDetail;
-    console.log(`  Grass batch ${formatCount(detail.grassBladeEnabledInstances)} active instances, ${formatCount(detail.grassBladeBatchRebuilds)} rebuilds, last ${formatRate(detail.grassBladeBatchLastRebuildMs)}ms, max ${formatRate(detail.grassBladeBatchMaxRebuildMs)}ms`);
-  }
-  console.log(`  Canvas: ${formatCanvas(snapshot.canvas)}`);
-  console.log(`  Renderer: ${renderer}`);
-  console.log(`  Flags: ${flags}`);
-  printBudgetRows('Top active', snapshot.sceneBudget?.activeByName);
-  printBudgetRows('Top active pickable', snapshot.sceneBudget?.activePickableByName);
-  printBudgetRows('Top enabled', snapshot.sceneBudget?.enabledByName, 3);
 }
 
 async function evaluateJson(cdp, expression, options = {}) {
@@ -523,16 +299,14 @@ async function waitForEvilQuestGame(cdp, timeoutMs) {
       const startedAt = performance.now();
       const check = () => {
         const gm = window.gm;
-        const hasSnapshotApi = typeof gm?.collectPerformanceSnapshot === 'function'
-          && typeof gm?.sampleRafFps === 'function';
-        const hasFallbackSnapshotInputs = !!gm?.engine && !!gm?.scene;
         const ready = !!gm
           && gm._loginSettled === true
           && typeof gm.username === 'string'
           && gm.username.length > 0
           && typeof gm.localPlayerId === 'number'
           && gm.localPlayerId > 0
-          && (hasSnapshotApi || hasFallbackSnapshotInputs)
+          && typeof gm.collectPerformanceSnapshot === 'function'
+          && typeof gm.sampleRafFps === 'function'
           && document.visibilityState === 'visible';
         if (ready) {
           resolve({
@@ -540,8 +314,6 @@ async function waitForEvilQuestGame(cdp, timeoutMs) {
             waitedMs: Math.round(performance.now() - startedAt),
             username: gm.username || '',
             localPlayerId: gm.localPlayerId,
-            hasSnapshotApi,
-            snapshotMode: hasSnapshotApi ? 'client-api' : 'profiler-fallback',
           });
           return;
         }
@@ -554,7 +326,6 @@ async function waitForEvilQuestGame(cdp, timeoutMs) {
             username: gm?.username ?? null,
             localPlayerId: gm?.localPlayerId ?? null,
             hasSnapshotApi: !!gm && typeof gm.collectPerformanceSnapshot === 'function',
-            hasFallbackSnapshotInputs: !!gm?.engine && !!gm?.scene,
             visibilityState: document.visibilityState,
             title: document.title,
             bodyText: document.body?.innerText?.slice(0, 500) || '',
@@ -569,159 +340,12 @@ async function waitForEvilQuestGame(cdp, timeoutMs) {
   `);
 }
 
-async function capturePageDiagnostics(cdp) {
-  return evaluateJson(cdp, `
-    (() => {
-      const nav = window.navigator || {};
-      const clip = (value, max = 220) => String(value || '').slice(0, max);
-      const shortUrl = (value) => {
-        try {
-          const u = new URL(String(value), location.href);
-          return u.origin === location.origin ? u.pathname + u.search : u.href;
-        } catch {
-          return String(value || '');
-        }
-      };
-      const basename = (value) => {
-        const short = shortUrl(value).split('?')[0].split('#')[0];
-        return short.slice(short.lastIndexOf('/') + 1);
-      };
-      const resourceEntries = performance.getEntriesByType('resource')
-        .filter((entry) => entry && typeof entry.name === 'string')
-        .map((entry) => ({
-          name: clip(shortUrl(entry.name)),
-          file: clip(basename(entry.name), 120),
-          type: entry.initiatorType || '',
-          startTime: Math.round(entry.startTime * 10) / 10,
-          duration: Math.round(entry.duration * 10) / 10,
-          transferSize: entry.transferSize || 0,
-          encodedBodySize: entry.encodedBodySize || 0,
-          decodedBodySize: entry.decodedBodySize || 0,
-        }));
-      const documentScripts = [...document.scripts]
-        .map((script) => script.src)
-        .filter(Boolean)
-        .map((src) => clip(shortUrl(src)));
-      const documentStylesheets = [...document.querySelectorAll('link[rel~="stylesheet"][href]')]
-        .map((link) => link.href)
-        .filter(Boolean)
-        .map((href) => clip(shortUrl(href)));
-      const assetResources = resourceEntries
-        .filter((entry) => /(^|\\/)(assets|Character models|gear|sprites|items|maps|data)\\//.test(entry.name))
-        .sort((a, b) => (b.decodedBodySize || b.transferSize || 0) - (a.decodedBodySize || a.transferSize || 0));
-      const scriptResources = resourceEntries
-        .filter((entry) => entry.type === 'script' || /\\.m?js($|\\?)/.test(entry.name))
-        .sort((a, b) => (b.decodedBodySize || b.transferSize || 0) - (a.decodedBodySize || a.transferSize || 0));
-      const cssResources = resourceEntries
-        .filter((entry) => entry.type === 'link' || /\\.css($|\\?)/.test(entry.name) || /fonts\\.googleapis\\.com\\/css/.test(entry.name))
-        .sort((a, b) => (b.decodedBodySize || b.transferSize || 0) - (a.decodedBodySize || a.transferSize || 0));
-      const sum = (items, field) => items.reduce((total, entry) => total + (entry[field] || 0), 0);
-      const canvas = document.createElement('canvas');
-      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-      const debugInfo = gl?.getExtension?.('WEBGL_debug_renderer_info') || null;
-      const webgl = gl ? {
-        context: typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext ? 'webgl2' : 'webgl',
-        version: gl.getParameter(gl.VERSION),
-        shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
-        vendor: gl.getParameter(gl.VENDOR),
-        renderer: gl.getParameter(gl.RENDERER),
-        unmaskedVendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : null,
-        unmaskedRenderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : null,
-        maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
-        maxVertexAttribs: gl.getParameter(gl.MAX_VERTEX_ATTRIBS),
-      } : { context: 'unavailable' };
-      const gm = window.gm;
-      let storage = {
-        hasAuthToken: false,
-        hasStoredUsername: false,
-        hasDeviceId: false,
-      };
-      try {
-        storage = {
-          hasAuthToken: !!localStorage.getItem('evilquest_token'),
-          hasStoredUsername: !!localStorage.getItem('evilquest_username'),
-          hasDeviceId: !!(localStorage.getItem('evilmud_device_id') || localStorage.getItem('evilquest_device_id')),
-        };
-      } catch {}
-      return {
-        url: String(location.href),
-        title: document.title,
-        visibilityState: document.visibilityState,
-        bodyText: document.body?.innerText?.slice(0, 500) || '',
-        browser: {
-          userAgent: nav.userAgent,
-          platform: nav.platform,
-          userAgentData: nav.userAgentData ? {
-            brands: nav.userAgentData.brands,
-            platform: nav.userAgentData.platform,
-            mobile: nav.userAgentData.mobile,
-          } : null,
-          brave: !!nav.brave,
-          hardwareConcurrency: nav.hardwareConcurrency,
-          deviceMemory: nav.deviceMemory ?? null,
-          language: nav.language,
-          languages: nav.languages,
-          devicePixelRatio: window.devicePixelRatio,
-        },
-        screen: window.screen ? {
-          width: window.screen.width,
-          height: window.screen.height,
-          availWidth: window.screen.availWidth,
-          availHeight: window.screen.availHeight,
-          colorDepth: window.screen.colorDepth,
-          pixelDepth: window.screen.pixelDepth,
-        } : null,
-        viewport: {
-          innerWidth: window.innerWidth,
-          innerHeight: window.innerHeight,
-          outerWidth: window.outerWidth,
-          outerHeight: window.outerHeight,
-        },
-        build: {
-          documentScripts,
-          documentStylesheets,
-          scriptFiles: [...new Set(scriptResources.map((entry) => entry.file).filter(Boolean))],
-          cssFiles: [...new Set(cssResources.map((entry) => entry.file).filter(Boolean))],
-          assetFiles: [...new Set(assetResources.map((entry) => entry.file).filter(Boolean))].slice(0, 80),
-          resourceCounts: {
-            total: resourceEntries.length,
-            assets: assetResources.length,
-            scripts: scriptResources.length,
-            stylesheets: cssResources.length,
-          },
-          resourceBytes: {
-            transfer: sum(resourceEntries, 'transferSize'),
-            encoded: sum(resourceEntries, 'encodedBodySize'),
-            decoded: sum(resourceEntries, 'decodedBodySize'),
-            scriptsTransfer: sum(scriptResources, 'transferSize'),
-            scriptsDecoded: sum(scriptResources, 'decodedBodySize'),
-            assetsTransfer: sum(assetResources, 'transferSize'),
-            assetsDecoded: sum(assetResources, 'decodedBodySize'),
-          },
-          topResources: assetResources.slice(0, 30),
-          topScripts: scriptResources.slice(0, 20),
-        },
-        storage,
-        webgl,
-        game: {
-          hasGameManager: !!gm,
-          loginSettled: gm?._loginSettled ?? null,
-          usernamePresent: typeof gm?.username === 'string' && gm.username.length > 0,
-          localPlayerIdPresent: typeof gm?.localPlayerId === 'number' && gm.localPlayerId > 0,
-          hasSnapshotApi: !!gm && typeof gm.collectPerformanceSnapshot === 'function',
-          hasFallbackSnapshotInputs: !!gm?.engine && !!gm?.scene,
-        },
-      };
-    })()
-  `);
-}
-
 async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
   return evaluateJson(cdp, `
     (async () => {
       const gm = window.gm;
-      if (!gm) {
-        return { ok: false, error: 'window.gm unavailable' };
+      if (!gm || typeof gm.collectPerformanceSnapshot !== 'function') {
+        return { ok: false, error: 'window.gm.collectPerformanceSnapshot unavailable' };
       }
       if (!gm.username || !(gm.localPlayerId > 0) || gm._loginSettled !== true) {
         return {
@@ -732,359 +356,40 @@ async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
           loginSettled: gm._loginSettled ?? null,
         };
       }
-      const durationMs = ${Math.max(250, Math.round(durationMs))};
-      const sampleRafFps = (ms) => new Promise((resolve) => {
-        let frames = 0;
-        const start = performance.now();
-        const tick = () => {
-          frames++;
-          const now = performance.now();
-          const elapsed = now - start;
-          if (elapsed >= ms) {
-            resolve({
-              frames,
-              durationMs: Math.round(elapsed),
-              fps: frames / Math.max(0.001, elapsed / 1000),
-            });
-            return;
-          }
-          requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
-      });
       const sample = typeof gm.sampleRafFps === 'function'
-        ? await gm.sampleRafFps(durationMs)
-        : await sampleRafFps(durationMs);
-
-      if (typeof gm.collectPerformanceSnapshot === 'function') {
-        const snapshot = gm.collectPerformanceSnapshot(sample || undefined);
-        return { ok: true, snapshot };
-      }
-
-      const engine = gm.engine;
-      const scene = gm.scene;
-      if (!engine || !scene) {
-        return { ok: false, error: 'window.gm engine/scene unavailable' };
-      }
-
-      const roundRate = (value) => typeof value === 'number' && Number.isFinite(value)
-        ? Math.round(value * 10) / 10
+        ? await gm.sampleRafFps(${Math.max(250, Math.round(durationMs))})
         : null;
-      const countVertices = (items) => items.reduce((sum, mesh) => (
-        sum + (typeof mesh?.getTotalVertices === 'function' ? mesh.getTotalVertices() : 0)
-      ), 0);
-      const countIndices = (items) => items.reduce((sum, mesh) => (
-        sum + (typeof mesh?.getTotalIndices === 'function' ? mesh.getTotalIndices() : 0)
-      ), 0);
-      const thinInstanceCount = (mesh) => {
-        const count = mesh?.thinInstanceCount;
-        return typeof count === 'number' && Number.isFinite(count) && count > 0 ? count : 0;
-      };
-      const effectiveMultiplier = (mesh) => {
-        const instances = thinInstanceCount(mesh);
-        return instances > 0 ? instances : 1;
-      };
-      const countEffectiveVertices = (items) => items.reduce((sum, mesh) => (
-        sum + (typeof mesh?.getTotalVertices === 'function' ? mesh.getTotalVertices() : 0) * effectiveMultiplier(mesh)
-      ), 0);
-      const countEffectiveIndices = (items) => items.reduce((sum, mesh) => (
-        sum + (typeof mesh?.getTotalIndices === 'function' ? mesh.getTotalIndices() : 0) * effectiveMultiplier(mesh)
-      ), 0);
-      const countThinInstances = (items) => items.reduce((sum, mesh) => sum + thinInstanceCount(mesh), 0);
-      const activeArray = (() => {
-        const active = typeof scene.getActiveMeshes === 'function' ? scene.getActiveMeshes() : null;
-        if (!active) return [];
-        const data = Array.isArray(active.data)
-          ? active.data
-          : Array.isArray(active)
-            ? active
-            : [];
-        const length = typeof active.length === 'number' ? active.length : data.length;
-        return data.slice(0, length).filter(Boolean);
-      })();
-      const meshes = Array.isArray(scene.meshes) ? scene.meshes : [];
-      const canvas = typeof engine.getRenderingCanvas === 'function'
-        ? engine.getRenderingCanvas()
-        : document.querySelector('canvas');
-      const gl = engine._gl
-        || canvas?.getContext?.('webgl2')
-        || canvas?.getContext?.('webgl')
-        || null;
-      const debugInfo = gl?.getExtension?.('WEBGL_debug_renderer_info') || null;
-      const webgl = gl ? {
-        context: typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext ? 'webgl2' : 'webgl',
-        version: gl.getParameter(gl.VERSION),
-        shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
-        vendor: gl.getParameter(gl.VENDOR),
-        renderer: gl.getParameter(gl.RENDERER),
-        unmaskedVendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : null,
-        unmaskedRenderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : null,
-        maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
-        maxVertexAttribs: gl.getParameter(gl.MAX_VERTEX_ATTRIBS),
-      } : { context: 'unavailable' };
-      const nav = window.navigator || {};
-      const browser = {
-        userAgent: nav.userAgent,
-        platform: nav.platform,
-        userAgentData: nav.userAgentData ? {
-          brands: nav.userAgentData.brands,
-          platform: nav.userAgentData.platform,
-          mobile: nav.userAgentData.mobile,
-        } : null,
-        brave: !!nav.brave,
-        hardwareConcurrency: nav.hardwareConcurrency,
-        deviceMemory: nav.deviceMemory ?? null,
-        language: nav.language,
-        languages: nav.languages,
-        visibilityState: document.visibilityState,
-        devicePixelRatio: window.devicePixelRatio,
-        crossOriginIsolated: window.crossOriginIsolated,
-        window: {
-          innerWidth: window.innerWidth,
-          innerHeight: window.innerHeight,
-          outerWidth: window.outerWidth,
-          outerHeight: window.outerHeight,
-        },
-        screen: window.screen ? {
-          width: window.screen.width,
-          height: window.screen.height,
-          availWidth: window.screen.availWidth,
-          availHeight: window.screen.availHeight,
-          colorDepth: window.screen.colorDepth,
-          pixelDepth: window.screen.pixelDepth,
-        } : null,
-      };
-      const softwareRenderer = [
-        webgl.unmaskedRenderer,
-        webgl.renderer,
-        webgl.unmaskedVendor,
-        webgl.vendor,
-      ].map((value) => String(value ?? '').toLowerCase()).join(' ');
-      const isSoftwareRenderer = [
-        'swiftshader',
-        'llvmpipe',
-        'software rasterizer',
-        'software renderer',
-        'microsoft basic render',
-        'basic render driver',
-        'warp',
-        'mesa offscreen',
-      ].some((pattern) => softwareRenderer.includes(pattern));
-      const renderScale = typeof gm.renderHardwareScalingLevel === 'number'
-        ? gm.renderHardwareScalingLevel
-        : typeof engine.getHardwareScalingLevel === 'function'
-          ? engine.getHardwareScalingLevel()
-          : null;
-      const flags = [];
-      const context = String(webgl.context ?? '');
-      if (!context || context === 'unavailable') flags.push('webgl-unavailable');
-      if (context === 'webgl') flags.push('webgl1-context');
-      if (browser.brave === true) flags.push('brave-browser');
-      if (!webgl.unmaskedRenderer) flags.push('renderer-info-masked');
-      if (isSoftwareRenderer) flags.push('software-renderer-likely');
-      const fps = typeof sample?.fps === 'number' && Number.isFinite(sample.fps) ? sample.fps : null;
-      if (canvas && window.devicePixelRatio >= 1.5 && (!renderScale || renderScale <= 1)) {
-        const renderPixels = canvas.width * canvas.height;
-        const clientPixels = canvas.clientWidth * canvas.clientHeight;
-        if (renderPixels > clientPixels * 1.4) flags.push('high-dpr-render-target');
-      }
-      if (fps !== null && fps < 50) {
-        flags.push('low-fps-measured');
-        if (browser.brave === true) flags.push('brave-low-fps');
-        if (!isSoftwareRenderer && context && context !== 'unavailable') flags.push('low-fps-with-hardware-renderer');
-        if (renderScale !== null && renderScale >= 1.99) flags.push('low-fps-after-render-scale');
-        if (renderScale !== null && renderScale >= 2.99) flags.push('emergency-render-scale');
-      }
-
-      const bucketName = (name) => {
-        const value = name || '<unnamed>';
-        const placed = /^(placed)_-?\\d+,-?\\d+_\\d+_(.+)$/.exec(value);
-        if (placed) return (placed[1] + '_*_' + placed[2]).slice(0, 56);
-        const thin = /^(thin)_-?\\d+,-?\\d+_(.+)$/.exec(value);
-        if (thin) return (thin[1] + '_*_' + thin[2]).slice(0, 56);
-        const npc = /^(npc3dsrc)_(.+)_\\d+_(.+)$/.exec(value);
-        if (npc) return (npc[1] + '_' + npc[2] + '_*_' + npc[3]).slice(0, 56);
-        return value.replace(/_[0-9]+_[0-9]+.*/, '_*').replace(/_[0-9]+$/, '_*').slice(0, 56);
-      };
-      const grouped = (items, limit = 30) => {
-        const counts = new Map();
-        for (const mesh of items) {
-          const key = bucketName(mesh?.name);
-          const prev = counts.get(key) || { count: 0, vertices: 0, indices: 0, instances: 0, effectiveVertices: 0, effectiveIndices: 0 };
-          const vertices = typeof mesh?.getTotalVertices === 'function' ? mesh.getTotalVertices() : 0;
-          const indices = typeof mesh?.getTotalIndices === 'function' ? mesh.getTotalIndices() : 0;
-          const instances = thinInstanceCount(mesh);
-          const multiplier = instances > 0 ? instances : 1;
-          prev.count++;
-          prev.vertices += vertices;
-          prev.indices += indices;
-          prev.instances += instances;
-          prev.effectiveVertices += vertices * multiplier;
-          prev.effectiveIndices += indices * multiplier;
-          counts.set(key, prev);
-        }
-        return Array.from(counts, ([name, value]) => ({ name, ...value }))
-          .sort((a, b) => b.effectiveVertices - a.effectiveVertices || b.effectiveIndices - a.effectiveIndices || b.vertices - a.vertices || b.count - a.count)
-          .slice(0, limit);
-      };
-      const groupedPlacedChunks = (items, limit = 30) => {
-        const counts = new Map();
-        for (const mesh of items) {
-          const match = /^(?:placed|thin)_(-?\\d+,-?\\d+)_/.exec(mesh?.name || '');
-          if (!match) continue;
-          counts.set(match[1], (counts.get(match[1]) || 0) + 1);
-        }
-        return Array.from(counts, ([chunk, count]) => ({ chunk, count }))
-          .sort((a, b) => b.count - a.count)
-          .slice(0, limit);
-      };
-      const enabledMeshes = meshes.filter((mesh) => typeof mesh?.isEnabled !== 'function' || mesh.isEnabled());
-      const disabledMeshes = meshes.filter((mesh) => typeof mesh?.isEnabled === 'function' && !mesh.isEnabled());
-      const pickableMeshes = meshes.filter((mesh) => !!mesh?.isPickable);
-      const activePickableMeshes = activeArray.filter((mesh) => !!mesh?.isPickable);
-      const sceneBudget = {
-        summary: {
-          meshes: meshes.length,
-          activeMeshes: activeArray.length,
-          enabledMeshes: enabledMeshes.length,
-          pickableMeshes: pickableMeshes.length,
-          activePickableMeshes: activePickableMeshes.length,
-          frozenWorldMatrices: meshes.filter((mesh) => !!mesh?._isWorldMatrixFrozen).length,
-          doNotSyncBoundingInfo: meshes.filter((mesh) => !!mesh?.doNotSyncBoundingInfo).length,
-          transformNodes: scene.transformNodes?.length ?? null,
-          materials: scene.materials?.length ?? null,
-          textures: scene.textures?.length ?? null,
-          skeletons: scene.skeletons?.length ?? null,
-          animationGroups: scene.animationGroups?.length ?? null,
-          activeAnimatables: scene._activeAnimatables?.length ?? null,
-          playingAnimationGroups: scene.animationGroups?.filter((group) => group.isPlaying).length ?? null,
-          particleSystems: scene.particleSystems?.length ?? null,
-        },
-        activeByName: grouped(activeArray),
-        enabledByName: grouped(enabledMeshes),
-        disabledByName: grouped(disabledMeshes),
-        enabledNotFrozenByName: grouped(enabledMeshes.filter((mesh) => !mesh?._isWorldMatrixFrozen)),
-        enabledPlacedByChunk: groupedPlacedChunks(enabledMeshes),
-        activePlacedByChunk: groupedPlacedChunks(activeArray),
-        pickableByName: grouped(pickableMeshes),
-        activePickableByName: grouped(activePickableMeshes),
-        playingAnimationGroups: (scene.animationGroups || [])
-          .filter((group) => group.isPlaying)
-          .map((group) => ({
-            name: group.name,
-            targetedAnimations: group.targetedAnimations?.length ?? null,
-            animatables: group._animatables?.length ?? null,
-          }))
-          .sort((a, b) => (b.animatables ?? 0) - (a.animatables ?? 0) || (b.targetedAnimations ?? 0) - (a.targetedAnimations ?? 0))
-          .slice(0, 30),
-      };
-      const groundMeshes = meshes.filter((mesh) => /^chunk_-?\\d+_-?\\d+$/.test(mesh?.name || ''));
-      const grassMeshes = meshes.filter((mesh) => /^chunk_grass_/.test(mesh?.name || '') || mesh?.name === 'terrain_grass_blades');
-      const rockMeshes = meshes.filter((mesh) => /^chunk_rocks_/.test(mesh?.name || ''));
-      const detailMeshes = [...grassMeshes, ...rockMeshes];
-      const terrainDetail = typeof gm.chunkManager?.getTerrainDetailStats === 'function'
-        ? gm.chunkManager.getTerrainDetailStats()
-        : null;
-
-      return {
-        ok: true,
-        snapshot: {
-          snapshotSource: 'profiler-fallback',
-          measuredFps: roundRate(sample?.fps),
-          measuredFrames: sample?.frames ?? null,
-          measuredDurationMs: sample?.durationMs ?? null,
-          engineFps: roundRate(typeof engine.getFps === 'function' ? engine.getFps() : null),
-          drawCalls: engine._drawCalls?.current ?? null,
-          activeMeshes: activeArray.length,
-          totalMeshes: meshes.length,
-          totalVertices: countVertices(meshes),
-          totalIndices: countIndices(meshes),
-          proceduralTerrainDetail: true,
-          renderScale,
-          baseRenderScale: typeof gm.baseHardwareScalingLevel === 'number' ? gm.baseHardwareScalingLevel : null,
-          currentMap: typeof gm.chunkManager?.getMapId === 'function' ? gm.chunkManager.getMapId() : null,
-          currentFloor: typeof gm.currentFloor === 'number' ? gm.currentFloor : null,
-          player: {
-            x: typeof gm.playerX === 'number' ? Math.round(gm.playerX * 10) / 10 : null,
-            z: typeof gm.playerZ === 'number' ? Math.round(gm.playerZ * 10) / 10 : null,
-          },
-          canvas: canvas ? {
-            width: canvas.width,
-            height: canvas.height,
-            clientWidth: canvas.clientWidth,
-            clientHeight: canvas.clientHeight,
-            devicePixelRatio: window.devicePixelRatio,
-            renderScale: canvas.dataset?.renderScale ?? (renderScale == null ? null : String(renderScale)),
-          } : null,
-          chunkMeshes: {
-            ground: groundMeshes.length,
-            detail: detailMeshes.length,
-            grass: grassMeshes.length,
-            rocks: rockMeshes.length,
-            groundDetailAttributes: groundMeshes.filter((mesh) => !!mesh?.getVerticesData?.('groundDetail')).length,
-            detailVertices: countEffectiveVertices(detailMeshes),
-            detailIndices: countEffectiveIndices(detailMeshes),
-            detailGeometryVertices: countVertices(detailMeshes),
-            detailGeometryIndices: countIndices(detailMeshes),
-            grassVertices: countEffectiveVertices(grassMeshes),
-            grassIndices: countEffectiveIndices(grassMeshes),
-            grassGeometryVertices: countVertices(grassMeshes),
-            grassGeometryIndices: countIndices(grassMeshes),
-            grassInstances: countThinInstances(grassMeshes),
-            rockVertices: countVertices(rockMeshes),
-            rockIndices: countIndices(rockMeshes),
-            terrainDetail,
-          },
-          sceneBudget,
-          diagnosticFlags: flags,
-          browser,
-          webgl,
-        },
-      };
+      const snapshot = gm.collectPerformanceSnapshot(sample || undefined);
+      return { ok: true, snapshot };
     })()
   `);
 }
 
 async function main() {
   await mkdir(outDir, { recursive: true });
-  if (!attachExistingCdp && !keepProfile) await rm(userDataDir, { recursive: true, force: true });
-  const cdpPortWasOpen = await isCdpPortOpen();
-  if (attachExistingCdp && !cdpPortWasOpen) {
-    throw new Error(`PROFILE_ATTACH_EXISTING_CDP=1 requires an already-running Chromium/Brave with --remote-debugging-port=${port}.`);
-  }
-  if (!allowExistingCdp && !attachExistingCdp && cdpPortWasOpen) {
-    throw new Error(`CDP port ${port} is already in use. Set CDP_PORT to a free port, close the other Chromium app, or set PROFILE_ALLOW_EXISTING_CDP=1 to intentionally attach.`);
-  }
-  let launchedBrowser = false;
-  if (!cdpPortWasOpen) {
-    const chromeArgs = [
-      `--remote-debugging-port=${port}`,
-      `--user-data-dir=${userDataDir}`,
-      '--no-first-run',
-      '--disable-background-timer-throttling',
-      '--disable-renderer-backgrounding',
-      '--enable-precise-memory-info',
-      ...extraBrowserArgs,
-      'about:blank',
-    ];
-    const chrome = spawn(browserBin, chromeArgs, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
-    launchedBrowser = true;
-    chrome.on('error', (error) => {
-      console.error(`[evilquest-profiler] Failed to launch ${browserBin}: ${error.message}`);
-    });
-    chrome.stderr.on('data', (data) => {
-      const text = String(data);
-      if (!text.includes('DevTools listening')) process.stderr.write(text);
-    });
-    chrome.unref();
-  }
+  if (!keepProfile) await rm(userDataDir, { recursive: true, force: true });
+  const chromeArgs = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${userDataDir}`,
+    '--no-first-run',
+    '--disable-background-timer-throttling',
+    '--disable-renderer-backgrounding',
+    '--enable-precise-memory-info',
+    ...extraBrowserArgs,
+    'about:blank',
+  ];
+  const chrome = spawn(browserBin, chromeArgs, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  chrome.on('error', (error) => {
+    console.error(`[evilquest-profiler] Failed to launch ${browserBin}: ${error.message}`);
+  });
+  chrome.stderr.on('data', (data) => {
+    const text = String(data);
+    if (!text.includes('DevTools listening')) process.stderr.write(text);
+  });
+  chrome.unref();
 
   await waitForCdp();
-  const browserDiagnostics = await captureBrowserDiagnostics();
-  printBrowserDiagnostics(browserDiagnostics);
-  const pageTarget = attachExistingCdp
-    ? await selectExistingPageTarget(url)
-    : await openFreshPageTarget('about:blank');
+  const pageTarget = await openFreshPageTarget('about:blank');
   if (!pageTarget?.webSocketDebuggerUrl) throw new Error('No debuggable Chrome page target found');
   const cdp = new CdpClient(pageTarget.webSocketDebuggerUrl);
   await cdp.open();
@@ -1109,17 +414,8 @@ async function main() {
   await cdp.send('Network.enable');
   await cdp.send('Page.enable');
   await cdp.send('Profiler.enable');
-  try {
-    await cdp.send('Runtime.setAsyncCallStackDepth', { maxDepth: 32 });
-  } catch (error) {
-    console.warn(`[evilquest-profiler] Runtime async stack depth unavailable: ${error.message}`);
-  }
+  await cdp.send('Runtime.setAsyncCallStackDepth', { maxDepth: 32 });
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: injectedProfiler });
-  await cdp.send('Runtime.evaluate', {
-    expression: injectedProfiler,
-    awaitPromise: true,
-    returnByValue: true,
-  });
   if (authToken && authUsername) {
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
       source: `
@@ -1148,42 +444,29 @@ async function main() {
       httpOnly: true,
     });
   }
-  if (!attachExistingCdp) await cdp.send('Page.navigate', { url });
-  console.log(attachExistingCdp
-    ? `Attached to existing tab: ${pageTarget.url || 'unknown URL'}`
-    : `Opened ${url} in ${cdpPortWasOpen ? 'existing browser' : browserBin}.`);
+  await cdp.send('Page.navigate', { url });
+  console.log(`Opened ${url} in ${browserBin}.`);
   if (autorun) console.log(`Autorun enabled; recording ${seconds}s immediately.`);
-  else console.log(`Type "go" to reload and record ${seconds}s, "capture" to record the current tab, or "quit" to exit.`);
+  else console.log(`Type "go" then Enter to reload and record ${seconds}s, or "quit" to exit.`);
 
   while (true) {
     const answer = autorun ? 'go' : await readCommand('profiler> ');
     if (answer === 'quit' || answer === 'exit') break;
-    const shouldReload = autorun ? reloadBeforeCapture : (answer === 'go' || answer === 'reload');
-    const shouldCaptureCurrent = autorun
-      ? !shouldReload
-      : (answer === 'capture' || answer === 'record' || answer === 'current');
-    if (!shouldReload && !shouldCaptureCurrent) continue;
+    if (answer !== 'go') continue;
 
     await cdp.send('Performance.enable');
     await cdp.send('Profiler.setSamplingInterval', { interval: 100 });
     browserLogs.length = 0;
     if (captureStartup) await cdp.send('Profiler.start');
-    if (shouldReload) await cdp.send('Page.reload', { ignoreCache: true });
+    await cdp.send('Page.reload', { ignoreCache: true });
     const gameReady = captureEvilQuestSnapshot
       ? await waitForEvilQuestGame(cdp, gameReadyTimeoutMs)
       : { ok: false, skipped: true };
-    let pageDiagnostics = await capturePageDiagnostics(cdp);
     if (captureEvilQuestSnapshot && !gameReady?.ok) {
       console.log(`[evilquest-profiler] Game snapshot wait did not finish: ${JSON.stringify(gameReady)}`);
-      printPageDiagnostics(pageDiagnostics);
     }
     if (!captureStartup) await cdp.send('Profiler.start');
-    const recordingContext = captureStartup
-      ? 'including startup'
-      : captureEvilQuestSnapshot && gameReady?.ok
-        ? 'after game ready'
-        : 'without an in-game snapshot';
-    console.log(`Recording ${seconds}s ${recordingContext}...`);
+    console.log(`Recording ${seconds}s${captureStartup ? ' including startup' : ' after game ready'}...`);
     await sleep(seconds * 1000);
     const { profile } = await cdp.send('Profiler.stop');
     const perf = await cdp.send('Performance.getMetrics');
@@ -1192,7 +475,6 @@ async function main() {
       returnByValue: true,
     });
     const browserStats = JSON.parse(statsResult.result?.value || '{}');
-    pageDiagnostics = await capturePageDiagnostics(cdp);
     const evilQuestSnapshot = captureEvilQuestSnapshot && gameReady?.ok
       ? await captureEvilQuestPerformanceSnapshot(cdp, evilQuestSnapshotMs)
       : { ok: false, skipped: true, gameReady };
@@ -1205,25 +487,14 @@ async function main() {
       url,
       browserBin,
       seconds,
-      target: {
-        attachExistingCdp,
-        cdpPortWasOpen,
-        launchedBrowser,
-        pageTargetUrl: pageTarget.url || '',
-        pageTargetTitle: pageTarget.title || '',
-      },
       capturedAt: new Date().toISOString(),
       gameReady,
-      pageDiagnostics,
-      browserDiagnostics,
       evilQuestSnapshot: evilQuestSnapshot?.ok ? evilQuestSnapshot.snapshot : evilQuestSnapshot,
       topFunctionSelfTime: functionSelfTime.slice(0, 100),
       browserSummary,
       performanceMetrics: perf.metrics || [],
     };
     await writeFile(join(runDir, 'summary.json'), JSON.stringify(summary, null, 2));
-    await writeFile(join(runDir, 'page-diagnostics.json'), JSON.stringify(pageDiagnostics, null, 2));
-    await writeFile(join(runDir, 'browser-diagnostics.json'), JSON.stringify(browserDiagnostics, null, 2));
     await writeFile(join(runDir, 'evilquest-snapshot.json'), JSON.stringify(evilQuestSnapshot, null, 2));
     await writeFile(join(runDir, 'cpu-profile.json'), JSON.stringify(profile, null, 2));
     await writeFile(join(runDir, 'browser-stats.json'), JSON.stringify(browserStats, null, 2));
@@ -1238,19 +509,21 @@ async function main() {
       console.log(`${row.totalMs.toFixed(1).padStart(8)}ms total  ${row.maxMs.toFixed(1).padStart(6)}ms max  x${String(row.count).padEnd(4)} ${row.key}`);
     }
     if (evilQuestSnapshot?.ok) {
-      printPageDiagnostics(pageDiagnostics);
-      printEvilQuestSnapshot(evilQuestSnapshot.snapshot || {});
+      const snapshot = evilQuestSnapshot.snapshot || {};
+      const flags = Array.isArray(snapshot.diagnosticFlags) ? snapshot.diagnosticFlags.join(', ') : 'none';
+      const renderer = snapshot.webgl?.unmaskedRenderer || snapshot.webgl?.renderer || 'unknown';
+      console.log('EvilQuest snapshot:');
+      console.log(`  ${snapshot.measuredFps ?? 'n/a'} FPS, ${snapshot.activeMeshes ?? 'n/a'} active meshes, ${snapshot.totalVertices ?? 'n/a'} vertices`);
+      console.log(`  Renderer: ${renderer}`);
+      console.log(`  Flags: ${flags}`);
     }
     if (autorun) break;
   }
-  if (launchedBrowser) {
-    try {
-      await cdp.send('Browser.close');
-    } catch {
-      // Browser may already be gone if the user closed it manually.
-    }
+  try {
+    await cdp.send('Browser.close');
+  } catch {
+    // Browser may already be gone if the user closed it manually.
   }
-  cdp.close();
 }
 
 main().catch((error) => {

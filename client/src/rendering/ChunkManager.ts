@@ -46,7 +46,6 @@ const ROOF_REVEAL_NEARBY_TILE_PADDING = 2;
 const ROOF_REVEAL_OBJECT_LAYER_BELOW_TOLERANCE = 0.75;
 const ROOF_REVEAL_TEXTURE_PLANE_BBOX_PADDING = 10;
 const STALL_FRAME_MATERIAL_NAMES = new Set(['material.001', 'material.002', 'material.003']);
-const DOOR_OBJECT_DEF_ID = 13;
 
 export function isRoofLikePlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
@@ -189,18 +188,6 @@ interface ChunkBuildResult {
   built: boolean;
   visible: boolean;
 }
-
-type BatchedPlacedVisualRef = {
-  mesh: Mesh;
-  index: number;
-  visibleMatrix: Matrix;
-  hiddenMatrix: Matrix;
-};
-
-type GrassBladeChunkBatch = {
-  matrices: Float32Array;
-  enabled: boolean;
-};
 
 interface ElevatedThinInstanceSource {
   mesh: Mesh;
@@ -446,7 +433,6 @@ export class ChunkManager {
   private loadingModelPromises: Map<string, Promise<TransformNode | null>> = new Map();
   private modelAnimationGroups: Map<string, AnimationGroup[]> = new Map();
   private placedObjectAnimationGroups: WeakMap<TransformNode, AnimationGroup[]> = new WeakMap();
-  private placedObjectVisualRefs: WeakMap<TransformNode, BatchedPlacedVisualRef[]> = new WeakMap();
   private oneShotPlacedAnimationGroups: WeakSet<AnimationGroup> = new WeakSet();
   private activeAnimationGroups: AnimationGroup[] = [];
   private textureCache: Map<string, Texture> = new Map();
@@ -468,16 +454,6 @@ export class ChunkManager {
   private chunkRoofThinInstSources: Map<string, Mesh[]> = new Map();
   private chunkElevatedThinInstSources: Map<string, ElevatedThinInstanceSource[]> = new Map();
   private chunkStructuralThinInstSources: Map<string, ElevatedThinInstanceSource[]> = new Map();
-  private grassBladeBatch: Mesh | null = null;
-  private grassBladeChunks: Map<string, GrassBladeChunkBatch> = new Map();
-  private grassBladeBatchDirty: boolean = false;
-  private grassBladeBatchRebuildScheduled: boolean = false;
-  private grassBladeBatchRebuilds: number = 0;
-  private grassBladeBatchLastRebuildMs: number = 0;
-  private grassBladeBatchMaxRebuildMs: number = 0;
-  private grassBladeBatchTotalRebuildMs: number = 0;
-  private grassBladeBatchLastInstances: number = 0;
-  private grassBladeBatchLastBufferBytes: number = 0;
 
   private doorEdgeKey(floor: number, tileIdx: number): string {
     return `${Math.floor(floor)}:${tileIdx}`;
@@ -515,34 +491,6 @@ export class ChunkManager {
   getMeta(): MapMeta | null { return this.meta; }
   getMapWidth(): number { return this.mapWidth; }
   getMapHeight(): number { return this.mapHeight; }
-
-  getTerrainDetailStats(): Record<string, unknown> {
-    let totalGrassInstances = 0;
-    let enabledGrassInstances = 0;
-    let enabledGrassChunks = 0;
-    for (const chunk of this.grassBladeChunks.values()) {
-      const instances = chunk.matrices.length / 16;
-      totalGrassInstances += instances;
-      if (chunk.enabled) {
-        enabledGrassChunks++;
-        enabledGrassInstances += instances;
-      }
-    }
-    return {
-      grassBladeChunks: this.grassBladeChunks.size,
-      grassBladeEnabledChunks: enabledGrassChunks,
-      grassBladeStoredInstances: totalGrassInstances,
-      grassBladeEnabledInstances: enabledGrassInstances,
-      grassBladeBatchDirty: this.grassBladeBatchDirty,
-      grassBladeBatchRebuildScheduled: this.grassBladeBatchRebuildScheduled,
-      grassBladeBatchRebuilds: this.grassBladeBatchRebuilds,
-      grassBladeBatchLastRebuildMs: Math.round(this.grassBladeBatchLastRebuildMs * 100) / 100,
-      grassBladeBatchMaxRebuildMs: Math.round(this.grassBladeBatchMaxRebuildMs * 100) / 100,
-      grassBladeBatchTotalRebuildMs: Math.round(this.grassBladeBatchTotalRebuildMs * 100) / 100,
-      grassBladeBatchLastInstances: this.grassBladeBatchLastInstances,
-      grassBladeBatchLastBufferBytes: this.grassBladeBatchLastBufferBytes,
-    };
-  }
 
   private scheduleNextFrame(callback: FrameRequestCallback): void {
     if (typeof requestAnimationFrame === 'function') {
@@ -583,12 +531,12 @@ export class ChunkManager {
 
   private ensureTerrainDetailMaterials(): void {
     if (!this.grassBladeMat) {
-      // Upright grass strands are only seam accents. They are unlit vertex-color
-      // triangles; the ground shader carries the actual grass texture.
+      // Upright grass strands. Brighter emissive than ground so the thin, mostly
+      // edge-on blades still read as lit grass; double-sided since each blade is
+      // a single triangle.
       this.grassBladeMat = new StandardMaterial('chunkGrassBladeMat', this.scene);
       this.grassBladeMat.specularColor = new Color3(0, 0, 0);
-      this.grassBladeMat.emissiveColor = new Color3(0, 0, 0);
-      this.grassBladeMat.disableLighting = true;
+      this.grassBladeMat.emissiveColor = new Color3(0.35, 0.35, 0.35);
       this.grassBladeMat.backFaceCulling = false;
     }
     if (!this.stoneRockMat) {
@@ -686,6 +634,7 @@ export class ChunkManager {
     if (this.chunkMeshesEnabled.get(chunkKey) === enabled) return false;
     this.chunkMeshesEnabled.set(chunkKey, enabled);
     meshes.ground.setEnabled(enabled);
+    meshes.grassBlades?.setEnabled(enabled);
     meshes.stoneRocks?.setEnabled(enabled);
     for (const overlay of meshes.overlays) overlay.setEnabled(enabled);
     meshes.water?.setEnabled(enabled);
@@ -705,7 +654,6 @@ export class ChunkManager {
         floorSet.stairs?.setEnabled(false);
       }
     }
-    this.setGrassBladeChunkEnabled(chunkKey, enabled);
     return true;
   }
 
@@ -719,7 +667,7 @@ export class ChunkManager {
   private disposeChunkMeshes(key: string, meshes: ChunkMeshes): void {
     this.clearRoofObjectGridForChunk(this.terrainRoofChunkKey(key));
     meshes.ground.dispose();
-    this.unregisterGrassBladeChunk(key);
+    meshes.grassBlades?.dispose();
     meshes.stoneRocks?.dispose();
     this.disposeChunkTextureOverlays(key);
     meshes.water?.dispose();
@@ -1808,15 +1756,13 @@ export class ChunkManager {
   }
 
   private buildChunkMeshes(chunkX: number, chunkZ: number): ChunkMeshes {
-    const chunkKey = `${chunkX},${chunkZ}`;
     const startX = chunkX * CHUNK_SIZE;
     const startZ = chunkZ * CHUNK_SIZE;
     const endX = Math.min(startX + CHUNK_SIZE, this.mapWidth);
     const endZ = Math.min(startZ + CHUNK_SIZE, this.mapHeight);
 
     const ground = this.buildGroundMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
-    this.registerGrassBladeChunk(chunkKey, this.buildGrassBladeMatrices(startX, startZ, endX, endZ), false);
-    const grassBlades = null;
+    const grassBlades = this.buildGrassBladeMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
     const stoneRocks = this.buildStoneRockMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
     const overlays = this.buildTextureOverlays(chunkX, chunkZ, startX, startZ, endX, endZ);
     const water = this.buildWaterMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
@@ -2105,8 +2051,12 @@ export class ChunkManager {
 
   // --- Grass strands: sparse upright blades on grass tiles ---
 
-  private buildGrassBladeMatrices(startX: number, startZ: number, endX: number, endZ: number): Float32Array {
-    const matrices: number[] = [];
+  private buildGrassBladeMesh(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number): Mesh | null {
+    const positions: number[] = [];
+    const indices: number[] = [];
+    const colors: number[] = [];
+    let vi = 0;
+
     // Deterministic per-position pseudo-random in [0,1) so blades don't shimmer
     // or change between chunk rebuilds.
     const rand = (a: number, b: number): number => {
@@ -2115,11 +2065,16 @@ export class ChunkManager {
     };
 
     // The fragment shader already gives grass its continuous fine pattern.
-    // These triangles are only silhouette/accent detail at ground-type seams;
-    // open fields stay shader-only so grass does not add a draw for every chunk.
-    const BOUNDARY_BLADES_PER_TILE = 1;
+    // These triangles are only silhouette/accent detail, so keep them sparse:
+    // dense per-tile blades were adding hundreds of thousands of vertices around
+    // spawn and showed large GPU variance between Chromium builds.
+    const INTERIOR_BLADE_TILE_CHANCE = 0.07;
+    const INTERIOR_BLADES_PER_SELECTED_TILE = 1;
+    const BOUNDARY_BLADES_PER_TILE = 2;
     const EDGE_SPILL_BLADES = 1;
     const HALF_WIDTH = 0.035;
+    const base = groundColor('grass', 0.80);
+    const tip = groundColor('grass', 1.18);
 
     // Emit one blade at world (bx,bz); uses tile (tx,tz) corner heights for ground Y.
     const emitBlade = (bx: number, bz: number, h: { tl: number; tr: number; bl: number; br: number }, tx: number, tz: number, seed: number): void => {
@@ -2131,12 +2086,10 @@ export class ChunkManager {
       const height = 0.14 + rand(tx + seed * 7, tz * 3) * 0.18;
       const leanX = (rand(tx * 2 + seed, tz) - 0.5) * 0.16;
       const leanZ = (rand(tz * 2 + 5, tx + seed) - 0.5) * 0.16;
-      matrices.push(
-        HALF_WIDTH, 0, 0, 0,
-        leanX, height, leanZ, 0,
-        0, 0, HALF_WIDTH, 0,
-        bx, by, bz, 1,
-      );
+      positions.push(bx - HALF_WIDTH, by, bz, bx + HALF_WIDTH, by, bz, bx + leanX, by + height, bz + leanZ);
+      colors.push(base.r, base.g, base.b, 1, base.r, base.g, base.b, 1, tip.r, tip.g, tip.b, 1);
+      indices.push(vi, vi + 1, vi + 2);
+      vi += 3;
     };
 
     const isGrass = (tx: number, tz: number): boolean =>
@@ -2155,10 +2108,12 @@ export class ChunkManager {
         if (tileType !== 'grass') continue;
 
         const hasNonGrassNeighbor = EDGES.some(([dx, dz]) => !isGrass(x + dx, z + dz));
-        if (!hasNonGrassNeighbor) continue;
+        const interiorBlades = hasNonGrassNeighbor
+          ? BOUNDARY_BLADES_PER_TILE
+          : (rand(x * 11 + 19, z * 11 + 23) < INTERIOR_BLADE_TILE_CHANCE ? INTERIOR_BLADES_PER_SELECTED_TILE : 0);
 
         const h = this.getTileCornerHeights(x, z);
-        for (let b = 0; b < BOUNDARY_BLADES_PER_TILE; b++) {
+        for (let b = 0; b < interiorBlades; b++) {
           const bx = x + 0.15 + rand(x * 4 + b, z * 4) * 0.7;
           const bz = z + 0.15 + rand(x * 4 + b + 31, z * 4 + 17) * 0.7;
           emitBlade(bx, bz, h, x, z, b);
@@ -2186,116 +2141,21 @@ export class ChunkManager {
       }
     }
 
-    return Float32Array.from(matrices);
-  }
+    if (positions.length === 0) return null;
 
-  private ensureGrassBladeBatch(): Mesh {
-    if (this.grassBladeBatch && !this.grassBladeBatch.isDisposed()) return this.grassBladeBatch;
-    const base = groundColor('grass', 0.80);
-    const tip = groundColor('grass', 1.18);
-    const mesh = new Mesh('terrain_grass_blades', this.scene);
+    const mesh = new Mesh(`chunk_grass_${chunkX}_${chunkZ}`, this.scene);
     const vertexData = new VertexData();
-    vertexData.positions = [-1, 0, 0, 1, 0, 0, 0, 1, 0];
-    vertexData.indices = [0, 1, 2];
-    vertexData.colors = [
-      base.r, base.g, base.b, 1,
-      base.r, base.g, base.b, 1,
-      tip.r, tip.g, tip.b, 1,
-    ];
+    vertexData.positions = positions;
+    vertexData.indices = indices;
+    vertexData.colors = colors;
+    const normals: number[] = [];
+    VertexData.ComputeNormals(positions, indices, normals);
+    vertexData.normals = normals;
     vertexData.applyToMesh(mesh);
     mesh.material = this.grassBladeMat;
     mesh.hasVertexAlpha = false;
     mesh.isPickable = false;
-    mesh.setEnabled(false);
-    mesh.freezeWorldMatrix();
-    this.grassBladeBatch = mesh;
     return mesh;
-  }
-
-  private registerGrassBladeChunk(chunkKey: string, matrices: Float32Array, enabled: boolean): void {
-    this.grassBladeChunks.set(chunkKey, { matrices, enabled });
-    this.markGrassBladeBatchDirty();
-  }
-
-  private setGrassBladeChunkEnabled(chunkKey: string, enabled: boolean): void {
-    const chunk = this.grassBladeChunks.get(chunkKey);
-    if (!chunk || chunk.enabled === enabled) return;
-    chunk.enabled = enabled;
-    this.markGrassBladeBatchDirty();
-  }
-
-  private unregisterGrassBladeChunk(chunkKey: string): void {
-    if (!this.grassBladeChunks.delete(chunkKey)) return;
-    this.markGrassBladeBatchDirty();
-  }
-
-  private markGrassBladeBatchDirty(): void {
-    this.grassBladeBatchDirty = true;
-    if (this.grassBladeBatchRebuildScheduled) return;
-    this.grassBladeBatchRebuildScheduled = true;
-    const generation = this.loadMapToken;
-    this.scheduleNextFrame(() => {
-      this.grassBladeBatchRebuildScheduled = false;
-      if (generation !== this.loadMapToken || !this.grassBladeBatchDirty) return;
-      this.grassBladeBatchDirty = false;
-      this.rebuildGrassBladeBatchNow();
-    });
-  }
-
-  private rebuildGrassBladeBatchNow(): void {
-    const startedAt = performance.now();
-    const mesh = this.ensureGrassBladeBatch();
-    let instanceCount = 0;
-    for (const chunk of this.grassBladeChunks.values()) {
-      if (chunk.enabled) instanceCount += chunk.matrices.length / 16;
-    }
-    if (instanceCount === 0) {
-      mesh.thinInstanceSetBuffer('matrix', null);
-      mesh.thinInstanceCount = 0;
-      this.recordGrassBladeBatchRebuild(startedAt, 0, 0);
-      mesh.setEnabled(false);
-      return;
-    }
-
-    const matrixBuffer = new Float32Array(instanceCount * 16);
-    let offset = 0;
-    for (const chunk of this.grassBladeChunks.values()) {
-      if (!chunk.enabled) continue;
-      matrixBuffer.set(chunk.matrices, offset);
-      offset += chunk.matrices.length;
-    }
-    mesh.thinInstanceSetBuffer('matrix', matrixBuffer, 16, true);
-    mesh.thinInstanceCount = instanceCount;
-    mesh.thinInstanceRefreshBoundingInfo(true);
-    mesh.doNotSyncBoundingInfo = true;
-    mesh.setEnabled(true);
-    this.recordGrassBladeBatchRebuild(startedAt, instanceCount, matrixBuffer.byteLength);
-  }
-
-  private recordGrassBladeBatchRebuild(startedAt: number, instanceCount: number, bufferBytes: number): void {
-    const durationMs = performance.now() - startedAt;
-    this.grassBladeBatchRebuilds++;
-    this.grassBladeBatchLastRebuildMs = durationMs;
-    this.grassBladeBatchMaxRebuildMs = Math.max(this.grassBladeBatchMaxRebuildMs, durationMs);
-    this.grassBladeBatchTotalRebuildMs += durationMs;
-    this.grassBladeBatchLastInstances = instanceCount;
-    this.grassBladeBatchLastBufferBytes = bufferBytes;
-  }
-
-  private disposeGrassBladeBatch(): void {
-    this.grassBladeBatchDirty = false;
-    this.grassBladeBatchRebuildScheduled = false;
-    this.grassBladeBatchRebuilds = 0;
-    this.grassBladeBatchLastRebuildMs = 0;
-    this.grassBladeBatchMaxRebuildMs = 0;
-    this.grassBladeBatchTotalRebuildMs = 0;
-    this.grassBladeBatchLastInstances = 0;
-    this.grassBladeBatchLastBufferBytes = 0;
-    this.grassBladeChunks.clear();
-    if (this.grassBladeBatch && !this.grassBladeBatch.isDisposed()) {
-      this.grassBladeBatch.dispose();
-    }
-    this.grassBladeBatch = null;
   }
 
   // --- Stone pebbles: small round rocks scattered on stone-family ground ---
@@ -3297,21 +3157,6 @@ export class ChunkManager {
     return this.placedObjectNodeSet.has(node);
   }
 
-  setPlacedObjectVisualEnabled(node: TransformNode, enabled: boolean): boolean {
-    const refs = this.placedObjectVisualRefs.get(node);
-    if (!refs || refs.length === 0) return false;
-
-    const touched = new Set<Mesh>();
-    for (const ref of refs) {
-      ref.mesh.thinInstanceSetMatrixAt(ref.index, enabled ? ref.visibleMatrix : ref.hiddenMatrix, false);
-      touched.add(ref.mesh);
-    }
-    for (const mesh of touched) {
-      mesh.thinInstanceBufferUpdated('matrix');
-    }
-    return true;
-  }
-
   /** Check if any placed GLB object exists near a world position */
   hasPlacedObjectNear(x: number, z: number, radius: number): boolean {
     return this.findPlacedObjectNear(x, z, radius) !== null;
@@ -4054,10 +3899,6 @@ export class ChunkManager {
         : Texture.NEAREST_SAMPLINGMODE;
       const alphaBlend = assetDef.alphaBlend;
       for (const mesh of result.meshes) {
-        if (mesh.getTotalVertices() === 0) {
-          mesh.isVisible = false;
-          mesh.isPickable = false;
-        }
         const mat = mesh.material;
         if (mat && 'diffuseTexture' in mat && (mat as any).diffuseTexture) {
           (mat as any).diffuseTexture.updateSamplingMode(samplingMode);
@@ -4175,60 +4016,6 @@ export class ChunkManager {
     // 'stone wall door2' or 'stone_wall_door' don't — catch them by name.
     if (obj.assetId.toLowerCase().includes('door')) return false;
     return true;
-  }
-
-  private canBatchPlacedObjectVisual(obj: PlacedObject): boolean {
-    const objectDefId = objectDefIdForPlacedAsset(obj.assetId);
-    if (objectDefId == null) return false;
-    if (objectDefId === DOOR_OBJECT_DEF_ID) return false;
-    if (this.modelAnimationGroups.has(obj.assetId)) return false;
-    if (this.isRoofLikeAsset(obj.assetId)) return false;
-    if (this.isAlphaBlendAsset(obj.assetId)) return false;
-    // Door-like decorative frames can share names with interactable objects.
-    // Keep any door-named asset unique so pick metadata and door pivots remain
-    // tied to the actual transform hierarchy.
-    if (obj.assetId.toLowerCase().includes('door')) return false;
-    return true;
-  }
-
-  private createPlacedObjectPlaceholder(chunkKey: string, idx: number, obj: PlacedObject): TransformNode {
-    const root = new TransformNode(`placed_${chunkKey}_${idx}_${obj.assetId}_placeholder`, this.scene);
-    root.position = new Vector3(obj.position.x, obj.position.y, obj.position.z);
-    const { x: orx, y: ory, z: orz } = obj.rotation;
-    root.rotationQuaternion = Quaternion.FromEulerAngles(orx, ory, orz);
-    const scaleBoost = this.getPlacedObjectScaleBoost(obj.assetId);
-    root.scaling = new Vector3(obj.scale.x * scaleBoost, obj.scale.y * scaleBoost, obj.scale.z * scaleBoost);
-    root.metadata = {
-      ...root.metadata,
-      assetId: obj.assetId,
-      chunkKey,
-      placedX: obj.position.x,
-      placedY: obj.position.y,
-      placedZ: obj.position.z,
-      interactionActions: this.placedObjectInteractionActions(obj),
-      interactions: Array.isArray(obj.interactions) && obj.interactions.length > 0 ? obj.interactions : undefined,
-      placedName: obj.name,
-      isNoRoof: obj.noRoof === true,
-    } satisfies PlacedObjectNodeMetadata;
-    root.setEnabled(false);
-    root.freezeWorldMatrix();
-    return root;
-  }
-
-  private addPlacedObjectNode(root: TransformNode, obj: PlacedObject, nodes: TransformNode[]): void {
-    nodes.push(root);
-    this.placedObjectNodes.push(root);
-    this.placedObjectNodeSet.add(root);
-
-    if (objectDefIdForPlacedAsset(obj.assetId) != null) {
-      const gridKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
-      let nodesAtTile = this.placedObjectGrid.get(gridKey);
-      if (!nodesAtTile) {
-        nodesAtTile = [];
-        this.placedObjectGrid.set(gridKey, nodesAtTile);
-      }
-      nodesAtTile.push(root);
-    }
   }
 
   private placedObjectInteractionActions(obj: PlacedObject): string[] | undefined {
@@ -4617,8 +4404,8 @@ export class ChunkManager {
       return true;
     };
 
-    // Split into thin-instanceable static scenery, batched world-object
-    // visuals with placeholder roots, and regular animated/door hierarchies.
+    // Split into thin-instanceable static scenery vs regular interactable,
+    // animated, door, and stair hierarchies.
     // Need to load templates first so canThinInstance can check for animations.
     const templateAssetIds = new Set<string>();
     for (const obj of renderableObjects) {
@@ -4647,19 +4434,9 @@ export class ChunkManager {
     type ThinGroup = { assetId: string; visibility: 'ground' | 'elevated' | 'roof'; placements: PlacedObject[] };
     const regularObjects: PlacedObject[] = [];
     const thinGroups = new Map<string, ThinGroup>();
-    const batchedVisualGroups = new Map<string, ThinGroup>();
     for (const obj of renderableObjects) {
       if (!this.loadedModelCache.get(obj.assetId)) continue;
-      if (this.canBatchPlacedObjectVisual(obj)) {
-        const visibility = this.getThinVisibilityClass(obj);
-        const groupKey = placedObjectThinGroupKey(obj.assetId, visibility, obj.position.y);
-        let group = batchedVisualGroups.get(groupKey);
-        if (!group) {
-          group = { assetId: obj.assetId, visibility, placements: [] };
-          batchedVisualGroups.set(groupKey, group);
-        }
-        group.placements.push(obj);
-      } else if (this.canThinInstance(obj)) {
+      if (this.canThinInstance(obj)) {
         const visibility = this.getThinVisibilityClass(obj);
         const groupKey = placedObjectThinGroupKey(obj.assetId, visibility, obj.position.y);
         let group = thinGroups.get(groupKey);
@@ -4727,18 +4504,6 @@ export class ChunkManager {
     };
     const _tmpMatrix = Matrix.Identity();
     const _placementMatrix = Matrix.Identity();
-    let placedNodeIndex = 0;
-    const batchedPlaceholderByObject = new Map<PlacedObject, TransformNode>();
-
-    for (const { placements } of batchedVisualGroups.values()) {
-      for (const obj of placements) {
-        const root = this.createPlacedObjectPlaceholder(chunkKey, placedNodeIndex++, obj);
-        batchedPlaceholderByObject.set(obj, root);
-        this.addPlacedObjectNode(root, obj, nodes);
-        await this.yieldIfFrameBudgetSpent(workSlice);
-        if (abortPartialLoadIfStopped()) return;
-      }
-    }
 
     for (const { assetId, visibility, placements } of thinGroups.values()) {
       const template = this.loadedModelCache.get(assetId)!;
@@ -4754,7 +4519,7 @@ export class ChunkManager {
         : null;
 
       for (const { sourceMesh, baseMatrix } of baseEntries) {
-        const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null, true)!;
+        const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null)!;
         src.parent = null;
         src.position.set(0, 0, 0);
         src.rotation.set(0, 0, 0);
@@ -4796,7 +4561,6 @@ export class ChunkManager {
           ));
         }
         src.doNotSyncBoundingInfo = true;
-        src.freezeWorldMatrix();
         src.metadata = { ...(src.metadata ?? {}), assetId, chunkKey };
         thinSources.push(src);
         if (visibility === 'roof') roofThinSources.push(src);
@@ -4810,95 +4574,18 @@ export class ChunkManager {
         if (abortPartialLoadIfStopped()) return;
       }
     }
-
-    for (const { assetId, placements } of batchedVisualGroups.values()) {
-      const template = this.loadedModelCache.get(assetId)!;
-      const baseEntries = this.getTemplateBaseMatrices(assetId, template);
-      if (baseEntries.length === 0) continue;
-
-      const scaleBoost = this.getPlacedObjectScaleBoost(assetId);
-      const placeholders = placements.map(obj => batchedPlaceholderByObject.get(obj) ?? null);
-
-      for (const { sourceMesh, baseMatrix } of baseEntries) {
-        const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null, true)!;
-        src.parent = null;
-        src.position.set(0, 0, 0);
-        src.rotation.set(0, 0, 0);
-        src.rotationQuaternion = null;
-        src.scaling.set(1, 1, 1);
-        src.setEnabled(false);
-        if (src instanceof Mesh) src.makeGeometryUnique();
-        const mat = src.material;
-        if (mat) this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(assetId), true);
-        src.isPickable = false;
-
-        for (let i = 0; i < placements.length; i++) {
-          const obj = placements[i];
-          const root = placeholders[i];
-          if (!root) continue;
-
-          this.composePlacedObjectMatrix(obj, scaleBoost, _placementMatrix);
-          baseMatrix.multiplyToRef(_placementMatrix, _tmpMatrix);
-          const index = src.thinInstanceAdd(_tmpMatrix, false);
-          if (index >= 0) {
-            const hiddenMatrix = Matrix.Compose(
-              TmpVectors.Vector3[2].set(0, 0, 0),
-              Quaternion.Identity(),
-              TmpVectors.Vector3[3].set(obj.position.x, obj.position.y, obj.position.z),
-            );
-            const refs = this.placedObjectVisualRefs.get(root) ?? [];
-            refs.push({
-              mesh: src,
-              index,
-              visibleMatrix: _tmpMatrix.clone(),
-              hiddenMatrix,
-            });
-            this.placedObjectVisualRefs.set(root, refs);
-          }
-
-          await this.yieldIfFrameBudgetSpent(workSlice);
-          if (abortPartialLoadIfStopped()) return;
-        }
-
-        src.thinInstanceBufferUpdated('matrix');
-        const pad = 5;
-        let bMinX = Infinity, bMinY = Infinity, bMinZ = Infinity;
-        let bMaxX = -Infinity, bMaxY = -Infinity, bMaxZ = -Infinity;
-        const matBuf = (src as any)._thinInstanceDataStorage?.matrixData;
-        if (matBuf) {
-          for (let i = 0; i < src.thinInstanceCount; i++) {
-            const tx = matBuf[i * 16 + 12], ty = matBuf[i * 16 + 13], tz = matBuf[i * 16 + 14];
-            if (tx - pad < bMinX) bMinX = tx - pad;
-            if (ty - pad < bMinY) bMinY = ty - pad;
-            if (tz - pad < bMinZ) bMinZ = tz - pad;
-            if (tx + pad > bMaxX) bMaxX = tx + pad;
-            if (ty + pad > bMaxY) bMaxY = ty + pad;
-            if (tz + pad > bMaxZ) bMaxZ = tz + pad;
-          }
-          src.setBoundingInfo(new BoundingInfo(
-            new Vector3(bMinX, bMinY, bMinZ),
-            new Vector3(bMaxX, bMaxY, bMaxZ)
-          ));
-        }
-        src.doNotSyncBoundingInfo = true;
-        src.freezeWorldMatrix();
-        src.metadata = { ...(src.metadata ?? {}), assetId, chunkKey };
-        thinSources.push(src);
-        await this.yieldIfFrameBudgetSpent(workSlice);
-        if (abortPartialLoadIfStopped()) return;
-      }
-    }
     this.chunkThinInstSources.set(chunkKey, thinSources);
     if (roofThinSources.length > 0) this.chunkRoofThinInstSources.set(chunkKey, roofThinSources);
     if (elevatedThinSources.length > 0) this.chunkElevatedThinInstSources.set(chunkKey, elevatedThinSources);
     if (structuralThinSources.length > 0) this.chunkStructuralThinInstSources.set(chunkKey, structuralThinSources);
 
     // --- Regular instances: interactable, animated, doors, stairs ---
+    let idx = 0;
     for (const obj of regularObjects) {
       const template = this.loadedModelCache.get(obj.assetId)!;
 
       const instance = template.instantiateHierarchy(null, undefined, (source, cloned) => {
-        cloned.name = `placed_${chunkKey}_${placedNodeIndex}_${source.name}`;
+        cloned.name = `placed_${chunkKey}_${idx}_${source.name}`;
       });
       if (!instance) continue;
       instance.setEnabled(false);
@@ -4920,11 +4607,11 @@ export class ChunkManager {
         clonedNodes.set(instance.name, instance);
 
         for (const srcGroup of templateAnims) {
-          const clonedGroup = new AnimationGroup(`${srcGroup.name}_${chunkKey}_${placedNodeIndex}`, this.scene);
+          const clonedGroup = new AnimationGroup(`${srcGroup.name}_${chunkKey}_${idx}`, this.scene);
           for (const ta of srcGroup.targetedAnimations) {
             const srcName = ta.target?.name as string;
             const clonedTarget = srcName
-              ? clonedNodes.get(`placed_${chunkKey}_${placedNodeIndex}_${srcName}`)
+              ? clonedNodes.get(`placed_${chunkKey}_${idx}_${srcName}`)
               : null;
             if (clonedTarget) {
               clonedGroup.addTargetedAnimation(ta.animation, clonedTarget);
@@ -4979,10 +4666,22 @@ export class ChunkManager {
         }
       }
 
-      this.addPlacedObjectNode(root, obj, nodes);
+      nodes.push(root);
       if (instanceAnims.length > 0) this.placedObjectAnimationGroups.set(root, instanceAnims);
+      this.placedObjectNodes.push(root);
+      this.placedObjectNodeSet.add(root);
 
-      placedNodeIndex++;
+      if (objectDefIdForPlacedAsset(obj.assetId) != null) {
+        const gridKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
+        let nodesAtTile = this.placedObjectGrid.get(gridKey);
+        if (!nodesAtTile) {
+          nodesAtTile = [];
+          this.placedObjectGrid.set(gridKey, nodesAtTile);
+        }
+        nodesAtTile.push(root);
+      }
+
+      idx++;
       await this.yieldIfFrameBudgetSpent(workSlice);
       if (abortPartialLoadIfStopped()) return;
     }
@@ -6503,7 +6202,6 @@ export class ChunkManager {
     this.overlayMatCache.clear();
     for (const [, m] of this.texPlaneMaterialCache) m.dispose();
     this.texPlaneMaterialCache.clear();
-    this.disposeGrassBladeBatch();
 
     for (const [, meshes] of this.chunks) {
       meshes.ground.dispose();
