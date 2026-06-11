@@ -232,6 +232,47 @@ function printDetails(runs) {
   }
 }
 
+function measuredRows(runs) {
+  return runs
+    .map((run) => {
+      const browserDiagnostics = run.browserDiagnostics || {};
+      const fps = finiteNumber(run.snapshot?.measuredFps);
+      return {
+        run,
+        fps,
+        angle: angleLabel(browserDiagnostics),
+        className: classification(run.snapshot || {}, browserDiagnostics),
+      };
+    })
+    .filter((row) => row.fps != null);
+}
+
+function printVerdict(runs) {
+  const measured = measuredRows(runs).sort((a, b) => b.fps - a.fps);
+  console.log('\nBackend verdict');
+  if (measured.length === 0) {
+    console.log('- No in-game FPS snapshots were found. Re-run after login and type capture once the game is visible.');
+    return;
+  }
+
+  const best = measured[0];
+  const worst = measured[measured.length - 1];
+  console.log(`- Best: ${basename(best.run.dir)} (${best.angle}) ${formatRate(best.fps)} FPS, ${best.className}`);
+  if (measured.length === 1) return;
+
+  console.log(`- Worst: ${basename(worst.run.dir)} (${worst.angle}) ${formatRate(worst.fps)} FPS, ${worst.className}`);
+  const ratio = best.fps / Math.max(1, worst.fps);
+  if (best.fps >= 55 && worst.fps < 55 && ratio >= 1.5) {
+    console.log('- Strong backend signal: one browser GPU path is playable while another is low FPS in the same scene.');
+  } else if (measured.every((row) => row.className === 'healthy')) {
+    console.log('- No low-FPS backend failure reproduced in these captures.');
+  } else if (measured.every((row) => row.fps < 55)) {
+    console.log('- All captured backends are low FPS; check software rendering, battery/efficiency settings, or scene-specific CPU stalls next.');
+  } else {
+    console.log('- Mixed result; compare the best and worst run with compare-profiler-runs.mjs for the next clue.');
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const dirs = args.length > 0 ? args.map((arg) => resolve(arg)) : await latestRunDirs(8);
@@ -244,6 +285,7 @@ async function main() {
   if (runs.length === 0) throw new Error('No profiler run directories found');
   printRows(runs);
   printDetails(runs);
+  printVerdict(runs);
 }
 
 main().catch((error) => {

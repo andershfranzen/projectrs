@@ -18,9 +18,13 @@ PROFILE_AUTORUN=1 PROFILE_SECONDS=20 bun tools/browser-profiler.mjs http://local
 
 ## Windows Brave
 
-Run from PowerShell. By default the profiler uses an isolated temp profile, not
-your normal Brave profile. Either run it once without autorun and log in there,
-or set `CHROME_PROFILE_DIR` to a dedicated profile directory you want to reuse.
+Run from PowerShell. The Brave helper below launches Brave itself so it can
+reproduce the real profile/settings where the bad FPS is happening. Close Brave
+fully before each run; if Brave is already running, Chromium may ignore the new
+DevTools or ANGLE flags.
+
+For an isolated temp profile instead, use the direct `browser-profiler.mjs`
+examples later in this section with `CHROME_PROFILE_DIR`.
 
 For the current Brave profile/tab that already reproduces the low FPS, the
 shortest workflow is:
@@ -50,6 +54,13 @@ close Brave fully between runs and capture the same scene with forced backends:
 .\tools\profile-windows-brave.ps1 -ZipLatest
 .\tools\profile-windows-brave.ps1 -AngleBackend d3d11 -ZipLatest
 .\tools\profile-windows-brave.ps1 -AngleBackend gl -ZipLatest
+```
+
+For a guided default/D3D11/OpenGL pass that summarizes the captured runs at the
+end:
+
+```powershell
+.\tools\profile-windows-brave-backends.ps1 -ZipLatest
 ```
 
 If one forced backend is fast while the default run is slow, the issue is in
