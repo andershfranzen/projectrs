@@ -529,6 +529,7 @@ export class Npc3DEntity {
       const shouldCloneMaterials = materialLookup !== null;
       const cloned = new Map<any, any>();
       for (const mesh of result.meshes) {
+        if (mesh.getTotalVertices() === 0) mesh.isVisible = false;
         const original = mesh.material as any;
         if (!original) continue;
         let mat = original;

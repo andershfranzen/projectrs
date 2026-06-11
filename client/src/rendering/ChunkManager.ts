@@ -3891,6 +3891,10 @@ export class ChunkManager {
         : Texture.NEAREST_SAMPLINGMODE;
       const alphaBlend = assetDef.alphaBlend;
       for (const mesh of result.meshes) {
+        if (mesh.getTotalVertices() === 0) {
+          mesh.isVisible = false;
+          mesh.isPickable = false;
+        }
         const mat = mesh.material;
         if (mat && 'diffuseTexture' in mat && (mat as any).diffuseTexture) {
           (mat as any).diffuseTexture.updateSamplingMode(samplingMode);
