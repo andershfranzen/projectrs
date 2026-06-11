@@ -21,6 +21,7 @@ function parseArgs(argv) {
     user: '',
     query: '',
     json: false,
+    bearerEnv: 'EVILQUEST_ADMIN_TOKEN',
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -34,6 +35,8 @@ function parseArgs(argv) {
       options.query = String(argv[++i] ?? '').toLowerCase();
     } else if (arg === '--json') {
       options.json = true;
+    } else if (arg === '--bearer-env') {
+      options.bearerEnv = String(argv[++i] ?? '').trim();
     } else if (!arg.startsWith('--')) {
       options.input = arg;
     } else {
@@ -116,9 +119,42 @@ function extractEntriesFromJson(raw) {
   return [];
 }
 
-async function readEntries(input) {
-  const file = resolve(input);
-  const text = await readFile(file, 'utf8');
+function isHttpInput(input) {
+  return /^https?:\/\//i.test(input);
+}
+
+function diagnosticUrl(input, options) {
+  const url = new URL(input);
+  if (url.pathname.endsWith('/api/admin/client-diagnostics')) {
+    if (!url.searchParams.has('limit')) url.searchParams.set('limit', String(options.limit));
+    if (options.event && !url.searchParams.has('event')) url.searchParams.set('event', options.event);
+    if (options.user && !url.searchParams.has('user') && !url.searchParams.has('username')) url.searchParams.set('user', options.user);
+    if (options.query && !url.searchParams.has('q') && !url.searchParams.has('query')) url.searchParams.set('q', options.query);
+  }
+  return url;
+}
+
+async function readInputText(input, options) {
+  if (!isHttpInput(input)) return readFile(resolve(input), 'utf8');
+
+  const url = diagnosticUrl(input, options);
+  const headers = { Accept: 'application/json' };
+  const bearer = options.bearerEnv ? process.env[options.bearerEnv] : '';
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
+
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    const authHint = bearer
+      ? ''
+      : ` Set ${options.bearerEnv}=<admin token> or pass --bearer-env NAME for admin endpoints.`;
+    throw new Error(`HTTP ${response.status} for ${url}.${authHint}${body ? ` Body: ${body.slice(0, 300)}` : ''}`);
+  }
+  return response.text();
+}
+
+async function readEntries(input, options) {
+  const text = await readInputText(input, options);
   try {
     const parsed = JSON.parse(text);
     const entries = extractEntriesFromJson(parsed);
@@ -328,7 +364,7 @@ function renderText(input, entries, options) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const allEntries = await readEntries(options.input);
+  const allEntries = await readEntries(options.input, options);
   const entries = newestFirst(allEntries.filter((entry) => passesFilters(entry, options)));
   const output = options.json
     ? JSON.stringify({ input: options.input, ...summarize(entries), entries: entries.slice(0, options.limit) }, null, 2)
@@ -337,6 +373,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error);
+  console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });

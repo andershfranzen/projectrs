@@ -178,6 +178,8 @@ or from `/api/admin/client-diagnostics` JSON:
 ```bash
 bun tools/summarize-client-diagnostics.mjs server/data/audit.log --limit 20
 bun tools/summarize-client-diagnostics.mjs diagnostics.json --event client_perf_snapshot --query brave
+EVILQUEST_ADMIN_TOKEN=<admin-token> bun tools/summarize-client-diagnostics.mjs \
+  'https://evilquest.net/api/admin/client-diagnostics?limit=50' --query brave
 ```
 
 The summary classifies snapshots as software-renderer low FPS, stable 30 Hz
