@@ -8,10 +8,19 @@ import { join } from 'node:path';
 const url = process.argv[2] || 'https://evilquest.net/play';
 const seconds = Number(process.env.PROFILE_SECONDS || process.argv[3] || 30);
 const port = Number(process.env.CDP_PORT || 9222);
+const browserBin = process.env.BROWSER_BIN || process.env.CHROME_BIN || 'google-chrome';
 const userDataDir = process.env.CHROME_PROFILE_DIR || join(tmpdir(), 'evilquest-profiler-chrome');
 const outDir = process.env.PROFILE_OUT_DIR || join(process.cwd(), 'tools', 'profiler-runs');
 const autorun = process.env.PROFILE_AUTORUN === '1' || process.argv.includes('--autorun');
 const keepProfile = process.env.PROFILE_KEEP_PROFILE === '1' || process.argv.includes('--keep-profile') || autorun;
+const captureEvilQuestSnapshot = process.env.PROFILE_EVILQUEST_SNAPSHOT !== '0';
+const evilQuestSnapshotMs = Number(process.env.PROFILE_EVILQUEST_SNAPSHOT_MS || 3000);
+const gameReadyTimeoutMs = Number(process.env.PROFILE_GAME_READY_TIMEOUT_MS || 45000);
+const extraBrowserArgs = (process.env.PROFILE_BROWSER_ARGS || '').split(/\s+/).filter(Boolean);
+const authToken = process.env.PROFILE_AUTH_TOKEN || '';
+const authUsername = process.env.PROFILE_AUTH_USERNAME || '';
+const wsSecret = process.env.PROFILE_WS_SECRET || '';
+const deviceId = process.env.PROFILE_DEVICE_ID || '';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -234,6 +243,74 @@ function summarizeBrowserStats(stats) {
   };
 }
 
+async function evaluateJson(cdp, expression, options = {}) {
+  const result = await cdp.send('Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+    ...options,
+  });
+  if (result.exceptionDetails) {
+    return {
+      error: result.exceptionDetails.text || 'Runtime evaluation failed',
+      details: result.exceptionDetails.exception?.description || '',
+    };
+  }
+  return result.result?.value;
+}
+
+async function waitForEvilQuestGame(cdp, timeoutMs) {
+  return evaluateJson(cdp, `
+    new Promise((resolve) => {
+      const startedAt = performance.now();
+      const check = () => {
+        const gm = window.gm;
+        const ready = !!gm
+          && gm._loginSettled === true
+          && typeof gm.collectPerformanceSnapshot === 'function'
+          && typeof gm.sampleRafFps === 'function'
+          && document.visibilityState === 'visible';
+        if (ready) {
+          resolve({ ok: true, waitedMs: Math.round(performance.now() - startedAt), username: gm.username || '' });
+          return;
+        }
+        if (performance.now() - startedAt >= ${Math.max(1000, Math.round(timeoutMs))}) {
+          resolve({
+            ok: false,
+            waitedMs: Math.round(performance.now() - startedAt),
+            hasGameManager: !!gm,
+            loginSettled: gm?._loginSettled ?? null,
+            hasSnapshotApi: !!gm && typeof gm.collectPerformanceSnapshot === 'function',
+            visibilityState: document.visibilityState,
+            title: document.title,
+            bodyText: document.body?.innerText?.slice(0, 500) || '',
+            location: String(location.href),
+          });
+          return;
+        }
+        setTimeout(check, 250);
+      };
+      check();
+    })
+  `);
+}
+
+async function captureEvilQuestPerformanceSnapshot(cdp, durationMs) {
+  return evaluateJson(cdp, `
+    (async () => {
+      const gm = window.gm;
+      if (!gm || typeof gm.collectPerformanceSnapshot !== 'function') {
+        return { ok: false, error: 'window.gm.collectPerformanceSnapshot unavailable' };
+      }
+      const sample = typeof gm.sampleRafFps === 'function'
+        ? await gm.sampleRafFps(${Math.max(250, Math.round(durationMs))})
+        : null;
+      const snapshot = gm.collectPerformanceSnapshot(sample || undefined);
+      return { ok: true, snapshot };
+    })()
+  `);
+}
+
 async function main() {
   await mkdir(outDir, { recursive: true });
   if (!keepProfile) await rm(userDataDir, { recursive: true, force: true });
@@ -244,9 +321,13 @@ async function main() {
     '--disable-background-timer-throttling',
     '--disable-renderer-backgrounding',
     '--enable-precise-memory-info',
+    ...extraBrowserArgs,
     'about:blank',
   ];
-  const chrome = spawn('google-chrome', chromeArgs, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  const chrome = spawn(browserBin, chromeArgs, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  chrome.on('error', (error) => {
+    console.error(`[evilquest-profiler] Failed to launch ${browserBin}: ${error.message}`);
+  });
   chrome.stderr.on('data', (data) => {
     const text = String(data);
     if (!text.includes('DevTools listening')) process.stderr.write(text);
@@ -277,12 +358,41 @@ async function main() {
 
   await cdp.send('Runtime.enable');
   await cdp.send('Log.enable');
+  await cdp.send('Network.enable');
   await cdp.send('Page.enable');
   await cdp.send('Profiler.enable');
   await cdp.send('Runtime.setAsyncCallStackDepth', { maxDepth: 32 });
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: injectedProfiler });
+  if (authToken && authUsername) {
+    await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `
+        try {
+          localStorage.setItem('evilquest_token', ${JSON.stringify(authToken)});
+          localStorage.setItem('evilquest_username', ${JSON.stringify(authUsername)});
+        } catch {}
+      `,
+    });
+  }
+  if (wsSecret) {
+    await cdp.send('Network.setCookie', {
+      url,
+      name: 'eq_ws_session',
+      value: wsSecret,
+      sameSite: 'Strict',
+      httpOnly: true,
+    });
+  }
+  if (deviceId) {
+    await cdp.send('Network.setCookie', {
+      url,
+      name: 'eq_device_id',
+      value: deviceId,
+      sameSite: 'Strict',
+      httpOnly: true,
+    });
+  }
   await cdp.send('Page.navigate', { url });
-  console.log(`Opened ${url} in Chrome.`);
+  console.log(`Opened ${url} in ${browserBin}.`);
   if (autorun) console.log(`Autorun enabled; recording ${seconds}s immediately.`);
   else console.log(`Type "go" then Enter to reload and record ${seconds}s, or "quit" to exit.`);
 
@@ -297,6 +407,12 @@ async function main() {
     await cdp.send('Performance.enable');
     await cdp.send('Page.reload', { ignoreCache: true });
     console.log(`Recording ${seconds}s...`);
+    const gameReady = captureEvilQuestSnapshot
+      ? await waitForEvilQuestGame(cdp, gameReadyTimeoutMs)
+      : { ok: false, skipped: true };
+    if (captureEvilQuestSnapshot && !gameReady?.ok) {
+      console.log(`[evilquest-profiler] Game snapshot wait did not finish: ${JSON.stringify(gameReady)}`);
+    }
     await sleep(seconds * 1000);
     const { profile } = await cdp.send('Profiler.stop');
     const perf = await cdp.send('Performance.getMetrics');
@@ -305,6 +421,9 @@ async function main() {
       returnByValue: true,
     });
     const browserStats = JSON.parse(statsResult.result?.value || '{}');
+    const evilQuestSnapshot = captureEvilQuestSnapshot && gameReady?.ok
+      ? await captureEvilQuestPerformanceSnapshot(cdp, evilQuestSnapshotMs)
+      : { ok: false, skipped: true, gameReady };
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const runDir = join(outDir, stamp);
     await mkdir(runDir, { recursive: true });
@@ -312,13 +431,17 @@ async function main() {
     const browserSummary = summarizeBrowserStats(browserStats);
     const summary = {
       url,
+      browserBin,
       seconds,
       capturedAt: new Date().toISOString(),
+      gameReady,
+      evilQuestSnapshot: evilQuestSnapshot?.ok ? evilQuestSnapshot.snapshot : evilQuestSnapshot,
       topFunctionSelfTime: functionSelfTime.slice(0, 100),
       browserSummary,
       performanceMetrics: perf.metrics || [],
     };
     await writeFile(join(runDir, 'summary.json'), JSON.stringify(summary, null, 2));
+    await writeFile(join(runDir, 'evilquest-snapshot.json'), JSON.stringify(evilQuestSnapshot, null, 2));
     await writeFile(join(runDir, 'cpu-profile.json'), JSON.stringify(profile, null, 2));
     await writeFile(join(runDir, 'browser-stats.json'), JSON.stringify(browserStats, null, 2));
     await writeFile(join(runDir, 'console.json'), JSON.stringify(browserLogs, null, 2));
@@ -331,7 +454,21 @@ async function main() {
     for (const row of browserSummary.slowCallbacks.slice(0, 10)) {
       console.log(`${row.totalMs.toFixed(1).padStart(8)}ms total  ${row.maxMs.toFixed(1).padStart(6)}ms max  x${String(row.count).padEnd(4)} ${row.key}`);
     }
+    if (evilQuestSnapshot?.ok) {
+      const snapshot = evilQuestSnapshot.snapshot || {};
+      const flags = Array.isArray(snapshot.diagnosticFlags) ? snapshot.diagnosticFlags.join(', ') : 'none';
+      const renderer = snapshot.webgl?.unmaskedRenderer || snapshot.webgl?.renderer || 'unknown';
+      console.log('EvilQuest snapshot:');
+      console.log(`  ${snapshot.measuredFps ?? 'n/a'} FPS, ${snapshot.activeMeshes ?? 'n/a'} active meshes, ${snapshot.totalVertices ?? 'n/a'} vertices`);
+      console.log(`  Renderer: ${renderer}`);
+      console.log(`  Flags: ${flags}`);
+    }
     if (autorun) break;
+  }
+  try {
+    await cdp.send('Browser.close');
+  } catch {
+    // Browser may already be gone if the user closed it manually.
   }
 }
 
