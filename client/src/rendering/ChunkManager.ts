@@ -270,6 +270,10 @@ export interface MinimapTileSnapshot {
   startZ: number;
 }
 
+export interface ChunkManagerOptions {
+  terrainDetailEnabled?: boolean;
+}
+
 /**
  * Client-side chunk manager.
  * Loads KC editor map.json via HTTP, builds/destroys chunk terrain
@@ -334,6 +338,7 @@ export class ChunkManager {
   private floorMat: StandardMaterial | null = null;
   private stairMat: StandardMaterial | null = null;
   private paddyWaterMat: StandardMaterial | null = null;
+  private terrainDetailEnabled: boolean = true;
 
   private loaded: boolean = false;
 
@@ -482,8 +487,9 @@ export class ChunkManager {
    *  objects get wiped, chunks render terrain only. */
   private loadMapToken: number = 0;
 
-  constructor(scene: Scene) {
+  constructor(scene: Scene, options: ChunkManagerOptions = {}) {
     this.scene = scene;
+    this.terrainDetailEnabled = options.terrainDetailEnabled ?? true;
   }
 
   isLoaded(): boolean { return this.loaded; }
@@ -517,6 +523,90 @@ export class ChunkManager {
     });
     this.editorChunkApplyTail = run.catch(() => {});
     return run;
+  }
+
+  isTerrainDetailEnabled(): boolean {
+    return this.terrainDetailEnabled;
+  }
+
+  private createGroundMaterial(): StandardMaterial {
+    const mat = new StandardMaterial('chunkGroundMat', this.scene);
+    mat.specularColor = new Color3(0, 0, 0);
+    mat.emissiveColor = new Color3(0.2, 0.2, 0.2);
+    if (this.terrainDetailEnabled) {
+      // Procedural per-type surface detail (grass/dirt/sand/stone), driven by
+      // the per-vertex `groundDetail` attribute set in buildGroundMesh.
+      new GroundDetailPluginMaterial(mat);
+    }
+    return mat;
+  }
+
+  private ensureTerrainDetailMaterials(): void {
+    if (!this.grassBladeMat) {
+      // Upright grass strands. Brighter emissive than ground so the thin, mostly
+      // edge-on blades still read as lit grass; double-sided since each blade is
+      // a single triangle.
+      this.grassBladeMat = new StandardMaterial('chunkGrassBladeMat', this.scene);
+      this.grassBladeMat.specularColor = new Color3(0, 0, 0);
+      this.grassBladeMat.emissiveColor = new Color3(0.35, 0.35, 0.35);
+      this.grassBladeMat.backFaceCulling = false;
+    }
+    if (!this.stoneRockMat) {
+      // Small scattered pebbles on stone ground. Its own material (not groundMat,
+      // whose detail plugin expects a per-vertex groundDetail attribute the rocks
+      // don't carry); matches ground emissive so pebbles sit in naturally.
+      this.stoneRockMat = new StandardMaterial('chunkStoneRockMat', this.scene);
+      this.stoneRockMat.specularColor = new Color3(0, 0, 0);
+      this.stoneRockMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
+      this.stoneRockMat.backFaceCulling = false;
+    }
+  }
+
+  setTerrainDetailEnabled(enabled: boolean): void {
+    if (this.terrainDetailEnabled === enabled) return;
+    this.terrainDetailEnabled = enabled;
+
+    const oldGroundMat = this.groundMat;
+    this.groundMat = this.createGroundMaterial();
+    if (enabled) this.ensureTerrainDetailMaterials();
+
+    for (const [key, meshes] of this.chunks) {
+      const [cx, cz] = key.split(',').map(Number);
+      const startX = cx * CHUNK_SIZE;
+      const startZ = cz * CHUNK_SIZE;
+      const endX = Math.min(startX + CHUNK_SIZE, this.mapWidth);
+      const endZ = Math.min(startZ + CHUNK_SIZE, this.mapHeight);
+      const wasEnabled = this.chunkMeshesEnabled.get(key) ?? meshes.ground.isEnabled();
+
+      meshes.ground.dispose();
+      meshes.ground = this.buildGroundMesh(cx, cz, startX, startZ, endX, endZ);
+      meshes.ground.freezeWorldMatrix();
+      meshes.ground.doNotSyncBoundingInfo = true;
+      meshes.ground.setEnabled(wasEnabled);
+
+      meshes.grassBlades?.dispose();
+      meshes.stoneRocks?.dispose();
+      meshes.grassBlades = enabled ? this.buildGrassBladeMesh(cx, cz, startX, startZ, endX, endZ) : null;
+      meshes.stoneRocks = enabled ? this.buildStoneRockMesh(cx, cz, startX, startZ, endX, endZ) : null;
+      if (meshes.grassBlades) {
+        meshes.grassBlades.freezeWorldMatrix();
+        meshes.grassBlades.doNotSyncBoundingInfo = true;
+        meshes.grassBlades.setEnabled(wasEnabled);
+      }
+      if (meshes.stoneRocks) {
+        meshes.stoneRocks.freezeWorldMatrix();
+        meshes.stoneRocks.doNotSyncBoundingInfo = true;
+        meshes.stoneRocks.setEnabled(wasEnabled);
+      }
+    }
+
+    if (!enabled) {
+      this.grassBladeMat?.dispose();
+      this.stoneRockMat?.dispose();
+      this.grassBladeMat = null;
+      this.stoneRockMat = null;
+    }
+    oldGroundMat?.dispose();
   }
 
   private getVisibilityDistanceTiles(paddingTiles: number): number {
@@ -853,31 +943,9 @@ export class ChunkManager {
 
     // Create shared materials
     if (!this.groundMat) {
-      this.groundMat = new StandardMaterial('chunkGroundMat', this.scene);
-      this.groundMat.specularColor = new Color3(0, 0, 0);
-      this.groundMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
-      // Procedural per-type surface detail (grass/dirt/sand/stone), driven by the
-      // per-vertex `groundDetail` attribute set in buildGroundMesh.
-      new GroundDetailPluginMaterial(this.groundMat);
+      this.groundMat = this.createGroundMaterial();
     }
-    if (!this.grassBladeMat) {
-      // Upright grass strands. Brighter emissive than ground so the thin, mostly
-      // edge-on blades still read as lit grass; double-sided since each blade is a
-      // single triangle.
-      this.grassBladeMat = new StandardMaterial('chunkGrassBladeMat', this.scene);
-      this.grassBladeMat.specularColor = new Color3(0, 0, 0);
-      this.grassBladeMat.emissiveColor = new Color3(0.35, 0.35, 0.35);
-      this.grassBladeMat.backFaceCulling = false;
-    }
-    if (!this.stoneRockMat) {
-      // Small scattered pebbles on stone ground. Its own material (not groundMat,
-      // whose detail plugin expects a per-vertex groundDetail attribute the rocks
-      // don't carry); matches ground emissive so pebbles sit in naturally.
-      this.stoneRockMat = new StandardMaterial('chunkStoneRockMat', this.scene);
-      this.stoneRockMat.specularColor = new Color3(0, 0, 0);
-      this.stoneRockMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
-      this.stoneRockMat.backFaceCulling = false;
-    }
+    if (this.terrainDetailEnabled) this.ensureTerrainDetailMaterials();
     if (!this.waterMat) {
       this.waterMat = new StandardMaterial('chunkWaterMat', this.scene);
       this.waterMat.specularColor = new Color3(0, 0, 0);
@@ -1753,8 +1821,8 @@ export class ChunkManager {
     const endZ = Math.min(startZ + CHUNK_SIZE, this.mapHeight);
 
     const ground = this.buildGroundMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
-    const grassBlades = this.buildGrassBladeMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
-    const stoneRocks = this.buildStoneRockMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
+    const grassBlades = this.terrainDetailEnabled ? this.buildGrassBladeMesh(chunkX, chunkZ, startX, startZ, endX, endZ) : null;
+    const stoneRocks = this.terrainDetailEnabled ? this.buildStoneRockMesh(chunkX, chunkZ, startX, startZ, endX, endZ) : null;
     const overlays = this.buildTextureOverlays(chunkX, chunkZ, startX, startZ, endX, endZ);
     const water = this.buildWaterMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
     const paddyWater = this.buildPaddyWaterMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
@@ -2032,8 +2100,10 @@ export class ChunkManager {
     VertexData.ComputeNormals(positions, indices, normals);
     vertexData.normals = normals;
     vertexData.applyToMesh(mesh);
-    // Custom per-vertex attribute feeding the procedural ground-detail shader.
-    mesh.setVerticesData('groundDetail', detail, false, 1);
+    if (this.terrainDetailEnabled) {
+      // Custom per-vertex attribute feeding the procedural ground-detail shader.
+      mesh.setVerticesData('groundDetail', detail, false, 1);
+    }
     mesh.material = this.groundMat;
     mesh.hasVertexAlpha = false;
     mesh.isPickable = true;
