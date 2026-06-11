@@ -198,7 +198,7 @@ type BatchedPlacedVisualRef = {
 };
 
 type GrassBladeChunkBatch = {
-  matrices: Matrix[];
+  matrices: Float32Array;
   enabled: boolean;
 };
 
@@ -470,6 +470,8 @@ export class ChunkManager {
   private chunkStructuralThinInstSources: Map<string, ElevatedThinInstanceSource[]> = new Map();
   private grassBladeBatch: Mesh | null = null;
   private grassBladeChunks: Map<string, GrassBladeChunkBatch> = new Map();
+  private grassBladeBatchDirty: boolean = false;
+  private grassBladeBatchRebuildScheduled: boolean = false;
 
   private doorEdgeKey(floor: number, tileIdx: number): string {
     return `${Math.floor(floor)}:${tileIdx}`;
@@ -2069,8 +2071,8 @@ export class ChunkManager {
 
   // --- Grass strands: sparse upright blades on grass tiles ---
 
-  private buildGrassBladeMatrices(startX: number, startZ: number, endX: number, endZ: number): Matrix[] {
-    const matrices: Matrix[] = [];
+  private buildGrassBladeMatrices(startX: number, startZ: number, endX: number, endZ: number): Float32Array {
+    const matrices: number[] = [];
     // Deterministic per-position pseudo-random in [0,1) so blades don't shimmer
     // or change between chunk rebuilds.
     const rand = (a: number, b: number): number => {
@@ -2095,12 +2097,12 @@ export class ChunkManager {
       const height = 0.14 + rand(tx + seed * 7, tz * 3) * 0.18;
       const leanX = (rand(tx * 2 + seed, tz) - 0.5) * 0.16;
       const leanZ = (rand(tz * 2 + 5, tx + seed) - 0.5) * 0.16;
-      matrices.push(Matrix.FromValues(
+      matrices.push(
         HALF_WIDTH, 0, 0, 0,
         leanX, height, leanZ, 0,
         0, 0, HALF_WIDTH, 0,
         bx, by, bz, 1,
-      ));
+      );
     };
 
     const isGrass = (tx: number, tz: number): boolean =>
@@ -2150,7 +2152,7 @@ export class ChunkManager {
       }
     }
 
-    return matrices;
+    return Float32Array.from(matrices);
   }
 
   private ensureGrassBladeBatch(): Mesh {
@@ -2176,28 +2178,41 @@ export class ChunkManager {
     return mesh;
   }
 
-  private registerGrassBladeChunk(chunkKey: string, matrices: Matrix[], enabled: boolean): void {
+  private registerGrassBladeChunk(chunkKey: string, matrices: Float32Array, enabled: boolean): void {
     this.grassBladeChunks.set(chunkKey, { matrices, enabled });
-    this.rebuildGrassBladeBatch();
+    this.markGrassBladeBatchDirty();
   }
 
   private setGrassBladeChunkEnabled(chunkKey: string, enabled: boolean): void {
     const chunk = this.grassBladeChunks.get(chunkKey);
     if (!chunk || chunk.enabled === enabled) return;
     chunk.enabled = enabled;
-    this.rebuildGrassBladeBatch();
+    this.markGrassBladeBatchDirty();
   }
 
   private unregisterGrassBladeChunk(chunkKey: string): void {
     if (!this.grassBladeChunks.delete(chunkKey)) return;
-    this.rebuildGrassBladeBatch();
+    this.markGrassBladeBatchDirty();
   }
 
-  private rebuildGrassBladeBatch(): void {
+  private markGrassBladeBatchDirty(): void {
+    this.grassBladeBatchDirty = true;
+    if (this.grassBladeBatchRebuildScheduled) return;
+    this.grassBladeBatchRebuildScheduled = true;
+    const generation = this.loadMapToken;
+    this.scheduleNextFrame(() => {
+      this.grassBladeBatchRebuildScheduled = false;
+      if (generation !== this.loadMapToken || !this.grassBladeBatchDirty) return;
+      this.grassBladeBatchDirty = false;
+      this.rebuildGrassBladeBatchNow();
+    });
+  }
+
+  private rebuildGrassBladeBatchNow(): void {
     const mesh = this.ensureGrassBladeBatch();
     let instanceCount = 0;
     for (const chunk of this.grassBladeChunks.values()) {
-      if (chunk.enabled) instanceCount += chunk.matrices.length;
+      if (chunk.enabled) instanceCount += chunk.matrices.length / 16;
     }
     if (instanceCount === 0) {
       mesh.thinInstanceSetBuffer('matrix', null);
@@ -2210,10 +2225,8 @@ export class ChunkManager {
     let offset = 0;
     for (const chunk of this.grassBladeChunks.values()) {
       if (!chunk.enabled) continue;
-      for (const matrix of chunk.matrices) {
-        matrixBuffer.set(matrix.m, offset);
-        offset += 16;
-      }
+      matrixBuffer.set(chunk.matrices, offset);
+      offset += chunk.matrices.length;
     }
     mesh.thinInstanceSetBuffer('matrix', matrixBuffer, 16, true);
     mesh.thinInstanceCount = instanceCount;
@@ -2223,6 +2236,8 @@ export class ChunkManager {
   }
 
   private disposeGrassBladeBatch(): void {
+    this.grassBladeBatchDirty = false;
+    this.grassBladeBatchRebuildScheduled = false;
     this.grassBladeChunks.clear();
     if (this.grassBladeBatch && !this.grassBladeBatch.isDisposed()) {
       this.grassBladeBatch.dispose();

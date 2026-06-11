@@ -117,6 +117,38 @@ describe('terrain object shadow receivers', () => {
   });
 });
 
+describe('procedural grass batching', () => {
+  test('coalesces grass thin-instance rebuilds across chunk changes', () => {
+    const callbacks: FrameRequestCallback[] = [];
+    let rebuilds = 0;
+    const manager = Object.assign(Object.create(ChunkManager.prototype), {
+      grassBladeChunks: new Map<string, { matrices: Float32Array; enabled: boolean }>(),
+      grassBladeBatchDirty: false,
+      grassBladeBatchRebuildScheduled: false,
+      loadMapToken: 1,
+      scheduleNextFrame: (callback: FrameRequestCallback) => {
+        callbacks.push(callback);
+      },
+      rebuildGrassBladeBatchNow: () => {
+        rebuilds++;
+      },
+    }) as any;
+
+    manager.registerGrassBladeChunk('0,0', new Float32Array(16), true);
+    manager.registerGrassBladeChunk('0,1', new Float32Array(32), false);
+    manager.setGrassBladeChunkEnabled('0,1', true);
+
+    expect(callbacks).toHaveLength(1);
+    expect(rebuilds).toBe(0);
+
+    callbacks[0](performance.now());
+
+    expect(rebuilds).toBe(1);
+    expect(manager.grassBladeBatchDirty).toBe(false);
+    expect(manager.grassBladeBatchRebuildScheduled).toBe(false);
+  });
+});
+
 describe('placed object thin-instance grouping', () => {
   test('batches static world-object visuals but keeps doors unique', () => {
     const manager = Object.assign(Object.create(ChunkManager.prototype), {
