@@ -71,7 +71,7 @@ function formatCanvas(snapshot) {
 
 function formatFramePacing(pacing) {
   if (!pacing || typeof pacing !== 'object') return 'n/a';
-  return `median ${formatRate(pacing.medianMs)}ms, p95 ${formatRate(pacing.p95Ms)}ms, max ${formatRate(pacing.maxMs)}ms, >33ms ${formatCount(pacing.over33Ms)}`;
+  return `median ${formatRate(pacing.medianMs)}ms, p95 ${formatRate(pacing.p95Ms)}ms, max ${formatRate(pacing.maxMs)}ms, >33ms ${formatCount(pacing.over33Ms)}, >50ms ${formatCount(pacing.over50Ms)}`;
 }
 
 function formatViewport(pageDiagnostics) {
@@ -79,6 +79,85 @@ function formatViewport(pageDiagnostics) {
   if (!viewport) return 'n/a';
   const dpr = pageDiagnostics?.browser?.devicePixelRatio;
   return `${formatCount(viewport.innerWidth)}x${formatCount(viewport.innerHeight)} inner / ${formatCount(viewport.outerWidth)}x${formatCount(viewport.outerHeight)} outer, DPR ${formatRate(dpr)}`;
+}
+
+function browserRuntimeFromRun(run) {
+  return run.snapshot?.browser && typeof run.snapshot.browser === 'object'
+    ? run.snapshot.browser
+    : run.pageDiagnostics?.browser && typeof run.pageDiagnostics.browser === 'object'
+      ? run.pageDiagnostics.browser
+      : {};
+}
+
+function screenFromRun(run) {
+  const browser = browserRuntimeFromRun(run);
+  return browser.screen && typeof browser.screen === 'object'
+    ? browser.screen
+    : run.pageDiagnostics?.screen && typeof run.pageDiagnostics.screen === 'object'
+      ? run.pageDiagnostics.screen
+      : null;
+}
+
+function viewportFromRun(run) {
+  const browser = browserRuntimeFromRun(run);
+  return run.pageDiagnostics?.viewport && typeof run.pageDiagnostics.viewport === 'object'
+    ? run.pageDiagnostics.viewport
+    : browser.window && typeof browser.window === 'object'
+      ? browser.window
+      : null;
+}
+
+function formatDisplay(run) {
+  const screen = screenFromRun(run);
+  const viewport = viewportFromRun(run);
+  const orientation = screen?.orientation;
+  const parts = [];
+  if (screen) {
+    const label = `${formatCount(screen.width)}x${formatCount(screen.height)}`;
+    const available = screen.availWidth != null || screen.availHeight != null
+      ? `avail ${formatCount(screen.availWidth)}x${formatCount(screen.availHeight)}`
+      : null;
+    const orient = orientation?.type ? `${orientation.type}${orientation.angle != null ? ` ${orientation.angle}deg` : ''}` : null;
+    parts.push([label, available, orient].filter(Boolean).join(', '));
+  }
+  if (viewport) {
+    parts.push(`viewport ${formatCount(viewport.innerWidth)}x${formatCount(viewport.innerHeight)} inner / ${formatCount(viewport.outerWidth)}x${formatCount(viewport.outerHeight)} outer`);
+  }
+  return parts.length > 0 ? parts.join('; ') : 'n/a';
+}
+
+function formatConnection(run) {
+  const connection = browserRuntimeFromRun(run).connection;
+  if (!connection || typeof connection !== 'object') return 'n/a';
+  const parts = [
+    connection.effectiveType || connection.type || null,
+    connection.downlink != null ? `${formatRate(connection.downlink)}Mbps` : null,
+    connection.rtt != null ? `${formatCount(connection.rtt)}ms RTT` : null,
+    connection.saveData === true ? 'Save-Data on' : connection.saveData === false ? 'Save-Data off' : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(', ') : 'n/a';
+}
+
+function formatBattery(run) {
+  const battery = browserRuntimeFromRun(run).battery;
+  if (!battery || typeof battery !== 'object') return 'n/a';
+  const level = typeof battery.level === 'number' && Number.isFinite(battery.level)
+    ? `${Math.round(battery.level * 100)}%`
+    : 'level n/a';
+  const charging = battery.charging === true ? 'charging' : battery.charging === false ? 'not charging' : 'charging n/a';
+  return `${level}, ${charging}`;
+}
+
+function formatMediaPreferences(run) {
+  const media = browserRuntimeFromRun(run).media;
+  if (!media || typeof media !== 'object') return 'n/a';
+  const active = [
+    media.prefersReducedMotion === true ? 'reduced-motion' : null,
+    media.prefersReducedData === true ? 'reduced-data' : null,
+    media.prefersContrastMore === true ? 'contrast-more' : null,
+    media.forcedColors === true ? 'forced-colors' : null,
+  ].filter(Boolean);
+  return active.length > 0 ? active.join(', ') : 'none';
 }
 
 function formatShortUrl(value) {
@@ -642,6 +721,10 @@ function printPageDiagnosticComparison(aRun, bRun) {
   console.log('\nPage diagnostics');
   printDiagnosticMetric('Browser', browserLabel(aPage), browserLabel(bPage));
   printDiagnosticMetric('Platform', aPage?.browser?.platform, bPage?.browser?.platform);
+  printDiagnosticMetric('Display', formatDisplay(aRun), formatDisplay(bRun));
+  printDiagnosticMetric('Connection', formatConnection(aRun), formatConnection(bRun));
+  printDiagnosticMetric('Battery', formatBattery(aRun), formatBattery(bRun));
+  printDiagnosticMetric('Media prefs', formatMediaPreferences(aRun), formatMediaPreferences(bRun));
   printDiagnosticMetric('Renderer', rendererFromWebGl(aPage?.webgl), rendererFromWebGl(bPage?.webgl));
   printDiagnosticMetric('WebGL context', aPage?.webgl?.context, bPage?.webgl?.context);
   printDiagnosticMetric('Software renderer', isSoftwareRenderer(aPage?.webgl), isSoftwareRenderer(bPage?.webgl), formatBool);
