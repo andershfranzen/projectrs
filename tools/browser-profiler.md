@@ -22,6 +22,20 @@ Run from PowerShell. By default the profiler uses an isolated temp profile, not
 your normal Brave profile. Either run it once without autorun and log in there,
 or set `CHROME_PROFILE_DIR` to a dedicated profile directory you want to reuse.
 
+For the current Brave profile/tab that already reproduces the low FPS, the
+shortest workflow is:
+
+```powershell
+.\tools\profile-windows-brave.ps1
+```
+
+If PowerShell blocks local scripts, run it as
+`powershell -ExecutionPolicy Bypass -File .\tools\profile-windows-brave.ps1`.
+
+Close Brave fully first, let the script start Brave with a DevTools port, log in
+to EvilQuest, wait until the bad FPS is visible, then type `capture` in the
+profiler terminal. The run is written under `tools/profiler-runs/`.
+
 ```powershell
 $env:BROWSER_BIN = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
 $env:CHROME_PROFILE_DIR = "$env:TEMP\evilquest-profiler-brave"
