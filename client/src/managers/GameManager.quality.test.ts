@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { GameManager } from './GameManager';
 
 const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
 
 function installLocalStorageStub(): Map<string, string> {
   const store = new Map<string, string>();
@@ -22,7 +23,19 @@ afterEach(() => {
   } else {
     delete (globalThis as Partial<typeof globalThis>).localStorage;
   }
+  if (originalWindow) {
+    Object.defineProperty(globalThis, 'window', originalWindow);
+  } else {
+    delete (globalThis as Partial<typeof globalThis>).window;
+  }
 });
+
+function installWindowStub(devicePixelRatio: number = 1): void {
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { devicePixelRatio },
+  });
+}
 
 function makeQualityManager() {
   const canvas = {
@@ -138,5 +151,43 @@ describe('GameManager render quality command', () => {
     expect(hardwareScaleCalls).toEqual([3]);
     expect(canvas.dataset.renderScale).toBe('3.00');
     expect(messages.at(-1)).toBe('FPS still low; lowering render resolution further.');
+  });
+
+  test('diagnostic flags distinguish Brave low FPS on an apparently hardware renderer', () => {
+    installWindowStub();
+    const { manager } = makeQualityManager();
+
+    const flags = manager.getPerformanceDiagnosticFlags(
+      { context: 'webgl2', unmaskedRenderer: 'ANGLE (NVIDIA, GeForce RTX)' },
+      { brave: true },
+      null,
+      32,
+    );
+
+    expect(flags).toContain('brave-browser');
+    expect(flags).toContain('low-fps-measured');
+    expect(flags).toContain('brave-low-fps');
+    expect(flags).toContain('low-fps-with-hardware-renderer');
+    expect(flags).not.toContain('software-renderer-likely');
+    expect(flags).not.toContain('low-fps-after-render-scale');
+  });
+
+  test('diagnostic flags show when low FPS persists after emergency render scaling', () => {
+    installWindowStub();
+    const { manager } = makeQualityManager();
+    manager.renderHardwareScalingLevel = 3;
+
+    const flags = manager.getPerformanceDiagnosticFlags(
+      { context: 'webgl2', unmaskedRenderer: 'ANGLE (Google, SwiftShader driver)' },
+      { brave: false },
+      null,
+      30,
+    );
+
+    expect(flags).toContain('software-renderer-likely');
+    expect(flags).toContain('low-fps-measured');
+    expect(flags).toContain('low-fps-after-render-scale');
+    expect(flags).toContain('emergency-render-scale');
+    expect(flags).not.toContain('low-fps-with-hardware-renderer');
   });
 });

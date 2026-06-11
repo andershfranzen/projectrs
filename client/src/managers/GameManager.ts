@@ -1361,7 +1361,12 @@ export class GameManager {
     };
   }
 
-  private getPerformanceDiagnosticFlags(webgl: Record<string, unknown>, browser: Record<string, unknown>, canvas: HTMLCanvasElement | null): string[] {
+  private getPerformanceDiagnosticFlags(
+    webgl: Record<string, unknown>,
+    browser: Record<string, unknown>,
+    canvas: HTMLCanvasElement | null,
+    measuredFps: number | null = null,
+  ): string[] {
     const flags: string[] = [];
     const context = String(webgl.context ?? '');
     if (!context || context === 'unavailable') flags.push('webgl-unavailable');
@@ -1369,7 +1374,8 @@ export class GameManager {
     if (browser.brave === true) flags.push('brave-browser');
     if (!webgl.unmaskedRenderer) flags.push('renderer-info-masked');
 
-    if (isSoftwareWebGlRenderer(webgl)) {
+    const softwareRenderer = isSoftwareWebGlRenderer(webgl);
+    if (softwareRenderer) {
       flags.push('software-renderer-likely');
     }
 
@@ -1378,6 +1384,14 @@ export class GameManager {
       const renderPixels = canvas.width * canvas.height;
       const clientPixels = canvas.clientWidth * canvas.clientHeight;
       if (renderPixels > clientPixels * 1.4) flags.push('high-dpr-render-target');
+    }
+
+    if (measuredFps !== null && Number.isFinite(measuredFps) && measuredFps < LOW_FPS_DIAGNOSTIC_THRESHOLD) {
+      flags.push('low-fps-measured');
+      if (browser.brave === true) flags.push('brave-low-fps');
+      if (!softwareRenderer && context && context !== 'unavailable') flags.push('low-fps-with-hardware-renderer');
+      if (this.renderHardwareScalingLevel >= LOW_QUALITY_HARDWARE_SCALE - 0.01) flags.push('low-fps-after-render-scale');
+      if (this.renderHardwareScalingLevel >= EMERGENCY_LOW_QUALITY_HARDWARE_SCALE - 0.01) flags.push('emergency-render-scale');
     }
 
     return flags;
@@ -1463,7 +1477,7 @@ export class GameManager {
         rockIndices: countIndices(rockMeshes),
       },
       sceneBudget,
-      diagnosticFlags: this.getPerformanceDiagnosticFlags(webgl, browser, canvas),
+      diagnosticFlags: this.getPerformanceDiagnosticFlags(webgl, browser, canvas, sample?.fps ?? null),
       browser,
       webgl,
     };
@@ -1753,6 +1767,10 @@ export class GameManager {
     }
     if (diagnosticFlags.includes('software-renderer-likely')) {
       this.chatPanel?.addSystemMessage('Renderer warning: WebGL looks software-backed. Check browser hardware acceleration and GPU blocklist settings.', '#ffb347');
+    } else if (diagnosticFlags.includes('brave-low-fps')) {
+      this.chatPanel?.addSystemMessage('Brave warning: FPS is low even though WebGL does not look software-backed. Compare /quality low and Brave hardware acceleration settings.', '#ffb347');
+    } else if (diagnosticFlags.includes('low-fps-with-hardware-renderer')) {
+      this.chatPanel?.addSystemMessage('Renderer warning: FPS is low on an apparently hardware-backed renderer. Compare /quality low and send the perf snapshot.', '#ffb347');
     }
     this.chatPanel?.addSystemMessage('Perf snapshot sent to the server log.');
 
