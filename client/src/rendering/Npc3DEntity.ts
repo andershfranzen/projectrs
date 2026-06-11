@@ -553,10 +553,16 @@ export class Npc3DEntity {
       // Same pattern as ChunkManager.loadGLBModel — proven to work
       this.root = new TransformNode(`npc3d_${label ?? ''}`, this.scene);
       for (const node of result.rootNodes) node.parent = this.root;
+      for (const node of result.rootNodes) {
+        if ('isPickable' in node) (node as TransformNode & { isPickable: boolean }).isPickable = false;
+        for (const child of ((node as any).getDescendants?.(false) ?? [])) {
+          if ('isPickable' in child) (child as { isPickable: boolean }).isPickable = false;
+        }
+      }
       this.applyRootRotation();
 
       this.meshes = result.meshes.filter(m => m.getTotalVertices() > 0);
-      for (const mesh of this.meshes) mesh.isPickable = false;
+      for (const mesh of result.meshes) mesh.isPickable = false;
       this.skeletons = result.skeletons;
 
       // Compute bounds and offset so feet are at Y=0. Some authored GLBs
