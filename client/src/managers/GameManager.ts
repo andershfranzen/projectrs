@@ -63,7 +63,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -506,6 +506,7 @@ export class GameManager {
   /** Shared geometry for crop pick proxies, keyed by local proxy dimensions. */
   private cropProxyTemplates: Map<string, Mesh> = new Map();
   private cropPickProxies: Map<number, Mesh> = new Map();
+  private worldObjectPickProxies: Map<number, Mesh> = new Map();
   private doorPivots: Map<number, DoorPivotEntry> = new Map();
   private doorPickProxies: Map<number, Mesh> = new Map();
   private doorTiles: Map<number, [number, number]> = new Map();
@@ -2434,11 +2435,13 @@ export class GameManager {
       this.worldObjectPickState.delete(previous);
       this.disposeDoorVisualState(objectEntityId);
       this.disposeCropPickProxy(objectEntityId);
+      this.disposeWorldObjectPickProxy(objectEntityId);
     }
     const currentEntityId = this.worldObjectIdByNode.get(node);
     if (currentEntityId != null && currentEntityId !== objectEntityId) {
       this.disposeDoorVisualState(currentEntityId);
       this.disposeCropPickProxy(currentEntityId);
+      this.disposeWorldObjectPickProxy(currentEntityId);
       this.worldObjectModels.delete(currentEntityId);
       this.worldObjectPickState.delete(node);
     }
@@ -2449,6 +2452,7 @@ export class GameManager {
   private deleteWorldObjectModel(objectEntityId: number): void {
     this.disposeDoorVisualState(objectEntityId);
     this.disposeCropPickProxy(objectEntityId);
+    this.disposeWorldObjectPickProxy(objectEntityId);
     this.objectModels.deleteActiveModelAnimations(objectEntityId);
     const node = this.worldObjectModels.get(objectEntityId);
     if (node) {
@@ -2553,10 +2557,10 @@ export class GameManager {
     this.setWorldObjectModel(objectEntityId, placedNode);
 
     const def = this.objectDefsCache.get(data.defId);
-    const isCrop = def?.category === 'crop';
-    this.setWorldObjectPickTarget(objectEntityId, isCrop ? false : this.isWorldObjectInteractable(def, data.depleted), placedNode);
+    this.setWorldObjectPickTarget(objectEntityId, false, placedNode);
     if (def?.category === 'door') {
       this.setWorldObjectPickTarget(objectEntityId, false, placedNode);
+      this.disposeWorldObjectPickProxy(objectEntityId);
       const modelRotY = this.modelRotY(placedNode);
       const pickBounds = this.computeDoorPickProxyBounds(placedNode, data.x, data.z, modelRotY, placedNode.getAbsolutePosition().y);
       const { tile: [tx, tz], edge: wallEdge } = doorEdgeFromPlacement(data.x, data.z, modelRotY);
@@ -2586,8 +2590,17 @@ export class GameManager {
     }
 
     if (def?.category === 'crop') {
+      this.disposeWorldObjectPickProxy(objectEntityId);
       this.createCropPickProxy(objectEntityId, placedNode, def, data.depleted);
       this.setCropPickTarget(objectEntityId, def, data.depleted, placedNode);
+    } else if (def && def.category !== 'door') {
+      this.setGenericWorldObjectPickTarget(
+        objectEntityId,
+        data,
+        def,
+        this.isWorldObjectInteractable(def, data.depleted),
+        placedNode,
+      );
     }
   }
 
@@ -2641,6 +2654,112 @@ export class GameManager {
       this.worldObjectPickState.delete(proxy);
       this.cropPickProxies.delete(objectEntityId);
     }
+  }
+
+  private fallbackWorldObjectPickProxyBounds(
+    data: { x: number; z: number; y?: number; rotY?: number },
+    def: WorldObjectDef,
+  ): DoorPickProxyBounds {
+    const bounds = getObjectFootprintBounds(data.x, data.z, def, data.rotY ?? 0);
+    const margin = 0.16;
+    const baseY = Number.isFinite(data.y) ? (data.y ?? 0) : 0;
+    return {
+      center: new Vector3(
+        bounds.minX + bounds.width / 2,
+        baseY + 1.1,
+        bounds.minZ + bounds.depth / 2,
+      ),
+      width: Math.max(0.8, bounds.width + margin),
+      depth: Math.max(0.8, bounds.depth + margin),
+      height: 2.2,
+    };
+  }
+
+  private computeWorldObjectPickProxyBounds(
+    model: TransformNode,
+    data: { x: number; z: number; y?: number; rotY?: number },
+    def: WorldObjectDef,
+  ): DoorPickProxyBounds {
+    const fallback = this.fallbackWorldObjectPickProxyBounds(data, def);
+    model.computeWorldMatrix(true);
+    let bounds: ReturnType<TransformNode['getHierarchyBoundingVectors']>;
+    try {
+      bounds = model.getHierarchyBoundingVectors(true);
+    } catch {
+      return fallback;
+    }
+
+    const width = bounds.max.x - bounds.min.x;
+    const depth = bounds.max.z - bounds.min.z;
+    const height = bounds.max.y - bounds.min.y;
+    if (!Number.isFinite(width) || !Number.isFinite(depth) || !Number.isFinite(height) || width <= 0 || depth <= 0 || height <= 0) {
+      return fallback;
+    }
+
+    const margin = 0.18;
+    return {
+      center: new Vector3(
+        (bounds.min.x + bounds.max.x) / 2,
+        (bounds.min.y + bounds.max.y) / 2,
+        (bounds.min.z + bounds.max.z) / 2,
+      ),
+      width: Math.max(fallback.width, Math.min(width + margin, 6)),
+      depth: Math.max(fallback.depth, Math.min(depth + margin, 6)),
+      height: Math.max(fallback.height, Math.min(height + margin, 8)),
+    };
+  }
+
+  private createWorldObjectPickProxy(
+    objectEntityId: number,
+    data: { x: number; z: number; y?: number; rotY?: number },
+    def: WorldObjectDef,
+    model: TransformNode,
+  ): Mesh {
+    this.disposeWorldObjectPickProxy(objectEntityId);
+    const bounds = this.computeWorldObjectPickProxyBounds(model, data, def);
+    const proxy = MeshBuilder.CreateBox(`worldObject_pickProxy_${objectEntityId}`, {
+      width: bounds.width,
+      depth: bounds.depth,
+      height: bounds.height,
+    }, this.scene);
+    proxy.position = bounds.center;
+    proxy.isVisible = true;
+    proxy.visibility = 0;
+    proxy.isPickable = false;
+    proxy.layerMask = 0;
+    proxy.metadata = { kind: 'worldObject', objectEntityId };
+    proxy.computeWorldMatrix(true);
+    proxy.setParent(model);
+    proxy.doNotSyncBoundingInfo = true;
+    proxy.freezeWorldMatrix();
+    this.worldObjectPickProxies.set(objectEntityId, proxy);
+    return proxy;
+  }
+
+  private disposeWorldObjectPickProxy(objectEntityId: number): void {
+    const proxy = this.worldObjectPickProxies.get(objectEntityId);
+    if (proxy) {
+      proxy.dispose();
+      this.worldObjectPickState.delete(proxy);
+      this.worldObjectPickProxies.delete(objectEntityId);
+    }
+  }
+
+  private setGenericWorldObjectPickTarget(
+    objectEntityId: number,
+    data: { x: number; z: number; y?: number; rotY?: number },
+    def: WorldObjectDef,
+    interactive: boolean,
+    model: TransformNode,
+  ): void {
+    this.setWorldObjectPickTarget(objectEntityId, false, model);
+    let proxy = this.worldObjectPickProxies.get(objectEntityId);
+    if (interactive && (!proxy || proxy.isDisposed())) {
+      proxy = this.createWorldObjectPickProxy(objectEntityId, data, def, model);
+    }
+    if (!proxy) return;
+    proxy.setEnabled(interactive);
+    this.setWorldObjectPickTarget(objectEntityId, interactive, proxy);
   }
 
   private setCropPickTarget(
@@ -3676,6 +3795,7 @@ export class GameManager {
         if (model) this.setWorldObjectPickTarget(entityId, false, model);
         this.objectModels.deleteStump(entityId);
         this.disposeDoorVisualState(entityId);
+        this.disposeWorldObjectPickProxy(entityId);
         if (model && this.chunkManager.isPlacedObjectNode(model) && !model.isDisposed()) {
           // Keep the placed-node association across floor/range visibility
           // churn. Re-entering a dense ground floor can resync hundreds of
@@ -3982,7 +4102,16 @@ export class GameManager {
           );
           if (activeModel) {
             this.setWorldObjectModel(objectEntityId, activeModel);
-            this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), activeModel);
+            this.setWorldObjectPickTarget(objectEntityId, false, activeModel);
+            if (def.category !== 'crop' && def.category !== 'door') {
+              this.setGenericWorldObjectPickTarget(
+                objectEntityId,
+                objectData,
+                def,
+                this.isWorldObjectInteractable(def, isDepleted),
+                activeModel,
+              );
+            }
             model = activeModel;
           }
         }
@@ -3998,6 +4127,7 @@ export class GameManager {
           // Doors stay visible — animate rotation instead
           model.setEnabled(true);
           this.setWorldObjectPickTarget(objectEntityId, false, model);
+          this.disposeWorldObjectPickProxy(objectEntityId);
           if (!this.doorPickProxies.has(objectEntityId)) {
             const rotY = this.doorPivots.get(objectEntityId)?.closedRotY ?? (rotY1000 / 1000);
             this.createDoorPickProxy(objectEntityId, x, z, rotY, model.getAbsolutePosition().y);
@@ -4013,12 +4143,19 @@ export class GameManager {
           depletedModel.setEnabled(isDepleted);
           this.setWorldObjectPickTarget(objectEntityId, false, depletedModel);
         }
-        if (def?.category !== 'door') {
+        if (def && def.category !== 'door') {
           this.setPlacedWorldObjectEnabled(model, !isDepleted);
           if (def?.category === 'crop') {
+            this.disposeWorldObjectPickProxy(objectEntityId);
             this.setCropPickTarget(objectEntityId, def, isDepleted, model);
           } else {
-            this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), model);
+            this.setGenericWorldObjectPickTarget(
+              objectEntityId,
+              objectData,
+              def,
+              this.isWorldObjectInteractable(def, isDepleted),
+              model,
+            );
           }
         }
       }
@@ -4068,7 +4205,7 @@ export class GameManager {
         // Doors stay visible — animation is handled above
       } else {
         const model = this.worldObjectModels.get(objectEntityId);
-        if (hasDepleteModel && data) {
+        if (def && hasDepleteModel && data) {
           const placedNode = model ?? this.chunkManager.findPlacedObjectNear(
             data.x,
             data.z,
@@ -4090,18 +4227,29 @@ export class GameManager {
             }
             this.setPlacedWorldObjectEnabled(placedNode, isDepleted === 0);
             if (def?.category === 'crop') {
+              this.disposeWorldObjectPickProxy(objectEntityId);
               this.setCropPickTarget(objectEntityId, def, isDepleted === 1, placedNode);
             } else {
-              this.setWorldObjectPickTarget(objectEntityId, isDepleted === 0, placedNode);
+              this.setGenericWorldObjectPickTarget(objectEntityId, data, def, isDepleted === 0, placedNode);
             }
           }
-        } else if (model) {
+        } else if (model && def && data) {
           this.setPlacedWorldObjectEnabled(model, isDepleted === 0);
           if (def?.category === 'crop') {
+            this.disposeWorldObjectPickProxy(objectEntityId);
             this.setCropPickTarget(objectEntityId, def, isDepleted === 1, model);
           } else {
-            this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted === 1), model);
+            this.setGenericWorldObjectPickTarget(
+              objectEntityId,
+              data,
+              def,
+              this.isWorldObjectInteractable(def, isDepleted === 1),
+              model,
+            );
           }
+        } else if (model) {
+          this.setWorldObjectPickTarget(objectEntityId, false, model);
+          this.disposeWorldObjectPickProxy(objectEntityId);
         }
       }
     });
@@ -4683,6 +4831,8 @@ export class GameManager {
         this.closedCenteredDoorTileKeysByObjectId.clear();
         for (const [, proxy] of this.cropPickProxies) proxy.dispose();
         this.cropPickProxies.clear();
+        for (const [, proxy] of this.worldObjectPickProxies) proxy.dispose();
+        this.worldObjectPickProxies.clear();
         for (const [, proxy] of this.doorPickProxies) proxy.dispose();
         this.doorPickProxies.clear();
         for (const [, entry] of this.doorPivots) entry.pivot.dispose();
@@ -8784,6 +8934,8 @@ export class GameManager {
     this.worldObjectPickState = new WeakMap();
     for (const [, proxy] of this.cropPickProxies) proxy.dispose();
     this.cropPickProxies.clear();
+    for (const [, proxy] of this.worldObjectPickProxies) proxy.dispose();
+    this.worldObjectPickProxies.clear();
     for (const [, proxy] of this.doorPickProxies) proxy.dispose();
     this.doorPickProxies.clear();
     for (const [, entry] of this.doorPivots) entry.pivot.dispose();
