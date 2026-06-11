@@ -131,6 +131,13 @@ function extractPageDiagnostics(raw) {
   return null;
 }
 
+function extractBrowserDiagnostics(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.browserDiagnostics && typeof raw.browserDiagnostics === 'object') return raw.browserDiagnostics;
+  if (raw.systemInfo || raw.browserVersion || raw.devtoolsVersion) return raw;
+  return null;
+}
+
 function rendererFromWebGl(webgl) {
   return webgl?.unmaskedRenderer || webgl?.renderer || 'unknown';
 }
@@ -189,6 +196,51 @@ function browserLabel(pageDiagnostics) {
   return match ? `${match[1]} ${match[2]}` : 'Chromium';
 }
 
+function browserProcessLabel(browserDiagnostics) {
+  if (!browserDiagnostics) return 'n/a';
+  return browserDiagnostics.browserVersion?.product
+    || browserDiagnostics.devtoolsVersion?.Browser
+    || 'unknown browser';
+}
+
+function gpuDevicesFromBrowserDiagnostics(browserDiagnostics) {
+  return Array.isArray(browserDiagnostics?.systemInfo?.gpu?.devices)
+    ? browserDiagnostics.systemInfo.gpu.devices
+    : [];
+}
+
+function gpuFeatureStatusFromBrowserDiagnostics(browserDiagnostics) {
+  const status = browserDiagnostics?.systemInfo?.gpu?.featureStatus;
+  return status && typeof status === 'object' ? status : {};
+}
+
+function primaryGpuLabel(browserDiagnostics) {
+  const device = gpuDevicesFromBrowserDiagnostics(browserDiagnostics)[0];
+  if (!device) return 'n/a';
+  const name = [
+    device.vendorString || device.vendorId,
+    device.deviceString || device.deviceId,
+  ].filter(Boolean).join(' ') || 'unknown GPU';
+  const driver = [
+    device.driverVendor,
+    device.driverVersion,
+  ].filter(Boolean).join(' ');
+  return driver ? `${name} (${driver})` : name;
+}
+
+function commandLineFlags(browserDiagnostics) {
+  const args = browserDiagnostics?.commandLine?.arguments;
+  const rawCommandLine = browserDiagnostics?.systemInfo?.commandLine;
+  const allArgs = Array.isArray(args)
+    ? args
+    : typeof rawCommandLine === 'string'
+      ? rawCommandLine.split(/\s+/)
+      : null;
+  if (!allArgs) return 'n/a';
+  const relevant = allArgs.filter((arg) => /^--(disable|enable|use|ignore|in-process|no-|ozone|angle|gpu|swiftshader|render|use-angle)/i.test(String(arg)));
+  return relevant.length > 0 ? relevant.slice(0, 12).join(' ') : 'none';
+}
+
 function formatBool(value) {
   if (value === true) return 'yes';
   if (value === false) return 'no';
@@ -222,6 +274,8 @@ async function readRun(input) {
   const browserStats = dir ? await readJsonIfPresent(join(dir, 'browser-stats.json')) : null;
   const pageDiagnostics = extractPageDiagnostics(summary)
     ?? (dir ? await readJsonIfPresent(join(dir, 'page-diagnostics.json')) : extractPageDiagnostics(raw));
+  const browserDiagnostics = extractBrowserDiagnostics(summary)
+    ?? (dir ? await readJsonIfPresent(join(dir, 'browser-diagnostics.json')) : extractBrowserDiagnostics(raw));
   const snapshotFile = dir ? join(dir, 'evilquest-snapshot.json') : candidate;
   const snapshotRaw = dir ? await readJsonIfPresent(snapshotFile) : raw;
   const snapshot = extractCompletedSnapshot(snapshotRaw) ?? extractCompletedSnapshot(summary);
@@ -239,6 +293,7 @@ async function readRun(input) {
     file,
     snapshot,
     pageDiagnostics,
+    browserDiagnostics,
     summary,
     browserStats,
   };
@@ -425,6 +480,41 @@ function printPageDiagnosticComparison(aRun, bRun) {
   printDiagnosticMetric('URL', formatShortUrl(aPage?.url), formatShortUrl(bPage?.url));
 }
 
+function printBrowserDiagnosticComparison(aRun, bRun) {
+  if (!aRun.browserDiagnostics && !bRun.browserDiagnostics) return;
+
+  const aBrowser = aRun.browserDiagnostics;
+  const bBrowser = bRun.browserDiagnostics;
+  const featureKeys = [
+    'gpu_compositing',
+    'webgl',
+    'webgl2',
+    'rasterization',
+    'multiple_raster_threads',
+    'canvas_oop_rasterization',
+    'video_decode',
+    'video_encode',
+    'vulkan',
+    'metal',
+  ];
+
+  console.log('\nBrowser process diagnostics');
+  printDiagnosticMetric('Browser product', browserProcessLabel(aBrowser), browserProcessLabel(bBrowser));
+  printDiagnosticMetric('Primary GPU', primaryGpuLabel(aBrowser), primaryGpuLabel(bBrowser));
+  printDiagnosticMetric('GPU count', gpuDevicesFromBrowserDiagnostics(aBrowser).length, gpuDevicesFromBrowserDiagnostics(bBrowser).length, formatCount);
+  for (const key of featureKeys) {
+    const aStatus = gpuFeatureStatusFromBrowserDiagnostics(aBrowser)[key];
+    const bStatus = gpuFeatureStatusFromBrowserDiagnostics(bBrowser)[key];
+    if (aStatus != null || bStatus != null) printDiagnosticMetric(key, aStatus, bStatus);
+  }
+  const aAux = aBrowser?.systemInfo?.gpu?.auxAttributes || {};
+  const bAux = bBrowser?.systemInfo?.gpu?.auxAttributes || {};
+  printDiagnosticMetric('GL renderer', aAux.glRenderer, bAux.glRenderer);
+  printDiagnosticMetric('GL vendor', aAux.glVendor, bAux.glVendor);
+  printDiagnosticMetric('ANGLE backend', aAux.angleBackend, bAux.angleBackend);
+  printDiagnosticMetric('Relevant flags', commandLineFlags(aBrowser), commandLineFlags(bBrowser));
+}
+
 function printSnapshotComparison(aSnapshot, bSnapshot) {
   if (!aSnapshot && !bSnapshot) {
     console.log('\nEvilQuest snapshot: unavailable for both runs');
@@ -489,6 +579,7 @@ async function main() {
   console.log('');
 
   printPageDiagnosticComparison(a, b);
+  printBrowserDiagnosticComparison(a, b);
   printSnapshotComparison(aSnapshot, bSnapshot);
   printResourceComparison(a, b);
   printCpuComparison(a, b);

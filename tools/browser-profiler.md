@@ -58,6 +58,7 @@ Each run writes a timestamped folder under `tools/profiler-runs/`:
 
 - `summary.json` - CPU hot spots, browser timing summaries, resource summaries, and the EvilQuest snapshot inline.
 - `page-diagnostics.json` - browser, viewport, storage-presence, and WebGL renderer info even if login/game readiness fails.
+- `browser-diagnostics.json` - Chrome/Brave process diagnostics from DevTools, including GPU devices and feature status.
 - `evilquest-snapshot.json` - measured FPS, renderer, WebGL flags, canvas size, mesh/vertex counts, map/player position.
 - `cpu-profile.json` - raw Chrome DevTools CPU profile.
 - `browser-stats.json` - long tasks, slow callbacks, resources, fetches, WebSockets.
@@ -91,9 +92,10 @@ bun tools/compare-profiler-runs.mjs tools/profiler-runs/<chrome-run> tools/profi
 ```
 
 The comparison includes page diagnostics, the in-game snapshot when available,
-resource timing, fetch timing, long tasks, slow callbacks, and CPU self-time.
-That makes it useful for separating live/local network and asset-loading
-differences from renderer/GPU backend differences.
+browser-process GPU diagnostics, resource timing, fetch timing, long tasks,
+slow callbacks, and CPU self-time. That makes it useful for separating
+live/local network and asset-loading differences from renderer/GPU backend
+differences.
 
 With no arguments it compares the latest two run directories:
 

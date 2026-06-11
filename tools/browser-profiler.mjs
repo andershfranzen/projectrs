@@ -80,6 +80,31 @@ async function isCdpPortOpen() {
   }
 }
 
+async function withBrowserCdp(callback) {
+  const version = await cdpJson('/json/version');
+  if (!version?.webSocketDebuggerUrl) {
+    return { error: 'Chrome DevTools browser target is unavailable', version };
+  }
+
+  const browserCdp = new CdpClient(version.webSocketDebuggerUrl);
+  await browserCdp.open();
+  try {
+    return await callback(browserCdp, version);
+  } finally {
+    browserCdp.close();
+  }
+}
+
+async function safeCdpSend(cdp, method, params = {}) {
+  try {
+    return await cdp.send(method, params);
+  } catch (error) {
+    return {
+      error: error?.message || String(error),
+    };
+  }
+}
+
 class CdpClient {
   constructor(wsUrl) {
     this.nextId = 1;
@@ -130,33 +155,40 @@ class CdpClient {
 }
 
 async function openFreshPageTarget(initialUrl = 'about:blank') {
-  const version = await cdpJson('/json/version');
-  if (!version?.webSocketDebuggerUrl) {
-    throw new Error('Chrome DevTools browser target is unavailable');
-  }
-
-  const browserCdp = new CdpClient(version.webSocketDebuggerUrl);
-  await browserCdp.open();
-  let created;
-  try {
-    created = await browserCdp.send('Target.createTarget', {
+  return withBrowserCdp(async (browserCdp) => {
+    const created = await browserCdp.send('Target.createTarget', {
       url: initialUrl,
       newWindow: false,
       background: false,
     });
-  } finally {
-    browserCdp.close();
-  }
-  const targetId = created.targetId;
-  if (!targetId) throw new Error('Chrome DevTools did not create a page target');
+    const targetId = created.targetId;
+    if (!targetId) throw new Error('Chrome DevTools did not create a page target');
 
-  for (let i = 0; i < 40; i += 1) {
-    const targets = await cdpJson('/json/list');
-    const target = targets.find((item) => item.id === targetId);
-    if (target?.webSocketDebuggerUrl) return target;
-    await sleep(100);
-  }
-  throw new Error(`Fresh page target ${targetId} did not become debuggable`);
+    for (let i = 0; i < 40; i += 1) {
+      const targets = await cdpJson('/json/list');
+      const target = targets.find((item) => item.id === targetId);
+      if (target?.webSocketDebuggerUrl) return target;
+      await sleep(100);
+    }
+    throw new Error(`Fresh page target ${targetId} did not become debuggable`);
+  });
+}
+
+async function captureBrowserDiagnostics() {
+  return withBrowserCdp(async (browserCdp, devtoolsVersion) => {
+    const browserVersion = await safeCdpSend(browserCdp, 'Browser.getVersion');
+    const systemInfo = await safeCdpSend(browserCdp, 'SystemInfo.getInfo');
+    const processInfo = await safeCdpSend(browserCdp, 'SystemInfo.getProcessInfo');
+    const commandLine = await safeCdpSend(browserCdp, 'Browser.getBrowserCommandLine');
+    return {
+      capturedAt: new Date().toISOString(),
+      devtoolsVersion,
+      browserVersion,
+      systemInfo,
+      processInfo,
+      commandLine,
+    };
+  });
 }
 
 const injectedProfiler = String.raw`
@@ -367,6 +399,50 @@ function printPageDiagnostics(pageDiagnostics) {
   console.log('Page diagnostics:');
   console.log(`  ${browserName}, ${context}, renderer: ${renderer}`);
   console.log(`  ${authText}, has game manager: ${pageDiagnostics.game?.hasGameManager ? 'yes' : 'no'}, title: ${pageDiagnostics.title || 'n/a'}`);
+}
+
+function gpuDevicesFromBrowserDiagnostics(browserDiagnostics) {
+  return Array.isArray(browserDiagnostics?.systemInfo?.gpu?.devices)
+    ? browserDiagnostics.systemInfo.gpu.devices
+    : [];
+}
+
+function gpuFeatureStatusFromBrowserDiagnostics(browserDiagnostics) {
+  const status = browserDiagnostics?.systemInfo?.gpu?.featureStatus;
+  return status && typeof status === 'object' ? status : {};
+}
+
+function printBrowserDiagnostics(browserDiagnostics) {
+  if (!browserDiagnostics || typeof browserDiagnostics !== 'object') return;
+  if (browserDiagnostics.error) {
+    console.log(`Browser diagnostics unavailable: ${browserDiagnostics.error}`);
+    return;
+  }
+
+  const browser = browserDiagnostics.browserVersion?.product
+    || browserDiagnostics.devtoolsVersion?.Browser
+    || 'unknown browser';
+  const devices = gpuDevicesFromBrowserDiagnostics(browserDiagnostics);
+  const primaryGpu = devices[0];
+  const gpuLabel = primaryGpu
+    ? `${[
+      primaryGpu.vendorString || primaryGpu.vendorId,
+      primaryGpu.deviceString || primaryGpu.deviceId,
+    ].filter(Boolean).join(' ')}${primaryGpu.driverVendor || primaryGpu.driverVersion
+      ? ` (${[primaryGpu.driverVendor, primaryGpu.driverVersion].filter(Boolean).join(' ')})`
+      : ''}`
+    : 'unknown GPU';
+  const aux = browserDiagnostics.systemInfo?.gpu?.auxAttributes || {};
+  const featureStatus = gpuFeatureStatusFromBrowserDiagnostics(browserDiagnostics);
+  const webglStatus = featureStatus.webgl || featureStatus.webgl2 || 'unknown';
+  const gpuCompositingStatus = featureStatus.gpu_compositing || 'unknown';
+
+  console.log('Browser process diagnostics:');
+  console.log(`  ${browser}, GPU: ${gpuLabel}`);
+  console.log(`  WebGL feature: ${webglStatus}, GPU compositing: ${gpuCompositingStatus}`);
+  if (aux.glRenderer || aux.glVendor) {
+    console.log(`  GL: ${[aux.glVendor, aux.glRenderer].filter(Boolean).join(' / ')}`);
+  }
 }
 
 function printEvilQuestSnapshot(snapshot) {
@@ -584,6 +660,8 @@ async function main() {
   chrome.unref();
 
   await waitForCdp();
+  const browserDiagnostics = await captureBrowserDiagnostics();
+  printBrowserDiagnostics(browserDiagnostics);
   const pageTarget = await openFreshPageTarget('about:blank');
   if (!pageTarget?.webSocketDebuggerUrl) throw new Error('No debuggable Chrome page target found');
   const cdp = new CdpClient(pageTarget.webSocketDebuggerUrl);
@@ -698,6 +776,7 @@ async function main() {
       capturedAt: new Date().toISOString(),
       gameReady,
       pageDiagnostics,
+      browserDiagnostics,
       evilQuestSnapshot: evilQuestSnapshot?.ok ? evilQuestSnapshot.snapshot : evilQuestSnapshot,
       topFunctionSelfTime: functionSelfTime.slice(0, 100),
       browserSummary,
@@ -705,6 +784,7 @@ async function main() {
     };
     await writeFile(join(runDir, 'summary.json'), JSON.stringify(summary, null, 2));
     await writeFile(join(runDir, 'page-diagnostics.json'), JSON.stringify(pageDiagnostics, null, 2));
+    await writeFile(join(runDir, 'browser-diagnostics.json'), JSON.stringify(browserDiagnostics, null, 2));
     await writeFile(join(runDir, 'evilquest-snapshot.json'), JSON.stringify(evilQuestSnapshot, null, 2));
     await writeFile(join(runDir, 'cpu-profile.json'), JSON.stringify(profile, null, 2));
     await writeFile(join(runDir, 'browser-stats.json'), JSON.stringify(browserStats, null, 2));
