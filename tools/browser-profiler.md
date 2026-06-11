@@ -43,7 +43,7 @@ extension tabs, startup tabs, and restored sessions should not steal the capture
 
 Each run writes a timestamped folder under `tools/profiler-runs/`:
 
-- `summary.json` - CPU hot spots, browser timing summaries, and the EvilQuest snapshot inline.
+- `summary.json` - CPU hot spots, browser timing summaries, resource summaries, and the EvilQuest snapshot inline.
 - `evilquest-snapshot.json` - measured FPS, renderer, WebGL flags, canvas size, mesh/vertex counts, map/player position.
 - `cpu-profile.json` - raw Chrome DevTools CPU profile.
 - `browser-stats.json` - long tasks, slow callbacks, resources, fetches, WebSockets.
@@ -76,11 +76,21 @@ You can diff two profiler run directories directly:
 bun tools/compare-profiler-runs.mjs tools/profiler-runs/<chrome-run> tools/profiler-runs/<brave-run>
 ```
 
+The comparison includes the in-game snapshot plus resource timing, fetch timing,
+long tasks, slow callbacks, and CPU self-time. That makes it useful for
+separating live/local network and asset-loading differences from renderer/GPU
+backend differences.
+
 With no arguments it compares the latest two run directories:
 
 ```bash
 bun tools/compare-profiler-runs.mjs
 ```
+
+If a live run reports `hasGameManager: false` and the body text is the login
+screen, it did not capture steady-state gameplay. Reuse a logged-in
+`CHROME_PROFILE_DIR`, run once without autorun and log in there, or inject auth
+with the variables below.
 
 ## Optional Auth Injection
 
