@@ -270,10 +270,6 @@ export interface MinimapTileSnapshot {
   startZ: number;
 }
 
-export interface ChunkManagerOptions {
-  terrainDetailEnabled?: boolean;
-}
-
 /**
  * Client-side chunk manager.
  * Loads KC editor map.json via HTTP, builds/destroys chunk terrain
@@ -338,7 +334,6 @@ export class ChunkManager {
   private floorMat: StandardMaterial | null = null;
   private stairMat: StandardMaterial | null = null;
   private paddyWaterMat: StandardMaterial | null = null;
-  private terrainDetailEnabled: boolean = true;
 
   private loaded: boolean = false;
 
@@ -487,9 +482,8 @@ export class ChunkManager {
    *  objects get wiped, chunks render terrain only. */
   private loadMapToken: number = 0;
 
-  constructor(scene: Scene, options: ChunkManagerOptions = {}) {
+  constructor(scene: Scene) {
     this.scene = scene;
-    this.terrainDetailEnabled = options.terrainDetailEnabled ?? true;
   }
 
   isLoaded(): boolean { return this.loaded; }
@@ -525,19 +519,13 @@ export class ChunkManager {
     return run;
   }
 
-  isTerrainDetailEnabled(): boolean {
-    return this.terrainDetailEnabled;
-  }
-
   private createGroundMaterial(): StandardMaterial {
     const mat = new StandardMaterial('chunkGroundMat', this.scene);
     mat.specularColor = new Color3(0, 0, 0);
     mat.emissiveColor = new Color3(0.2, 0.2, 0.2);
-    if (this.terrainDetailEnabled) {
-      // Procedural per-type surface detail (grass/dirt/sand/stone), driven by
-      // the per-vertex `groundDetail` attribute set in buildGroundMesh.
-      new GroundDetailPluginMaterial(mat);
-    }
+    // Procedural per-type surface detail (grass/dirt/sand/stone), driven by
+    // the per-vertex `groundDetail` attribute set in buildGroundMesh.
+    new GroundDetailPluginMaterial(mat);
     return mat;
   }
 
@@ -560,53 +548,6 @@ export class ChunkManager {
       this.stoneRockMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
       this.stoneRockMat.backFaceCulling = false;
     }
-  }
-
-  setTerrainDetailEnabled(enabled: boolean): void {
-    if (this.terrainDetailEnabled === enabled) return;
-    this.terrainDetailEnabled = enabled;
-
-    const oldGroundMat = this.groundMat;
-    this.groundMat = this.createGroundMaterial();
-    if (enabled) this.ensureTerrainDetailMaterials();
-
-    for (const [key, meshes] of this.chunks) {
-      const [cx, cz] = key.split(',').map(Number);
-      const startX = cx * CHUNK_SIZE;
-      const startZ = cz * CHUNK_SIZE;
-      const endX = Math.min(startX + CHUNK_SIZE, this.mapWidth);
-      const endZ = Math.min(startZ + CHUNK_SIZE, this.mapHeight);
-      const wasEnabled = this.chunkMeshesEnabled.get(key) ?? meshes.ground.isEnabled();
-
-      meshes.ground.dispose();
-      meshes.ground = this.buildGroundMesh(cx, cz, startX, startZ, endX, endZ);
-      meshes.ground.freezeWorldMatrix();
-      meshes.ground.doNotSyncBoundingInfo = true;
-      meshes.ground.setEnabled(wasEnabled);
-
-      meshes.grassBlades?.dispose();
-      meshes.stoneRocks?.dispose();
-      meshes.grassBlades = enabled ? this.buildGrassBladeMesh(cx, cz, startX, startZ, endX, endZ) : null;
-      meshes.stoneRocks = enabled ? this.buildStoneRockMesh(cx, cz, startX, startZ, endX, endZ) : null;
-      if (meshes.grassBlades) {
-        meshes.grassBlades.freezeWorldMatrix();
-        meshes.grassBlades.doNotSyncBoundingInfo = true;
-        meshes.grassBlades.setEnabled(wasEnabled);
-      }
-      if (meshes.stoneRocks) {
-        meshes.stoneRocks.freezeWorldMatrix();
-        meshes.stoneRocks.doNotSyncBoundingInfo = true;
-        meshes.stoneRocks.setEnabled(wasEnabled);
-      }
-    }
-
-    if (!enabled) {
-      this.grassBladeMat?.dispose();
-      this.stoneRockMat?.dispose();
-      this.grassBladeMat = null;
-      this.stoneRockMat = null;
-    }
-    oldGroundMat?.dispose();
   }
 
   private getVisibilityDistanceTiles(paddingTiles: number): number {
@@ -945,7 +886,7 @@ export class ChunkManager {
     if (!this.groundMat) {
       this.groundMat = this.createGroundMaterial();
     }
-    if (this.terrainDetailEnabled) this.ensureTerrainDetailMaterials();
+    this.ensureTerrainDetailMaterials();
     if (!this.waterMat) {
       this.waterMat = new StandardMaterial('chunkWaterMat', this.scene);
       this.waterMat.specularColor = new Color3(0, 0, 0);
@@ -1821,8 +1762,8 @@ export class ChunkManager {
     const endZ = Math.min(startZ + CHUNK_SIZE, this.mapHeight);
 
     const ground = this.buildGroundMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
-    const grassBlades = this.terrainDetailEnabled ? this.buildGrassBladeMesh(chunkX, chunkZ, startX, startZ, endX, endZ) : null;
-    const stoneRocks = this.terrainDetailEnabled ? this.buildStoneRockMesh(chunkX, chunkZ, startX, startZ, endX, endZ) : null;
+    const grassBlades = this.buildGrassBladeMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
+    const stoneRocks = this.buildStoneRockMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
     const overlays = this.buildTextureOverlays(chunkX, chunkZ, startX, startZ, endX, endZ);
     const water = this.buildWaterMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
     const paddyWater = this.buildPaddyWaterMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
@@ -2100,10 +2041,8 @@ export class ChunkManager {
     VertexData.ComputeNormals(positions, indices, normals);
     vertexData.normals = normals;
     vertexData.applyToMesh(mesh);
-    if (this.terrainDetailEnabled) {
-      // Custom per-vertex attribute feeding the procedural ground-detail shader.
-      mesh.setVerticesData('groundDetail', detail, false, 1);
-    }
+    // Custom per-vertex attribute feeding the procedural ground-detail shader.
+    mesh.setVerticesData('groundDetail', detail, false, 1);
     mesh.material = this.groundMat;
     mesh.hasVertexAlpha = false;
     mesh.isPickable = true;
@@ -2125,8 +2064,15 @@ export class ChunkManager {
       return s - Math.floor(s);
     };
 
-    const BLADES_PER_TILE = 8;
-    const HALF_WIDTH = 0.025;
+    // The fragment shader already gives grass its continuous fine pattern.
+    // These triangles are only silhouette/accent detail, so keep them sparse:
+    // dense per-tile blades were adding hundreds of thousands of vertices around
+    // spawn and showed large GPU variance between Chromium builds.
+    const INTERIOR_BLADE_TILE_CHANCE = 0.42;
+    const INTERIOR_BLADES_PER_SELECTED_TILE = 2;
+    const BOUNDARY_BLADES_PER_TILE = 3;
+    const EDGE_SPILL_BLADES = 2;
+    const HALF_WIDTH = 0.04;
     const base = groundColor('grass', 0.80);
     const tip = groundColor('grass', 1.18);
 
@@ -2137,9 +2083,9 @@ export class ChunkManager {
       const hu = Math.min(Math.max(bx - tx, 0), 1);
       const hv = Math.min(Math.max(bz - tz, 0), 1);
       const by = bilerpCorners(h.tl, h.tr, h.bl, h.br, hu, hv);
-      const height = 0.10 + rand(tx + seed * 7, tz * 3) * 0.14;
-      const leanX = (rand(tx * 2 + seed, tz) - 0.5) * 0.10;
-      const leanZ = (rand(tz * 2 + 5, tx + seed) - 0.5) * 0.10;
+      const height = 0.14 + rand(tx + seed * 7, tz * 3) * 0.18;
+      const leanX = (rand(tx * 2 + seed, tz) - 0.5) * 0.16;
+      const leanZ = (rand(tz * 2 + 5, tx + seed) - 0.5) * 0.16;
       positions.push(bx - HALF_WIDTH, by, bz, bx + HALF_WIDTH, by, bz, bx + leanX, by + height, bz + leanZ);
       colors.push(base.r, base.g, base.b, 1, base.r, base.g, base.b, 1, tip.r, tip.g, tip.b, 1);
       indices.push(vi, vi + 1, vi + 2);
@@ -2161,8 +2107,13 @@ export class ChunkManager {
         const tileType = tile?.ground ?? this.defaultGround;
         if (tileType !== 'grass') continue;
 
+        const hasNonGrassNeighbor = EDGES.some(([dx, dz]) => !isGrass(x + dx, z + dz));
+        const interiorBlades = hasNonGrassNeighbor
+          ? BOUNDARY_BLADES_PER_TILE
+          : (rand(x * 11 + 19, z * 11 + 23) < INTERIOR_BLADE_TILE_CHANCE ? INTERIOR_BLADES_PER_SELECTED_TILE : 0);
+
         const h = this.getTileCornerHeights(x, z);
-        for (let b = 0; b < BLADES_PER_TILE; b++) {
+        for (let b = 0; b < interiorBlades; b++) {
           const bx = x + 0.15 + rand(x * 4 + b, z * 4) * 0.7;
           const bz = z + 0.15 + rand(x * 4 + b + 31, z * 4 + 17) * 0.7;
           emitBlade(bx, bz, h, x, z, b);
@@ -2175,7 +2126,7 @@ export class ChunkManager {
         for (let e = 0; e < EDGES.length; e++) {
           const [dx, dz] = EDGES[e];
           if (isGrass(x + dx, z + dz)) continue; // only spill onto non-grass neighbours
-          for (let s = 0; s < 3; s++) {
+          for (let s = 0; s < EDGE_SPILL_BLADES; s++) {
             // along-edge position 0.1..0.9, spilled 0.05..0.35 past the edge
             const along = 0.1 + rand(x * 9 + e * 3 + s, z * 9) * 0.8;
             const over = 0.05 + rand(z * 9 + e * 3 + s, x * 9 + 5) * 0.30;
@@ -2231,9 +2182,9 @@ export class ChunkManager {
         const tileType = tile?.ground ?? this.defaultGround;
         if (groundDetailFamily(tileType) !== 3) continue; // stone/rock/road/dungeon family only
 
-        // Sparse + random: most tiles get none, some get one or two pebbles.
+        // Sparse + random: most tiles get none, a few get one or two pebbles.
         const roll = rand(x * 5 + 3, z * 5 + 9);
-        const rockCount = roll > 0.72 ? (roll > 0.92 ? 2 : 1) : 0;
+        const rockCount = roll > 0.84 ? (roll > 0.97 ? 2 : 1) : 0;
         if (rockCount === 0) continue;
 
         const h = this.getTileCornerHeights(x, z);

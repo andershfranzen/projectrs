@@ -82,9 +82,6 @@ const NPC_TARGET_PATH_MAX_WAYPOINTS = 50;
 const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
-const TERRAIN_DETAIL_STORAGE_KEY = 'projectrs_terrain_detail';
-const ADAPTIVE_TERRAIN_DETAIL_WARMUP_MS = 8000;
-const ADAPTIVE_TERRAIN_DETAIL_MIN_FPS = 45;
 const GROUND_ITEM_TOOLTIP_MAX_LINES = 8;
 const ROOF_HOVER_REFRESH_MS = 75;
 const ROOF_HOVER_CLEAR_GRACE_MS = 120;
@@ -92,12 +89,10 @@ const ROOF_HOVER_STICKY_RADIUS_TILES = 1;
 const ROOF_HOVER_WALL_TRIGGER_RADIUS_TILES = 1;
 const ROOF_HOVER_RAY_SEARCH_RADIUS_TILES = 4;
 
-type TerrainDetailMode = 'full' | 'simple';
-
-interface TerrainDetailPreference {
-  mode: TerrainDetailMode;
-  reason: string;
-  forced: boolean;
+interface FrameRateSample {
+  frames: number;
+  durationMs: number;
+  fps: number;
 }
 const ROOF_HOVER_STRUCTURAL_SAMPLE_HEIGHT_OFFSETS = [1.1, 1.8, 2.5] as const;
 const NPC_FACING_NONE = -32768;
@@ -628,11 +623,6 @@ export class GameManager {
   private fpsFrameCount: number = 0;
   private fpsLastSampleAt: number = 0;
   private fpsCounterUserToggled: boolean = false;
-  private terrainDetailMode: TerrainDetailMode = 'full';
-  private terrainDetailReason: string = 'default';
-  private terrainDetailForced: boolean = false;
-  private adaptiveTerrainDetailStartedAt: number = 0;
-  private adaptiveTerrainDetailFrames: number = 0;
   private nativeContextMenuBlocker: ((event: MouseEvent) => void) | null = null;
   private lastWorldContextMenuEventAt: number = 0;
   private lastWorldContextMenuEventX: number = -9999;
@@ -665,14 +655,8 @@ export class GameManager {
     // RS-style chunky pixels: keep the CSS size stable but allow an explicit
     // low-quality framebuffer for players who need the fill-rate savings.
     this.baseHardwareScalingLevel = this.detectBaseHardwareScalingLevel();
-    const terrainDetail = this.detectTerrainDetailPreference();
-    this.terrainDetailMode = terrainDetail.mode;
-    this.terrainDetailReason = terrainDetail.reason;
-    this.terrainDetailForced = terrainDetail.forced;
     this.setRenderHardwareScalingLevel(this.baseHardwareScalingLevel, canvas);
     canvas.style.imageRendering = 'pixelated';
-    canvas.dataset.terrainDetail = this.terrainDetailMode;
-    canvas.dataset.terrainDetailReason = this.terrainDetailReason;
     this.scene = new Scene(this.engine);
     this.scene.useRightHandedSystem = true; // Match Three.js coordinate system (KC editor)
     this.scene.clearColor = new Color4(0, 0, 0, 1);
@@ -713,7 +697,7 @@ export class GameManager {
     this.camera = new GameCamera(this.scene, canvas);
 
     // Chunk-based terrain
-    this.chunkManager = new ChunkManager(this.scene, { terrainDetailEnabled: this.terrainDetailMode === 'full' });
+    this.chunkManager = new ChunkManager(this.scene);
 
     // Destination marker
     this.createDestinationMarker();
@@ -1024,7 +1008,6 @@ export class GameManager {
       this.scene.render();
 
       this.updateFpsCounter(now);
-      this.updateAdaptiveTerrainDetail(now);
     });
 
     // Resize on window changes AND on canvas-element changes (catches CSS grid reflows
@@ -1276,6 +1259,124 @@ export class GameManager {
     } catch { /* best-effort diagnostics only */ }
   }
 
+  private getWebGlDiagnostics(): Record<string, unknown> {
+    const canvas = this.engine.getRenderingCanvas();
+    if (!canvas) return {};
+
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    if (!gl) return { context: 'unavailable' };
+
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    const info: Record<string, unknown> = {
+      context: gl instanceof WebGL2RenderingContext ? 'webgl2' : 'webgl',
+      version: gl.getParameter(gl.VERSION),
+      shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+      vendor: gl.getParameter(gl.VENDOR),
+      renderer: gl.getParameter(gl.RENDERER),
+      maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+      maxVertexAttribs: gl.getParameter(gl.MAX_VERTEX_ATTRIBS),
+    };
+    if (debugInfo) {
+      info.unmaskedVendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+      info.unmaskedRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+    }
+    return info;
+  }
+
+  private getBrowserDiagnostics(): Record<string, unknown> {
+    const nav = window.navigator as Navigator & {
+      brave?: unknown;
+      deviceMemory?: number;
+      userAgentData?: {
+        brands?: Array<{ brand: string; version: string }>;
+        platform?: string;
+        mobile?: boolean;
+      };
+    };
+    return {
+      userAgent: nav.userAgent,
+      platform: nav.platform,
+      userAgentData: nav.userAgentData ? {
+        brands: nav.userAgentData.brands,
+        platform: nav.userAgentData.platform,
+        mobile: nav.userAgentData.mobile,
+      } : null,
+      brave: !!nav.brave,
+      hardwareConcurrency: nav.hardwareConcurrency,
+      deviceMemory: nav.deviceMemory ?? null,
+      language: nav.language,
+      languages: nav.languages,
+      visibilityState: document.visibilityState,
+    };
+  }
+
+  private sampleRafFps(durationMs: number = 3000): Promise<FrameRateSample> {
+    return new Promise((resolve) => {
+      let frames = 0;
+      const start = performance.now();
+      const tick = () => {
+        frames++;
+        const now = performance.now();
+        const elapsed = now - start;
+        if (elapsed >= durationMs) {
+          resolve({
+            frames,
+            durationMs: Math.round(elapsed),
+            fps: frames / Math.max(0.001, elapsed / 1000),
+          });
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  }
+
+  private collectPerformanceSnapshot(sample?: FrameRateSample): Record<string, unknown> {
+    const canvas = this.engine.getRenderingCanvas();
+    const meshes = this.scene.meshes;
+    const activeMeshes = this.scene.getActiveMeshes();
+    const drawCalls = (this.engine as unknown as { _drawCalls?: { current?: number } })._drawCalls?.current ?? null;
+    const vertexCount = meshes.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0);
+    const indexCount = meshes.reduce((sum, mesh) => sum + mesh.getTotalIndices(), 0);
+
+    return {
+      measuredFps: sample ? Math.round(sample.fps * 10) / 10 : null,
+      measuredFrames: sample?.frames ?? null,
+      measuredDurationMs: sample?.durationMs ?? null,
+      engineFps: Math.round(this.engine.getFps() * 10) / 10,
+      drawCalls,
+      activeMeshes: activeMeshes.length,
+      totalMeshes: meshes.length,
+      totalVertices: vertexCount,
+      totalIndices: indexCount,
+      proceduralTerrainDetail: true,
+      renderScale: this.renderHardwareScalingLevel,
+      baseRenderScale: this.baseHardwareScalingLevel,
+      currentMap: this.chunkManager.getMapId(),
+      currentFloor: this.currentFloor,
+      player: {
+        x: Math.round(this.playerX * 10) / 10,
+        z: Math.round(this.playerZ * 10) / 10,
+      },
+      canvas: canvas ? {
+        width: canvas.width,
+        height: canvas.height,
+        clientWidth: canvas.clientWidth,
+        clientHeight: canvas.clientHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        renderScale: canvas.dataset.renderScale,
+      } : null,
+      chunkMeshes: {
+        ground: meshes.filter(mesh => /^chunk_-?\d+_-?\d+$/.test(mesh.name)).length,
+        detail: meshes.filter(mesh => /^chunk_(grass|rocks)_/.test(mesh.name)).length,
+        groundDetailAttributes: meshes.filter(mesh => !!mesh.getVerticesData('groundDetail')).length,
+      },
+      browser: this.getBrowserDiagnostics(),
+      webgl: this.getWebGlDiagnostics(),
+    };
+  }
+
   private setConnectionFrozen(frozen: boolean): void {
     this.connectionFrozen = frozen;
     this.inputManager.setEnabled(!frozen);
@@ -1312,45 +1413,6 @@ export class GameManager {
       // Storage can be blocked in privacy modes; default to full quality.
     }
     return 1;
-  }
-
-  private normalizeTerrainDetailMode(value: string | null | undefined): TerrainDetailMode | null {
-    const normalized = value?.trim().toLowerCase();
-    if (!normalized) return null;
-    if (['full', 'high', 'on', 'true', '1'].includes(normalized)) return 'full';
-    if (['simple', 'low', 'off', 'false', '0'].includes(normalized)) return 'simple';
-    return null;
-  }
-
-  private browserLooksLikeBrave(): boolean {
-    const nav = window.navigator as Navigator & { brave?: unknown };
-    return !!nav.brave;
-  }
-
-  private detectTerrainDetailPreference(): TerrainDetailPreference {
-    const params = new URLSearchParams(window.location.search);
-    const explicit = this.normalizeTerrainDetailMode(params.get('terrainDetail') ?? params.get('terrain'));
-    if (explicit) return { mode: explicit, reason: 'url', forced: true };
-
-    const quality = params.get('quality')?.toLowerCase();
-    if (quality === 'high') return { mode: 'full', reason: 'quality=high', forced: true };
-    if (quality === 'low') return { mode: 'simple', reason: 'quality=low', forced: true };
-
-    try {
-      const stored = this.normalizeTerrainDetailMode(localStorage.getItem(TERRAIN_DETAIL_STORAGE_KEY));
-      if (stored) return { mode: stored, reason: 'saved preference', forced: true };
-      if (localStorage.getItem('projectrs_low_quality') === '1') {
-        return { mode: 'simple', reason: 'low-quality preference', forced: false };
-      }
-    } catch {
-      // Storage can be blocked in privacy modes; fall through to browser hints.
-    }
-
-    if (this.browserLooksLikeBrave()) {
-      return { mode: 'simple', reason: 'brave', forced: false };
-    }
-
-    return { mode: 'full', reason: 'default', forced: false };
   }
 
   private setRenderHardwareScalingLevel(level: number, canvas?: HTMLCanvasElement): void {
@@ -1396,83 +1458,39 @@ export class GameManager {
     this.setFpsCounterVisible(!this.fpsCounterEl, true);
   }
 
-  private setTerrainDetailMode(mode: TerrainDetailMode, reason: string, persist: boolean): void {
-    this.terrainDetailMode = mode;
-    this.terrainDetailReason = reason;
-    this.terrainDetailForced = persist;
-    this.adaptiveTerrainDetailStartedAt = 0;
-    this.adaptiveTerrainDetailFrames = 0;
-    this.chunkManager.setTerrainDetailEnabled(mode === 'full');
-    const canvas = this.engine.getRenderingCanvas();
-    if (canvas) {
-      canvas.dataset.terrainDetail = mode;
-      canvas.dataset.terrainDetailReason = reason;
-    }
-    if (persist) {
-      try {
-        localStorage.setItem(TERRAIN_DETAIL_STORAGE_KEY, mode);
-      } catch {
-        // Storage can be blocked in privacy modes; the runtime switch still applies.
-      }
-    }
-  }
-
-  private handleTerrainDetailCommand(msg: string): void {
-    const arg = msg.replace(/^\/terraindetail\b/i, '').trim();
-    const mode = this.normalizeTerrainDetailMode(arg);
-    if (!mode) {
-      this.chatPanel?.addSystemMessage(`Terrain detail is ${this.terrainDetailMode} (${this.terrainDetailReason}). Use /terraindetail simple or /terraindetail full.`);
-      return;
-    }
-    this.setTerrainDetailMode(mode, 'command', true);
-    this.chatPanel?.addSystemMessage(`Terrain detail set to ${mode}.`);
-  }
-
-  private isGameFrameVisible(): boolean {
-    const frame = document.getElementById('game-frame') as HTMLElement | null;
-    return !!frame && frame.style.display !== 'none' && frame.style.visibility !== 'hidden';
-  }
-
-  private resetAdaptiveTerrainDetailWindow(): void {
-    this.adaptiveTerrainDetailStartedAt = 0;
-    this.adaptiveTerrainDetailFrames = 0;
-  }
-
-  private updateAdaptiveTerrainDetail(now: number): void {
-    if (this.terrainDetailForced || this.terrainDetailMode !== 'full') return;
-    if (document.visibilityState !== 'visible' || !this.isGameFrameVisible() || !this._loginSettled || this.localPlayerId < 0) {
-      this.resetAdaptiveTerrainDetailWindow();
-      return;
-    }
-
-    if (this.adaptiveTerrainDetailStartedAt === 0) {
-      this.adaptiveTerrainDetailStartedAt = now;
-      this.adaptiveTerrainDetailFrames = 0;
-    }
-    this.adaptiveTerrainDetailFrames++;
-
-    const elapsed = now - this.adaptiveTerrainDetailStartedAt;
-    if (elapsed < ADAPTIVE_TERRAIN_DETAIL_WARMUP_MS) return;
-
-    const avgFps = this.adaptiveTerrainDetailFrames / Math.max(0.001, elapsed / 1000);
-    if (avgFps < ADAPTIVE_TERRAIN_DETAIL_MIN_FPS && this.scene.getActiveMeshes().length > 100) {
-      this.setTerrainDetailMode('simple', 'auto low fps', false);
-      this.chatPanel?.addSystemMessage('Terrain detail reduced for performance. Use /terraindetail full to restore it.');
-      return;
-    }
-
-    this.resetAdaptiveTerrainDetailWindow();
-  }
-
   private updateFpsCounter(now: number): void {
     if (!this.fpsCounterEl) return;
     this.fpsFrameCount++;
     if (now - this.fpsLastSampleAt < 1000) return;
     const fps = Math.round(this.engine.getFps());
     const scale = this.renderHardwareScalingLevel.toFixed(1);
-    this.fpsCounterEl.textContent = `${this.fpsFrameCount} FPS (${fps}) | ${this.scene.getActiveMeshes().length} meshes | scale ${scale} | terrain ${this.terrainDetailMode}`;
+    this.fpsCounterEl.textContent = `${this.fpsFrameCount} FPS (${fps}) | ${this.scene.getActiveMeshes().length} meshes | scale ${scale}`;
     this.fpsFrameCount = 0;
     this.fpsLastSampleAt = now;
+  }
+
+  private async handlePerfCommand(): Promise<void> {
+    this.chatPanel?.addSystemMessage('Measuring client performance for 3 seconds...');
+    const sample = await this.sampleRafFps(3000);
+    const snapshot = this.collectPerformanceSnapshot(sample);
+    this.reportClientLog('client_perf_snapshot', snapshot);
+
+    const webgl = snapshot.webgl as Record<string, unknown> | undefined;
+    const renderer = String(webgl?.unmaskedRenderer ?? webgl?.renderer ?? 'unknown');
+    const clippedRenderer = renderer.length > 80 ? `${renderer.slice(0, 77)}...` : renderer;
+    const meshes = Number(snapshot.activeMeshes ?? 0);
+    const vertices = Number(snapshot.totalVertices ?? 0);
+    this.chatPanel?.addSystemMessage(
+      `Perf: ${sample.fps.toFixed(1)} FPS, ${meshes} active meshes, ${Math.round(vertices / 1000)}k vertices. Renderer: ${clippedRenderer}`,
+    );
+    this.chatPanel?.addSystemMessage('Perf snapshot sent to the server log.');
+
+    try {
+      await navigator.clipboard?.writeText(JSON.stringify(snapshot, null, 2));
+      this.chatPanel?.addSystemMessage('Perf snapshot copied to clipboard.');
+    } catch {
+      // Clipboard write requires focus/permission in some browsers; server log is enough.
+    }
   }
 
   private updateResponsiveCameraZoom(): void {
@@ -7323,8 +7341,8 @@ export class GameManager {
       return true;
     }
 
-    if (msg.trim().toLowerCase().startsWith('/terraindetail')) {
-      this.handleTerrainDetailCommand(msg);
+    if (msg.trim().toLowerCase() === '/perf') {
+      void this.handlePerfCommand();
       return true;
     }
 
