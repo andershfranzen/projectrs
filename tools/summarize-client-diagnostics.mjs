@@ -191,6 +191,38 @@ function browser(entry) {
   return isPlainRecord(entry.payload?.browser) ? entry.payload.browser : {};
 }
 
+function formatBattery(entry) {
+  const raw = browser(entry).battery;
+  if (!isPlainRecord(raw)) return 'battery n/a';
+  const level = finiteNumber(raw.level);
+  const levelText = level == null ? 'level n/a' : `${Math.round(level * 100)}%`;
+  const charging = raw.charging === true ? 'charging' : raw.charging === false ? 'not charging' : 'charging n/a';
+  return `${levelText} ${charging}`;
+}
+
+function formatConnection(entry) {
+  const raw = browser(entry).connection;
+  if (!isPlainRecord(raw)) return 'connection n/a';
+  return [
+    raw.effectiveType ? String(raw.effectiveType) : null,
+    finiteNumber(raw.downlink) != null ? `${formatRate(finiteNumber(raw.downlink))}Mbps` : null,
+    finiteNumber(raw.rtt) != null ? `${formatCount(finiteNumber(raw.rtt))}ms RTT` : null,
+    raw.saveData === true ? 'save-data' : null,
+  ].filter(Boolean).join(' ') || 'connection n/a';
+}
+
+function formatMedia(entry) {
+  const raw = browser(entry).media;
+  if (!isPlainRecord(raw)) return 'media n/a';
+  const prefs = [
+    raw.prefersReducedMotion === true ? 'reduced-motion' : null,
+    raw.prefersReducedData === true ? 'reduced-data' : null,
+    raw.prefersContrastMore === true ? 'contrast-more' : null,
+    raw.forcedColors === true ? 'forced-colors' : null,
+  ].filter(Boolean);
+  return prefs.length > 0 ? prefs.join(', ') : 'media normal';
+}
+
 function framePacing(entry) {
   return isPlainRecord(entry.payload?.framePacing) ? entry.payload.framePacing : null;
 }
@@ -357,6 +389,7 @@ function renderText(input, entries, options) {
     lines.push(`- ${entry.ts || 'unknown time'} ${entry.event} user=${entry.username} browser=${browserLabel(entry)} fps=${formatRate(fps)} class=${classification(entry)}`);
     lines.push(`  frame=${formatPacing(entry)} flags=${flags(entry).join(', ') || 'none'}`);
     lines.push(`  renderer=${clip(renderer(entry))}`);
+    lines.push(`  browserState=${formatBattery(entry)}; ${formatConnection(entry)}; ${formatMedia(entry)}`);
     lines.push(`  ${canvasText}; ${sceneText}; map=${entry.payload?.currentMap ?? 'n/a'} player=${isPlainRecord(entry.payload?.player) ? `${entry.payload.player.x ?? '?'},${entry.payload.player.z ?? '?'}` : 'n/a'}`);
   }
   return `${lines.join('\n')}\n`;

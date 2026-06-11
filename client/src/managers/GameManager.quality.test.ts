@@ -332,4 +332,45 @@ describe('GameManager render quality command', () => {
       over100Ms: 0,
     });
   });
+
+  test('perf snapshot enrichment records battery and high entropy browser data', async () => {
+    const browser: Record<string, unknown> = {};
+    const highEntropy = {
+      architecture: 'x86',
+      bitness: '64',
+      fullVersionList: [{ brand: 'Brave', version: '146.0.1.2' }],
+      platformVersion: '10.0.0',
+    };
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        navigator: {
+          getBattery: async () => ({
+            charging: false,
+            level: 0.22,
+            chargingTime: Infinity,
+            dischargingTime: 3600,
+          }),
+          userAgentData: {
+            getHighEntropyValues: async (hints: string[]) => {
+              expect(hints).toContain('fullVersionList');
+              return highEntropy;
+            },
+          },
+        },
+      },
+    });
+    const manager = Object.create(GameManager.prototype) as any;
+    const snapshot = { browser };
+
+    await manager.enrichPerformanceSnapshot(snapshot);
+
+    expect(browser.userAgentDataHighEntropy).toEqual(highEntropy);
+    expect(browser.battery).toEqual({
+      charging: false,
+      level: 0.22,
+      chargingTime: null,
+      dischargingTime: 3600,
+    });
+  });
 });

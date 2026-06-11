@@ -1411,20 +1411,24 @@ export class GameManager {
   }
 
   private getBrowserDiagnostics(): Record<string, unknown> {
+    type BrowserConnectionInfo = {
+      downlink?: number;
+      effectiveType?: string;
+      rtt?: number;
+      saveData?: boolean;
+      type?: string;
+    };
     const nav = window.navigator as Navigator & {
       brave?: unknown;
-      connection?: {
-        downlink?: number;
-        effectiveType?: string;
-        rtt?: number;
-        saveData?: boolean;
-        type?: string;
-      };
+      connection?: BrowserConnectionInfo;
+      mozConnection?: BrowserConnectionInfo;
+      webkitConnection?: BrowserConnectionInfo;
       deviceMemory?: number;
       userAgentData?: {
         brands?: Array<{ brand: string; version: string }>;
         platform?: string;
         mobile?: boolean;
+        getHighEntropyValues?: (hints: string[]) => Promise<Record<string, unknown>>;
       };
     };
     const media = typeof window.matchMedia === 'function' ? {
@@ -1433,12 +1437,13 @@ export class GameManager {
       prefersContrastMore: window.matchMedia('(prefers-contrast: more)').matches,
       forcedColors: window.matchMedia('(forced-colors: active)').matches,
     } : null;
-    const connection = nav.connection ? {
-      downlink: nav.connection.downlink ?? null,
-      effectiveType: nav.connection.effectiveType ?? null,
-      rtt: nav.connection.rtt ?? null,
-      saveData: nav.connection.saveData ?? null,
-      type: nav.connection.type ?? null,
+    const rawConnection = nav.connection ?? nav.mozConnection ?? nav.webkitConnection ?? null;
+    const connection = rawConnection ? {
+      downlink: rawConnection.downlink ?? null,
+      effectiveType: rawConnection.effectiveType ?? null,
+      rtt: rawConnection.rtt ?? null,
+      saveData: rawConnection.saveData ?? null,
+      type: rawConnection.type ?? null,
     } : null;
     const visualViewport = window.visualViewport ? {
       width: Math.round(window.visualViewport.width),
@@ -1486,6 +1491,59 @@ export class GameManager {
         orientation: screenOrientation,
       } : null,
     };
+  }
+
+  private async enrichBrowserDiagnostics(browser: Record<string, unknown>): Promise<void> {
+    if (typeof window === 'undefined') return;
+    const nav = window.navigator as Navigator & {
+      getBattery?: () => Promise<{
+        charging?: boolean;
+        level?: number;
+        chargingTime?: number;
+        dischargingTime?: number;
+      }>;
+      userAgentData?: {
+        getHighEntropyValues?: (hints: string[]) => Promise<Record<string, unknown>>;
+      };
+    };
+
+    if (nav.userAgentData?.getHighEntropyValues) {
+      try {
+        browser.userAgentDataHighEntropy = await nav.userAgentData.getHighEntropyValues([
+          'architecture',
+          'bitness',
+          'fullVersionList',
+          'model',
+          'platformVersion',
+          'uaFullVersion',
+          'wow64',
+        ]);
+      } catch {
+        browser.userAgentDataHighEntropy = null;
+      }
+    }
+
+    if (typeof nav.getBattery === 'function') {
+      try {
+        const rawBattery = await nav.getBattery();
+        browser.battery = rawBattery ? {
+          charging: rawBattery.charging ?? null,
+          level: rawBattery.level ?? null,
+          chargingTime: Number.isFinite(rawBattery.chargingTime) ? rawBattery.chargingTime : null,
+          dischargingTime: Number.isFinite(rawBattery.dischargingTime) ? rawBattery.dischargingTime : null,
+        } : null;
+      } catch {
+        browser.battery = null;
+      }
+    }
+  }
+
+  private async enrichPerformanceSnapshot(snapshot: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const browser = snapshot.browser;
+    if (browser && typeof browser === 'object' && !Array.isArray(browser)) {
+      await this.enrichBrowserDiagnostics(browser as Record<string, unknown>);
+    }
+    return snapshot;
   }
 
   private getPerformanceDiagnosticFlags(
@@ -1836,6 +1894,7 @@ export class GameManager {
     if (!this.shouldCapturePerformanceDiagnostic()) return;
 
     const snapshot = this.collectPerformanceSnapshot(sample);
+    await this.enrichPerformanceSnapshot(snapshot);
     snapshot.lowFpsAction = 'diagnostic-only';
     snapshot.lowFpsInitialFps = Math.round(initialSample.fps * 10) / 10;
     snapshot.lowFpsInitialDurationMs = initialSample.durationMs;
@@ -1896,6 +1955,7 @@ export class GameManager {
     this.chatPanel?.addSystemMessage('Measuring client performance for 3 seconds...');
     const sample = await this.sampleRafFps(3000);
     const snapshot = this.collectPerformanceSnapshot(sample);
+    await this.enrichPerformanceSnapshot(snapshot);
     this.reportClientLog('client_perf_snapshot', snapshot);
 
     const webgl = snapshot.webgl as Record<string, unknown> | undefined;
