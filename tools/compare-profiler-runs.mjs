@@ -259,6 +259,118 @@ function formatBuildResourceRow(row) {
   return `${label} (${parts.join(', ')})`;
 }
 
+function uniqueStrings(items) {
+  return [...new Set((Array.isArray(items) ? items : [])
+    .filter((item) => typeof item === 'string' && item.length > 0))];
+}
+
+function buildScriptFingerprint(run) {
+  const build = run.pageDiagnostics?.build;
+  return uniqueStrings([
+    ...(build?.scriptFiles ?? []),
+    ...(build?.documentScripts ?? []),
+  ]);
+}
+
+function difference(left, right) {
+  const rightSet = new Set(right);
+  return left.filter((item) => !rightSet.has(item));
+}
+
+function listForHint(items, limit = 4) {
+  if (!Array.isArray(items) || items.length === 0) return 'none';
+  const visible = items.slice(0, limit).join(', ');
+  return items.length > limit ? `${visible}, +${items.length - limit} more` : visible;
+}
+
+function hasCompletedSnapshot(run) {
+  return !!run.snapshot && typeof run.snapshot === 'object' && run.snapshot.measuredFps != null;
+}
+
+function measuredFps(run) {
+  const fps = run.snapshot?.measuredFps;
+  return typeof fps === 'number' && Number.isFinite(fps) ? fps : null;
+}
+
+function activeMeshCount(run) {
+  const meshes = run.snapshot?.activeMeshes;
+  return typeof meshes === 'number' && Number.isFinite(meshes) ? meshes : null;
+}
+
+function rendererLikelySoftware(run) {
+  const flags = flagsFromRun(run);
+  return flags.includes('software-renderer-likely') || isSoftwareRenderer(run.pageDiagnostics?.webgl) === true;
+}
+
+function rendererLabelForHint(run) {
+  const renderer = rendererFromRun(run);
+  return renderer === 'unknown' ? 'unknown renderer' : renderer;
+}
+
+function pageLooksLikeLogin(run) {
+  return flagsFromRun(run).includes('login-screen');
+}
+
+function printComparisonHints(aRun, bRun) {
+  const hints = [];
+  const aScripts = buildScriptFingerprint(aRun);
+  const bScripts = buildScriptFingerprint(bRun);
+  const onlyA = difference(aScripts, bScripts);
+  const onlyB = difference(bScripts, aScripts);
+  if ((aScripts.length > 0 || bScripts.length > 0) && (onlyA.length > 0 || onlyB.length > 0)) {
+    hints.push(`Client build mismatch: A-only [${listForHint(onlyA)}], B-only [${listForHint(onlyB)}]. Treat live/local FPS deltas as mixed with bundle changes.`);
+  }
+
+  const aHasSnapshot = hasCompletedSnapshot(aRun);
+  const bHasSnapshot = hasCompletedSnapshot(bRun);
+  if (!aHasSnapshot || !bHasSnapshot) {
+    const missing = [
+      !aHasSnapshot ? 'A' : null,
+      !bHasSnapshot ? 'B' : null,
+    ].filter(Boolean);
+    hints.push(`Incomplete in-game evidence: ${missing.join(' and ')} ${missing.length === 1 ? 'lacks' : 'lack'} a completed EvilQuest FPS snapshot.`);
+  }
+
+  if (pageLooksLikeLogin(aRun) || pageLooksLikeLogin(bRun)) {
+    hints.push('At least one run captured the login screen; use it for page/build/GPU diagnostics only, not steady-state gameplay FPS.');
+  }
+
+  const aSoftware = rendererLikelySoftware(aRun);
+  const bSoftware = rendererLikelySoftware(bRun);
+  if (aSoftware !== bSoftware) {
+    hints.push(`Renderer backend mismatch: A is ${aSoftware ? 'software/SwiftShader-like' : 'hardware-like'}, B is ${bSoftware ? 'software/SwiftShader-like' : 'hardware-like'}. Renderer backend is a primary suspect for large FPS gaps.`);
+  }
+
+  const aFps = measuredFps(aRun);
+  const bFps = measuredFps(bRun);
+  if (aFps != null && bFps != null) {
+    const lower = Math.min(aFps, bFps);
+    const higher = Math.max(aFps, bFps);
+    const ratio = lower > 0 ? higher / lower : Infinity;
+    const aMeshes = activeMeshCount(aRun);
+    const bMeshes = activeMeshCount(bRun);
+    const meshDeltaRatio = aMeshes != null && bMeshes != null && Math.max(aMeshes, bMeshes) > 0
+      ? Math.abs(aMeshes - bMeshes) / Math.max(aMeshes, bMeshes)
+      : null;
+    if (ratio >= 2 && meshDeltaRatio != null && meshDeltaRatio <= 0.2) {
+      hints.push(`FPS differs by ${ratio.toFixed(1)}x while active mesh counts are similar (${formatCount(aMeshes)} -> ${formatCount(bMeshes)}); browser/GPU/backend differences are more likely than scene size alone.`);
+    } else if (ratio >= 2) {
+      hints.push(`FPS differs by ${ratio.toFixed(1)}x; compare renderer, canvas scale, active meshes, and bundle fingerprint before attributing it to the server.`);
+    }
+  }
+
+  const aRenderer = rendererLabelForHint(aRun);
+  const bRenderer = rendererLabelForHint(bRun);
+  if (aRenderer !== bRenderer && aRenderer !== 'unknown renderer' && bRenderer !== 'unknown renderer') {
+    hints.push(`Renderer strings differ: A [${aRenderer}], B [${bRenderer}].`);
+  }
+
+  if (hints.length === 0) return;
+  console.log('Comparison hints');
+  for (const hint of hints) console.log(`  - ${hint}`);
+  console.log('');
+}
+
 function formatBool(value) {
   if (value === true) return 'yes';
   if (value === false) return 'no';
@@ -616,6 +728,7 @@ async function main() {
   console.log(`Canvas/View B: ${formatRunViewport(b)}`);
   console.log('');
 
+  printComparisonHints(a, b);
   printPageDiagnosticComparison(a, b);
   printBuildDiagnosticComparison(a, b);
   printBrowserDiagnosticComparison(a, b);
