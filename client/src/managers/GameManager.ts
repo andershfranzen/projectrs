@@ -155,6 +155,16 @@ function isHarvestObjectDef(def: WorldObjectDef): boolean {
     || def.category === 'stall';
 }
 
+function isSoftwareWebGlRenderer(webgl: Record<string, unknown>): boolean {
+  const rendererText = [
+    webgl.unmaskedRenderer,
+    webgl.renderer,
+    webgl.unmaskedVendor,
+    webgl.vendor,
+  ].map(value => String(value ?? '').toLowerCase()).join(' ');
+  return SOFTWARE_RENDERER_PATTERNS.some(pattern => rendererText.includes(pattern));
+}
+
 type InteractionOption = {
   label: string;
   labelParts?: { text: string; color?: string }[];
@@ -1357,13 +1367,7 @@ export class GameManager {
     if (browser.brave === true) flags.push('brave-browser');
     if (!webgl.unmaskedRenderer) flags.push('renderer-info-masked');
 
-    const rendererText = [
-      webgl.unmaskedRenderer,
-      webgl.renderer,
-      webgl.unmaskedVendor,
-      webgl.vendor,
-    ].map(value => String(value ?? '').toLowerCase()).join(' ');
-    if (SOFTWARE_RENDERER_PATTERNS.some(pattern => rendererText.includes(pattern))) {
+    if (isSoftwareWebGlRenderer(webgl)) {
       flags.push('software-renderer-likely');
     }
 
@@ -1498,6 +1502,7 @@ export class GameManager {
     } catch {
       // Storage can be blocked in privacy modes; default to full quality.
     }
+    if (isSoftwareWebGlRenderer(this.getWebGlDiagnostics())) return LOW_QUALITY_HARDWARE_SCALE;
     return 1;
   }
 
