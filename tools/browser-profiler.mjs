@@ -454,6 +454,7 @@ function printEvilQuestSnapshot(snapshot) {
   const chunks = snapshot.chunkMeshes || {};
 
   console.log('EvilQuest snapshot:');
+  if (snapshot.snapshotSource) console.log(`  Source: ${snapshot.snapshotSource}`);
   console.log(`  ${formatRate(snapshot.measuredFps)} FPS, engine ${formatRate(snapshot.engineFps)}, draw calls ${formatCount(snapshot.drawCalls)}`);
   console.log(`  Active meshes ${formatCount(snapshot.activeMeshes)} / total ${formatCount(snapshot.totalMeshes)}, vertices ${formatCount(snapshot.totalVertices)}, indices ${formatCount(snapshot.totalIndices)}`);
   console.log(`  Pickable ${formatCount(summary.activePickableMeshes)} active / ${formatCount(summary.pickableMeshes)} total, enabled ${formatCount(summary.enabledMeshes)}, textures ${formatCount(summary.textures)}, materials ${formatCount(summary.materials)}`);

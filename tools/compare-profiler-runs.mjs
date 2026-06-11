@@ -311,6 +311,14 @@ function pageLooksLikeLogin(run) {
   return flagsFromRun(run).includes('login-screen');
 }
 
+function snapshotSource(run) {
+  if (!run.snapshot) return 'none';
+  if (typeof run.snapshot.snapshotSource === 'string' && run.snapshot.snapshotSource.length > 0) {
+    return run.snapshot.snapshotSource;
+  }
+  return 'client-api';
+}
+
 function printComparisonHints(aRun, bRun) {
   const hints = [];
   const aScripts = buildScriptFingerprint(aRun);
@@ -333,6 +341,14 @@ function printComparisonHints(aRun, bRun) {
 
   if (pageLooksLikeLogin(aRun) || pageLooksLikeLogin(bRun)) {
     hints.push('At least one run captured the login screen; use it for page/build/GPU diagnostics only, not steady-state gameplay FPS.');
+  }
+
+  const fallbackRuns = [
+    snapshotSource(aRun) === 'profiler-fallback' ? 'A' : null,
+    snapshotSource(bRun) === 'profiler-fallback' ? 'B' : null,
+  ].filter(Boolean);
+  if (fallbackRuns.length > 0) {
+    hints.push(`${fallbackRuns.join(' and ')} used the profiler fallback snapshot path. FPS, renderer, canvas, and scene counts are comparable; client-only fields may be less complete.`);
   }
 
   const aSoftware = rendererLikelySoftware(aRun);
@@ -606,6 +622,7 @@ function printPageDiagnosticComparison(aRun, bRun) {
   printDiagnosticMetric('Device ID stored', aPage?.storage?.hasDeviceId, bPage?.storage?.hasDeviceId, formatBool);
   printDiagnosticMetric('Game manager', aPage?.game?.hasGameManager, bPage?.game?.hasGameManager, formatBool);
   printDiagnosticMetric('Snapshot API', aPage?.game?.hasSnapshotApi, bPage?.game?.hasSnapshotApi, formatBool);
+  printDiagnosticMetric('Fallback inputs', aPage?.game?.hasFallbackSnapshotInputs, bPage?.game?.hasFallbackSnapshotInputs, formatBool);
   printDiagnosticMetric('Login settled', aPage?.game?.loginSettled, bPage?.game?.loginSettled);
   printDiagnosticMetric('URL', formatShortUrl(aPage?.url), formatShortUrl(bPage?.url));
 }
@@ -715,11 +732,15 @@ async function main() {
 
   console.log(`A: ${a.file}`);
   console.log(`B: ${b.file}`);
-  if (a.summary?.url || b.summary?.url) {
-    console.log(`URL A: ${a.summary?.url || 'n/a'}`);
-    console.log(`URL B: ${b.summary?.url || 'n/a'}`);
+  const aUrl = a.summary?.url || a.pageDiagnostics?.url;
+  const bUrl = b.summary?.url || b.pageDiagnostics?.url;
+  if (aUrl || bUrl) {
+    console.log(`URL A: ${formatShortUrl(aUrl)}`);
+    console.log(`URL B: ${formatShortUrl(bUrl)}`);
   }
   console.log('');
+  console.log(`Snapshot source A: ${snapshotSource(a)}`);
+  console.log(`Snapshot source B: ${snapshotSource(b)}`);
   console.log(`Renderer A: ${rendererFromRun(a)}`);
   console.log(`Renderer B: ${rendererFromRun(b)}`);
   console.log(`Flags A: ${formatValue(flagsFromRun(a))}`);
