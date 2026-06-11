@@ -4553,6 +4553,7 @@ export class ChunkManager {
           ));
         }
         src.doNotSyncBoundingInfo = true;
+        src.freezeWorldMatrix();
         src.metadata = { ...(src.metadata ?? {}), assetId, chunkKey };
         thinSources.push(src);
         if (visibility === 'roof') roofThinSources.push(src);
