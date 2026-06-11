@@ -1064,6 +1064,8 @@ export class AdminPanel {
       this.metricCell('Player', this.formatPlayer(player)),
       this.metricCell('Ground/detail', `${this.formatNullableNumber(this.recordNumber(chunkMeshes, 'ground'))}/${this.formatNullableNumber(this.recordNumber(chunkMeshes, 'detail'))}`),
       this.metricCell('Detail attrs', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'groundDetailAttributes'))),
+      this.metricCell('Detail verts', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'detailVertices'))),
+      this.metricCell('Grass verts', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'grassVertices'))),
       this.metricCell('Client at', entry.clientAt === null ? '-' : new Date(entry.clientAt).toLocaleString()),
       this.metricCell('Server tick', entry.tick === null ? '-' : String(entry.tick)),
     );

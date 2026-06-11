@@ -2068,11 +2068,11 @@ export class ChunkManager {
     // These triangles are only silhouette/accent detail, so keep them sparse:
     // dense per-tile blades were adding hundreds of thousands of vertices around
     // spawn and showed large GPU variance between Chromium builds.
-    const INTERIOR_BLADE_TILE_CHANCE = 0.42;
-    const INTERIOR_BLADES_PER_SELECTED_TILE = 2;
-    const BOUNDARY_BLADES_PER_TILE = 3;
-    const EDGE_SPILL_BLADES = 2;
-    const HALF_WIDTH = 0.04;
+    const INTERIOR_BLADE_TILE_CHANCE = 0.07;
+    const INTERIOR_BLADES_PER_SELECTED_TILE = 1;
+    const BOUNDARY_BLADES_PER_TILE = 2;
+    const EDGE_SPILL_BLADES = 1;
+    const HALF_WIDTH = 0.035;
     const base = groundColor('grass', 0.80);
     const tip = groundColor('grass', 1.18);
 

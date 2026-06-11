@@ -1404,6 +1404,12 @@ export class GameManager {
     const drawCalls = (this.engine as unknown as { _drawCalls?: { current?: number } })._drawCalls?.current ?? null;
     const vertexCount = meshes.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0);
     const indexCount = meshes.reduce((sum, mesh) => sum + mesh.getTotalIndices(), 0);
+    const groundMeshes = meshes.filter(mesh => /^chunk_-?\d+_-?\d+$/.test(mesh.name));
+    const grassMeshes = meshes.filter(mesh => /^chunk_grass_/.test(mesh.name));
+    const rockMeshes = meshes.filter(mesh => /^chunk_rocks_/.test(mesh.name));
+    const detailMeshes = [...grassMeshes, ...rockMeshes];
+    const countVertices = (items: typeof meshes): number => items.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0);
+    const countIndices = (items: typeof meshes): number => items.reduce((sum, mesh) => sum + mesh.getTotalIndices(), 0);
     const browser = this.getBrowserDiagnostics();
     const webgl = this.getWebGlDiagnostics();
 
@@ -1435,9 +1441,17 @@ export class GameManager {
         renderScale: canvas.dataset.renderScale,
       } : null,
       chunkMeshes: {
-        ground: meshes.filter(mesh => /^chunk_-?\d+_-?\d+$/.test(mesh.name)).length,
-        detail: meshes.filter(mesh => /^chunk_(grass|rocks)_/.test(mesh.name)).length,
-        groundDetailAttributes: meshes.filter(mesh => !!mesh.getVerticesData('groundDetail')).length,
+        ground: groundMeshes.length,
+        detail: detailMeshes.length,
+        grass: grassMeshes.length,
+        rocks: rockMeshes.length,
+        groundDetailAttributes: groundMeshes.filter(mesh => !!mesh.getVerticesData('groundDetail')).length,
+        detailVertices: countVertices(detailMeshes),
+        detailIndices: countIndices(detailMeshes),
+        grassVertices: countVertices(grassMeshes),
+        grassIndices: countIndices(grassMeshes),
+        rockVertices: countVertices(rockMeshes),
+        rockIndices: countIndices(rockMeshes),
       },
       diagnosticFlags: this.getPerformanceDiagnosticFlags(webgl, browser, canvas),
       browser,
