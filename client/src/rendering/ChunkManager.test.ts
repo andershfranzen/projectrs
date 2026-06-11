@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Matrix, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { ChunkManager, assertOptionalMapResourceResponse, isInteractiveDoorPlacedAsset, isObjectShadowReceiverGround, isRoofLikePlacedAsset, placedObjectThinGroupKey } from './ChunkManager';
 import type { GroundType } from '@projectrs/shared';
@@ -134,6 +135,40 @@ describe('placed object thin-instance grouping', () => {
       .toBe(placedObjectThinGroupKey('stone wall', 'ground', 2.73));
     expect(placedObjectThinGroupKey('tile roofing', 'roof', 2.73))
       .toBe(placedObjectThinGroupKey('tile roofing', 'roof', 5.49));
+  });
+
+  test('toggles a batched placed visual through its thin-instance matrix', () => {
+    const manager = Object.create(ChunkManager.prototype) as any;
+    const node = {} as TransformNode;
+    const visibleMatrix = Matrix.Translation(1, 2, 3);
+    const hiddenMatrix = Matrix.Translation(4, 5, 6);
+    const matrixCalls: Array<{ index: number; matrix: Matrix; refresh: boolean }> = [];
+    const bufferUpdates: string[] = [];
+    const mesh = {
+      thinInstanceSetMatrixAt: (index: number, matrix: Matrix, refresh: boolean) => {
+        matrixCalls.push({ index, matrix, refresh });
+      },
+      thinInstanceBufferUpdated: (kind: string) => {
+        bufferUpdates.push(kind);
+      },
+    } as unknown as Mesh;
+
+    manager.placedObjectVisualRefs = new WeakMap([[node, [{
+      mesh,
+      index: 7,
+      visibleMatrix,
+      hiddenMatrix,
+    }]]]);
+
+    expect(manager.setPlacedObjectVisualEnabled(node, false)).toBe(true);
+    expect(manager.setPlacedObjectVisualEnabled(node, true)).toBe(true);
+    expect(manager.setPlacedObjectVisualEnabled({} as TransformNode, true)).toBe(false);
+
+    expect(matrixCalls).toEqual([
+      { index: 7, matrix: hiddenMatrix, refresh: false },
+      { index: 7, matrix: visibleMatrix, refresh: false },
+    ]);
+    expect(bufferUpdates).toEqual(['matrix', 'matrix']);
   });
 });
 

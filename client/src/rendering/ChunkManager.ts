@@ -13,7 +13,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB, worldAABBForMaterials } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, createObjectShadowCaster, createWallEdgeShadowCaster, isLinearCasterCoveredByWallRuns, isLinearShadowAsset, objectShadowBounds, objectShadowFactorAt, wallShadowRunsFromEntries } from '@projectrs/shared';
+import { isGroundItemSpawnAssetId, isCropPlacedAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, createObjectShadowCaster, createWallEdgeShadowCaster, isLinearCasterCoveredByWallRuns, isLinearShadowAsset, objectShadowBounds, objectShadowFactorAt, wallShadowRunsFromEntries } from '@projectrs/shared';
 import { groundDetailFamily } from '@projectrs/shared';
 import { GroundDetailPluginMaterial } from './GroundDetailPlugin';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, DEFAULT_CUT_ANGLE, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, waterFlowUvFromTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
@@ -188,6 +188,13 @@ interface ChunkBuildResult {
   built: boolean;
   visible: boolean;
 }
+
+type BatchedPlacedVisualRef = {
+  mesh: Mesh;
+  index: number;
+  visibleMatrix: Matrix;
+  hiddenMatrix: Matrix;
+};
 
 interface ElevatedThinInstanceSource {
   mesh: Mesh;
@@ -433,6 +440,7 @@ export class ChunkManager {
   private loadingModelPromises: Map<string, Promise<TransformNode | null>> = new Map();
   private modelAnimationGroups: Map<string, AnimationGroup[]> = new Map();
   private placedObjectAnimationGroups: WeakMap<TransformNode, AnimationGroup[]> = new WeakMap();
+  private placedObjectVisualRefs: WeakMap<TransformNode, BatchedPlacedVisualRef[]> = new WeakMap();
   private oneShotPlacedAnimationGroups: WeakSet<AnimationGroup> = new WeakSet();
   private activeAnimationGroups: AnimationGroup[] = [];
   private textureCache: Map<string, Texture> = new Map();
@@ -3149,6 +3157,21 @@ export class ChunkManager {
     return this.placedObjectNodeSet.has(node);
   }
 
+  setPlacedObjectVisualEnabled(node: TransformNode, enabled: boolean): boolean {
+    const refs = this.placedObjectVisualRefs.get(node);
+    if (!refs || refs.length === 0) return false;
+
+    const touched = new Set<Mesh>();
+    for (const ref of refs) {
+      ref.mesh.thinInstanceSetMatrixAt(ref.index, enabled ? ref.visibleMatrix : ref.hiddenMatrix, false);
+      touched.add(ref.mesh);
+    }
+    for (const mesh of touched) {
+      mesh.thinInstanceBufferUpdated('matrix');
+    }
+    return true;
+  }
+
   /** Check if any placed GLB object exists near a world position */
   hasPlacedObjectNear(x: number, z: number, radius: number): boolean {
     return this.findPlacedObjectNear(x, z, radius) !== null;
@@ -4014,6 +4037,54 @@ export class ChunkManager {
     return true;
   }
 
+  private canBatchCropVisual(obj: PlacedObject): boolean {
+    if (!isCropPlacedAssetId(obj.assetId)) return false;
+    if (this.modelAnimationGroups.has(obj.assetId)) return false;
+    if (this.isRoofLikeAsset(obj.assetId)) return false;
+    if (this.isAlphaBlendAsset(obj.assetId)) return false;
+    return true;
+  }
+
+  private createPlacedObjectPlaceholder(chunkKey: string, idx: number, obj: PlacedObject): TransformNode {
+    const root = new TransformNode(`placed_${chunkKey}_${idx}_${obj.assetId}_placeholder`, this.scene);
+    root.position = new Vector3(obj.position.x, obj.position.y, obj.position.z);
+    const { x: orx, y: ory, z: orz } = obj.rotation;
+    root.rotationQuaternion = Quaternion.FromEulerAngles(orx, ory, orz);
+    const scaleBoost = this.getPlacedObjectScaleBoost(obj.assetId);
+    root.scaling = new Vector3(obj.scale.x * scaleBoost, obj.scale.y * scaleBoost, obj.scale.z * scaleBoost);
+    root.metadata = {
+      ...root.metadata,
+      assetId: obj.assetId,
+      chunkKey,
+      placedX: obj.position.x,
+      placedY: obj.position.y,
+      placedZ: obj.position.z,
+      interactionActions: this.placedObjectInteractionActions(obj),
+      interactions: Array.isArray(obj.interactions) && obj.interactions.length > 0 ? obj.interactions : undefined,
+      placedName: obj.name,
+      isNoRoof: obj.noRoof === true,
+    } satisfies PlacedObjectNodeMetadata;
+    root.setEnabled(false);
+    root.freezeWorldMatrix();
+    return root;
+  }
+
+  private addPlacedObjectNode(root: TransformNode, obj: PlacedObject, nodes: TransformNode[]): void {
+    nodes.push(root);
+    this.placedObjectNodes.push(root);
+    this.placedObjectNodeSet.add(root);
+
+    if (objectDefIdForPlacedAsset(obj.assetId) != null) {
+      const gridKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
+      let nodesAtTile = this.placedObjectGrid.get(gridKey);
+      if (!nodesAtTile) {
+        nodesAtTile = [];
+        this.placedObjectGrid.set(gridKey, nodesAtTile);
+      }
+      nodesAtTile.push(root);
+    }
+  }
+
   private placedObjectInteractionActions(obj: PlacedObject): string[] | undefined {
     if (!Array.isArray(obj.interactions) || obj.interactions.length === 0) return undefined;
     const actions: string[] = [];
@@ -4430,9 +4501,19 @@ export class ChunkManager {
     type ThinGroup = { assetId: string; visibility: 'ground' | 'elevated' | 'roof'; placements: PlacedObject[] };
     const regularObjects: PlacedObject[] = [];
     const thinGroups = new Map<string, ThinGroup>();
+    const cropVisualGroups = new Map<string, ThinGroup>();
     for (const obj of renderableObjects) {
       if (!this.loadedModelCache.get(obj.assetId)) continue;
-      if (this.canThinInstance(obj)) {
+      if (this.canBatchCropVisual(obj)) {
+        const visibility = this.getThinVisibilityClass(obj);
+        const groupKey = placedObjectThinGroupKey(obj.assetId, visibility, obj.position.y);
+        let group = cropVisualGroups.get(groupKey);
+        if (!group) {
+          group = { assetId: obj.assetId, visibility, placements: [] };
+          cropVisualGroups.set(groupKey, group);
+        }
+        group.placements.push(obj);
+      } else if (this.canThinInstance(obj)) {
         const visibility = this.getThinVisibilityClass(obj);
         const groupKey = placedObjectThinGroupKey(obj.assetId, visibility, obj.position.y);
         let group = thinGroups.get(groupKey);
@@ -4500,6 +4581,18 @@ export class ChunkManager {
     };
     const _tmpMatrix = Matrix.Identity();
     const _placementMatrix = Matrix.Identity();
+    let placedNodeIndex = 0;
+    const cropPlaceholderByObject = new Map<PlacedObject, TransformNode>();
+
+    for (const { placements } of cropVisualGroups.values()) {
+      for (const obj of placements) {
+        const root = this.createPlacedObjectPlaceholder(chunkKey, placedNodeIndex++, obj);
+        cropPlaceholderByObject.set(obj, root);
+        this.addPlacedObjectNode(root, obj, nodes);
+        await this.yieldIfFrameBudgetSpent(workSlice);
+        if (abortPartialLoadIfStopped()) return;
+      }
+    }
 
     for (const { assetId, visibility, placements } of thinGroups.values()) {
       const template = this.loadedModelCache.get(assetId)!;
@@ -4571,18 +4664,95 @@ export class ChunkManager {
         if (abortPartialLoadIfStopped()) return;
       }
     }
+
+    for (const { assetId, placements } of cropVisualGroups.values()) {
+      const template = this.loadedModelCache.get(assetId)!;
+      const baseEntries = this.getTemplateBaseMatrices(assetId, template);
+      if (baseEntries.length === 0) continue;
+
+      const scaleBoost = this.getPlacedObjectScaleBoost(assetId);
+      const placeholders = placements.map(obj => cropPlaceholderByObject.get(obj) ?? null);
+
+      for (const { sourceMesh, baseMatrix } of baseEntries) {
+        const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null)!;
+        src.parent = null;
+        src.position.set(0, 0, 0);
+        src.rotation.set(0, 0, 0);
+        src.rotationQuaternion = null;
+        src.scaling.set(1, 1, 1);
+        src.setEnabled(false);
+        if (src instanceof Mesh) src.makeGeometryUnique();
+        const mat = src.material;
+        if (mat) this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(assetId), true);
+        src.isPickable = false;
+
+        for (let i = 0; i < placements.length; i++) {
+          const obj = placements[i];
+          const root = placeholders[i];
+          if (!root) continue;
+
+          this.composePlacedObjectMatrix(obj, scaleBoost, _placementMatrix);
+          baseMatrix.multiplyToRef(_placementMatrix, _tmpMatrix);
+          const index = src.thinInstanceAdd(_tmpMatrix, false);
+          if (index >= 0) {
+            const hiddenMatrix = Matrix.Compose(
+              TmpVectors.Vector3[2].set(0, 0, 0),
+              Quaternion.Identity(),
+              TmpVectors.Vector3[3].set(obj.position.x, obj.position.y, obj.position.z),
+            );
+            const refs = this.placedObjectVisualRefs.get(root) ?? [];
+            refs.push({
+              mesh: src,
+              index,
+              visibleMatrix: _tmpMatrix.clone(),
+              hiddenMatrix,
+            });
+            this.placedObjectVisualRefs.set(root, refs);
+          }
+
+          await this.yieldIfFrameBudgetSpent(workSlice);
+          if (abortPartialLoadIfStopped()) return;
+        }
+
+        src.thinInstanceBufferUpdated('matrix');
+        const pad = 5;
+        let bMinX = Infinity, bMinY = Infinity, bMinZ = Infinity;
+        let bMaxX = -Infinity, bMaxY = -Infinity, bMaxZ = -Infinity;
+        const matBuf = (src as any)._thinInstanceDataStorage?.matrixData;
+        if (matBuf) {
+          for (let i = 0; i < src.thinInstanceCount; i++) {
+            const tx = matBuf[i * 16 + 12], ty = matBuf[i * 16 + 13], tz = matBuf[i * 16 + 14];
+            if (tx - pad < bMinX) bMinX = tx - pad;
+            if (ty - pad < bMinY) bMinY = ty - pad;
+            if (tz - pad < bMinZ) bMinZ = tz - pad;
+            if (tx + pad > bMaxX) bMaxX = tx + pad;
+            if (ty + pad > bMaxY) bMaxY = ty + pad;
+            if (tz + pad > bMaxZ) bMaxZ = tz + pad;
+          }
+          src.setBoundingInfo(new BoundingInfo(
+            new Vector3(bMinX, bMinY, bMinZ),
+            new Vector3(bMaxX, bMaxY, bMaxZ)
+          ));
+        }
+        src.doNotSyncBoundingInfo = true;
+        src.freezeWorldMatrix();
+        src.metadata = { ...(src.metadata ?? {}), assetId, chunkKey };
+        thinSources.push(src);
+        await this.yieldIfFrameBudgetSpent(workSlice);
+        if (abortPartialLoadIfStopped()) return;
+      }
+    }
     this.chunkThinInstSources.set(chunkKey, thinSources);
     if (roofThinSources.length > 0) this.chunkRoofThinInstSources.set(chunkKey, roofThinSources);
     if (elevatedThinSources.length > 0) this.chunkElevatedThinInstSources.set(chunkKey, elevatedThinSources);
     if (structuralThinSources.length > 0) this.chunkStructuralThinInstSources.set(chunkKey, structuralThinSources);
 
     // --- Regular instances: interactable, animated, doors, stairs ---
-    let idx = 0;
     for (const obj of regularObjects) {
       const template = this.loadedModelCache.get(obj.assetId)!;
 
       const instance = template.instantiateHierarchy(null, undefined, (source, cloned) => {
-        cloned.name = `placed_${chunkKey}_${idx}_${source.name}`;
+        cloned.name = `placed_${chunkKey}_${placedNodeIndex}_${source.name}`;
       });
       if (!instance) continue;
       instance.setEnabled(false);
@@ -4604,11 +4774,11 @@ export class ChunkManager {
         clonedNodes.set(instance.name, instance);
 
         for (const srcGroup of templateAnims) {
-          const clonedGroup = new AnimationGroup(`${srcGroup.name}_${chunkKey}_${idx}`, this.scene);
+          const clonedGroup = new AnimationGroup(`${srcGroup.name}_${chunkKey}_${placedNodeIndex}`, this.scene);
           for (const ta of srcGroup.targetedAnimations) {
             const srcName = ta.target?.name as string;
             const clonedTarget = srcName
-              ? clonedNodes.get(`placed_${chunkKey}_${idx}_${srcName}`)
+              ? clonedNodes.get(`placed_${chunkKey}_${placedNodeIndex}_${srcName}`)
               : null;
             if (clonedTarget) {
               clonedGroup.addTargetedAnimation(ta.animation, clonedTarget);
@@ -4663,22 +4833,10 @@ export class ChunkManager {
         }
       }
 
-      nodes.push(root);
+      this.addPlacedObjectNode(root, obj, nodes);
       if (instanceAnims.length > 0) this.placedObjectAnimationGroups.set(root, instanceAnims);
-      this.placedObjectNodes.push(root);
-      this.placedObjectNodeSet.add(root);
 
-      if (objectDefIdForPlacedAsset(obj.assetId) != null) {
-        const gridKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
-        let nodesAtTile = this.placedObjectGrid.get(gridKey);
-        if (!nodesAtTile) {
-          nodesAtTile = [];
-          this.placedObjectGrid.set(gridKey, nodesAtTile);
-        }
-        nodesAtTile.push(root);
-      }
-
-      idx++;
+      placedNodeIndex++;
       await this.yieldIfFrameBudgetSpent(workSlice);
       if (abortPartialLoadIfStopped()) return;
     }

@@ -151,6 +151,18 @@ export function isGroundItemSpawnAssetId(assetId: string): boolean {
   return GROUND_ITEM_SPAWN_ASSET_IDS.has(assetId);
 }
 
+export const CROP_OBJECT_DEF_IDS: ReadonlySet<number> = new Set([
+  RICE_PLANT_OBJECT_DEF_ID,
+  POTATO_PLANT_OBJECT_DEF_ID,
+  29, // Cauliflower Plant
+  30, // Wheat Plant
+]);
+
+export function isCropPlacedAssetId(assetId: string): boolean {
+  const objectDefId = ASSET_TO_OBJECT_DEF[assetId];
+  return objectDefId !== undefined && CROP_OBJECT_DEF_IDS.has(objectDefId);
+}
+
 export interface SceneryExamineMeta {
   name: string;
   examineText: string;

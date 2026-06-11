@@ -2593,23 +2593,28 @@ export class GameManager {
 
   private setPlacedWorldObjectEnabled(node: TransformNode, enabled: boolean): void {
     if (!enabled) {
+      this.chunkManager.setPlacedObjectVisualEnabled(node, false);
       if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
     const roofDefaultEnabled = this.chunkManager.roofNodeDefaultEnabled(node);
     if (roofDefaultEnabled === false) {
+      this.chunkManager.setPlacedObjectVisualEnabled(node, false);
       if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
     const objectEntityId = this.worldObjectIdForNode(node);
     if (objectEntityId !== null && !this.shouldPlacedWorldObjectBeEnabled(objectEntityId)) {
+      this.chunkManager.setPlacedObjectVisualEnabled(node, false);
       if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
     if (this.isRoofNodeHidden(node)) {
+      this.chunkManager.setPlacedObjectVisualEnabled(node, false);
       if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
+    this.chunkManager.setPlacedObjectVisualEnabled(node, true);
     if (!node.isEnabled(false)) node.setEnabled(true);
   }
 
