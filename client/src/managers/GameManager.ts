@@ -63,7 +63,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -89,16 +89,6 @@ const LOW_FPS_DIAGNOSTIC_THRESHOLD = 50;
 const CLIENT_LOG_PAYLOAD_SOFT_LIMIT = 60 * 1024;
 const MANUAL_LOW_QUALITY_STORAGE_KEY = 'projectrs_low_quality';
 const LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY = 'projectrs_auto_low_quality';
-const SOFTWARE_RENDERER_PATTERNS = [
-  'swiftshader',
-  'llvmpipe',
-  'software rasterizer',
-  'software renderer',
-  'microsoft basic render',
-  'basic render driver',
-  'warp',
-  'mesa offscreen',
-] as const;
 const GROUND_ITEM_TOOLTIP_MAX_LINES = 8;
 const ROOF_HOVER_REFRESH_MS = 75;
 const ROOF_HOVER_CLEAR_GRACE_MS = 120;
@@ -113,18 +103,6 @@ interface FrameRateSample {
   framePacing: FramePacingSample | null;
 }
 
-export interface FramePacingSample {
-  intervals: number;
-  meanMs: number;
-  medianMs: number;
-  p95Ms: number;
-  maxMs: number;
-  stddevMs: number;
-  over16Ms: number;
-  over33Ms: number;
-  over50Ms: number;
-  over100Ms: number;
-}
 const ROOF_HOVER_STRUCTURAL_SAMPLE_HEIGHT_OFFSETS = [1.1, 1.8, 2.5] as const;
 const NPC_FACING_NONE = -32768;
 const TERMINAL_CLOSE_REASONS = new Set([
@@ -173,35 +151,6 @@ function isHarvestObjectDef(def: WorldObjectDef): boolean {
     || def.category === 'stall';
 }
 
-function roundTiming(value: number): number {
-  return Math.round(value * 10) / 10;
-}
-
-function summarizeFramePacing(intervals: number[]): FramePacingSample | null {
-  if (intervals.length === 0) return null;
-  const sorted = [...intervals].sort((a, b) => a - b);
-  const percentile = (p: number): number => {
-    const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1));
-    return sorted[index];
-  };
-  const sum = intervals.reduce((total, value) => total + value, 0);
-  const mean = sum / intervals.length;
-  const variance = intervals.reduce((total, value) => total + ((value - mean) ** 2), 0) / intervals.length;
-
-  return {
-    intervals: intervals.length,
-    meanMs: roundTiming(mean),
-    medianMs: roundTiming(percentile(0.5)),
-    p95Ms: roundTiming(percentile(0.95)),
-    maxMs: roundTiming(sorted[sorted.length - 1]),
-    stddevMs: roundTiming(Math.sqrt(variance)),
-    over16Ms: intervals.filter(value => value > 16.7).length,
-    over33Ms: intervals.filter(value => value > 33.4).length,
-    over50Ms: intervals.filter(value => value > 50).length,
-    over100Ms: intervals.filter(value => value > 100).length,
-  };
-}
-
 function formatPerfTiming(value: number | null | undefined): string {
   return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)}ms` : 'n/a';
 }
@@ -212,23 +161,7 @@ export function formatFramePacingForChat(pacing: FramePacingSample | null | unde
 }
 
 export function isStableLowFrameCadence(fps: number, pacing: FramePacingSample | null | undefined): boolean {
-  return fps >= 27
-    && fps <= 36
-    && !!pacing
-    && pacing.medianMs >= 27
-    && pacing.medianMs <= 38
-    && pacing.p95Ms <= 42
-    && pacing.stddevMs <= 5;
-}
-
-function isSoftwareWebGlRenderer(webgl: Record<string, unknown>): boolean {
-  const rendererText = [
-    webgl.unmaskedRenderer,
-    webgl.renderer,
-    webgl.unmaskedVendor,
-    webgl.vendor,
-  ].map(value => String(value ?? '').toLowerCase()).join(' ');
-  return SOFTWARE_RENDERER_PATTERNS.some(pattern => rendererText.includes(pattern));
+  return sharedIsStableLowFrameCadence(fps, pacing);
 }
 
 type InteractionOption = {
@@ -1369,8 +1302,8 @@ export class GameManager {
     try {
       const payload = this.buildClientLogPayload(event, details);
       if (navigator.sendBeacon) {
-        navigator.sendBeacon('/api/client-log', new Blob([payload], { type: 'application/json' }));
-        return;
+        const queued = navigator.sendBeacon('/api/client-log', new Blob([payload], { type: 'application/json' }));
+        if (queued) return;
       }
       void fetch('/api/client-log', {
         method: 'POST',
@@ -1406,6 +1339,7 @@ export class GameManager {
       'totalMeshes',
       'totalVertices',
       'totalIndices',
+      'framePacing',
       'renderScale',
       'baseRenderScale',
       'currentMap',
@@ -1432,6 +1366,7 @@ export class GameManager {
       originalBytes: fullPayloadBytes,
       compactBytes: compactPayloadBytes,
       diagnosticFlags: details.diagnosticFlags,
+      framePacing: details.framePacing,
       currentMap: details.currentMap,
     });
   }

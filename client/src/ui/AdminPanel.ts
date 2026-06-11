@@ -1,4 +1,13 @@
 import { createModalPanel } from './ModalPanel';
+import {
+  areComparableDiagnosticScenes,
+  browserFamilyFromDiagnosticPayload,
+  diagnosticFlagsFromPayload,
+  hasUnevenFramePacing as sharedHasUnevenFramePacing,
+  isPlayerChromiumBrowserFamily,
+  isStableLowFrameCadence as sharedIsStableLowFrameCadence,
+  measuredFpsFromDiagnosticPayload,
+} from '@projectrs/shared';
 
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 type AdminTab = 'bots' | 'events' | 'diagnostics';
@@ -850,34 +859,50 @@ export class AdminPanel {
     this.eventFilterEl.style.display = 'none';
     this.diagnosticFilterEl.style.display = 'grid';
     this.setGridHeader(DIAGNOSTIC_GRID_COLUMNS, ['Time', 'Event', 'User', 'Renderer', 'FPS']);
-    const lowFps = this.diagnostics.filter(entry => entry.event === 'client_low_fps_snapshot').length;
-    const postScale = this.diagnostics.filter(entry => entry.event === 'client_low_fps_post_scale_snapshot').length;
-    const perf = this.diagnostics.filter(entry => entry.event === 'client_perf_snapshot').length;
-    const quality = this.diagnostics.filter(entry => entry.event === 'client_quality_change').length;
-    const software = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('software-renderer-likely')).length;
-    const brave = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('brave-browser')).length;
-    const braveLow = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('brave-low-fps')).length;
-    const hardwareLow = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('low-fps-with-hardware-renderer')).length;
-    const emergencyScale = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('emergency-render-scale')).length;
-    const stable30 = this.diagnostics.filter(entry => this.isStableLowFrameCadence(entry)).length;
-    const uneven = this.diagnostics.filter(entry => this.hasUnevenFramePacing(entry)).length;
+    const counts = {
+      lowFps: 0,
+      postScale: 0,
+      perf: 0,
+      quality: 0,
+      software: 0,
+      brave: 0,
+      braveLow: 0,
+      hardwareLow: 0,
+      emergencyScale: 0,
+      stable30: 0,
+      uneven: 0,
+    };
+    for (const entry of this.diagnostics) {
+      if (entry.event === 'client_low_fps_snapshot') counts.lowFps++;
+      else if (entry.event === 'client_low_fps_post_scale_snapshot') counts.postScale++;
+      else if (entry.event === 'client_perf_snapshot') counts.perf++;
+      else if (entry.event === 'client_quality_change') counts.quality++;
+      const flags = this.diagnosticFlags(entry);
+      if (flags.includes('software-renderer-likely')) counts.software++;
+      if (flags.includes('brave-browser')) counts.brave++;
+      if (flags.includes('brave-low-fps')) counts.braveLow++;
+      if (flags.includes('low-fps-with-hardware-renderer')) counts.hardwareLow++;
+      if (flags.includes('emergency-render-scale')) counts.emergencyScale++;
+      if (this.isStableLowFrameCadence(entry)) counts.stable30++;
+      if (this.hasUnevenFramePacing(entry)) counts.uneven++;
+    }
     const browserGap = this.strongDiagnosticBrowserGap();
     const activeFilters = (this.diagnosticEventFilter ? 1 : 0)
       + (this.diagnosticSearchQuery ? 1 : 0)
       + (this.diagnosticUserFilter ? 1 : 0);
     const summaryPills = [
       this.summaryPill(`${this.diagnostics.length} snapshots`, '#6c5c43'),
-      this.summaryPill(`${lowFps} low FPS`, lowFps > 0 ? '#8f2f28' : '#4d5d45'),
-      this.summaryPill(`${postScale} post-scale`, postScale > 0 ? '#8f6d2d' : '#4d5d45'),
-      this.summaryPill(`${perf} perf`, '#2f5f8f'),
-      this.summaryPill(`${quality} quality`, quality > 0 ? '#2f5f8f' : '#4d5d45'),
-      this.summaryPill(`${hardwareLow} hardware low`, hardwareLow > 0 ? '#8f6d2d' : '#4d5d45'),
-      this.summaryPill(`${stable30} stable 30`, stable30 > 0 ? '#7a5a25' : '#4d5d45'),
-      this.summaryPill(`${uneven} stalls`, uneven > 0 ? '#8f2f28' : '#4d5d45'),
-      this.summaryPill(`${emergencyScale} emergency`, emergencyScale > 0 ? '#8f2f28' : '#4d5d45'),
-      this.summaryPill(`${software} software`, software > 0 ? '#8f2f28' : '#4d5d45'),
-      this.summaryPill(`${brave} Brave`, brave > 0 ? '#5f4a7d' : '#4d5d45'),
-      this.summaryPill(`${braveLow} Brave low`, braveLow > 0 ? '#5f4a7d' : '#4d5d45'),
+      this.summaryPill(`${counts.lowFps} low FPS`, counts.lowFps > 0 ? '#8f2f28' : '#4d5d45'),
+      this.summaryPill(`${counts.postScale} post-scale`, counts.postScale > 0 ? '#8f6d2d' : '#4d5d45'),
+      this.summaryPill(`${counts.perf} perf`, '#2f5f8f'),
+      this.summaryPill(`${counts.quality} quality`, counts.quality > 0 ? '#2f5f8f' : '#4d5d45'),
+      this.summaryPill(`${counts.hardwareLow} hardware low`, counts.hardwareLow > 0 ? '#8f6d2d' : '#4d5d45'),
+      this.summaryPill(`${counts.stable30} stable 30`, counts.stable30 > 0 ? '#7a5a25' : '#4d5d45'),
+      this.summaryPill(`${counts.uneven} stalls`, counts.uneven > 0 ? '#8f2f28' : '#4d5d45'),
+      this.summaryPill(`${counts.emergencyScale} emergency`, counts.emergencyScale > 0 ? '#8f2f28' : '#4d5d45'),
+      this.summaryPill(`${counts.software} software`, counts.software > 0 ? '#8f2f28' : '#4d5d45'),
+      this.summaryPill(`${counts.brave} Brave`, counts.brave > 0 ? '#5f4a7d' : '#4d5d45'),
+      this.summaryPill(`${counts.braveLow} Brave low`, counts.braveLow > 0 ? '#5f4a7d' : '#4d5d45'),
       this.summaryPill(`${Math.round(this.diagnosticBytesScanned / 1024)} KB`, '#564428'),
       this.summaryPill(`${activeFilters} filters`, activeFilters > 0 ? '#7a5a25' : '#4d5d45'),
     ];
@@ -1920,93 +1945,52 @@ export class AdminPanel {
   }
 
   private diagnosticFlags(entry: ClientDiagnosticLogEntry): string[] {
-    const flags = this.diagnosticPayload(entry).diagnosticFlags;
-    return Array.isArray(flags) ? flags.filter((flag): flag is string => typeof flag === 'string') : [];
+    return diagnosticFlagsFromPayload(this.diagnosticPayload(entry));
   }
 
   private diagnosticFramePacing(entry: ClientDiagnosticLogEntry): Record<string, unknown> {
     return this.recordObject(this.diagnosticPayload(entry), 'framePacing');
   }
 
-  private diagnosticMap(entry: ClientDiagnosticLogEntry): string {
-    const payload = this.diagnosticPayload(entry);
-    return String(payload.currentMap ?? 'n/a');
-  }
-
-  private diagnosticFloor(entry: ClientDiagnosticLogEntry): string {
-    const payload = this.diagnosticPayload(entry);
-    return payload.currentFloor == null ? 'n/a' : String(payload.currentFloor);
-  }
-
-  private diagnosticRatioDelta(a: number | null, b: number | null): number | null {
-    if (a === null || b === null) return null;
-    const larger = Math.max(Math.abs(a), Math.abs(b));
-    if (larger === 0) return 0;
-    return Math.abs(a - b) / larger;
-  }
-
   private comparableDiagnosticScene(a: ClientDiagnosticLogEntry, b: ClientDiagnosticLogEntry): boolean {
-    const aMap = this.diagnosticMap(a);
-    const bMap = this.diagnosticMap(b);
-    if (aMap !== 'n/a' && bMap !== 'n/a' && aMap !== bMap) return false;
-    const aFloor = this.diagnosticFloor(a);
-    const bFloor = this.diagnosticFloor(b);
-    if (aFloor !== 'n/a' && bFloor !== 'n/a' && aFloor !== bFloor) return false;
-    const aPayload = this.diagnosticPayload(a);
-    const bPayload = this.diagnosticPayload(b);
-    const meshDelta = this.diagnosticRatioDelta(this.recordNumber(aPayload, 'activeMeshes'), this.recordNumber(bPayload, 'activeMeshes'));
-    const vertexDelta = this.diagnosticRatioDelta(this.recordNumber(aPayload, 'totalVertices'), this.recordNumber(bPayload, 'totalVertices'));
-    return (meshDelta === null || meshDelta <= 0.35)
-      && (vertexDelta === null || vertexDelta <= 0.35);
+    return areComparableDiagnosticScenes(this.diagnosticPayload(a), this.diagnosticPayload(b));
   }
 
   private diagnosticBrowserFamily(entry: ClientDiagnosticLogEntry): string {
-    const payload = this.diagnosticPayload(entry);
-    const browser = this.recordObject(payload, 'browser');
-    const flags = this.diagnosticFlags(entry);
-    if (browser.brave === true || flags.includes('brave-browser')) return 'Brave';
-    const ua = String(browser.userAgent ?? '');
-    if (ua.includes('Edg/')) return 'Edge';
-    if (ua.includes('Chrome/')) return 'Chrome';
-    if (ua.includes('Chromium/')) return 'Chromium';
-    const uaData = this.recordObject(browser, 'userAgentData');
-    const brands = uaData.brands;
-    if (Array.isArray(brands)) {
-      const brandNames = brands
-        .map(brand => brand && typeof brand === 'object' && !Array.isArray(brand) ? String((brand as Record<string, unknown>).brand ?? '') : '')
-        .filter(Boolean);
-      if (brandNames.some(brand => brand.includes('Microsoft Edge'))) return 'Edge';
-      if (brandNames.some(brand => brand.includes('Google Chrome'))) return 'Chrome';
-      if (brandNames.some(brand => brand.includes('Chromium'))) return 'Chromium';
-    }
-    return 'unknown';
+    return browserFamilyFromDiagnosticPayload(this.diagnosticPayload(entry));
   }
 
   private isPlayerChromiumDiagnostic(entry: ClientDiagnosticLogEntry): boolean {
-    const browser = this.diagnosticBrowserFamily(entry);
-    return browser === 'Chrome' || browser === 'Brave' || browser === 'Edge' || browser === 'Chromium';
+    return isPlayerChromiumBrowserFamily(this.diagnosticBrowserFamily(entry));
   }
 
   private strongDiagnosticBrowserGap(): DiagnosticBrowserGap | null {
-    const measured = this.diagnostics.filter(entry => this.diagnosticFps(entry) !== null && this.isPlayerChromiumDiagnostic(entry));
+    const byUser = new Map<string, ClientDiagnosticLogEntry[]>();
+    for (const entry of this.diagnostics) {
+      if (!entry.username || this.diagnosticFps(entry) === null || !this.isPlayerChromiumDiagnostic(entry)) continue;
+      const entries = byUser.get(entry.username) ?? [];
+      entries.push(entry);
+      byUser.set(entry.username, entries);
+    }
     let best: DiagnosticBrowserGap | null = null;
-    for (let i = 0; i < measured.length; i++) {
-      for (let j = i + 1; j < measured.length; j++) {
-        const a = measured[i];
-        const b = measured[j];
-        if (!a.username || a.username !== b.username) continue;
-        if (this.diagnosticBrowserFamily(a) === this.diagnosticBrowserFamily(b)) continue;
-        if (!this.comparableDiagnosticScene(a, b)) continue;
-        const aFps = this.diagnosticFps(a);
-        const bFps = this.diagnosticFps(b);
-        if (aFps === null || bFps === null) continue;
-        const high = aFps >= bFps ? a : b;
-        const low = high === a ? b : a;
-        const highFps = Math.max(aFps, bFps);
-        const lowFps = Math.min(aFps, bFps);
-        const ratio = highFps / Math.max(1, lowFps);
-        if (highFps < 100 || lowFps >= 55 || ratio < 1.5) continue;
-        if (!best || ratio > best.ratio) best = { high, low, highFps, lowFps, ratio };
+    for (const measured of byUser.values()) {
+      for (let i = 0; i < measured.length; i++) {
+        for (let j = i + 1; j < measured.length; j++) {
+          const a = measured[i];
+          const b = measured[j];
+          if (this.diagnosticBrowserFamily(a) === this.diagnosticBrowserFamily(b)) continue;
+          if (!this.comparableDiagnosticScene(a, b)) continue;
+          const aFps = this.diagnosticFps(a);
+          const bFps = this.diagnosticFps(b);
+          if (aFps === null || bFps === null) continue;
+          const high = aFps >= bFps ? a : b;
+          const low = high === a ? b : a;
+          const highFps = Math.max(aFps, bFps);
+          const lowFps = Math.min(aFps, bFps);
+          const ratio = highFps / Math.max(1, lowFps);
+          if (highFps < 100 || lowFps >= 55 || ratio < 1.5) continue;
+          if (!best || ratio > best.ratio) best = { high, low, highFps, lowFps, ratio };
+        }
       }
     }
     return best;
@@ -2014,32 +1998,11 @@ export class AdminPanel {
 
   private isStableLowFrameCadence(entry: ClientDiagnosticLogEntry): boolean {
     const fps = this.diagnosticFps(entry);
-    const pacing = this.diagnosticFramePacing(entry);
-    const median = this.recordNumber(pacing, 'medianMs');
-    const p95 = this.recordNumber(pacing, 'p95Ms');
-    const stddev = this.recordNumber(pacing, 'stddevMs');
-    return fps !== null
-      && fps >= 27
-      && fps <= 36
-      && median !== null
-      && median >= 27
-      && median <= 38
-      && p95 !== null
-      && p95 <= 42
-      && stddev !== null
-      && stddev <= 5;
+    return sharedIsStableLowFrameCadence(fps, this.diagnosticFramePacing(entry));
   }
 
   private hasUnevenFramePacing(entry: ClientDiagnosticLogEntry): boolean {
-    const pacing = this.diagnosticFramePacing(entry);
-    const p95 = this.recordNumber(pacing, 'p95Ms');
-    const max = this.recordNumber(pacing, 'maxMs');
-    const stddev = this.recordNumber(pacing, 'stddevMs');
-    const over50 = this.recordNumber(pacing, 'over50Ms');
-    return (p95 !== null && p95 >= 50)
-      || (max !== null && max >= 100)
-      || (stddev !== null && stddev >= 12)
-      || (over50 !== null && over50 >= 3);
+    return sharedHasUnevenFramePacing(this.diagnosticFramePacing(entry));
   }
 
   private diagnosticFlagColor(flag: string): string {
@@ -2072,8 +2035,7 @@ export class AdminPanel {
   }
 
   private diagnosticFps(entry: ClientDiagnosticLogEntry): number | null {
-    const payload = this.diagnosticPayload(entry);
-    return this.recordNumber(payload, 'measuredFps') ?? this.recordNumber(payload, 'engineFps');
+    return measuredFpsFromDiagnosticPayload(this.diagnosticPayload(entry));
   }
 
   private diagnosticRenderer(entry: ClientDiagnosticLogEntry): string {

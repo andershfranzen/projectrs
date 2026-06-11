@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS, isValidMinimapIconFilename, normalizeMinimapMarkers } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS, isValidMinimapIconFilename, normalizeMinimapMarkers, diagnosticFlagsFromPayload, diagnosticRecordField, measuredFpsFromDiagnosticPayload, rendererFromWebGlDiagnostics } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -1768,6 +1768,17 @@ async function readRecentClientDiagnostics(options: {
   }
 }
 
+function clientLogConsoleSummary(event: string, username: string, payload: unknown): string {
+  const fps = measuredFpsFromDiagnosticPayload(payload);
+  const fpsText = fps === null ? 'n/a' : (fps >= 100 ? Math.round(fps).toString() : fps.toFixed(1));
+  const flags = diagnosticFlagsFromPayload(payload);
+  const payloadRecord = isPlainRecord(payload) ? payload : {};
+  const map = String(payloadRecord.currentMap ?? 'n/a').slice(0, 48);
+  const renderer = rendererFromWebGlDiagnostics(diagnosticRecordField(payload, 'webgl')).slice(0, 120);
+  const flagText = flags.length > 0 ? flags.slice(0, 8).join(',') : 'none';
+  return `[client-log] ${event} user=${username} fps=${fpsText} map=${map} flags=${flagText} renderer=${renderer}`;
+}
+
 function forumAvatarFilePath(urlOrPath: string): string | null {
   let pathname = urlOrPath;
   if (/^https?:\/\//.test(pathname)) {
@@ -3146,7 +3157,7 @@ const server = Bun.serve<SocketData>({
         const body = await req.json() as { event?: string; username?: string; details?: unknown; at?: number };
         const event = String(body.event ?? 'unknown').slice(0, 96);
         const username = String(body.username ?? 'unknown').slice(0, 64);
-        console.warn(`[client-log] ${event} user=${username} details=${JSON.stringify(body.details ?? {})}`);
+        console.warn(clientLogConsoleSummary(event, username, body.details ?? {}));
         audit({
           type: 'client.log',
           tick: world.getCurrentTick(),

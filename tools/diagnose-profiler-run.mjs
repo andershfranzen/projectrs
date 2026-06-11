@@ -1,15 +1,13 @@
 #!/usr/bin/env bun
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
+import {
+  isSoftwareRendererText,
+  isSoftwareWebGlRenderer,
+  rendererFromWebGlDiagnostics,
+} from '../shared/performanceDiagnostics.ts';
 
 const profilerRoot = resolve('tools', 'profiler-runs');
-const SOFTWARE_RENDERER_PATTERNS = [
-  'swiftshader',
-  'llvmpipe',
-  'software rasterizer',
-  'software renderer',
-  'microsoft basic render',
-];
 const LOW_FPS_THRESHOLD = 55;
 const HIGH_DPR_THRESHOLD = 1.75;
 const LARGE_CANVAS_PIXELS = 4_000_000;
@@ -81,22 +79,16 @@ function extractBrowserDiagnostics(raw) {
 }
 
 function rendererFromWebGl(webgl) {
-  return webgl?.unmaskedRenderer || webgl?.renderer || 'unknown';
+  return rendererFromWebGlDiagnostics(webgl);
 }
 
 function softwareRendererFromText(...values) {
-  const text = values.filter(Boolean).join(' ').toLowerCase();
-  return SOFTWARE_RENDERER_PATTERNS.some((pattern) => text.includes(pattern));
+  return isSoftwareRendererText(...values);
 }
 
 function isSoftwareRenderer(webgl) {
   if (!webgl || typeof webgl !== 'object') return null;
-  return softwareRendererFromText(
-    webgl.unmaskedRenderer,
-    webgl.renderer,
-    webgl.unmaskedVendor,
-    webgl.vendor,
-  );
+  return isSoftwareWebGlRenderer(webgl);
 }
 
 function browserLabel(pageDiagnostics) {

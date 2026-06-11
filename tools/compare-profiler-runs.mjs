@@ -2,15 +2,12 @@
 import { basename } from 'node:path';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import {
+  isSoftwareWebGlRenderer,
+  rendererFromWebGlDiagnostics,
+} from '../shared/performanceDiagnostics.ts';
 
 const profilerRoot = resolve('tools', 'profiler-runs');
-const SOFTWARE_RENDERER_PATTERNS = [
-  'swiftshader',
-  'llvmpipe',
-  'software rasterizer',
-  'software renderer',
-  'microsoft basic render',
-];
 
 function formatCount(value) {
   return typeof value === 'number' && Number.isFinite(value)
@@ -223,18 +220,12 @@ function extractBrowserDiagnostics(raw) {
 }
 
 function rendererFromWebGl(webgl) {
-  return webgl?.unmaskedRenderer || webgl?.renderer || 'unknown';
+  return rendererFromWebGlDiagnostics(webgl);
 }
 
 function isSoftwareRenderer(webgl) {
   if (!webgl || typeof webgl !== 'object') return null;
-  const rendererText = [
-    webgl?.unmaskedRenderer,
-    webgl?.renderer,
-    webgl?.unmaskedVendor,
-    webgl?.vendor,
-  ].filter(Boolean).join(' ').toLowerCase();
-  return SOFTWARE_RENDERER_PATTERNS.some((pattern) => rendererText.includes(pattern));
+  return isSoftwareWebGlRenderer(webgl);
 }
 
 function rendererFromRun(run) {

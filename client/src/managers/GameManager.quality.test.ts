@@ -3,6 +3,8 @@ import { formatFramePacingForChat, GameManager, isStableLowFrameCadence } from '
 
 const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+const originalFetch = Object.getOwnPropertyDescriptor(globalThis, 'fetch');
 
 function installLocalStorageStub(): Map<string, string> {
   const store = new Map<string, string>();
@@ -27,6 +29,16 @@ afterEach(() => {
     Object.defineProperty(globalThis, 'window', originalWindow);
   } else {
     delete (globalThis as Partial<typeof globalThis>).window;
+  }
+  if (originalNavigator) {
+    Object.defineProperty(globalThis, 'navigator', originalNavigator);
+  } else {
+    delete (globalThis as Partial<typeof globalThis>).navigator;
+  }
+  if (originalFetch) {
+    Object.defineProperty(globalThis, 'fetch', originalFetch);
+  } else {
+    delete (globalThis as Partial<typeof globalThis>).fetch;
   }
 });
 
@@ -256,6 +268,18 @@ describe('GameManager render quality command', () => {
     const payload = manager.buildClientLogPayload('client_perf_snapshot', {
       currentMap: 'kcmap',
       diagnosticFlags: ['low-fps-measured'],
+      framePacing: {
+        intervals: 90,
+        meanMs: 33.3,
+        medianMs: 33.3,
+        p95Ms: 34.1,
+        maxMs: 36.8,
+        stddevMs: 1.2,
+        over16Ms: 90,
+        over33Ms: 88,
+        over50Ms: 0,
+        over100Ms: 0,
+      },
       webgl: { unmaskedRenderer: 'ANGLE (NVIDIA)' },
       oversized: '\u754c'.repeat(80_000),
     });
@@ -265,8 +289,46 @@ describe('GameManager render quality command', () => {
     expect(parsed.details.truncated).toBe(true);
     expect(parsed.details.currentMap).toBe('kcmap');
     expect(parsed.details.diagnosticFlags).toEqual(['low-fps-measured']);
+    expect(parsed.details.framePacing).toEqual({
+      intervals: 90,
+      meanMs: 33.3,
+      medianMs: 33.3,
+      p95Ms: 34.1,
+      maxMs: 36.8,
+      stddevMs: 1.2,
+      over16Ms: 90,
+      over33Ms: 88,
+      over50Ms: 0,
+      over100Ms: 0,
+    });
     expect(parsed.details.webgl).toEqual({ unmaskedRenderer: 'ANGLE (NVIDIA)' });
     expect(parsed.details.oversized).toBeUndefined();
+  });
+
+  test('client log falls back to fetch when sendBeacon rejects the payload', () => {
+    const manager = Object.create(GameManager.prototype) as any;
+    manager.username = 'tester';
+    const fetchCalls: Array<{ url: string; init: RequestInit }> = [];
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        sendBeacon: () => false,
+      },
+    });
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: (url: string, init: RequestInit) => {
+        fetchCalls.push({ url, init });
+        return Promise.resolve(new Response('{}'));
+      },
+    });
+
+    manager.reportClientLog('client_perf_snapshot', { measuredFps: 42, framePacing: { medianMs: 24 } });
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0].url).toBe('/api/client-log');
+    expect(fetchCalls[0].init.keepalive).toBe(true);
+    expect(String(fetchCalls[0].init.body)).toContain('client_perf_snapshot');
   });
 
   test('stable low cadence distinguishes a 30 FPS cap from stalls', () => {

@@ -1,18 +1,17 @@
 #!/usr/bin/env bun
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
+import {
+  areComparableDiagnosticScenes,
+  classifyPerformanceDiagnostic,
+  diagnosticMapLabel,
+  diagnosticSceneComparisonText,
+  finiteDiagnosticNumber,
+  framePacingFromDiagnosticPayload,
+  rendererFromWebGlDiagnostics,
+} from '../shared/performanceDiagnostics.ts';
 
 const profilerRoot = resolve('tools', 'profiler-runs');
-const SOFTWARE_RENDERER_PATTERNS = [
-  'swiftshader',
-  'llvmpipe',
-  'software rasterizer',
-  'software renderer',
-  'microsoft basic render',
-  'basic render driver',
-  'warp',
-  'mesa offscreen',
-];
 
 function formatRate(value) {
   return typeof value === 'number' && Number.isFinite(value)
@@ -31,7 +30,7 @@ function pad(value, width) {
 }
 
 function finiteNumber(value) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  return finiteDiagnosticNumber(value);
 }
 
 async function readJsonIfPresent(file) {
@@ -52,12 +51,7 @@ function extractSnapshot(raw) {
 }
 
 function rendererFromWebGl(webgl) {
-  return webgl?.unmaskedRenderer || webgl?.renderer || 'unknown';
-}
-
-function softwareRendererFromText(...values) {
-  const text = values.filter(Boolean).join(' ').toLowerCase();
-  return SOFTWARE_RENDERER_PATTERNS.some((pattern) => text.includes(pattern));
+  return rendererFromWebGlDiagnostics(webgl);
 }
 
 function commandLineArgs(browserDiagnostics) {
@@ -113,7 +107,7 @@ function rendererLabel(snapshot, browserDiagnostics) {
 }
 
 function framePacing(snapshot) {
-  return snapshot?.framePacing && typeof snapshot.framePacing === 'object' ? snapshot.framePacing : null;
+  return framePacingFromDiagnosticPayload(snapshot);
 }
 
 function formatFrame(pacing) {
@@ -128,40 +122,15 @@ function formatCount(value) {
 }
 
 function mapLabel(snapshot) {
-  return String(snapshot?.currentMap ?? 'n/a');
-}
-
-function floorLabel(snapshot) {
-  return snapshot?.currentFloor == null ? 'n/a' : String(snapshot.currentFloor);
-}
-
-function ratioDelta(a, b) {
-  const left = finiteNumber(a);
-  const right = finiteNumber(b);
-  if (left == null || right == null) return null;
-  const larger = Math.max(Math.abs(left), Math.abs(right));
-  if (larger === 0) return 0;
-  return Math.abs(left - right) / larger;
+  return diagnosticMapLabel(snapshot);
 }
 
 function comparableScene(a, b) {
-  if (mapLabel(a) !== 'n/a' && mapLabel(b) !== 'n/a' && mapLabel(a) !== mapLabel(b)) return false;
-  if (floorLabel(a) !== 'n/a' && floorLabel(b) !== 'n/a' && floorLabel(a) !== floorLabel(b)) return false;
-  const meshDelta = ratioDelta(a?.activeMeshes, b?.activeMeshes);
-  const vertexDelta = ratioDelta(a?.totalVertices, b?.totalVertices);
-  return (meshDelta == null || meshDelta <= 0.35)
-    && (vertexDelta == null || vertexDelta <= 0.35);
+  return areComparableDiagnosticScenes(a, b);
 }
 
 function sceneComparisonText(a, b) {
-  const meshDelta = ratioDelta(a?.activeMeshes, b?.activeMeshes);
-  const vertexDelta = ratioDelta(a?.totalVertices, b?.totalVertices);
-  const parts = [
-    `map ${mapLabel(a) === mapLabel(b) ? mapLabel(a) : `${mapLabel(a)} vs ${mapLabel(b)}`}`,
-    meshDelta == null ? null : `meshes ${Math.round(meshDelta * 100)}% apart`,
-    vertexDelta == null ? null : `vertices ${Math.round(vertexDelta * 100)}% apart`,
-  ].filter(Boolean);
-  return parts.join(', ');
+  return diagnosticSceneComparisonText(a, b);
 }
 
 function sceneLabel(snapshot) {
@@ -172,46 +141,17 @@ function sceneLabel(snapshot) {
   ].join(' ');
 }
 
-function isStableLowCadence(fps, pacing) {
-  const median = finiteNumber(pacing?.medianMs);
-  const p95 = finiteNumber(pacing?.p95Ms);
-  const stddev = finiteNumber(pacing?.stddevMs);
-  return fps != null
-    && fps >= 27
-    && fps <= 36
-    && median != null
-    && median >= 27
-    && median <= 38
-    && p95 != null
-    && p95 <= 42
-    && stddev != null
-    && stddev <= 5;
-}
-
-function hasUnevenPacing(pacing) {
-  const p95 = finiteNumber(pacing?.p95Ms);
-  const max = finiteNumber(pacing?.maxMs);
-  const stddev = finiteNumber(pacing?.stddevMs);
-  const over50 = finiteNumber(pacing?.over50Ms);
-  return (p95 != null && p95 >= 50)
-    || (max != null && max >= 100)
-    || (stddev != null && stddev >= 12)
-    || (over50 != null && over50 >= 3);
-}
-
 function classification(snapshot, browserDiagnostics) {
-  const fps = finiteNumber(snapshot?.measuredFps);
-  const pacing = framePacing(snapshot);
-  const flags = Array.isArray(snapshot?.diagnosticFlags) ? snapshot.diagnosticFlags : [];
-  const aux = browserDiagnostics?.systemInfo?.gpu?.auxAttributes || {};
-  const software = flags.includes('software-renderer-likely')
-    || softwareRendererFromText(rendererFromWebGl(snapshot?.webgl), aux.glRenderer, aux.glVendor, aux.angleBackend);
-  if (software && fps != null && fps < 55) return 'software low';
-  if (isStableLowCadence(fps, pacing)) return 'stable 30';
-  if (fps != null && fps < 55 && hasUnevenPacing(pacing)) return 'stalls';
-  if (fps != null && fps < 55) return 'low FPS';
-  if (fps != null && fps >= 100) return 'healthy';
-  return 'unclear';
+  switch (classifyPerformanceDiagnostic(snapshot, browserDiagnostics)) {
+    case 'software-low': return 'software low';
+    case 'stable-30': return 'stable 30';
+    case 'stalls': return 'stalls';
+    case 'hardware-low':
+    case 'low-fps': return 'low FPS';
+    case 'healthy-high':
+    case 'healthy': return 'healthy';
+    default: return 'unclear';
+  }
 }
 
 async function latestRunDirs(limit = 8) {

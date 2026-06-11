@@ -1,17 +1,19 @@
 #!/usr/bin/env bun
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-
-const SOFTWARE_RENDERER_PATTERNS = [
-  'swiftshader',
-  'llvmpipe',
-  'software rasterizer',
-  'software renderer',
-  'microsoft basic render',
-  'basic render driver',
-  'warp',
-  'mesa offscreen',
-];
+import {
+  areComparableDiagnosticScenes,
+  browserFamilyFromDiagnosticPayload,
+  classifyPerformanceDiagnostic,
+  diagnosticFlagsFromPayload,
+  diagnosticSceneComparisonText,
+  finiteDiagnosticNumber,
+  framePacingFromDiagnosticPayload,
+  isPlayerChromiumBrowserFamily,
+  isSoftwarePerformanceDiagnostic,
+  measuredFpsFromDiagnosticPayload,
+  rendererFromWebGlDiagnostics,
+} from '../shared/performanceDiagnostics.ts';
 
 function parseArgs(argv) {
   const options = {
@@ -47,7 +49,7 @@ function parseArgs(argv) {
 }
 
 function finiteNumber(value) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  return finiteDiagnosticNumber(value);
 }
 
 function formatRate(value) {
@@ -180,8 +182,7 @@ async function readEntries(input, options) {
 }
 
 function flags(entry) {
-  const raw = entry.payload?.diagnosticFlags;
-  return Array.isArray(raw) ? raw.filter((flag) => typeof flag === 'string') : [];
+  return diagnosticFlagsFromPayload(entry.payload);
 }
 
 function webgl(entry) {
@@ -225,50 +226,23 @@ function formatMedia(entry) {
 }
 
 function framePacing(entry) {
-  return isPlainRecord(entry.payload?.framePacing) ? entry.payload.framePacing : null;
+  return framePacingFromDiagnosticPayload(entry.payload);
 }
 
 function measuredFps(entry) {
-  return finiteNumber(entry.payload?.measuredFps)
-    ?? finiteNumber(entry.payload?.fps)
-    ?? finiteNumber(entry.payload?.engineFps);
+  return measuredFpsFromDiagnosticPayload(entry.payload);
 }
 
 function renderer(entry) {
-  const info = webgl(entry);
-  return String(info.unmaskedRenderer ?? info.renderer ?? 'unknown');
-}
-
-function softwareRenderer(entry) {
-  if (flags(entry).includes('software-renderer-likely')) return true;
-  const info = webgl(entry);
-  const text = [
-    info.unmaskedRenderer,
-    info.renderer,
-    info.unmaskedVendor,
-    info.vendor,
-  ].filter(Boolean).join(' ').toLowerCase();
-  return SOFTWARE_RENDERER_PATTERNS.some((pattern) => text.includes(pattern));
+  return rendererFromWebGlDiagnostics(webgl(entry));
 }
 
 function browserLabel(entry) {
-  const info = browser(entry);
-  if (info.brave === true || flags(entry).includes('brave-browser')) return 'Brave';
-  const ua = String(info.userAgent ?? '');
-  if (ua.includes('Edg/')) return 'Edge';
-  if (ua.includes('HeadlessChrome/')) return 'HeadlessChrome';
-  if (ua.includes('Chrome/')) return 'Chrome';
-  const brands = isPlainRecord(info.userAgentData) && Array.isArray(info.userAgentData.brands)
-    ? info.userAgentData.brands.map((brand) => isPlainRecord(brand) ? brand.brand : '').filter(Boolean)
-    : [];
-  return brands.length > 0 ? brands.join(', ') : String(info.platform ?? 'unknown');
+  return browserFamilyFromDiagnosticPayload(entry.payload);
 }
 
 function isPlayerChromiumBrowser(label) {
-  return label === 'Chrome'
-    || label === 'Brave'
-    || label === 'Edge'
-    || label === 'Chromium';
+  return isPlayerChromiumBrowserFamily(label);
 }
 
 function isLowFps(entry) {
@@ -277,44 +251,24 @@ function isLowFps(entry) {
 }
 
 function isStableLowCadence(entry) {
-  const fps = measuredFps(entry);
-  const pacing = framePacing(entry);
-  const median = finiteNumber(pacing?.medianMs);
-  const p95 = finiteNumber(pacing?.p95Ms);
-  const stddev = finiteNumber(pacing?.stddevMs);
-  return fps != null
-    && fps >= 27
-    && fps <= 36
-    && median != null
-    && median >= 27
-    && median <= 38
-    && p95 != null
-    && p95 <= 42
-    && stddev != null
-    && stddev <= 5;
+  return classifyPerformanceDiagnostic(entry.payload) === 'stable-30';
 }
 
 function hasUnevenFramePacing(entry) {
-  const pacing = framePacing(entry);
-  const p95 = finiteNumber(pacing?.p95Ms);
-  const max = finiteNumber(pacing?.maxMs);
-  const stddev = finiteNumber(pacing?.stddevMs);
-  const over50 = finiteNumber(pacing?.over50Ms);
-  return (p95 != null && p95 >= 50)
-    || (max != null && max >= 100)
-    || (stddev != null && stddev >= 12)
-    || (over50 != null && over50 >= 3);
+  return classifyPerformanceDiagnostic(entry.payload) === 'stalls';
 }
 
 function classification(entry) {
-  if (softwareRenderer(entry) && isLowFps(entry)) return 'software renderer low FPS';
-  if (isStableLowCadence(entry)) return 'stable 30Hz cadence';
-  if (hasUnevenFramePacing(entry) && isLowFps(entry)) return 'uneven low-FPS stalls';
-  if (flags(entry).includes('brave-low-fps') || flags(entry).includes('low-fps-with-hardware-renderer')) return 'hardware-backed low FPS';
-  if (isLowFps(entry)) return 'low FPS';
-  const fps = measuredFps(entry);
-  if (fps != null && fps >= 100) return 'healthy high FPS';
-  return 'unclear';
+  switch (classifyPerformanceDiagnostic(entry.payload)) {
+    case 'software-low': return 'software renderer low FPS';
+    case 'stable-30': return 'stable 30Hz cadence';
+    case 'stalls': return 'uneven low-FPS stalls';
+    case 'hardware-low': return 'hardware-backed low FPS';
+    case 'low-fps': return 'low FPS';
+    case 'healthy-high': return 'healthy high FPS';
+    case 'healthy': return 'healthy';
+    default: return 'unclear';
+  }
 }
 
 function formatPacing(entry) {
@@ -323,65 +277,45 @@ function formatPacing(entry) {
   return `med ${formatRate(pacing.medianMs)}ms p95 ${formatRate(pacing.p95Ms)}ms max ${formatRate(pacing.maxMs)}ms >33 ${formatCount(pacing.over33Ms)} >50 ${formatCount(pacing.over50Ms)}`;
 }
 
-function mapLabel(entry) {
-  return String(entry.payload?.currentMap ?? 'n/a');
-}
-
-function floorLabel(entry) {
-  return entry.payload?.currentFloor == null ? 'n/a' : String(entry.payload.currentFloor);
-}
-
-function ratioDelta(a, b) {
-  const left = finiteNumber(a);
-  const right = finiteNumber(b);
-  if (left == null || right == null) return null;
-  const larger = Math.max(Math.abs(left), Math.abs(right));
-  if (larger === 0) return 0;
-  return Math.abs(left - right) / larger;
-}
-
 function comparableScene(a, b) {
-  if (mapLabel(a) !== 'n/a' && mapLabel(b) !== 'n/a' && mapLabel(a) !== mapLabel(b)) return false;
-  if (floorLabel(a) !== 'n/a' && floorLabel(b) !== 'n/a' && floorLabel(a) !== floorLabel(b)) return false;
-  const meshDelta = ratioDelta(a.payload?.activeMeshes, b.payload?.activeMeshes);
-  const vertexDelta = ratioDelta(a.payload?.totalVertices, b.payload?.totalVertices);
-  return (meshDelta == null || meshDelta <= 0.35)
-    && (vertexDelta == null || vertexDelta <= 0.35);
+  return areComparableDiagnosticScenes(a.payload, b.payload);
 }
 
 function sceneComparisonText(a, b) {
-  const meshDelta = ratioDelta(a.payload?.activeMeshes, b.payload?.activeMeshes);
-  const vertexDelta = ratioDelta(a.payload?.totalVertices, b.payload?.totalVertices);
-  const parts = [
-    `map ${mapLabel(a) === mapLabel(b) ? mapLabel(a) : `${mapLabel(a)} vs ${mapLabel(b)}`}`,
-    meshDelta == null ? null : `meshes ${Math.round(meshDelta * 100)}% apart`,
-    vertexDelta == null ? null : `vertices ${Math.round(vertexDelta * 100)}% apart`,
-  ].filter(Boolean);
-  return parts.join(', ');
+  return diagnosticSceneComparisonText(a.payload, b.payload);
 }
 
 function browserGapFindings(entries, limit = 3) {
   const measured = entries
     .filter((entry) => measuredFps(entry) != null)
     .filter((entry) => isPlayerChromiumBrowser(browserLabel(entry)));
+  const byUser = new Map();
+  for (const entry of measured) {
+    const key = entry.username || 'unknown';
+    const items = byUser.get(key) ?? [];
+    items.push(entry);
+    byUser.set(key, items);
+  }
   const findings = [];
-  for (let i = 0; i < measured.length; i += 1) {
-    for (let j = i + 1; j < measured.length; j += 1) {
-      const a = measured[i];
-      const b = measured[j];
-      if (browserLabel(a) === browserLabel(b)) continue;
-      const aFps = measuredFps(a);
-      const bFps = measuredFps(b);
-      if (aFps == null || bFps == null) continue;
-      const high = aFps >= bFps ? a : b;
-      const low = high === a ? b : a;
-      const highFps = measuredFps(high);
-      const lowFps = measuredFps(low);
-      const ratio = highFps / Math.max(1, lowFps);
-      const comparable = comparableScene(high, low);
-      const sameUser = high.username === low.username && high.username !== 'unknown';
-      const strong = sameUser && comparable && highFps >= 100 && lowFps < 55 && ratio >= 1.5;
-      findings.push({ high, low, highFps, lowFps, ratio, comparable, sameUser, strong });
+  for (const userEntries of byUser.values()) {
+    for (let i = 0; i < userEntries.length; i += 1) {
+      for (let j = i + 1; j < userEntries.length; j += 1) {
+        const a = userEntries[i];
+        const b = userEntries[j];
+        if (browserLabel(a) === browserLabel(b)) continue;
+        const aFps = measuredFps(a);
+        const bFps = measuredFps(b);
+        if (aFps == null || bFps == null) continue;
+        const high = aFps >= bFps ? a : b;
+        const low = high === a ? b : a;
+        const highFps = measuredFps(high);
+        const lowFps = measuredFps(low);
+        const ratio = highFps / Math.max(1, lowFps);
+        const comparable = comparableScene(high, low);
+        const sameUser = high.username === low.username && high.username !== 'unknown';
+        const strong = sameUser && comparable && highFps >= 100 && lowFps < 55 && ratio >= 1.5;
+        findings.push({ high, low, highFps, lowFps, ratio, comparable, sameUser, strong });
+      }
     }
   }
   return findings
@@ -415,8 +349,8 @@ function summarize(entries) {
     lowFps: entries.filter(isLowFps).length,
     brave: entries.filter((entry) => browserLabel(entry) === 'Brave').length,
     braveLow: entries.filter((entry) => browserLabel(entry) === 'Brave' && isLowFps(entry)).length,
-    software: entries.filter(softwareRenderer).length,
-    softwareLow: entries.filter((entry) => softwareRenderer(entry) && isLowFps(entry)).length,
+    software: entries.filter((entry) => isSoftwarePerformanceDiagnostic(entry.payload)).length,
+    softwareLow: entries.filter((entry) => isSoftwarePerformanceDiagnostic(entry.payload) && isLowFps(entry)).length,
     stable30: entries.filter(isStableLowCadence).length,
     uneven: entries.filter(hasUnevenFramePacing).length,
   };
