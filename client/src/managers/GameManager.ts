@@ -112,7 +112,7 @@ interface FrameRateSample {
   framePacing: FramePacingSample | null;
 }
 
-interface FramePacingSample {
+export interface FramePacingSample {
   intervals: number;
   meanMs: number;
   medianMs: number;
@@ -199,6 +199,25 @@ function summarizeFramePacing(intervals: number[]): FramePacingSample | null {
     over50Ms: intervals.filter(value => value > 50).length,
     over100Ms: intervals.filter(value => value > 100).length,
   };
+}
+
+function formatPerfTiming(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)}ms` : 'n/a';
+}
+
+export function formatFramePacingForChat(pacing: FramePacingSample | null | undefined): string {
+  if (!pacing) return 'n/a';
+  return `median ${formatPerfTiming(pacing.medianMs)}, p95 ${formatPerfTiming(pacing.p95Ms)}, max ${formatPerfTiming(pacing.maxMs)}, >33ms ${pacing.over33Ms}, >50ms ${pacing.over50Ms}`;
+}
+
+export function isStableLowFrameCadence(fps: number, pacing: FramePacingSample | null | undefined): boolean {
+  return fps >= 27
+    && fps <= 36
+    && !!pacing
+    && pacing.medianMs >= 27
+    && pacing.medianMs <= 38
+    && pacing.p95Ms <= 42
+    && pacing.stddevMs <= 5;
 }
 
 function isSoftwareWebGlRenderer(webgl: Record<string, unknown>): boolean {
@@ -1878,9 +1897,15 @@ export class GameManager {
     const canvasText = canvas
       ? `${Number(canvas.width ?? 0)}x${Number(canvas.height ?? 0)}/${Number(canvas.clientWidth ?? 0)}x${Number(canvas.clientHeight ?? 0)}`
       : 'unknown';
+    const framePacingText = formatFramePacingForChat(sample.framePacing);
     this.chatPanel?.addSystemMessage(
-      `Perf: ${sample.fps.toFixed(1)} FPS, scale ${renderScale.toFixed(1)}, ${meshes} active meshes, ${Math.round(vertices / 1000)}k vertices, canvas ${canvasText}. Renderer: ${clippedRenderer}`,
+      `Perf: ${sample.fps.toFixed(1)} FPS, scale ${renderScale.toFixed(1)}, ${meshes} active meshes, ${Math.round(vertices / 1000)}k vertices, canvas ${canvasText}. Frame ${framePacingText}. Renderer: ${clippedRenderer}`,
     );
+    if (isStableLowFrameCadence(sample.fps, sample.framePacing)) {
+      this.chatPanel?.addSystemMessage('Perf cadence: stable ~30 FPS; this looks more like a browser/display/GPU scheduling cap than random render stalls.', '#ffb347');
+    } else if ((sample.framePacing?.over50Ms ?? 0) >= 3 || (sample.framePacing?.p95Ms ?? 0) >= 50) {
+      this.chatPanel?.addSystemMessage('Perf cadence: uneven frames with long stalls; compare the copied snapshot against a good Chrome run.', '#ffb347');
+    }
     if (diagnosticFlags.length > 0) {
       this.chatPanel?.addSystemMessage(`Perf flags: ${diagnosticFlags.join(', ')}`);
     }

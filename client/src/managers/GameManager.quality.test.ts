@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { GameManager } from './GameManager';
+import { formatFramePacingForChat, GameManager, isStableLowFrameCadence } from './GameManager';
 
 const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
@@ -232,5 +232,47 @@ describe('GameManager render quality command', () => {
     const { manager } = makeQualityManager();
 
     expect(manager.rendererWarningForDiagnosticFlags(['low-fps-measured'])).toBeNull();
+  });
+
+  test('perf frame pacing summary calls out the useful cadence fields', () => {
+    expect(formatFramePacingForChat({
+      intervals: 90,
+      meanMs: 33.3,
+      medianMs: 33.4,
+      p95Ms: 34.1,
+      maxMs: 36.8,
+      stddevMs: 1.2,
+      over16Ms: 90,
+      over33Ms: 88,
+      over50Ms: 0,
+      over100Ms: 0,
+    })).toBe('median 33.4ms, p95 34.1ms, max 36.8ms, >33ms 88, >50ms 0');
+  });
+
+  test('stable low cadence distinguishes a 30 FPS cap from stalls', () => {
+    expect(isStableLowFrameCadence(30.1, {
+      intervals: 90,
+      meanMs: 33.2,
+      medianMs: 33.3,
+      p95Ms: 35.0,
+      maxMs: 38.0,
+      stddevMs: 1.4,
+      over16Ms: 90,
+      over33Ms: 88,
+      over50Ms: 0,
+      over100Ms: 0,
+    })).toBe(true);
+    expect(isStableLowFrameCadence(30.1, {
+      intervals: 90,
+      meanMs: 33.2,
+      medianMs: 33.3,
+      p95Ms: 81.0,
+      maxMs: 160.0,
+      stddevMs: 18.0,
+      over16Ms: 90,
+      over33Ms: 40,
+      over50Ms: 8,
+      over100Ms: 2,
+    })).toBe(false);
   });
 });
