@@ -277,6 +277,62 @@ function summarizeBrowserStats(stats) {
   };
 }
 
+function formatCount(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.round(value).toLocaleString()
+    : 'n/a';
+}
+
+function formatRate(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? (value >= 100 ? Math.round(value).toLocaleString() : value.toFixed(1))
+    : 'n/a';
+}
+
+function formatCanvas(canvas) {
+  if (!canvas) return 'n/a';
+  const renderSize = `${formatCount(canvas.width)}x${formatCount(canvas.height)}`;
+  const clientSize = `${formatCount(canvas.clientWidth)}x${formatCount(canvas.clientHeight)}`;
+  const dpr = formatRate(canvas.devicePixelRatio);
+  return `${renderSize} / ${clientSize}, DPR ${dpr}`;
+}
+
+function formatBudgetRow(row) {
+  if (!row || typeof row !== 'object') return 'n/a';
+  const name = row.name || row.chunk || '<unnamed>';
+  const vertices = row.vertices == null ? '' : `, ${formatCount(row.vertices)}v`;
+  const indices = row.indices == null ? '' : `, ${formatCount(row.indices)}i`;
+  return `${name} (${formatCount(row.count)}x${vertices}${indices})`;
+}
+
+function printBudgetRows(label, rows, limit = 5) {
+  const items = Array.isArray(rows) ? rows.slice(0, limit) : [];
+  if (items.length === 0) return;
+  console.log(`  ${label}:`);
+  for (const row of items) console.log(`    ${formatBudgetRow(row)}`);
+}
+
+function printEvilQuestSnapshot(snapshot) {
+  const flags = Array.isArray(snapshot.diagnosticFlags) && snapshot.diagnosticFlags.length > 0
+    ? snapshot.diagnosticFlags.join(', ')
+    : 'none';
+  const renderer = snapshot.webgl?.unmaskedRenderer || snapshot.webgl?.renderer || 'unknown';
+  const summary = snapshot.sceneBudget?.summary || {};
+  const chunks = snapshot.chunkMeshes || {};
+
+  console.log('EvilQuest snapshot:');
+  console.log(`  ${formatRate(snapshot.measuredFps)} FPS, engine ${formatRate(snapshot.engineFps)}, draw calls ${formatCount(snapshot.drawCalls)}`);
+  console.log(`  Active meshes ${formatCount(snapshot.activeMeshes)} / total ${formatCount(snapshot.totalMeshes)}, vertices ${formatCount(snapshot.totalVertices)}, indices ${formatCount(snapshot.totalIndices)}`);
+  console.log(`  Pickable ${formatCount(summary.activePickableMeshes)} active / ${formatCount(summary.pickableMeshes)} total, enabled ${formatCount(summary.enabledMeshes)}, textures ${formatCount(summary.textures)}, materials ${formatCount(summary.materials)}`);
+  console.log(`  Terrain chunks ${formatCount(chunks.ground)}, grass ${formatCount(chunks.grass)} meshes / ${formatCount(chunks.grassVertices)} vertices, detail ${formatCount(chunks.detailVertices)} vertices`);
+  console.log(`  Canvas: ${formatCanvas(snapshot.canvas)}`);
+  console.log(`  Renderer: ${renderer}`);
+  console.log(`  Flags: ${flags}`);
+  printBudgetRows('Top active', snapshot.sceneBudget?.activeByName);
+  printBudgetRows('Top active pickable', snapshot.sceneBudget?.activePickableByName);
+  printBudgetRows('Top enabled', snapshot.sceneBudget?.enabledByName, 3);
+}
+
 async function evaluateJson(cdp, expression, options = {}) {
   const result = await cdp.send('Runtime.evaluate', {
     expression,
@@ -509,13 +565,7 @@ async function main() {
       console.log(`${row.totalMs.toFixed(1).padStart(8)}ms total  ${row.maxMs.toFixed(1).padStart(6)}ms max  x${String(row.count).padEnd(4)} ${row.key}`);
     }
     if (evilQuestSnapshot?.ok) {
-      const snapshot = evilQuestSnapshot.snapshot || {};
-      const flags = Array.isArray(snapshot.diagnosticFlags) ? snapshot.diagnosticFlags.join(', ') : 'none';
-      const renderer = snapshot.webgl?.unmaskedRenderer || snapshot.webgl?.renderer || 'unknown';
-      console.log('EvilQuest snapshot:');
-      console.log(`  ${snapshot.measuredFps ?? 'n/a'} FPS, ${snapshot.activeMeshes ?? 'n/a'} active meshes, ${snapshot.totalVertices ?? 'n/a'} vertices`);
-      console.log(`  Renderer: ${renderer}`);
-      console.log(`  Flags: ${flags}`);
+      printEvilQuestSnapshot(evilQuestSnapshot.snapshot || {});
     }
     if (autorun) break;
   }

@@ -49,6 +49,10 @@ Each run writes a timestamped folder under `tools/profiler-runs/`:
 - `browser-stats.json` - long tasks, slow callbacks, resources, fetches, WebSockets.
 - `console.json` - browser console and exception logs.
 
+The command also prints the same high-signal snapshot fields to the terminal:
+FPS, renderer, flags, canvas/DPR, active/pickable mesh counts, terrain detail
+counts, and the top scene-budget buckets.
+
 To include page load, asset loading, and login startup in the CPU profile, set:
 
 ```bash
@@ -62,6 +66,21 @@ For the Brave issue, compare `evilquest-snapshot.json` between Chrome and Brave.
 - `snapshot.webgl.unmaskedRenderer`
 - `snapshot.canvas`
 - `snapshot.activeMeshes`, `snapshot.totalVertices`, `snapshot.totalIndices`
+- `snapshot.sceneBudget.summary.activePickableMeshes`
+- `snapshot.sceneBudget.activeByName`
+- `snapshot.sceneBudget.activePickableByName`
+
+You can diff two profiler run directories directly:
+
+```bash
+bun tools/compare-profiler-runs.mjs tools/profiler-runs/<chrome-run> tools/profiler-runs/<brave-run>
+```
+
+With no arguments it compares the latest two run directories:
+
+```bash
+bun tools/compare-profiler-runs.mjs
+```
 
 ## Optional Auth Injection
 
