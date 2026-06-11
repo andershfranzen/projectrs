@@ -29,6 +29,18 @@ function Wait-CdpPort {
   throw "Chrome DevTools endpoint did not appear on $endpoint"
 }
 
+function Test-CdpPort {
+  param([int]$Port)
+
+  $endpoint = "http://127.0.0.1:$Port/json/version"
+  try {
+    Invoke-WebRequest -UseBasicParsing -Uri $endpoint -TimeoutSec 1 | Out-Null
+    return $true
+  } catch {
+    return $false
+  }
+}
+
 function Get-LatestProfilerRun {
   param([string]$RunRoot)
 
@@ -59,6 +71,10 @@ try {
   }
 
   if (-not $NoLaunch) {
+    if (Test-CdpPort -Port $Port) {
+      throw "Chrome DevTools port $Port is already open. Close the previous Chromium/Brave process, pass -Port with a free port, or use -NoLaunch if you intentionally want to attach to that port."
+    }
+
     $launchPath = if ($BrowserPath) { $BrowserPath } else { $BravePath }
     if (-not (Test-Path $launchPath)) {
       throw "$BrowserName was not found at '$launchPath'. Pass -BrowserPath with the installed browser .exe path."

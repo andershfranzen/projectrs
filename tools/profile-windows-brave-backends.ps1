@@ -59,8 +59,10 @@ $capturedRuns = New-Object System.Collections.ArrayList
 
 for ($i = 0; $i -lt $Backends.Count; $i++) {
   $backend = $Backends[$i]
+  $runPort = $Port + $i
   Write-Host ""
   Write-Host "=== Brave backend capture $($i + 1)/$($Backends.Count): $backend ==="
+  Write-Host "This run uses DevTools port $runPort."
   Write-Host "Close Brave fully before this run so the backend flag is applied."
   Read-Host "Press Enter after Brave is closed"
 
@@ -68,7 +70,7 @@ for ($i = 0; $i -lt $Backends.Count; $i++) {
   $previousLatestRunName = if ($null -eq $previousLatestRun) { $null } else { $previousLatestRun.Name }
 
   $profilerArgs = New-Object System.Collections.ArrayList
-  Add-CommonArgs -Arguments $profilerArgs -Url $Url -BravePath $BravePath -Port $Port -Seconds $Seconds -Autorun:$Autorun.IsPresent -ZipLatest:$ZipLatest.IsPresent
+  Add-CommonArgs -Arguments $profilerArgs -Url $Url -BravePath $BravePath -Port $runPort -Seconds $Seconds -Autorun:$Autorun.IsPresent -ZipLatest:$ZipLatest.IsPresent
   if ($backend -ne "default") {
     [void]$profilerArgs.Add("-AngleBackend")
     [void]$profilerArgs.Add($backend)

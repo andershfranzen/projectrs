@@ -70,8 +70,10 @@ $capturedRuns = New-Object System.Collections.ArrayList
 
 for ($i = 0; $i -lt $Browsers.Count; $i++) {
   $browser = Resolve-BrowserPath -Browser $Browsers[$i]
+  $runPort = $Port + $i
   Write-Host ""
   Write-Host "=== Browser capture $($i + 1)/$($Browsers.Count): $($browser.Name) ==="
+  Write-Host "This run uses DevTools port $runPort."
   Write-Host "Close $($browser.Name) fully before this run so the DevTools flag is applied."
   Read-Host "Press Enter after $($browser.Name) is closed"
 
@@ -82,7 +84,7 @@ for ($i = 0; $i -lt $Browsers.Count; $i++) {
     "-Url", $Url,
     "-BrowserName", $browser.Name,
     "-BrowserPath", $browser.Path,
-    "-Port", $Port,
+    "-Port", $runPort,
     "-Seconds", $Seconds
   )
   if ($Autorun) { $profilerArgs += "-Autorun" }

@@ -44,7 +44,9 @@ Windows machine:
 ```
 
 That helper prompts you to close each browser, records one run per browser, then
-prints the same backend/FPS matrix used by the Brave backend test.
+prints the same backend/FPS matrix used by the Brave backend test. It uses
+incrementing DevTools ports starting at `9223`, so a stale browser on one port
+cannot be mistaken for the next capture.
 
 Close Brave fully first, let the script start Brave with a DevTools port, log in
 to EvilQuest, wait until the bad FPS is visible, then type `capture` in the
@@ -67,7 +69,7 @@ close Brave fully between runs and capture the same scene with forced backends:
 ```
 
 For a guided default/D3D11/OpenGL pass that summarizes the captured runs at the
-end:
+end, the helper uses incrementing DevTools ports starting at `9223`:
 
 ```powershell
 .\tools\profile-windows-brave-backends.ps1 -ZipLatest
