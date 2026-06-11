@@ -30,10 +30,10 @@ afterEach(() => {
   }
 });
 
-function installWindowStub(devicePixelRatio: number = 1): void {
+function installWindowStub(devicePixelRatio: number = 1, search: string = ''): void {
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
-    value: { devicePixelRatio },
+    value: { devicePixelRatio, location: { search } },
   });
 }
 
@@ -82,6 +82,7 @@ describe('GameManager render quality command', () => {
   test('sets high quality for the session and clears low quality preference', () => {
     const storage = installLocalStorageStub();
     storage.set('projectrs_low_quality', '1');
+    storage.set('projectrs_auto_low_quality', '1');
     const { manager, canvas, hardwareScaleCalls, messages, qualityLogs } = makeQualityManager();
     manager.baseHardwareScalingLevel = 2;
     manager.renderHardwareScalingLevel = 2;
@@ -89,6 +90,7 @@ describe('GameManager render quality command', () => {
     expect(manager.handleChatCommand('/quality high')).toBe(true);
 
     expect(storage.has('projectrs_low_quality')).toBe(false);
+    expect(storage.has('projectrs_auto_low_quality')).toBe(false);
     expect(manager.baseHardwareScalingLevel).toBe(1);
     expect(manager.renderHardwareScalingLevel).toBe(1);
     expect(hardwareScaleCalls).toEqual([1]);
@@ -100,12 +102,14 @@ describe('GameManager render quality command', () => {
   test('auto quality clears the manual low preference and uses detected scale', () => {
     const storage = installLocalStorageStub();
     storage.set('projectrs_low_quality', '1');
+    storage.set('projectrs_auto_low_quality', '1');
     const { manager, hardwareScaleCalls, messages, qualityLogs } = makeQualityManager();
     manager.detectBaseHardwareScalingLevel = () => 2;
 
     expect(manager.handleChatCommand('/quality auto')).toBe(true);
 
     expect(storage.has('projectrs_low_quality')).toBe(false);
+    expect(storage.has('projectrs_auto_low_quality')).toBe(false);
     expect(manager.baseHardwareScalingLevel).toBe(2);
     expect(manager.renderHardwareScalingLevel).toBe(2);
     expect(hardwareScaleCalls).toEqual([2]);
@@ -127,11 +131,12 @@ describe('GameManager render quality command', () => {
   });
 
   test('low FPS adaptive scaling can step from normal to low quality', () => {
-    installLocalStorageStub();
+    const storage = installLocalStorageStub();
     const { manager, canvas, hardwareScaleCalls, messages } = makeQualityManager();
 
     expect(manager.maybeApplyLowFpsRenderScale(35)).toBe(2);
 
+    expect(storage.get('projectrs_auto_low_quality')).toBe('1');
     expect(manager.renderHardwareScalingLevel).toBe(2);
     expect(hardwareScaleCalls).toEqual([2]);
     expect(canvas.dataset.renderScale).toBe('2.00');
@@ -139,7 +144,7 @@ describe('GameManager render quality command', () => {
   });
 
   test('low FPS adaptive scaling can step further only when FPS remains very low', () => {
-    installLocalStorageStub();
+    const storage = installLocalStorageStub();
     const { manager, canvas, hardwareScaleCalls, messages } = makeQualityManager();
     manager.renderHardwareScalingLevel = 2;
 
@@ -147,10 +152,31 @@ describe('GameManager render quality command', () => {
     expect(manager.maybeApplyLowFpsRenderScale(40)).toBe(3);
     expect(manager.maybeApplyLowFpsRenderScale(30)).toBeNull();
 
+    expect(storage.get('projectrs_auto_low_quality')).toBe('1');
     expect(manager.renderHardwareScalingLevel).toBe(3);
     expect(hardwareScaleCalls).toEqual([3]);
     expect(canvas.dataset.renderScale).toBe('3.00');
     expect(messages.at(-1)).toBe('FPS still low; lowering render resolution further.');
+  });
+
+  test('auto low quality preference is used on the next auto-detected session', () => {
+    const storage = installLocalStorageStub();
+    storage.set('projectrs_auto_low_quality', '1');
+    installWindowStub();
+    const { manager } = makeQualityManager();
+    manager.getWebGlDiagnostics = () => ({ context: 'webgl2', unmaskedRenderer: 'ANGLE (NVIDIA)' });
+
+    expect(manager.detectBaseHardwareScalingLevel()).toBe(2);
+  });
+
+  test('explicit quality URL overrides are not replaced by adaptive persistence', () => {
+    const storage = installLocalStorageStub();
+    installWindowStub(1, '?quality=high');
+    const { manager } = makeQualityManager();
+
+    expect(manager.maybeApplyLowFpsRenderScale(35)).toBe(2);
+
+    expect(storage.has('projectrs_auto_low_quality')).toBe(false);
   });
 
   test('diagnostic flags distinguish Brave low FPS on an apparently hardware renderer', () => {

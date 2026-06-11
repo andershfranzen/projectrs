@@ -21,6 +21,7 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
+import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { ChunkManager, assertOptionalMapResourceResponse } from '../rendering/ChunkManager';
 import { GameCamera } from '../rendering/Camera';
@@ -83,10 +84,12 @@ const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
 const EMERGENCY_LOW_QUALITY_HARDWARE_SCALE = 3.0;
-const LOW_FPS_DIAGNOSTIC_WARMUP_MS = 10000;
-const LOW_FPS_DIAGNOSTIC_SAMPLE_MS = 8000;
+const LOW_FPS_DIAGNOSTIC_WARMUP_MS = 5000;
+const LOW_FPS_DIAGNOSTIC_SAMPLE_MS = 3000;
 const LOW_FPS_DIAGNOSTIC_THRESHOLD = 50;
 const LOW_FPS_EXTRA_SCALE_THRESHOLD = 45;
+const MANUAL_LOW_QUALITY_STORAGE_KEY = 'projectrs_low_quality';
+const AUTO_LOW_QUALITY_STORAGE_KEY = 'projectrs_auto_low_quality';
 const SOFTWARE_RENDERER_PATTERNS = [
   'swiftshader',
   'llvmpipe',
@@ -190,6 +193,21 @@ type CropPickProxyConfig = {
   depth: number;
   height: number;
   y: number;
+};
+
+type CropPickProxyBatch = {
+  mesh: Mesh;
+  config: CropPickProxyConfig;
+  objectEntityIds: Array<number | null>;
+  refsByObjectId: Map<number, CropPickProxyRef>;
+  freeIndices: number[];
+};
+
+type CropPickProxyRef = {
+  batchKey: string;
+  index: number;
+  placedNode: TransformNode;
+  config: CropPickProxyConfig;
 };
 
 const DEFAULT_CROP_PICK_PROXY: CropPickProxyConfig = { width: 1.2, depth: 1.2, height: 1.2, y: 0.6 };
@@ -515,9 +533,8 @@ export class GameManager {
   private worldObjectIdByNode: WeakMap<TransformNode, number> = new WeakMap();
   private worldObjectPickState: WeakMap<TransformNode, { entityId: number; interactive: boolean }> = new WeakMap();
   private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; openDirection?: -1 | 1; locked?: boolean; interactionTiles?: { x: number; z: number }[]; ladderActionMask?: number }> = new Map();
-  /** Shared geometry for crop pick proxies, keyed by local proxy dimensions. */
-  private cropProxyTemplates: Map<string, Mesh> = new Map();
-  private cropPickProxies: Map<number, Mesh> = new Map();
+  private cropPickProxyBatches: Map<string, CropPickProxyBatch> = new Map();
+  private cropPickProxyRefs: Map<number, CropPickProxyRef> = new Map();
   private worldObjectPickProxies: Map<number, Mesh> = new Map();
   private doorPivots: Map<number, DoorPivotEntry> = new Map();
   private doorPickProxies: Map<number, Mesh> = new Map();
@@ -1525,13 +1542,14 @@ export class GameManager {
   }
 
   private detectBaseHardwareScalingLevel(): number {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
     const quality = params.get('quality')?.toLowerCase();
     if (quality === 'high') return 1;
     if (quality === 'low') return LOW_QUALITY_HARDWARE_SCALE;
 
     try {
-      if (localStorage.getItem('projectrs_low_quality') === '1') return LOW_QUALITY_HARDWARE_SCALE;
+      if (localStorage.getItem(MANUAL_LOW_QUALITY_STORAGE_KEY) === '1') return LOW_QUALITY_HARDWARE_SCALE;
+      if (localStorage.getItem(AUTO_LOW_QUALITY_STORAGE_KEY) === '1') return LOW_QUALITY_HARDWARE_SCALE;
     } catch {
       // Storage can be blocked in privacy modes; default to full quality.
     }
@@ -1555,12 +1573,33 @@ export class GameManager {
   private setLowQualityPreference(enabled: boolean): void {
     try {
       if (enabled) {
-        localStorage.setItem('projectrs_low_quality', '1');
+        localStorage.setItem(MANUAL_LOW_QUALITY_STORAGE_KEY, '1');
+        localStorage.removeItem(AUTO_LOW_QUALITY_STORAGE_KEY);
       } else {
-        localStorage.removeItem('projectrs_low_quality');
+        localStorage.removeItem(MANUAL_LOW_QUALITY_STORAGE_KEY);
+        localStorage.removeItem(AUTO_LOW_QUALITY_STORAGE_KEY);
       }
     } catch {
       // Storage can be blocked in privacy modes; the current session still changes.
+    }
+  }
+
+  private hasExplicitRenderQualityOverride(): boolean {
+    try {
+      return typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('quality');
+    } catch {
+      return false;
+    }
+  }
+
+  private rememberAdaptiveLowQualityPreference(): void {
+    if (this.hasExplicitRenderQualityOverride()) return;
+    try {
+      if (localStorage.getItem(MANUAL_LOW_QUALITY_STORAGE_KEY) !== '1') {
+        localStorage.setItem(AUTO_LOW_QUALITY_STORAGE_KEY, '1');
+      }
+    } catch {
+      // Best effort only; current-session scaling was already applied.
     }
   }
 
@@ -1627,6 +1666,7 @@ export class GameManager {
     if (nextScale === null) return null;
 
     this.setRenderHardwareScalingLevel(nextScale);
+    if (nextScale >= LOW_QUALITY_HARDWARE_SCALE - 0.01) this.rememberAdaptiveLowQualityPreference();
     this.chatPanel?.addSystemMessage(message, '#ffb347');
     return this.renderHardwareScalingLevel;
   }
@@ -2771,21 +2811,84 @@ export class GameManager {
     return def.id === POTATO_PLANT_OBJECT_DEF_ID ? POTATO_CROP_PICK_PROXY : DEFAULT_CROP_PICK_PROXY;
   }
 
-  private cropProxyTemplateFor(config: CropPickProxyConfig): Mesh {
-    const key = `${config.width},${config.depth},${config.height}`;
-    let tmpl = this.cropProxyTemplates.get(key);
-    if (!tmpl) {
-      tmpl = MeshBuilder.CreateBox(`crop_pickProxy_tmpl_${this.cropProxyTemplates.size}`, {
+  private cropPickProxyBatchKey(config: CropPickProxyConfig): string {
+    return `${config.width},${config.depth},${config.height},${config.y}`;
+  }
+
+  private cropHiddenPickMatrix(): Matrix {
+    return Matrix.Translation(0, -10000, 0);
+  }
+
+  private cropPickProxyMatrix(placedNode: TransformNode, config: CropPickProxyConfig): Matrix {
+    placedNode.computeWorldMatrix(true);
+    return Matrix.Translation(0, config.y, 0).multiply(placedNode.getWorldMatrix());
+  }
+
+  private cropPickProxyBatchFor(config: CropPickProxyConfig): CropPickProxyBatch {
+    const key = this.cropPickProxyBatchKey(config);
+    let batch = this.cropPickProxyBatches.get(key);
+    if (!batch) {
+      const mesh = MeshBuilder.CreateBox(`crop_pickProxy_batch_${this.cropPickProxyBatches.size}`, {
         width: config.width,
         depth: config.depth,
         height: config.height,
       }, this.scene);
-      tmpl.isVisible = false;
-      tmpl.isPickable = false;
-      tmpl.setEnabled(false);
-      this.cropProxyTemplates.set(key, tmpl);
+      mesh.isVisible = true;
+      mesh.visibility = 0;
+      mesh.isPickable = true;
+      mesh.layerMask = 0;
+      mesh.doNotSyncBoundingInfo = true;
+      mesh.thinInstanceEnablePicking = true;
+      mesh.metadata = {
+        kind: 'cropPickProxyBatch',
+        objectEntityIdsByThinInstance: [],
+      };
+      mesh.freezeWorldMatrix();
+      batch = {
+        mesh,
+        config,
+        objectEntityIds: mesh.metadata.objectEntityIdsByThinInstance,
+        refsByObjectId: new Map(),
+        freeIndices: [],
+      };
+      this.cropPickProxyBatches.set(key, batch);
     }
-    return tmpl;
+    return batch;
+  }
+
+  private refreshCropPickProxyBatchBounds(batch: CropPickProxyBatch): void {
+    const pad = Math.max(batch.config.width, batch.config.depth, batch.config.height, 1);
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+
+    for (const objectEntityId of batch.objectEntityIds) {
+      if (typeof objectEntityId !== 'number') continue;
+      const ref = batch.refsByObjectId.get(objectEntityId);
+      if (!ref) continue;
+      const m = this.cropPickProxyMatrix(ref.placedNode, ref.config).m;
+      const x = m[12] ?? 0;
+      const y = m[13] ?? 0;
+      const z = m[14] ?? 0;
+      minX = Math.min(minX, x - pad);
+      minY = Math.min(minY, y - pad);
+      minZ = Math.min(minZ, z - pad);
+      maxX = Math.max(maxX, x + pad);
+      maxY = Math.max(maxY, y + pad);
+      maxZ = Math.max(maxZ, z + pad);
+    }
+
+    if (!Number.isFinite(minX)) {
+      minX = minY = minZ = -1;
+      maxX = maxY = maxZ = 1;
+    }
+    batch.mesh.setBoundingInfo(new BoundingInfo(
+      new Vector3(minX, minY, minZ),
+      new Vector3(maxX, maxY, maxZ),
+    ));
   }
 
   private createCropPickProxy(
@@ -2796,26 +2899,59 @@ export class GameManager {
   ): void {
     this.disposeCropPickProxy(objectEntityId);
     const config = this.cropPickProxyConfig(def);
-    const proxy = this.cropProxyTemplateFor(config).clone(`crop_pickProxy_${objectEntityId}`, placedNode)!;
-    proxy.setEnabled(!depleted);
-    proxy.position.y = config.y;
-    proxy.isVisible = true;
-    proxy.visibility = 0;
-    proxy.isPickable = false;
-    proxy.layerMask = 0;
-    proxy.doNotSyncBoundingInfo = true;
-    proxy.freezeWorldMatrix();
-    proxy.metadata = { objectEntityId };
-    this.cropPickProxies.set(objectEntityId, proxy);
+    const batchKey = this.cropPickProxyBatchKey(config);
+    const batch = this.cropPickProxyBatchFor(config);
+    const index = batch.freeIndices.pop() ?? batch.objectEntityIds.length;
+    const matrix = depleted ? this.cropHiddenPickMatrix() : this.cropPickProxyMatrix(placedNode, config);
+
+    if (index >= batch.objectEntityIds.length) {
+      batch.mesh.thinInstanceAdd(matrix, false);
+    } else {
+      batch.mesh.thinInstanceSetMatrixAt(index, matrix);
+    }
+    batch.objectEntityIds[index] = depleted ? null : objectEntityId;
+    batch.mesh.thinInstanceBufferUpdated('matrix');
+
+    const ref = { batchKey, index, placedNode, config };
+    batch.refsByObjectId.set(objectEntityId, ref);
+    this.cropPickProxyRefs.set(objectEntityId, ref);
+    this.refreshCropPickProxyBatchBounds(batch);
   }
 
   private disposeCropPickProxy(objectEntityId: number): void {
-    const proxy = this.cropPickProxies.get(objectEntityId);
-    if (proxy) {
-      proxy.dispose();
-      this.worldObjectPickState.delete(proxy);
-      this.cropPickProxies.delete(objectEntityId);
+    const ref = this.cropPickProxyRefs.get(objectEntityId);
+    if (ref) {
+      const batch = this.cropPickProxyBatches.get(ref.batchKey);
+      if (batch) {
+        batch.objectEntityIds[ref.index] = null;
+        batch.refsByObjectId.delete(objectEntityId);
+        batch.freeIndices.push(ref.index);
+        batch.mesh.thinInstanceSetMatrixAt(ref.index, this.cropHiddenPickMatrix());
+        batch.mesh.thinInstanceBufferUpdated('matrix');
+        this.refreshCropPickProxyBatchBounds(batch);
+      }
+      this.cropPickProxyRefs.delete(objectEntityId);
     }
+  }
+
+  private setCropPickProxyEnabled(objectEntityId: number, enabled: boolean): void {
+    const ref = this.cropPickProxyRefs.get(objectEntityId);
+    if (!ref) return;
+    const batch = this.cropPickProxyBatches.get(ref.batchKey);
+    if (!batch) return;
+    batch.objectEntityIds[ref.index] = enabled ? objectEntityId : null;
+    batch.mesh.thinInstanceSetMatrixAt(
+      ref.index,
+      enabled ? this.cropPickProxyMatrix(ref.placedNode, ref.config) : this.cropHiddenPickMatrix(),
+    );
+    batch.mesh.thinInstanceBufferUpdated('matrix');
+    this.refreshCropPickProxyBatchBounds(batch);
+  }
+
+  private disposeAllCropPickProxyBatches(): void {
+    for (const batch of this.cropPickProxyBatches.values()) batch.mesh.dispose();
+    this.cropPickProxyBatches.clear();
+    this.cropPickProxyRefs.clear();
   }
 
   private fallbackWorldObjectPickProxyBounds(
@@ -2931,15 +3067,11 @@ export class GameManager {
     model: TransformNode,
   ): void {
     this.setWorldObjectPickTarget(objectEntityId, false, model);
-    let proxy = this.cropPickProxies.get(objectEntityId);
-    if (!proxy) {
+    if (!this.cropPickProxyRefs.has(objectEntityId)) {
       this.createCropPickProxy(objectEntityId, model, def, depleted);
-      proxy = this.cropPickProxies.get(objectEntityId);
     }
-    if (!proxy) return;
     const interactive = this.isWorldObjectInteractable(def, depleted);
-    proxy.setEnabled(interactive);
-    this.setWorldObjectPickTarget(objectEntityId, interactive, proxy);
+    this.setCropPickProxyEnabled(objectEntityId, interactive);
   }
 
   /** Create a depleted model (stump/depleted rock) at the placed node's position */
@@ -4991,8 +5123,7 @@ export class GameManager {
         this.blockedObjectTiles.clear();
         this.closedCenteredDoorTileCounts.clear();
         this.closedCenteredDoorTileKeysByObjectId.clear();
-        for (const [, proxy] of this.cropPickProxies) proxy.dispose();
-        this.cropPickProxies.clear();
+        this.disposeAllCropPickProxyBatches();
         for (const [, proxy] of this.worldObjectPickProxies) proxy.dispose();
         this.worldObjectPickProxies.clear();
         for (const [, proxy] of this.doorPickProxies) proxy.dispose();
@@ -5657,7 +5788,10 @@ export class GameManager {
     }
 
     if (pickResult?.pickedMesh) {
-      const pickedObjectEntityId = this.findWorldObjectIdFromPick(pickResult.pickedMesh as unknown as TransformNode);
+      const pickedObjectEntityId = this.findWorldObjectIdFromPick(
+        pickResult.pickedMesh as unknown as TransformNode,
+        pickResult.thinInstanceIndex ?? -1,
+      );
       if (pickedObjectEntityId != null) {
         options.push(...this.getWorldObjectInteractionOptions(pickedObjectEntityId));
       }
@@ -5918,7 +6052,19 @@ export class GameManager {
     }).filter((opt): opt is InteractionOption => opt !== null);
   }
 
-  private findWorldObjectIdFromPick(pickedMesh: TransformNode): number | null {
+  private findWorldObjectIdFromPick(pickedMesh: TransformNode, thinInstanceIndex: number = -1): number | null {
+    if (
+      pickedMesh.metadata?.kind === 'cropPickProxyBatch'
+      && thinInstanceIndex >= 0
+      && Array.isArray(pickedMesh.metadata.objectEntityIdsByThinInstance)
+    ) {
+      const id = pickedMesh.metadata.objectEntityIdsByThinInstance[thinInstanceIndex];
+      if (typeof id === 'number') {
+        const data = this.worldObjectDefs.get(id);
+        return data && this.isWorldObjectOnCurrentInteractionFloor(data) ? id : null;
+      }
+    }
+
     // Check 3D models (trees, rocks, placed objects) by walking up the parent
     // chain looking for objectEntityId metadata.
     let walkMesh: TransformNode | null = pickedMesh;
@@ -9102,8 +9248,7 @@ export class GameManager {
     this.worldObjectModels.clear();
     this.worldObjectIdByNode = new WeakMap();
     this.worldObjectPickState = new WeakMap();
-    for (const [, proxy] of this.cropPickProxies) proxy.dispose();
-    this.cropPickProxies.clear();
+    this.disposeAllCropPickProxyBatches();
     for (const [, proxy] of this.worldObjectPickProxies) proxy.dispose();
     this.worldObjectPickProxies.clear();
     for (const [, proxy] of this.doorPickProxies) proxy.dispose();

@@ -82,11 +82,19 @@ export class InputManager {
       const pick = this.scene.pick(
         pointerX,
         pointerY,
-        (mesh) => {
+        (mesh, thinInstanceIndex) => {
           // Only pick meshes that belong to interactive objects
           let node: Node | null = mesh;
           while (node) {
             if (node.metadata?.objectEntityId != null) return true;
+            if (
+              node.metadata?.kind === 'cropPickProxyBatch'
+              && thinInstanceIndex >= 0
+              && Array.isArray(node.metadata.objectEntityIdsByThinInstance)
+              && typeof node.metadata.objectEntityIdsByThinInstance[thinInstanceIndex] === 'number'
+            ) {
+              return true;
+            }
             node = node.parent;
           }
           return false;
@@ -97,6 +105,15 @@ export class InputManager {
       if (pick?.hit && pick.pickedMesh) {
         let node: Node | null = pick.pickedMesh;
         while (node) {
+          if (
+            node.metadata?.kind === 'cropPickProxyBatch'
+            && pick.thinInstanceIndex >= 0
+            && Array.isArray(node.metadata.objectEntityIdsByThinInstance)
+            && typeof node.metadata.objectEntityIdsByThinInstance[pick.thinInstanceIndex] === 'number'
+          ) {
+            this.onObjectClick(node.metadata.objectEntityIdsByThinInstance[pick.thinInstanceIndex]);
+            return true;
+          }
           if (node.metadata?.objectEntityId != null) {
             this.onObjectClick(node.metadata.objectEntityId);
             return true;
