@@ -1,7 +1,7 @@
 import { createModalPanel } from './ModalPanel';
 
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
-type AdminTab = 'bots' | 'events';
+type AdminTab = 'bots' | 'events' | 'diagnostics';
 
 interface AdminBotAccount {
   accountId: number;
@@ -113,9 +113,27 @@ interface GameEventLogResponse {
   error?: string;
 }
 
+interface ClientDiagnosticLogEntry {
+  ts: string;
+  tick: number | null;
+  event: string;
+  username: string;
+  clientAt: number | null;
+  payload: unknown;
+}
+
+interface ClientDiagnosticsResponse {
+  ok: boolean;
+  generatedAt: number;
+  bytesScanned: number;
+  events: ClientDiagnosticLogEntry[];
+  error?: string;
+}
+
 const TEXT_SHADOW = '1px 1px 0 #000';
 const BOT_GRID_COLUMNS = 'minmax(92px, 1.1fr) 54px 72px minmax(130px, 1.4fr) 102px';
 const EVENT_GRID_COLUMNS = '76px 82px minmax(94px, 0.9fr) minmax(180px, 2fr) 96px';
+const DIAGNOSTIC_GRID_COLUMNS = '78px 98px minmax(80px, 0.8fr) minmax(170px, 2fr) 64px';
 const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
   { type: 'chat', label: 'Chat' },
   { type: 'private_chat', label: 'Private' },
@@ -133,6 +151,12 @@ const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
   { type: 'duel', label: 'Duels' },
   { type: 'player_death', label: 'Deaths' },
 ];
+const CLIENT_DIAGNOSTIC_EVENTS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'All events' },
+  { value: 'client_low_fps_snapshot', label: 'Low FPS' },
+  { value: 'client_perf_snapshot', label: 'Perf' },
+  { value: 'game_connection_lost', label: 'Disconnects' },
+];
 const BAN_DURATIONS = [
   { label: '1 hour', seconds: 3600 },
   { label: '24 hours', seconds: 24 * 3600 },
@@ -149,9 +173,13 @@ export class AdminPanel {
   private gridHeaderEl: HTMLDivElement;
   private eventFilterEl: HTMLDivElement;
   private eventTypeChipsEl: HTMLDivElement;
+  private diagnosticFilterEl: HTMLDivElement;
   private botSearchInput: HTMLInputElement;
   private eventSearchInput: HTMLInputElement;
   private eventUserInput: HTMLInputElement;
+  private diagnosticSearchInput: HTMLInputElement;
+  private diagnosticUserInput: HTMLInputElement;
+  private diagnosticEventSelect: HTMLSelectElement;
   private refreshButton: HTMLButtonElement;
   private clearRiskButton: HTMLButtonElement;
   private subtitleEl: HTMLSpanElement | null = null;
@@ -161,13 +189,21 @@ export class AdminPanel {
   private selectedAccountId: number | null = null;
   private events: GameEventLogEntry[] = [];
   private selectedEventId: number | null = null;
+  private diagnostics: ClientDiagnosticLogEntry[] = [];
+  private selectedDiagnosticKey: string | null = null;
+  private diagnosticBytesScanned = 0;
   private eventAfterId = 0;
   private eventPollTimer: number | null = null;
   private eventLoading = false;
+  private diagnosticLoading = false;
   private readonly hiddenEventTypes = new Set<string>();
   private eventSearchQuery = '';
   private eventUserFilter = '';
   private eventFilterDebounceTimer: number | null = null;
+  private diagnosticSearchQuery = '';
+  private diagnosticUserFilter = '';
+  private diagnosticEventFilter = '';
+  private diagnosticFilterDebounceTimer: number | null = null;
   private botSearchQuery = '';
   private botSearchDebounceTimer: number | null = null;
   private accountContextMenuEl: HTMLDivElement | null = null;
@@ -225,7 +261,7 @@ export class AdminPanel {
       min-width: 0;
       margin-left: auto;
     `;
-    for (const [tab, label] of [['bots', 'Bot review'], ['events', 'Game log']] as const) {
+    for (const [tab, label] of [['bots', 'Bot review'], ['events', 'Game log'], ['diagnostics', 'Diagnostics']] as const) {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = label;
@@ -361,6 +397,73 @@ export class AdminPanel {
     this.eventFilterEl.appendChild(this.eventTypeChipsEl);
     body.appendChild(this.eventFilterEl);
 
+    this.diagnosticFilterEl = document.createElement('div');
+    this.diagnosticFilterEl.style.cssText = `
+      display: none;
+      grid-template-columns: minmax(150px, 1.3fr) minmax(110px, 0.8fr) minmax(112px, 0.7fr) 68px;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+      padding: 6px;
+      border: 1px solid rgba(74, 64, 53, 0.58);
+      background: rgba(12, 8, 6, 0.36);
+    `;
+    this.diagnosticSearchInput = document.createElement('input');
+    this.diagnosticSearchInput.type = 'search';
+    this.diagnosticSearchInput.placeholder = 'Search';
+    this.diagnosticSearchInput.spellcheck = false;
+    this.diagnosticSearchInput.style.cssText = this.eventFilterInputCss();
+    this.diagnosticSearchInput.addEventListener('input', () => {
+      this.diagnosticSearchQuery = this.diagnosticSearchInput.value.trim();
+      this.scheduleDiagnosticFilterRefresh();
+    });
+    this.diagnosticSearchInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.flushDiagnosticFilterRefresh();
+      }
+    });
+    this.diagnosticUserInput = document.createElement('input');
+    this.diagnosticUserInput.type = 'search';
+    this.diagnosticUserInput.placeholder = 'User';
+    this.diagnosticUserInput.spellcheck = false;
+    this.diagnosticUserInput.style.cssText = this.eventFilterInputCss();
+    this.diagnosticUserInput.addEventListener('input', () => {
+      this.diagnosticUserFilter = this.diagnosticUserInput.value.trim();
+      this.scheduleDiagnosticFilterRefresh();
+    });
+    this.diagnosticUserInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.flushDiagnosticFilterRefresh();
+      }
+    });
+    this.diagnosticEventSelect = document.createElement('select');
+    this.diagnosticEventSelect.style.cssText = this.eventFilterInputCss();
+    for (const config of CLIENT_DIAGNOSTIC_EVENTS) {
+      const option = document.createElement('option');
+      option.value = config.value;
+      option.textContent = config.label;
+      this.diagnosticEventSelect.appendChild(option);
+    }
+    this.diagnosticEventSelect.addEventListener('change', () => {
+      this.diagnosticEventFilter = this.diagnosticEventSelect.value;
+      this.flushDiagnosticFilterRefresh();
+    });
+    const clearDiagnosticFiltersButton = this.smallButton('Clear', 'rgba(50, 38, 28, 0.9)');
+    clearDiagnosticFiltersButton.style.minWidth = '68px';
+    clearDiagnosticFiltersButton.addEventListener('click', () => {
+      this.diagnosticSearchInput.value = '';
+      this.diagnosticUserInput.value = '';
+      this.diagnosticEventSelect.value = '';
+      this.diagnosticSearchQuery = '';
+      this.diagnosticUserFilter = '';
+      this.diagnosticEventFilter = '';
+      this.flushDiagnosticFilterRefresh();
+    });
+    this.diagnosticFilterEl.append(this.diagnosticSearchInput, this.diagnosticUserInput, this.diagnosticEventSelect, clearDiagnosticFiltersButton);
+    body.appendChild(this.diagnosticFilterEl);
+
     this.gridHeaderEl = document.createElement('div');
     this.gridHeaderEl.style.cssText = `
       display: grid;
@@ -425,6 +528,7 @@ export class AdminPanel {
   destroy(): void {
     this.stopEventPolling();
     this.clearEventFilterDebounce();
+    this.clearDiagnosticFilterDebounce();
     this.clearBotSearchDebounce();
     this.hideAccountContextMenu();
     document.removeEventListener('keydown', this.keydownHandler);
@@ -434,6 +538,7 @@ export class AdminPanel {
 
   private async refresh(): Promise<void> {
     if (this.activeTab === 'events') return this.refreshGameEvents(true);
+    if (this.activeTab === 'diagnostics') return this.refreshClientDiagnostics();
     return this.refreshBotReview();
   }
 
@@ -497,7 +602,13 @@ export class AdminPanel {
     for (const [tab, button] of this.tabButtons) {
       button.style.cssText = this.tabButtonCss(tab === this.activeTab);
     }
-    if (this.subtitleEl) this.subtitleEl.textContent = this.activeTab === 'events' ? 'Game log' : 'Bot review';
+    if (this.subtitleEl) {
+      this.subtitleEl.textContent = this.activeTab === 'events'
+        ? 'Game log'
+        : this.activeTab === 'diagnostics'
+          ? 'Client diagnostics'
+          : 'Bot review';
+    }
     this.clearRiskButton.style.display = this.activeTab === 'bots' ? '' : 'none';
   }
 
@@ -572,6 +683,52 @@ export class AdminPanel {
     }
   }
 
+  private async refreshClientDiagnostics(): Promise<void> {
+    if (this.diagnosticLoading) return;
+    this.diagnosticLoading = true;
+    this.refreshButton.disabled = true;
+    this.clearRiskButton.disabled = true;
+    this.refreshButton.textContent = 'Loading';
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', '200');
+      params.set('bytes', String(4 * 1024 * 1024));
+      if (this.diagnosticEventFilter) params.set('event', this.diagnosticEventFilter);
+      if (this.diagnosticSearchQuery) params.set('q', this.diagnosticSearchQuery);
+      if (this.diagnosticUserFilter) params.set('user', this.diagnosticUserFilter);
+      const res = await fetch(`/api/admin/client-diagnostics?${params.toString()}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.token}` },
+        credentials: 'same-origin',
+      });
+      if (res.status === 401 || res.status === 403) {
+        this.diagnostics = [];
+        this.renderEmpty('');
+        this.hide();
+        return;
+      }
+      const payload = await res.json() as ClientDiagnosticsResponse;
+      if (!res.ok || !payload.ok) {
+        throw new Error(payload.error || `Client diagnostics failed (${res.status})`);
+      }
+      this.diagnostics = payload.events ?? [];
+      this.diagnosticBytesScanned = payload.bytesScanned ?? 0;
+      if (this.diagnostics.length === 0) {
+        this.selectedDiagnosticKey = null;
+      } else if (!this.diagnostics.some(entry => this.diagnosticKey(entry) === this.selectedDiagnosticKey)) {
+        this.selectedDiagnosticKey = this.diagnosticKey(this.diagnostics[0]);
+      }
+      this.renderClientDiagnostics();
+    } catch (err) {
+      this.renderEmpty(err instanceof Error ? err.message : 'Unable to load client diagnostics.');
+    } finally {
+      this.diagnosticLoading = false;
+      this.refreshButton.disabled = false;
+      this.clearRiskButton.disabled = false;
+      this.refreshButton.textContent = 'Refresh';
+    }
+  }
+
   private async clearBotRiskLevels(): Promise<void> {
     if (this.loading || this.eventLoading) return;
     const confirmed = window.confirm('Clear all bot review risk levels and telemetry? Accounts, bans, mutes, and login history stay intact.');
@@ -614,6 +771,7 @@ export class AdminPanel {
     this.botSearchInput.style.display = '';
     this.clearRiskButton.style.display = '';
     this.eventFilterEl.style.display = 'none';
+    this.diagnosticFilterEl.style.display = 'none';
     this.setGridHeader(BOT_GRID_COLUMNS, ['Account', 'Score', 'Risk', 'Signals', 'Last login']);
     const total = this.accounts.length;
     const high = this.accounts.filter((a) => a.riskLevel === 'high' || a.riskLevel === 'critical').length;
@@ -643,6 +801,7 @@ export class AdminPanel {
     this.botSearchInput.style.display = 'none';
     this.clearRiskButton.style.display = 'none';
     this.eventFilterEl.style.display = 'flex';
+    this.diagnosticFilterEl.style.display = 'none';
     this.renderEventFilters();
     this.setGridHeader(EVENT_GRID_COLUMNS, ['Time', 'Type', 'Actor', 'Event', 'Location']);
     const rare = this.events.filter(event => event.severity === 'rare' || event.type === 'rare_drop').length;
@@ -670,6 +829,45 @@ export class AdminPanel {
       this.detailEl.replaceChildren();
       const empty = document.createElement('div');
       empty.textContent = 'No game events yet.';
+      empty.style.cssText = `font-size: 12px; color: #d9c6a2; padding: 8px;`;
+      this.detailEl.appendChild(empty);
+    }
+  }
+
+  private renderClientDiagnostics(): void {
+    this.botSearchInput.style.display = 'none';
+    this.clearRiskButton.style.display = 'none';
+    this.eventFilterEl.style.display = 'none';
+    this.diagnosticFilterEl.style.display = 'grid';
+    this.setGridHeader(DIAGNOSTIC_GRID_COLUMNS, ['Time', 'Event', 'User', 'Renderer', 'FPS']);
+    const lowFps = this.diagnostics.filter(entry => entry.event === 'client_low_fps_snapshot').length;
+    const perf = this.diagnostics.filter(entry => entry.event === 'client_perf_snapshot').length;
+    const software = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('software-renderer-likely')).length;
+    const brave = this.diagnostics.filter(entry => this.diagnosticFlags(entry).includes('brave-browser')).length;
+    const activeFilters = (this.diagnosticEventFilter ? 1 : 0)
+      + (this.diagnosticSearchQuery ? 1 : 0)
+      + (this.diagnosticUserFilter ? 1 : 0);
+    this.summaryEl.replaceChildren(
+      this.summaryPill(`${this.diagnostics.length} snapshots`, '#6c5c43'),
+      this.summaryPill(`${lowFps} low FPS`, lowFps > 0 ? '#8f2f28' : '#4d5d45'),
+      this.summaryPill(`${perf} perf`, '#2f5f8f'),
+      this.summaryPill(`${software} software`, software > 0 ? '#8f2f28' : '#4d5d45'),
+      this.summaryPill(`${brave} Brave`, brave > 0 ? '#5f4a7d' : '#4d5d45'),
+      this.summaryPill(`${Math.round(this.diagnosticBytesScanned / 1024)} KB`, '#564428'),
+      this.summaryPill(`${activeFilters} filters`, activeFilters > 0 ? '#7a5a25' : '#4d5d45'),
+    );
+
+    this.rowsEl.replaceChildren();
+    for (const entry of this.diagnostics) {
+      this.rowsEl.appendChild(this.diagnosticRow(entry));
+    }
+
+    const selected = this.diagnostics.find(entry => this.diagnosticKey(entry) === this.selectedDiagnosticKey) ?? null;
+    if (selected) this.renderDiagnosticDetail(selected);
+    else {
+      this.detailEl.replaceChildren();
+      const empty = document.createElement('div');
+      empty.textContent = 'No client diagnostics yet.';
       empty.style.cssText = `font-size: 12px; color: #d9c6a2; padding: 8px;`;
       this.detailEl.appendChild(empty);
     }
@@ -732,6 +930,26 @@ export class AdminPanel {
     this.eventFilterDebounceTimer = null;
   }
 
+  private scheduleDiagnosticFilterRefresh(): void {
+    this.clearDiagnosticFilterDebounce();
+    this.diagnosticFilterDebounceTimer = window.setTimeout(() => {
+      this.diagnosticFilterDebounceTimer = null;
+      if (this.visible && this.activeTab === 'diagnostics') void this.refreshClientDiagnostics();
+    }, 250);
+  }
+
+  private flushDiagnosticFilterRefresh(): void {
+    this.clearDiagnosticFilterDebounce();
+    this.selectedDiagnosticKey = null;
+    if (this.visible && this.activeTab === 'diagnostics') void this.refreshClientDiagnostics();
+  }
+
+  private clearDiagnosticFilterDebounce(): void {
+    if (this.diagnosticFilterDebounceTimer === null) return;
+    window.clearTimeout(this.diagnosticFilterDebounceTimer);
+    this.diagnosticFilterDebounceTimer = null;
+  }
+
   private scheduleBotSearchRefresh(): void {
     this.clearBotSearchDebounce();
     this.botSearchDebounceTimer = window.setTimeout(() => {
@@ -749,6 +967,126 @@ export class AdminPanel {
     if (this.botSearchDebounceTimer === null) return;
     window.clearTimeout(this.botSearchDebounceTimer);
     this.botSearchDebounceTimer = null;
+  }
+
+  private diagnosticRow(entry: ClientDiagnosticLogEntry): HTMLButtonElement {
+    const selected = this.diagnosticKey(entry) === this.selectedDiagnosticKey;
+    const flags = this.diagnosticFlags(entry);
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.style.cssText = `
+      appearance: none;
+      width: 100%;
+      display: grid;
+      grid-template-columns: ${DIAGNOSTIC_GRID_COLUMNS};
+      gap: 6px;
+      padding: 6px 7px;
+      border: 0;
+      border-bottom: 1px solid rgba(74, 64, 53, 0.55);
+      background: ${selected
+        ? 'rgba(122, 50, 40, 0.48)'
+        : flags.includes('software-renderer-likely')
+          ? 'rgba(73, 17, 13, 0.5)'
+          : 'rgba(22, 16, 12, 0.38)'};
+      color: #f1d6b6;
+      font: 11px Arial, Helvetica, sans-serif;
+      text-align: left;
+      cursor: pointer;
+      text-shadow: ${TEXT_SHADOW};
+    `;
+    row.addEventListener('click', () => {
+      this.selectedDiagnosticKey = this.diagnosticKey(entry);
+      this.renderClientDiagnostics();
+    });
+    row.append(
+      this.truncateCell(this.formatDiagnosticClock(entry)),
+      this.diagnosticEventPill(entry.event),
+      this.truncateCell(entry.username || '-'),
+      this.truncateCell(this.diagnosticRenderer(entry)),
+      this.truncateCell(this.formatRate(this.diagnosticFps(entry))),
+    );
+    return row;
+  }
+
+  private renderDiagnosticDetail(entry: ClientDiagnosticLogEntry): void {
+    const payload = this.diagnosticPayload(entry);
+    const webgl = this.recordObject(payload, 'webgl');
+    const browser = this.recordObject(payload, 'browser');
+    const canvas = this.recordObject(payload, 'canvas');
+    const chunkMeshes = this.recordObject(payload, 'chunkMeshes');
+    const player = this.recordObject(payload, 'player');
+    const flags = this.diagnosticFlags(entry);
+
+    const root = document.createElement('div');
+    root.style.cssText = `display: flex; flex-direction: column; gap: 8px;`;
+
+    const title = document.createElement('div');
+    title.style.cssText = `display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13px; font-weight: bold; color: #f4ded5;`;
+    title.append(
+      document.createTextNode(`${this.diagnosticEventLabel(entry.event)} · ${entry.username || 'unknown'}`),
+      this.diagnosticEventPill(entry.event),
+    );
+    root.appendChild(title);
+
+    const chips = document.createElement('div');
+    chips.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px; min-height: 20px;`;
+    if (flags.length === 0) {
+      chips.appendChild(this.summaryPill('no diagnostic flags', '#4d5d45'));
+    } else {
+      for (const flag of flags.slice(0, 10)) {
+        chips.appendChild(this.summaryPill(flag, flag === 'software-renderer-likely' ? '#8f2f28' : '#4d535f'));
+      }
+    }
+    root.appendChild(chips);
+
+    const metrics = document.createElement('div');
+    metrics.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(4, minmax(100px, 1fr));
+      gap: 6px;
+    `;
+    metrics.append(
+      this.metricCell('Time', this.formatDiagnosticTime(entry)),
+      this.metricCell('FPS', this.formatRate(this.diagnosticFps(entry))),
+      this.metricCell('Engine FPS', this.formatRate(this.recordNumber(payload, 'engineFps'))),
+      this.metricCell('Draw calls', this.formatNullableNumber(this.recordNumber(payload, 'drawCalls'))),
+      this.metricCell('Active meshes', this.formatNullableNumber(this.recordNumber(payload, 'activeMeshes'))),
+      this.metricCell('Total meshes', this.formatNullableNumber(this.recordNumber(payload, 'totalMeshes'))),
+      this.metricCell('Vertices', this.formatNullableNumber(this.recordNumber(payload, 'totalVertices'))),
+      this.metricCell('Indices', this.formatNullableNumber(this.recordNumber(payload, 'totalIndices'))),
+      this.metricCell('Renderer', this.diagnosticRenderer(entry)),
+      this.metricCell('WebGL', String(webgl.context ?? '-')),
+      this.metricCell('Browser', this.diagnosticBrowser(entry)),
+      this.metricCell('DPR', this.formatRate(this.recordNumber(browser, 'devicePixelRatio'))),
+      this.metricCell('Render scale', this.formatRate(this.recordNumber(payload, 'renderScale'))),
+      this.metricCell('Canvas', this.formatCanvas(canvas)),
+      this.metricCell('Map', String(payload.currentMap ?? '-')),
+      this.metricCell('Player', this.formatPlayer(player)),
+      this.metricCell('Ground/detail', `${this.formatNullableNumber(this.recordNumber(chunkMeshes, 'ground'))}/${this.formatNullableNumber(this.recordNumber(chunkMeshes, 'detail'))}`),
+      this.metricCell('Detail attrs', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'groundDetailAttributes'))),
+      this.metricCell('Client at', entry.clientAt === null ? '-' : new Date(entry.clientAt).toLocaleString()),
+      this.metricCell('Server tick', entry.tick === null ? '-' : String(entry.tick)),
+    );
+    root.appendChild(metrics);
+
+    const details = document.createElement('pre');
+    details.textContent = JSON.stringify(entry.payload ?? {}, null, 2);
+    details.style.cssText = `
+      margin: 0;
+      padding: 7px;
+      max-height: 150px;
+      overflow: auto;
+      border: 1px solid rgba(84, 70, 50, 0.6);
+      background: rgba(8, 6, 5, 0.45);
+      color: #d9c6a2;
+      font: 10px/14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-shadow: none;
+      white-space: pre-wrap;
+      word-break: break-word;
+    `;
+    root.appendChild(details);
+
+    this.detailEl.replaceChildren(root);
   }
 
   private eventRow(event: GameEventLogEntry): HTMLButtonElement {
@@ -1522,6 +1860,74 @@ export class AdminPanel {
     return `Mute ${this.formatModerationExpiry(mute.expiresAt)} by ${mute.mutedBy || 'unknown'}${mute.reason ? `: ${mute.reason}` : ''}`;
   }
 
+  private diagnosticKey(entry: ClientDiagnosticLogEntry): string {
+    return `${entry.ts}|${entry.clientAt ?? ''}|${entry.event}|${entry.username}`;
+  }
+
+  private diagnosticPayload(entry: ClientDiagnosticLogEntry): Record<string, unknown> {
+    return entry.payload && typeof entry.payload === 'object' && !Array.isArray(entry.payload)
+      ? entry.payload as Record<string, unknown>
+      : {};
+  }
+
+  private recordObject(record: Record<string, unknown>, key: string): Record<string, unknown> {
+    const value = record[key];
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  }
+
+  private diagnosticFlags(entry: ClientDiagnosticLogEntry): string[] {
+    const flags = this.diagnosticPayload(entry).diagnosticFlags;
+    return Array.isArray(flags) ? flags.filter((flag): flag is string => typeof flag === 'string') : [];
+  }
+
+  private diagnosticFps(entry: ClientDiagnosticLogEntry): number | null {
+    const payload = this.diagnosticPayload(entry);
+    return this.recordNumber(payload, 'measuredFps') ?? this.recordNumber(payload, 'engineFps');
+  }
+
+  private diagnosticRenderer(entry: ClientDiagnosticLogEntry): string {
+    const webgl = this.recordObject(this.diagnosticPayload(entry), 'webgl');
+    return String(webgl.unmaskedRenderer ?? webgl.renderer ?? 'unknown');
+  }
+
+  private diagnosticBrowser(entry: ClientDiagnosticLogEntry): string {
+    const payload = this.diagnosticPayload(entry);
+    const browser = this.recordObject(payload, 'browser');
+    if (browser.brave === true) return 'Brave';
+    const uaData = this.recordObject(browser, 'userAgentData');
+    const brands = uaData.brands;
+    if (Array.isArray(brands)) {
+      const brandNames = brands
+        .map(brand => brand && typeof brand === 'object' && !Array.isArray(brand) ? String((brand as Record<string, unknown>).brand ?? '') : '')
+        .filter(Boolean);
+      if (brandNames.length > 0) return brandNames.join(', ');
+    }
+    const ua = String(browser.userAgent ?? '');
+    if (ua.includes('Edg/')) return 'Edge';
+    if (ua.includes('Chrome/')) return 'Chrome';
+    return String(browser.platform ?? 'unknown');
+  }
+
+  private diagnosticEventLabel(event: string): string {
+    switch (event) {
+      case 'client_low_fps_snapshot': return 'Low FPS';
+      case 'client_perf_snapshot': return 'Perf';
+      case 'game_connection_lost': return 'Disconnect';
+      default: return event.replace(/_/g, ' ');
+    }
+  }
+
+  private diagnosticEventPill(event: string): HTMLDivElement {
+    const color = event === 'client_low_fps_snapshot'
+      ? '#8f2f28'
+      : event === 'client_perf_snapshot'
+        ? '#2f5f8f'
+        : event === 'game_connection_lost'
+          ? '#7a5a25'
+          : '#6c5c43';
+    return this.summaryPill(this.diagnosticEventLabel(event), color);
+  }
+
   private eventTypeLabel(type: string): string {
     return GAME_EVENT_TYPES.find(config => config.type === type)?.label ?? type.replace(/_/g, ' ');
   }
@@ -1704,11 +2110,46 @@ export class AdminPanel {
     });
   }
 
+  private formatDiagnosticClock(entry: ClientDiagnosticLogEntry): string {
+    const timestamp = Date.parse(entry.ts);
+    if (!Number.isFinite(timestamp)) return '-';
+    return new Date(timestamp).toLocaleTimeString(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  }
+
+  private formatDiagnosticTime(entry: ClientDiagnosticLogEntry): string {
+    const timestamp = Date.parse(entry.ts);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : '-';
+  }
+
   private formatLocation(event: GameEventLogEntry): string {
     if (!event.mapLevel) return '-';
     const x = event.x == null ? '?' : event.x.toFixed(1);
     const z = event.z == null ? '?' : event.z.toFixed(1);
     return `${event.mapLevel} F${event.floor ?? 0} ${x},${z}`;
+  }
+
+  private formatNullableNumber(value: number | null): string {
+    return value === null ? '-' : this.formatNumber(value);
+  }
+
+  private formatCanvas(canvas: Record<string, unknown>): string {
+    const width = this.recordNumber(canvas, 'width');
+    const height = this.recordNumber(canvas, 'height');
+    const clientWidth = this.recordNumber(canvas, 'clientWidth');
+    const clientHeight = this.recordNumber(canvas, 'clientHeight');
+    if (width === null || height === null) return '-';
+    if (clientWidth === null || clientHeight === null) return `${Math.round(width)}x${Math.round(height)}`;
+    return `${Math.round(width)}x${Math.round(height)} / ${Math.round(clientWidth)}x${Math.round(clientHeight)}`;
+  }
+
+  private formatPlayer(player: Record<string, unknown>): string {
+    const x = this.recordNumber(player, 'x');
+    const z = this.recordNumber(player, 'z');
+    return x === null || z === null ? '-' : `${x.toFixed(1)}, ${z.toFixed(1)}`;
   }
 
   private formatBanExpiry(unixSeconds: number | null): string {
