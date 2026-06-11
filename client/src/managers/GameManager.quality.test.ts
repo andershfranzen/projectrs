@@ -216,4 +216,32 @@ describe('GameManager render quality command', () => {
     expect(flags).toContain('emergency-render-scale');
     expect(flags).not.toContain('low-fps-with-hardware-renderer');
   });
+
+  test('renderer warnings call out software WebGL first', () => {
+    const { manager } = makeQualityManager();
+
+    const warning = manager.rendererWarningForDiagnosticFlags([
+      'software-renderer-likely',
+      'brave-low-fps',
+      'low-fps-with-hardware-renderer',
+    ]);
+
+    expect(warning).toContain('software rendering');
+    expect(warning).toContain('SwiftShader');
+  });
+
+  test('renderer warnings distinguish slow Brave hardware renderers', () => {
+    const { manager } = makeQualityManager();
+
+    const warning = manager.rendererWarningForDiagnosticFlags(['brave-low-fps', 'low-fps-with-hardware-renderer']);
+
+    expect(warning).toContain('Brave warning');
+    expect(warning).toContain('hardware renderer');
+  });
+
+  test('renderer warnings ignore plain low FPS without renderer evidence', () => {
+    const { manager } = makeQualityManager();
+
+    expect(manager.rendererWarningForDiagnosticFlags(['low-fps-measured'])).toBeNull();
+  });
 });

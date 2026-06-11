@@ -671,6 +671,7 @@ export class GameManager {
   private lowFpsDiagnosticSampleStartedAt: number = 0;
   private lowFpsDiagnosticFrames: number = 0;
   private lowFpsDiagnosticSent: boolean = false;
+  private lowFpsRendererWarningSent: boolean = false;
   private nativeContextMenuBlocker: ((event: MouseEvent) => void) | null = null;
   private lastWorldContextMenuEventAt: number = 0;
   private lastWorldContextMenuEventX: number = -9999;
@@ -1249,6 +1250,7 @@ export class GameManager {
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
       this.lowFpsDiagnosticSent = false;
+      this.lowFpsRendererWarningSent = false;
       this.resetLowFpsDiagnosticWindow();
       this._initialMapReadySent = false;
       this.suppressNextMapEntryMessage = false;
@@ -1728,12 +1730,35 @@ export class GameManager {
       && this.shouldCapturePerformanceDiagnostic();
   }
 
+  private rendererWarningForDiagnosticFlags(diagnosticFlags: readonly string[]): string | null {
+    if (diagnosticFlags.includes('software-renderer-likely')) {
+      return 'Renderer warning: WebGL is using software rendering (SwiftShader/CPU). Enable browser hardware acceleration and check GPU blocklist settings.';
+    }
+    if (diagnosticFlags.includes('brave-low-fps')) {
+      return 'Brave warning: FPS is low on a hardware renderer. Check Brave hardware acceleration, ANGLE/GPU settings, or compare Chrome.';
+    }
+    if (diagnosticFlags.includes('low-fps-with-hardware-renderer')) {
+      return 'Renderer warning: FPS is low on an apparently hardware-backed renderer. Try /quality low and send the perf snapshot.';
+    }
+    return null;
+  }
+
+  private maybeShowLowFpsRendererWarning(snapshot: Record<string, unknown>): void {
+    if (this.lowFpsRendererWarningSent) return;
+    const diagnosticFlags = Array.isArray(snapshot.diagnosticFlags) ? snapshot.diagnosticFlags.map(String) : [];
+    const warning = this.rendererWarningForDiagnosticFlags(diagnosticFlags);
+    if (!warning) return;
+    this.lowFpsRendererWarningSent = true;
+    this.chatPanel?.addSystemMessage(warning, '#ffb347');
+  }
+
   private schedulePostScaleLowFpsSnapshot(): void {
     window.setTimeout(async () => {
       if (!this.shouldCapturePerformanceDiagnostic()) return;
       const sample = await this.sampleRafFps(3000);
       const snapshot = this.collectPerformanceSnapshot(sample);
       snapshot.lowFpsAction = 'post-lowered-render-resolution';
+      this.maybeShowLowFpsRendererWarning(snapshot);
       const appliedRenderScale = this.maybeApplyLowFpsRenderScale(sample.fps);
       if (appliedRenderScale !== null) {
         snapshot.lowFpsAction = 'post-lowered-render-resolution-again';
@@ -1774,6 +1799,7 @@ export class GameManager {
         durationMs: Math.round(elapsed),
         fps,
       });
+      this.maybeShowLowFpsRendererWarning(snapshot);
       const appliedRenderScale = this.maybeApplyLowFpsRenderScale(fps);
       if (appliedRenderScale !== null) {
         snapshot.lowFpsAction = 'lowered-render-resolution';
@@ -1822,13 +1848,8 @@ export class GameManager {
     if (diagnosticFlags.length > 0) {
       this.chatPanel?.addSystemMessage(`Perf flags: ${diagnosticFlags.join(', ')}`);
     }
-    if (diagnosticFlags.includes('software-renderer-likely')) {
-      this.chatPanel?.addSystemMessage('Renderer warning: WebGL looks software-backed. Check browser hardware acceleration and GPU blocklist settings.', '#ffb347');
-    } else if (diagnosticFlags.includes('brave-low-fps')) {
-      this.chatPanel?.addSystemMessage('Brave warning: FPS is low even though WebGL does not look software-backed. Compare /quality low and Brave hardware acceleration settings.', '#ffb347');
-    } else if (diagnosticFlags.includes('low-fps-with-hardware-renderer')) {
-      this.chatPanel?.addSystemMessage('Renderer warning: FPS is low on an apparently hardware-backed renderer. Compare /quality low and send the perf snapshot.', '#ffb347');
-    }
+    const rendererWarning = this.rendererWarningForDiagnosticFlags(diagnosticFlags);
+    if (rendererWarning) this.chatPanel?.addSystemMessage(rendererWarning, '#ffb347');
     this.chatPanel?.addSystemMessage('Perf snapshot sent to the server log.');
 
     try {
@@ -1931,6 +1952,7 @@ export class GameManager {
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
       this.lowFpsDiagnosticSent = false;
+      this.lowFpsRendererWarningSent = false;
       this.resetLowFpsDiagnosticWindow();
       this._initialMapReadySent = false;
       this.suppressNextMapEntryMessage = true;
