@@ -1630,10 +1630,18 @@ export class GameManager {
     const clippedRenderer = renderer.length > 80 ? `${renderer.slice(0, 77)}...` : renderer;
     const meshes = Number(snapshot.activeMeshes ?? 0);
     const vertices = Number(snapshot.totalVertices ?? 0);
-    this.chatPanel?.addSystemMessage(
-      `Perf: ${sample.fps.toFixed(1)} FPS, ${meshes} active meshes, ${Math.round(vertices / 1000)}k vertices. Renderer: ${clippedRenderer}`,
-    );
     const diagnosticFlags = Array.isArray(snapshot.diagnosticFlags) ? snapshot.diagnosticFlags.map(String) : [];
+    const renderScale = Number(snapshot.renderScale ?? 1);
+    const canvas = snapshot.canvas as { width?: unknown; height?: unknown; clientWidth?: unknown; clientHeight?: unknown } | null | undefined;
+    const canvasText = canvas
+      ? `${Number(canvas.width ?? 0)}x${Number(canvas.height ?? 0)}/${Number(canvas.clientWidth ?? 0)}x${Number(canvas.clientHeight ?? 0)}`
+      : 'unknown';
+    this.chatPanel?.addSystemMessage(
+      `Perf: ${sample.fps.toFixed(1)} FPS, scale ${renderScale.toFixed(1)}, ${meshes} active meshes, ${Math.round(vertices / 1000)}k vertices, canvas ${canvasText}. Renderer: ${clippedRenderer}`,
+    );
+    if (diagnosticFlags.length > 0) {
+      this.chatPanel?.addSystemMessage(`Perf flags: ${diagnosticFlags.join(', ')}`);
+    }
     if (diagnosticFlags.includes('software-renderer-likely')) {
       this.chatPanel?.addSystemMessage('Renderer warning: WebGL looks software-backed. Check browser hardware acceleration and GPU blocklist settings.', '#ffb347');
     }
