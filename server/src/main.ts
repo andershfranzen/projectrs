@@ -3018,7 +3018,19 @@ const server = Bun.serve<SocketData>({
       if (!bodyWithinLimit(req, 8 * 1024)) return tooLarge();
       try {
         const body = await req.json() as { event?: string; username?: string; details?: unknown; at?: number };
-        console.warn(`[client-log] ${body.event ?? 'unknown'} user=${body.username ?? 'unknown'} details=${JSON.stringify(body.details ?? {})}`);
+        const event = String(body.event ?? 'unknown').slice(0, 96);
+        const username = String(body.username ?? 'unknown').slice(0, 64);
+        console.warn(`[client-log] ${event} user=${username} details=${JSON.stringify(body.details ?? {})}`);
+        audit({
+          type: 'client.log',
+          tick: world.getCurrentTick(),
+          details: {
+            event,
+            username,
+            clientAt: Number.isFinite(body.at) ? body.at : undefined,
+            payload: body.details ?? {},
+          },
+        });
       } catch {
         console.warn('[client-log] invalid payload');
       }
