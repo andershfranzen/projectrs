@@ -112,4 +112,31 @@ describe('GameManager render quality command', () => {
     expect(messages.at(-1)).toBe('Render quality: scale 1.0. Usage: /quality low, /quality high, or /quality auto.');
     expect(qualityLogs).toEqual([]);
   });
+
+  test('low FPS adaptive scaling can step from normal to low quality', () => {
+    installLocalStorageStub();
+    const { manager, canvas, hardwareScaleCalls, messages } = makeQualityManager();
+
+    expect(manager.maybeApplyLowFpsRenderScale(35)).toBe(2);
+
+    expect(manager.renderHardwareScalingLevel).toBe(2);
+    expect(hardwareScaleCalls).toEqual([2]);
+    expect(canvas.dataset.renderScale).toBe('2.00');
+    expect(messages.at(-1)).toBe('Low FPS detected; lowering render resolution.');
+  });
+
+  test('low FPS adaptive scaling can step further only when FPS remains very low', () => {
+    installLocalStorageStub();
+    const { manager, canvas, hardwareScaleCalls, messages } = makeQualityManager();
+    manager.renderHardwareScalingLevel = 2;
+
+    expect(manager.maybeApplyLowFpsRenderScale(48)).toBeNull();
+    expect(manager.maybeApplyLowFpsRenderScale(40)).toBe(3);
+    expect(manager.maybeApplyLowFpsRenderScale(30)).toBeNull();
+
+    expect(manager.renderHardwareScalingLevel).toBe(3);
+    expect(hardwareScaleCalls).toEqual([3]);
+    expect(canvas.dataset.renderScale).toBe('3.00');
+    expect(messages.at(-1)).toBe('FPS still low; lowering render resolution further.');
+  });
 });

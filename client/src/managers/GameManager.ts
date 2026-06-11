@@ -82,9 +82,11 @@ const NPC_TARGET_PATH_MAX_WAYPOINTS = 50;
 const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
+const EMERGENCY_LOW_QUALITY_HARDWARE_SCALE = 3.0;
 const LOW_FPS_DIAGNOSTIC_WARMUP_MS = 10000;
 const LOW_FPS_DIAGNOSTIC_SAMPLE_MS = 8000;
 const LOW_FPS_DIAGNOSTIC_THRESHOLD = 50;
+const LOW_FPS_EXTRA_SCALE_THRESHOLD = 45;
 const SOFTWARE_RENDERER_PATTERNS = [
   'swiftshader',
   'llvmpipe',
@@ -1579,10 +1581,22 @@ export class GameManager {
     this.reportRenderQualityChange(requestedQuality);
   }
 
-  private maybeApplyLowFpsRenderScale(): number | null {
-    if (this.renderHardwareScalingLevel >= LOW_QUALITY_HARDWARE_SCALE - 0.01) return null;
-    this.setRenderHardwareScalingLevel(LOW_QUALITY_HARDWARE_SCALE);
-    this.chatPanel?.addSystemMessage('Low FPS detected; lowering render resolution.', '#ffb347');
+  private maybeApplyLowFpsRenderScale(fps: number): number | null {
+    let nextScale: number | null = null;
+    let message = 'Low FPS detected; lowering render resolution.';
+    if (this.renderHardwareScalingLevel < LOW_QUALITY_HARDWARE_SCALE - 0.01) {
+      nextScale = LOW_QUALITY_HARDWARE_SCALE;
+    } else if (
+      fps < LOW_FPS_EXTRA_SCALE_THRESHOLD &&
+      this.renderHardwareScalingLevel < EMERGENCY_LOW_QUALITY_HARDWARE_SCALE - 0.01
+    ) {
+      nextScale = EMERGENCY_LOW_QUALITY_HARDWARE_SCALE;
+      message = 'FPS still low; lowering render resolution further.';
+    }
+    if (nextScale === null) return null;
+
+    this.setRenderHardwareScalingLevel(nextScale);
+    this.chatPanel?.addSystemMessage(message, '#ffb347');
     return this.renderHardwareScalingLevel;
   }
 
@@ -1649,6 +1663,12 @@ export class GameManager {
       const sample = await this.sampleRafFps(3000);
       const snapshot = this.collectPerformanceSnapshot(sample);
       snapshot.lowFpsAction = 'post-lowered-render-resolution';
+      const appliedRenderScale = this.maybeApplyLowFpsRenderScale(sample.fps);
+      if (appliedRenderScale !== null) {
+        snapshot.lowFpsAction = 'post-lowered-render-resolution-again';
+        snapshot.appliedRenderScale = appliedRenderScale;
+        this.schedulePostScaleLowFpsSnapshot();
+      }
       this.reportClientLog('client_low_fps_post_scale_snapshot', snapshot);
     }, 1000);
   }
@@ -1683,7 +1703,7 @@ export class GameManager {
         durationMs: Math.round(elapsed),
         fps,
       });
-      const appliedRenderScale = this.maybeApplyLowFpsRenderScale();
+      const appliedRenderScale = this.maybeApplyLowFpsRenderScale(fps);
       if (appliedRenderScale !== null) {
         snapshot.lowFpsAction = 'lowered-render-resolution';
         snapshot.appliedRenderScale = appliedRenderScale;
