@@ -30,6 +30,19 @@ $env:PROFILE_SECONDS = "20"
 bun tools/browser-profiler.mjs https://evilquest.net/play
 ```
 
+For a first Brave run where you need to log in manually, leave autorun unset:
+
+```powershell
+$env:BROWSER_BIN = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
+$env:CHROME_PROFILE_DIR = "$env:TEMP\evilquest-profiler-brave"
+$env:PROFILE_SECONDS = "20"
+bun tools/browser-profiler.mjs https://evilquest.net/play
+```
+
+Log in inside the opened Brave tab, wait until the game is running, then type
+`capture` in the profiler terminal. `capture` records the current tab without a
+reload. Use `go` when you want a clean reload before recording.
+
 If Brave is already using the default DevTools port, add a different one:
 
 ```powershell
@@ -44,6 +57,7 @@ extension tabs, startup tabs, and restored sessions should not steal the capture
 Each run writes a timestamped folder under `tools/profiler-runs/`:
 
 - `summary.json` - CPU hot spots, browser timing summaries, resource summaries, and the EvilQuest snapshot inline.
+- `page-diagnostics.json` - browser, viewport, storage-presence, and WebGL renderer info even if login/game readiness fails.
 - `evilquest-snapshot.json` - measured FPS, renderer, WebGL flags, canvas size, mesh/vertex counts, map/player position.
 - `cpu-profile.json` - raw Chrome DevTools CPU profile.
 - `browser-stats.json` - long tasks, slow callbacks, resources, fetches, WebSockets.
@@ -90,7 +104,9 @@ bun tools/compare-profiler-runs.mjs
 If a live run reports `hasGameManager: false` and the body text is the login
 screen, it did not capture steady-state gameplay. Reuse a logged-in
 `CHROME_PROFILE_DIR`, run once without autorun and log in there, or inject auth
-with the variables below.
+with the variables below. In that case, `page-diagnostics.json` can still show
+whether the browser is using SwiftShader/software WebGL, but it does not prove
+in-game FPS.
 
 ## Optional Auth Injection
 
