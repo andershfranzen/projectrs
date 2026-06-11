@@ -3,7 +3,7 @@ import { Matrix, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { ChunkManager, assertOptionalMapResourceResponse, isInteractiveDoorPlacedAsset, isObjectShadowReceiverGround, isRoofLikePlacedAsset, placedObjectThinGroupKey } from './ChunkManager';
-import type { GroundType } from '@projectrs/shared';
+import type { GroundType, KCTile } from '@projectrs/shared';
 
 const originalFetch = globalThis.fetch;
 const originalConsoleWarn = console.warn;
@@ -53,6 +53,44 @@ function makeObjectChunkManager(): ObjectChunkManagerHarness {
     objectLoadChunks: new Set<string>(),
     desiredObjectChunks: new Set<string>(),
     touchObjectChunk: () => {},
+  });
+}
+
+function makeKCTile(overrides: Partial<KCTile> = {}): KCTile {
+  return {
+    ground: 'grass',
+    groundB: null,
+    split: 'forward',
+    textureId: null,
+    textureRotation: 0,
+    textureScale: 1,
+    textureWorldUV: false,
+    textureHalfMode: false,
+    textureIdB: null,
+    textureRotationB: 0,
+    textureScaleB: 1,
+    textureCutAngle: 0,
+    textureCutOffset: 0,
+    waterPainted: false,
+    waterSurface: false,
+    waterSurfaceB: false,
+    ...overrides,
+  };
+}
+
+function makeGrassChunkManager(tiles: KCTile[][]): any {
+  return Object.assign(Object.create(ChunkManager.prototype), {
+    mapWidth: tiles[0]?.length ?? 0,
+    mapHeight: tiles.length,
+    defaultGround: 'grass' as GroundType,
+    activeChunks: null,
+    holeTiles: new Set<number>(),
+    floorHeights: new Map<number, number>(),
+    stairData: new Map<number, unknown>(),
+    texturePlaneFloorTiles: new Set<number>(),
+    tilePaintedEntries: new Map<number, { color: [number, number, number]; y: number }>(),
+    mapData: { tiles },
+    getTileCornerHeights: () => ({ tl: 0, tr: 0, bl: 0, br: 0 }),
   });
 }
 
@@ -165,6 +203,51 @@ describe('procedural grass batching', () => {
       grassBladeBatchDirty: false,
       grassBladeBatchRebuildScheduled: false,
     });
+  });
+});
+
+describe('procedural grass placement', () => {
+  test('uses only uncovered visible grass surfaces', () => {
+    const manager = makeGrassChunkManager([[
+      makeKCTile(),
+      makeKCTile({ textureId: 'tex-road' }),
+      makeKCTile(),
+      makeKCTile(),
+      makeKCTile({ groundB: 'dirt' }),
+      makeKCTile(),
+      makeKCTile(),
+    ]]);
+
+    manager.texturePlaneFloorTiles.add(2);
+    manager.tilePaintedEntries.set(3, { color: [80, 70, 60], y: 0 });
+    manager.floorHeights.set(5, 2.75);
+    manager.stairData.set(6, {});
+
+    expect(manager.isGrassBladeSurface(0, 0)).toBe(true);
+    expect(manager.isGrassBladeSurface(1, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(2, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(3, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(4, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(5, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(6, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(-1, 0)).toBe(false);
+  });
+
+  test('keeps seam blades inside the grass tile', () => {
+    const manager = makeGrassChunkManager([[
+      makeKCTile(),
+      makeKCTile({ ground: 'road' }),
+    ]]);
+
+    const matrices = manager.buildGrassBladeMatrices(0, 0, 2, 1);
+
+    expect(matrices.length).toBeGreaterThan(0);
+    for (let offset = 0; offset < matrices.length; offset += 16) {
+      expect(matrices[offset + 12]).toBeGreaterThanOrEqual(0);
+      expect(matrices[offset + 12]).toBeLessThanOrEqual(1);
+      expect(matrices[offset + 14]).toBeGreaterThanOrEqual(0);
+      expect(matrices[offset + 14]).toBeLessThanOrEqual(1);
+    }
   });
 });
 

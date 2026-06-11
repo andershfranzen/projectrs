@@ -2105,6 +2105,33 @@ export class ChunkManager {
 
   // --- Grass strands: sparse upright blades on grass tiles ---
 
+  private isGrassBladeSurface(x: number, z: number): boolean {
+    if (x < 0 || z < 0 || x >= this.mapWidth || z >= this.mapHeight) return false;
+    if (this.activeChunks && !this.activeChunks.has(`${Math.floor(x / EDITOR_CHUNK_SIZE)},${Math.floor(z / EDITOR_CHUNK_SIZE)}`)) return false;
+
+    const idx = z * this.mapWidth + x;
+    if (this.holeTiles.has(idx)) return false;
+
+    // Texture overlays, texture planes, floors and stairs are the visible surface
+    // for the tile. The raw base ground can still be grass underneath roads or
+    // interior floors, so do not grow procedural blades through those covers.
+    if (
+      this.floorHeights.has(idx)
+      || this.stairData.has(idx)
+      || this.texturePlaneFloorTiles.has(idx)
+      || this.tilePaintedEntries.has(idx)
+    ) {
+      return false;
+    }
+
+    const tile = this.getTileRaw(x, z);
+    const ground = tile?.ground ?? this.defaultGround;
+    if (ground !== 'grass') return false;
+    if (tile?.groundB && tile.groundB !== 'grass') return false;
+    if (tile?.textureId || tile?.textureIdB) return false;
+    return true;
+  }
+
   private buildGrassBladeMatrices(startX: number, startZ: number, endX: number, endZ: number): Float32Array {
     const matrices: number[] = [];
     // Deterministic per-position pseudo-random in [0,1) so blades don't shimmer
@@ -2139,20 +2166,14 @@ export class ChunkManager {
       );
     };
 
-    const isGrass = (tx: number, tz: number): boolean =>
-      (this.getTileRaw(tx, tz)?.ground ?? this.defaultGround) === 'grass';
+    const isGrass = (tx: number, tz: number): boolean => this.isGrassBladeSurface(tx, tz);
 
-    // Neighbour offsets for edge-spill (N/E/S/W), with the inward direction the
-    // spilled blades push toward the bordering non-grass tile.
+    // Neighbour offsets for grass seam accents (N/E/S/W).
     const EDGES: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
     for (let x = startX; x < endX; x++) {
       for (let z = startZ; z < endZ; z++) {
-        if (this.activeChunks && !this.activeChunks.has(`${Math.floor(x / EDITOR_CHUNK_SIZE)},${Math.floor(z / EDITOR_CHUNK_SIZE)}`)) continue;
-        if (this.holeTiles.has(z * this.mapWidth + x)) continue;
-        const tile = this.getTileRaw(x, z);
-        const tileType = tile?.ground ?? this.defaultGround;
-        if (tileType !== 'grass') continue;
+        if (!this.isGrassBladeSurface(x, z)) continue;
 
         const hasNonGrassNeighbor = EDGES.some(([dx, dz]) => !isGrass(x + dx, z + dz));
         if (!hasNonGrassNeighbor) continue;
@@ -2164,22 +2185,21 @@ export class ChunkManager {
           emitBlade(bx, bz, h, x, z, b);
         }
 
-        // Edge-spill: where this grass tile borders a non-grass tile, scatter a few
-        // blades straddling the seam so the straight tile boundary reads as a soft,
-        // organic grass fringe instead of a hard cut. Uses this tile's heights
-        // (terrain height is continuous across the edge).
+        // Where this grass tile borders a covered/non-grass tile, scatter a few
+        // blades just inside the grass side of the seam. This keeps the boundary
+        // organic without growing grass onto roads, floors or texture-painted tiles.
         for (let e = 0; e < EDGES.length; e++) {
           const [dx, dz] = EDGES[e];
-          if (isGrass(x + dx, z + dz)) continue; // only spill onto non-grass neighbours
+          if (isGrass(x + dx, z + dz)) continue;
           for (let s = 0; s < EDGE_SPILL_BLADES; s++) {
-            // along-edge position 0.1..0.9, spilled 0.05..0.35 past the edge
+            // Along-edge position 0.1..0.9, inset 0.04..0.22 into this grass tile.
             const along = 0.1 + rand(x * 9 + e * 3 + s, z * 9) * 0.8;
-            const over = 0.05 + rand(z * 9 + e * 3 + s, x * 9 + 5) * 0.30;
+            const inset = 0.04 + rand(z * 9 + e * 3 + s, x * 9 + 5) * 0.18;
             let bx: number, bz: number;
-            if (dz === -1) { bx = x + along; bz = z - over; }
-            else if (dz === 1) { bx = x + along; bz = z + 1 + over; }
-            else if (dx === -1) { bx = x - over; bz = z + along; }
-            else { bx = x + 1 + over; bz = z + along; }
+            if (dz === -1) { bx = x + along; bz = z + inset; }
+            else if (dz === 1) { bx = x + along; bz = z + 1 - inset; }
+            else if (dx === -1) { bx = x + inset; bz = z + along; }
+            else { bx = x + 1 - inset; bz = z + along; }
             emitBlade(bx, bz, h, x, z, 50 + e * 4 + s);
           }
         }
