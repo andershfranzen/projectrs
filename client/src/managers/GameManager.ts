@@ -13,7 +13,7 @@ import { Scene } from '@babylonjs/core/scene';
 BabylonAnimation.AllowMatricesInterpolation = false;
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
-import { Vector3, Color3, Color4, Matrix, Quaternion } from '@babylonjs/core/Maths/math';
+import { Vector3, Color3, Color4, Matrix, Quaternion, TmpVectors } from '@babylonjs/core/Maths/math';
 import { Viewport } from '@babylonjs/core/Maths/math.viewport';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
@@ -21,7 +21,6 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
-import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { ChunkManager, assertOptionalMapResourceResponse } from '../rendering/ChunkManager';
 import { GameCamera } from '../rendering/Camera';
@@ -208,6 +207,18 @@ type CropPickProxyRef = {
   index: number;
   placedNode: TransformNode;
   config: CropPickProxyConfig;
+};
+
+type WorldObjectPickProxyBatch = {
+  mesh: Mesh;
+  objectEntityIds: Array<number | null>;
+  refsByObjectId: Map<number, WorldObjectPickProxyRef>;
+  freeIndices: number[];
+};
+
+type WorldObjectPickProxyRef = {
+  index: number;
+  bounds: DoorPickProxyBounds;
 };
 
 const DEFAULT_CROP_PICK_PROXY: CropPickProxyConfig = { width: 1.2, depth: 1.2, height: 1.2, y: 0.6 };
@@ -535,7 +546,8 @@ export class GameManager {
   private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; openDirection?: -1 | 1; locked?: boolean; interactionTiles?: { x: number; z: number }[]; ladderActionMask?: number }> = new Map();
   private cropPickProxyBatches: Map<string, CropPickProxyBatch> = new Map();
   private cropPickProxyRefs: Map<number, CropPickProxyRef> = new Map();
-  private worldObjectPickProxies: Map<number, Mesh> = new Map();
+  private worldObjectPickProxyBatch: WorldObjectPickProxyBatch | null = null;
+  private worldObjectPickProxyRefs: Map<number, WorldObjectPickProxyRef> = new Map();
   private doorPivots: Map<number, DoorPivotEntry> = new Map();
   private doorPickProxies: Map<number, Mesh> = new Map();
   private doorTiles: Map<number, [number, number]> = new Map();
@@ -2837,10 +2849,6 @@ export class GameManager {
     return `${config.width},${config.depth},${config.height},${config.y}`;
   }
 
-  private cropHiddenPickMatrix(): Matrix {
-    return Matrix.Translation(0, -10000, 0);
-  }
-
   private cropPickProxyMatrix(placedNode: TransformNode, config: CropPickProxyConfig): Matrix {
     placedNode.computeWorldMatrix(true);
     return Matrix.Translation(0, config.y, 0).multiply(placedNode.getWorldMatrix());
@@ -2879,38 +2887,7 @@ export class GameManager {
   }
 
   private refreshCropPickProxyBatchBounds(batch: CropPickProxyBatch): void {
-    const pad = Math.max(batch.config.width, batch.config.depth, batch.config.height, 1);
-    let minX = Infinity;
-    let minY = Infinity;
-    let minZ = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
-
-    for (const objectEntityId of batch.objectEntityIds) {
-      if (typeof objectEntityId !== 'number') continue;
-      const ref = batch.refsByObjectId.get(objectEntityId);
-      if (!ref) continue;
-      const m = this.cropPickProxyMatrix(ref.placedNode, ref.config).m;
-      const x = m[12] ?? 0;
-      const y = m[13] ?? 0;
-      const z = m[14] ?? 0;
-      minX = Math.min(minX, x - pad);
-      minY = Math.min(minY, y - pad);
-      minZ = Math.min(minZ, z - pad);
-      maxX = Math.max(maxX, x + pad);
-      maxY = Math.max(maxY, y + pad);
-      maxZ = Math.max(maxZ, z + pad);
-    }
-
-    if (!Number.isFinite(minX)) {
-      minX = minY = minZ = -1;
-      maxX = maxY = maxZ = 1;
-    }
-    batch.mesh.setBoundingInfo(new BoundingInfo(
-      new Vector3(minX, minY, minZ),
-      new Vector3(maxX, maxY, maxZ),
-    ));
+    batch.mesh.thinInstanceRefreshBoundingInfo(true);
   }
 
   private createCropPickProxy(
@@ -2924,7 +2901,7 @@ export class GameManager {
     const batchKey = this.cropPickProxyBatchKey(config);
     const batch = this.cropPickProxyBatchFor(config);
     const index = batch.freeIndices.pop() ?? batch.objectEntityIds.length;
-    const matrix = depleted ? this.cropHiddenPickMatrix() : this.cropPickProxyMatrix(placedNode, config);
+    const matrix = this.cropPickProxyMatrix(placedNode, config);
 
     if (index >= batch.objectEntityIds.length) {
       batch.mesh.thinInstanceAdd(matrix, false);
@@ -2948,7 +2925,6 @@ export class GameManager {
         batch.objectEntityIds[ref.index] = null;
         batch.refsByObjectId.delete(objectEntityId);
         batch.freeIndices.push(ref.index);
-        batch.mesh.thinInstanceSetMatrixAt(ref.index, this.cropHiddenPickMatrix());
         batch.mesh.thinInstanceBufferUpdated('matrix');
         this.refreshCropPickProxyBatchBounds(batch);
       }
@@ -2962,10 +2938,7 @@ export class GameManager {
     const batch = this.cropPickProxyBatches.get(ref.batchKey);
     if (!batch) return;
     batch.objectEntityIds[ref.index] = enabled ? objectEntityId : null;
-    batch.mesh.thinInstanceSetMatrixAt(
-      ref.index,
-      enabled ? this.cropPickProxyMatrix(ref.placedNode, ref.config) : this.cropHiddenPickMatrix(),
-    );
+    if (enabled) batch.mesh.thinInstanceSetMatrixAt(ref.index, this.cropPickProxyMatrix(ref.placedNode, ref.config));
     batch.mesh.thinInstanceBufferUpdated('matrix');
     this.refreshCropPickProxyBatchBounds(batch);
   }
@@ -3029,40 +3002,95 @@ export class GameManager {
     };
   }
 
+  private worldObjectPickProxyMatrix(bounds: DoorPickProxyBounds): Matrix {
+    return Matrix.Compose(
+      TmpVectors.Vector3[0].set(bounds.width, bounds.height, bounds.depth),
+      Quaternion.Identity(),
+      bounds.center,
+    );
+  }
+
+  private worldObjectPickProxyBatchFor(): WorldObjectPickProxyBatch {
+    if (!this.worldObjectPickProxyBatch) {
+      const mesh = MeshBuilder.CreateBox('worldObject_pickProxy_batch', { size: 1 }, this.scene);
+      mesh.isVisible = true;
+      mesh.visibility = 0;
+      mesh.isPickable = true;
+      mesh.layerMask = 0;
+      mesh.doNotSyncBoundingInfo = true;
+      mesh.thinInstanceEnablePicking = true;
+      mesh.metadata = {
+        kind: 'worldObjectPickProxyBatch',
+        objectEntityIdsByThinInstance: [],
+      };
+      mesh.freezeWorldMatrix();
+      this.worldObjectPickProxyBatch = {
+        mesh,
+        objectEntityIds: mesh.metadata.objectEntityIdsByThinInstance,
+        refsByObjectId: new Map(),
+        freeIndices: [],
+      };
+    }
+    return this.worldObjectPickProxyBatch;
+  }
+
+  private refreshWorldObjectPickProxyBatchBounds(batch: WorldObjectPickProxyBatch): void {
+    batch.mesh.thinInstanceRefreshBoundingInfo(true);
+  }
+
   private createWorldObjectPickProxy(
     objectEntityId: number,
     data: { x: number; z: number; y?: number; rotY?: number },
     def: WorldObjectDef,
     model: TransformNode,
-  ): Mesh {
+  ): void {
     this.disposeWorldObjectPickProxy(objectEntityId);
     const bounds = this.computeWorldObjectPickProxyBounds(model, data, def);
-    const proxy = MeshBuilder.CreateBox(`worldObject_pickProxy_${objectEntityId}`, {
-      width: bounds.width,
-      depth: bounds.depth,
-      height: bounds.height,
-    }, this.scene);
-    proxy.position = bounds.center;
-    proxy.isVisible = true;
-    proxy.visibility = 0;
-    proxy.isPickable = false;
-    proxy.layerMask = 0;
-    proxy.metadata = { kind: 'worldObject', objectEntityId };
-    proxy.computeWorldMatrix(true);
-    proxy.setParent(model);
-    proxy.doNotSyncBoundingInfo = true;
-    proxy.freezeWorldMatrix();
-    this.worldObjectPickProxies.set(objectEntityId, proxy);
-    return proxy;
+    const batch = this.worldObjectPickProxyBatchFor();
+    const index = batch.freeIndices.pop() ?? batch.objectEntityIds.length;
+    const matrix = this.worldObjectPickProxyMatrix(bounds);
+
+    if (index >= batch.objectEntityIds.length) {
+      batch.mesh.thinInstanceAdd(matrix, false);
+    } else {
+      batch.mesh.thinInstanceSetMatrixAt(index, matrix);
+    }
+    batch.objectEntityIds[index] = objectEntityId;
+    batch.mesh.thinInstanceBufferUpdated('matrix');
+
+    const ref = { index, bounds };
+    batch.refsByObjectId.set(objectEntityId, ref);
+    this.worldObjectPickProxyRefs.set(objectEntityId, ref);
+    this.refreshWorldObjectPickProxyBatchBounds(batch);
   }
 
   private disposeWorldObjectPickProxy(objectEntityId: number): void {
-    const proxy = this.worldObjectPickProxies.get(objectEntityId);
-    if (proxy) {
-      proxy.dispose();
-      this.worldObjectPickState.delete(proxy);
-      this.worldObjectPickProxies.delete(objectEntityId);
+    const ref = this.worldObjectPickProxyRefs.get(objectEntityId);
+    const batch = this.worldObjectPickProxyBatch;
+    if (ref && batch) {
+      batch.objectEntityIds[ref.index] = null;
+      batch.refsByObjectId.delete(objectEntityId);
+      batch.freeIndices.push(ref.index);
+      batch.mesh.thinInstanceBufferUpdated('matrix');
+      this.refreshWorldObjectPickProxyBatchBounds(batch);
     }
+    this.worldObjectPickProxyRefs.delete(objectEntityId);
+  }
+
+  private setWorldObjectPickProxyEnabled(objectEntityId: number, enabled: boolean): void {
+    const ref = this.worldObjectPickProxyRefs.get(objectEntityId);
+    const batch = this.worldObjectPickProxyBatch;
+    if (!ref || !batch) return;
+    batch.objectEntityIds[ref.index] = enabled ? objectEntityId : null;
+    if (enabled) batch.mesh.thinInstanceSetMatrixAt(ref.index, this.worldObjectPickProxyMatrix(ref.bounds));
+    batch.mesh.thinInstanceBufferUpdated('matrix');
+    this.refreshWorldObjectPickProxyBatchBounds(batch);
+  }
+
+  private disposeWorldObjectPickProxyBatch(): void {
+    this.worldObjectPickProxyBatch?.mesh.dispose();
+    this.worldObjectPickProxyBatch = null;
+    this.worldObjectPickProxyRefs.clear();
   }
 
   private setGenericWorldObjectPickTarget(
@@ -3073,13 +3101,10 @@ export class GameManager {
     model: TransformNode,
   ): void {
     this.setWorldObjectPickTarget(objectEntityId, false, model);
-    let proxy = this.worldObjectPickProxies.get(objectEntityId);
-    if (interactive && (!proxy || proxy.isDisposed())) {
-      proxy = this.createWorldObjectPickProxy(objectEntityId, data, def, model);
+    if (interactive && !this.worldObjectPickProxyRefs.has(objectEntityId)) {
+      this.createWorldObjectPickProxy(objectEntityId, data, def, model);
     }
-    if (!proxy) return;
-    proxy.setEnabled(interactive);
-    this.setWorldObjectPickTarget(objectEntityId, interactive, proxy);
+    this.setWorldObjectPickProxyEnabled(objectEntityId, interactive);
   }
 
   private setCropPickTarget(
@@ -5146,8 +5171,7 @@ export class GameManager {
         this.closedCenteredDoorTileCounts.clear();
         this.closedCenteredDoorTileKeysByObjectId.clear();
         this.disposeAllCropPickProxyBatches();
-        for (const [, proxy] of this.worldObjectPickProxies) proxy.dispose();
-        this.worldObjectPickProxies.clear();
+        this.disposeWorldObjectPickProxyBatch();
         for (const [, proxy] of this.doorPickProxies) proxy.dispose();
         this.doorPickProxies.clear();
         for (const [, entry] of this.doorPivots) entry.pivot.dispose();
@@ -6076,7 +6100,7 @@ export class GameManager {
 
   private findWorldObjectIdFromPick(pickedMesh: TransformNode, thinInstanceIndex: number = -1): number | null {
     if (
-      pickedMesh.metadata?.kind === 'cropPickProxyBatch'
+      (pickedMesh.metadata?.kind === 'cropPickProxyBatch' || pickedMesh.metadata?.kind === 'worldObjectPickProxyBatch')
       && thinInstanceIndex >= 0
       && Array.isArray(pickedMesh.metadata.objectEntityIdsByThinInstance)
     ) {
@@ -9271,8 +9295,7 @@ export class GameManager {
     this.worldObjectIdByNode = new WeakMap();
     this.worldObjectPickState = new WeakMap();
     this.disposeAllCropPickProxyBatches();
-    for (const [, proxy] of this.worldObjectPickProxies) proxy.dispose();
-    this.worldObjectPickProxies.clear();
+    this.disposeWorldObjectPickProxyBatch();
     for (const [, proxy] of this.doorPickProxies) proxy.dispose();
     this.doorPickProxies.clear();
     for (const [, entry] of this.doorPivots) entry.pivot.dispose();

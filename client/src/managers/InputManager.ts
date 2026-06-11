@@ -11,6 +11,23 @@ export type GroundClickCallback = (worldX: number, worldZ: number) => void;
 export type TeleportClickCallback = (worldX: number, worldZ: number) => void;
 export type ObjectClickCallback = (objectEntityId: number) => void;
 
+function objectIdFromBatchedPickMetadata(metadata: unknown, thinInstanceIndex: number): number | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const record = metadata as { kind?: unknown; objectEntityIdsByThinInstance?: unknown };
+  if (record.kind !== 'cropPickProxyBatch' && record.kind !== 'worldObjectPickProxyBatch') return null;
+  if (!Array.isArray(record.objectEntityIdsByThinInstance)) return null;
+  const id = record.objectEntityIdsByThinInstance[thinInstanceIndex];
+  return typeof id === 'number' ? id : null;
+}
+
+function hasActiveBatchedPickInstances(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== 'object') return false;
+  const record = metadata as { kind?: unknown; objectEntityIdsByThinInstance?: unknown };
+  return (record.kind === 'cropPickProxyBatch' || record.kind === 'worldObjectPickProxyBatch')
+    && Array.isArray(record.objectEntityIdsByThinInstance)
+    && record.objectEntityIdsByThinInstance.some(id => typeof id === 'number');
+}
+
 /**
  * Handles mouse/keyboard input for the game.
  *
@@ -87,14 +104,8 @@ export class InputManager {
           let node: Node | null = mesh;
           while (node) {
             if (node.metadata?.objectEntityId != null) return true;
-            if (
-              node.metadata?.kind === 'cropPickProxyBatch'
-              && thinInstanceIndex >= 0
-              && Array.isArray(node.metadata.objectEntityIdsByThinInstance)
-              && typeof node.metadata.objectEntityIdsByThinInstance[thinInstanceIndex] === 'number'
-            ) {
-              return true;
-            }
+            if (thinInstanceIndex >= 0 && objectIdFromBatchedPickMetadata(node.metadata, thinInstanceIndex) !== null) return true;
+            if (thinInstanceIndex < 0 && hasActiveBatchedPickInstances(node.metadata)) return true;
             node = node.parent;
           }
           return false;
@@ -105,13 +116,9 @@ export class InputManager {
       if (pick?.hit && pick.pickedMesh) {
         let node: Node | null = pick.pickedMesh;
         while (node) {
-          if (
-            node.metadata?.kind === 'cropPickProxyBatch'
-            && pick.thinInstanceIndex >= 0
-            && Array.isArray(node.metadata.objectEntityIdsByThinInstance)
-            && typeof node.metadata.objectEntityIdsByThinInstance[pick.thinInstanceIndex] === 'number'
-          ) {
-            this.onObjectClick(node.metadata.objectEntityIdsByThinInstance[pick.thinInstanceIndex]);
+          const batchedObjectId = objectIdFromBatchedPickMetadata(node.metadata, pick.thinInstanceIndex);
+          if (batchedObjectId !== null) {
+            this.onObjectClick(batchedObjectId);
             return true;
           }
           if (node.metadata?.objectEntityId != null) {
