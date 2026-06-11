@@ -533,6 +533,49 @@ async function capturePageDiagnostics(cdp) {
   return evaluateJson(cdp, `
     (() => {
       const nav = window.navigator || {};
+      const clip = (value, max = 220) => String(value || '').slice(0, max);
+      const shortUrl = (value) => {
+        try {
+          const u = new URL(String(value), location.href);
+          return u.origin === location.origin ? u.pathname + u.search : u.href;
+        } catch {
+          return String(value || '');
+        }
+      };
+      const basename = (value) => {
+        const short = shortUrl(value).split('?')[0].split('#')[0];
+        return short.slice(short.lastIndexOf('/') + 1);
+      };
+      const resourceEntries = performance.getEntriesByType('resource')
+        .filter((entry) => entry && typeof entry.name === 'string')
+        .map((entry) => ({
+          name: clip(shortUrl(entry.name)),
+          file: clip(basename(entry.name), 120),
+          type: entry.initiatorType || '',
+          startTime: Math.round(entry.startTime * 10) / 10,
+          duration: Math.round(entry.duration * 10) / 10,
+          transferSize: entry.transferSize || 0,
+          encodedBodySize: entry.encodedBodySize || 0,
+          decodedBodySize: entry.decodedBodySize || 0,
+        }));
+      const documentScripts = [...document.scripts]
+        .map((script) => script.src)
+        .filter(Boolean)
+        .map((src) => clip(shortUrl(src)));
+      const documentStylesheets = [...document.querySelectorAll('link[rel~="stylesheet"][href]')]
+        .map((link) => link.href)
+        .filter(Boolean)
+        .map((href) => clip(shortUrl(href)));
+      const assetResources = resourceEntries
+        .filter((entry) => /(^|\\/)(assets|Character models|gear|sprites|items|maps|data)\\//.test(entry.name))
+        .sort((a, b) => (b.decodedBodySize || b.transferSize || 0) - (a.decodedBodySize || a.transferSize || 0));
+      const scriptResources = resourceEntries
+        .filter((entry) => entry.type === 'script' || /\\.m?js($|\\?)/.test(entry.name))
+        .sort((a, b) => (b.decodedBodySize || b.transferSize || 0) - (a.decodedBodySize || a.transferSize || 0));
+      const cssResources = resourceEntries
+        .filter((entry) => entry.type === 'link' || /\\.css($|\\?)/.test(entry.name) || /fonts\\.googleapis\\.com\\/css/.test(entry.name))
+        .sort((a, b) => (b.decodedBodySize || b.transferSize || 0) - (a.decodedBodySize || a.transferSize || 0));
+      const sum = (items, field) => items.reduce((total, entry) => total + (entry[field] || 0), 0);
       const canvas = document.createElement('canvas');
       const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
       const debugInfo = gl?.getExtension?.('WEBGL_debug_renderer_info') || null;
@@ -593,6 +636,30 @@ async function capturePageDiagnostics(cdp) {
           innerHeight: window.innerHeight,
           outerWidth: window.outerWidth,
           outerHeight: window.outerHeight,
+        },
+        build: {
+          documentScripts,
+          documentStylesheets,
+          scriptFiles: [...new Set(scriptResources.map((entry) => entry.file).filter(Boolean))],
+          cssFiles: [...new Set(cssResources.map((entry) => entry.file).filter(Boolean))],
+          assetFiles: [...new Set(assetResources.map((entry) => entry.file).filter(Boolean))].slice(0, 80),
+          resourceCounts: {
+            total: resourceEntries.length,
+            assets: assetResources.length,
+            scripts: scriptResources.length,
+            stylesheets: cssResources.length,
+          },
+          resourceBytes: {
+            transfer: sum(resourceEntries, 'transferSize'),
+            encoded: sum(resourceEntries, 'encodedBodySize'),
+            decoded: sum(resourceEntries, 'decodedBodySize'),
+            scriptsTransfer: sum(scriptResources, 'transferSize'),
+            scriptsDecoded: sum(scriptResources, 'decodedBodySize'),
+            assetsTransfer: sum(assetResources, 'transferSize'),
+            assetsDecoded: sum(assetResources, 'decodedBodySize'),
+          },
+          topResources: assetResources.slice(0, 30),
+          topScripts: scriptResources.slice(0, 20),
         },
         storage,
         webgl,
@@ -741,7 +808,7 @@ async function main() {
     const gameReady = captureEvilQuestSnapshot
       ? await waitForEvilQuestGame(cdp, gameReadyTimeoutMs)
       : { ok: false, skipped: true };
-    const pageDiagnostics = await capturePageDiagnostics(cdp);
+    let pageDiagnostics = await capturePageDiagnostics(cdp);
     if (captureEvilQuestSnapshot && !gameReady?.ok) {
       console.log(`[evilquest-profiler] Game snapshot wait did not finish: ${JSON.stringify(gameReady)}`);
       printPageDiagnostics(pageDiagnostics);
@@ -761,6 +828,7 @@ async function main() {
       returnByValue: true,
     });
     const browserStats = JSON.parse(statsResult.result?.value || '{}');
+    pageDiagnostics = await capturePageDiagnostics(cdp);
     const evilQuestSnapshot = captureEvilQuestSnapshot && gameReady?.ok
       ? await captureEvilQuestPerformanceSnapshot(cdp, evilQuestSnapshotMs)
       : { ok: false, skipped: true, gameReady };

@@ -241,6 +241,24 @@ function commandLineFlags(browserDiagnostics) {
   return relevant.length > 0 ? relevant.slice(0, 12).join(' ') : 'none';
 }
 
+function fileListLabel(items, limit = 8) {
+  if (!Array.isArray(items) || items.length === 0) return 'none';
+  const visible = items.slice(0, limit).join(', ');
+  return items.length > limit ? `${visible}, +${items.length - limit} more` : visible;
+}
+
+function formatBuildResourceRow(row) {
+  if (!row || typeof row !== 'object') return 'n/a';
+  const label = row.file || row.name || 'resource';
+  const parts = [
+    row.type || 'resource',
+    `${formatRate(row.duration)}ms`,
+    formatBytes(row.transferSize),
+    `${formatBytes(row.decodedBodySize)} decoded`,
+  ];
+  return `${label} (${parts.join(', ')})`;
+}
+
 function formatBool(value) {
   if (value === true) return 'yes';
   if (value === false) return 'no';
@@ -515,6 +533,26 @@ function printBrowserDiagnosticComparison(aRun, bRun) {
   printDiagnosticMetric('Relevant flags', commandLineFlags(aBrowser), commandLineFlags(bBrowser));
 }
 
+function printBuildDiagnosticComparison(aRun, bRun) {
+  const aBuild = aRun.pageDiagnostics?.build;
+  const bBuild = bRun.pageDiagnostics?.build;
+  if (!aBuild && !bBuild) return;
+
+  console.log('\nClient build/resource fingerprint');
+  printDiagnosticMetric('Document scripts', fileListLabel(aBuild?.documentScripts), fileListLabel(bBuild?.documentScripts));
+  printDiagnosticMetric('Loaded script files', fileListLabel(aBuild?.scriptFiles), fileListLabel(bBuild?.scriptFiles));
+  printDiagnosticMetric('Stylesheets', fileListLabel(aBuild?.cssFiles), fileListLabel(bBuild?.cssFiles));
+  printDiagnosticMetric('Resource count', aBuild?.resourceCounts?.total, bBuild?.resourceCounts?.total, formatCount);
+  printDiagnosticMetric('Asset count', aBuild?.resourceCounts?.assets, bBuild?.resourceCounts?.assets, formatCount);
+  printDiagnosticMetric('Script count', aBuild?.resourceCounts?.scripts, bBuild?.resourceCounts?.scripts, formatCount);
+  printDiagnosticMetric('Total transfer', aBuild?.resourceBytes?.transfer, bBuild?.resourceBytes?.transfer, formatBytes);
+  printDiagnosticMetric('Total decoded', aBuild?.resourceBytes?.decoded, bBuild?.resourceBytes?.decoded, formatBytes);
+  printDiagnosticMetric('Script transfer', aBuild?.resourceBytes?.scriptsTransfer, bBuild?.resourceBytes?.scriptsTransfer, formatBytes);
+  printDiagnosticMetric('Script decoded', aBuild?.resourceBytes?.scriptsDecoded, bBuild?.resourceBytes?.scriptsDecoded, formatBytes);
+  printRows('Top loaded assets', aBuild?.topResources, bBuild?.topResources, formatBuildResourceRow, 8);
+  printRows('Top loaded scripts', aBuild?.topScripts, bBuild?.topScripts, formatBuildResourceRow, 8);
+}
+
 function printSnapshotComparison(aSnapshot, bSnapshot) {
   if (!aSnapshot && !bSnapshot) {
     console.log('\nEvilQuest snapshot: unavailable for both runs');
@@ -579,6 +617,7 @@ async function main() {
   console.log('');
 
   printPageDiagnosticComparison(a, b);
+  printBuildDiagnosticComparison(a, b);
   printBrowserDiagnosticComparison(a, b);
   printSnapshotComparison(aSnapshot, bSnapshot);
   printResourceComparison(a, b);
