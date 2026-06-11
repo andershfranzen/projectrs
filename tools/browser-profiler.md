@@ -34,7 +34,14 @@ If PowerShell blocks local scripts, run it as
 
 Close Brave fully first, let the script start Brave with a DevTools port, log in
 to EvilQuest, wait until the bad FPS is visible, then type `capture` in the
-profiler terminal. The run is written under `tools/profiler-runs/`.
+profiler terminal. After it writes the run, type `quit` to return to
+PowerShell. The run is written under `tools/profiler-runs/`.
+
+To also create a zip of the newest profiler run after you type `quit`:
+
+```powershell
+.\tools\profile-windows-brave.ps1 -ZipLatest
+```
 
 ```powershell
 $env:BROWSER_BIN = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"

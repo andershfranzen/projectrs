@@ -4,7 +4,8 @@ param(
   [int]$Port = 9223,
   [int]$Seconds = 20,
   [switch]$NoLaunch,
-  [switch]$Autorun
+  [switch]$Autorun,
+  [switch]$ZipLatest
 )
 
 $ErrorActionPreference = "Stop"
@@ -70,9 +71,25 @@ try {
       Write-Host ""
       Write-Host "Log in to EvilQuest in Brave, wait until the bad FPS is visible, then type 'capture' here."
       Write-Host "The profiler will attach to the existing tab and will not reload it."
+      Write-Host "After the capture finishes, type 'quit' to return to PowerShell."
       Write-Host ""
     }
     bun tools/browser-profiler.mjs $Url
+
+    if ($ZipLatest) {
+      $runRoot = Join-Path $repoRoot "tools\profiler-runs"
+      $latestRun = Get-ChildItem -Path $runRoot -Directory |
+        Sort-Object Name -Descending |
+        Select-Object -First 1
+      if ($null -eq $latestRun) {
+        Write-Warning "No profiler run directory found under $runRoot"
+      } else {
+        $zipPath = Join-Path $runRoot ($latestRun.Name + ".zip")
+        if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+        Compress-Archive -Path (Join-Path $latestRun.FullName "*") -DestinationPath $zipPath -Force
+        Write-Host "Packaged latest profiler run: $zipPath"
+      }
+    }
   } finally {
     Pop-Location
   }
