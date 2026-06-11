@@ -85,6 +85,16 @@ const LOW_QUALITY_HARDWARE_SCALE = 2.0;
 const LOW_FPS_DIAGNOSTIC_WARMUP_MS = 10000;
 const LOW_FPS_DIAGNOSTIC_SAMPLE_MS = 8000;
 const LOW_FPS_DIAGNOSTIC_THRESHOLD = 50;
+const SOFTWARE_RENDERER_PATTERNS = [
+  'swiftshader',
+  'llvmpipe',
+  'software rasterizer',
+  'software renderer',
+  'microsoft basic render',
+  'basic render driver',
+  'warp',
+  'mesa offscreen',
+] as const;
 const GROUND_ITEM_TOOLTIP_MAX_LINES = 8;
 const ROOF_HOVER_REFRESH_MS = 75;
 const ROOF_HOVER_CLEAR_GRACE_MS = 120;
@@ -1318,7 +1328,51 @@ export class GameManager {
       language: nav.language,
       languages: nav.languages,
       visibilityState: document.visibilityState,
+      devicePixelRatio: window.devicePixelRatio,
+      crossOriginIsolated: window.crossOriginIsolated,
+      window: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        outerWidth: window.outerWidth,
+        outerHeight: window.outerHeight,
+      },
+      screen: window.screen ? {
+        width: window.screen.width,
+        height: window.screen.height,
+        availWidth: window.screen.availWidth,
+        availHeight: window.screen.availHeight,
+        colorDepth: window.screen.colorDepth,
+        pixelDepth: window.screen.pixelDepth,
+      } : null,
     };
+  }
+
+  private getPerformanceDiagnosticFlags(webgl: Record<string, unknown>, browser: Record<string, unknown>, canvas: HTMLCanvasElement | null): string[] {
+    const flags: string[] = [];
+    const context = String(webgl.context ?? '');
+    if (!context || context === 'unavailable') flags.push('webgl-unavailable');
+    if (context === 'webgl') flags.push('webgl1-context');
+    if (browser.brave === true) flags.push('brave-browser');
+    if (!webgl.unmaskedRenderer) flags.push('renderer-info-masked');
+
+    const rendererText = [
+      webgl.unmaskedRenderer,
+      webgl.renderer,
+      webgl.unmaskedVendor,
+      webgl.vendor,
+    ].map(value => String(value ?? '').toLowerCase()).join(' ');
+    if (SOFTWARE_RENDERER_PATTERNS.some(pattern => rendererText.includes(pattern))) {
+      flags.push('software-renderer-likely');
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas && dpr >= 1.5 && this.renderHardwareScalingLevel <= 1) {
+      const renderPixels = canvas.width * canvas.height;
+      const clientPixels = canvas.clientWidth * canvas.clientHeight;
+      if (renderPixels > clientPixels * 1.4) flags.push('high-dpr-render-target');
+    }
+
+    return flags;
   }
 
   private sampleRafFps(durationMs: number = 3000): Promise<FrameRateSample> {
@@ -1350,6 +1404,8 @@ export class GameManager {
     const drawCalls = (this.engine as unknown as { _drawCalls?: { current?: number } })._drawCalls?.current ?? null;
     const vertexCount = meshes.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0);
     const indexCount = meshes.reduce((sum, mesh) => sum + mesh.getTotalIndices(), 0);
+    const browser = this.getBrowserDiagnostics();
+    const webgl = this.getWebGlDiagnostics();
 
     return {
       measuredFps: sample ? Math.round(sample.fps * 10) / 10 : null,
@@ -1383,8 +1439,9 @@ export class GameManager {
         detail: meshes.filter(mesh => /^chunk_(grass|rocks)_/.test(mesh.name)).length,
         groundDetailAttributes: meshes.filter(mesh => !!mesh.getVerticesData('groundDetail')).length,
       },
-      browser: this.getBrowserDiagnostics(),
-      webgl: this.getWebGlDiagnostics(),
+      diagnosticFlags: this.getPerformanceDiagnosticFlags(webgl, browser, canvas),
+      browser,
+      webgl,
     };
   }
 
@@ -1553,6 +1610,10 @@ export class GameManager {
     this.chatPanel?.addSystemMessage(
       `Perf: ${sample.fps.toFixed(1)} FPS, ${meshes} active meshes, ${Math.round(vertices / 1000)}k vertices. Renderer: ${clippedRenderer}`,
     );
+    const diagnosticFlags = Array.isArray(snapshot.diagnosticFlags) ? snapshot.diagnosticFlags.map(String) : [];
+    if (diagnosticFlags.includes('software-renderer-likely')) {
+      this.chatPanel?.addSystemMessage('Renderer warning: WebGL looks software-backed. Check browser hardware acceleration and GPU blocklist settings.', '#ffb347');
+    }
     this.chatPanel?.addSystemMessage('Perf snapshot sent to the server log.');
 
     try {
