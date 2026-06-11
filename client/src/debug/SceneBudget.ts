@@ -9,8 +9,15 @@ type AnimationGroupInternals = {
   _animatables?: unknown[];
 };
 
-function bucketName(name: string | undefined): string {
-  return (name || '<unnamed>')
+export function bucketName(name: string | undefined): string {
+  const value = name || '<unnamed>';
+  const placed = /^(placed)_-?\d+,-?\d+_\d+_(.+)$/.exec(value);
+  if (placed) return `${placed[1]}_*_${placed[2]}`.slice(0, 56);
+  const thin = /^(thin)_-?\d+,-?\d+_(.+)$/.exec(value);
+  if (thin) return `${thin[1]}_*_${thin[2]}`.slice(0, 56);
+  const npc = /^(npc3dsrc)_(.+)_\d+_(.+)$/.exec(value);
+  if (npc) return `${npc[1]}_${npc[2]}_*_${npc[3]}`.slice(0, 56);
+  return value
     .replace(/_[0-9]+_[0-9]+.*/, '_*')
     .replace(/_[0-9]+$/, '_*')
     .slice(0, 56);
