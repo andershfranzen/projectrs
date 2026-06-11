@@ -6,8 +6,8 @@ import type { Material } from '@babylonjs/core/Materials/material';
  * StandardMaterial so the flat vertex-colored ground gains a living surface
  * pattern without any texture asset:
  *
- *   family 0 grass/moss  → fine organic speckle
- *   family 1 dirt/path   → soft clumps
+ *   family 0 grass/moss  → very subtle organic variation
+ *   family 1 dirt/path   → very subtle dry variation
  *   family 2 sand/desert → fine grain
  *   family 3 stone/rock  → cheap cracked stone cells
  *
@@ -57,15 +57,6 @@ float gdCellInterior(vec2 p) {
   return smoothstep(width, width + 0.045, edge);
 }
 
-float gdGrassStrands(vec2 p) {
-  vec2 band = vec2(p.x * 8.0 + p.y * 1.7, p.y * 3.2);
-  vec2 cell = floor(band);
-  float keep = step(0.42, gdHash(cell + vec2(19.7, 3.1)));
-  float offset = gdHash(cell) * 0.72;
-  float line = abs(fract(band.x + offset) - 0.5);
-  float blade = 1.0 - smoothstep(0.020, 0.090, line);
-  return blade * keep;
-}
 `;
 
 const FRAGMENT_MAIN_END = `
@@ -75,18 +66,16 @@ const FRAGMENT_MAIN_END = `
     vec2 wp = vGroundDetailPosW.xz;
     float m = 1.0;
     if (fam < 0.5) {
-      // grass: soft body noise plus cheap strand highlights. This carries most
-      // of the grass texture so geometry can stay sparse.
-      float n = gdNoise(wp * 6.0);
-      float fine = gdNoise(wp * 18.0);
-      float speck = gdHash(floor(wp * 23.0));
-      float strands = gdGrassStrands(wp);
-      m = mix(0.88, 1.10, n) + (fine - 0.5) * 0.035 + (speck - 0.5) * 0.035 + strands * 0.075;
+      // Grass should read as clean low-poly paint; the blade geometry supplies
+      // the texture accents, so keep shader variation barely visible.
+      float n = gdNoise(wp * 3.5);
+      float speck = gdHash(floor(wp * 10.0));
+      m = mix(0.97, 1.035, n) + (speck - 0.5) * 0.012;
     } else if (fam < 1.5) {
-      // dirt: low-frequency clumps with a little dry grit
-      float n = gdNoise(wp * 4.0);
-      float grit = gdHash(floor(wp * 12.0));
-      m = mix(0.90, 1.09, n) + (grit - 0.5) * 0.04;
+      // Dirt/path paint should stay smooth enough to match the editor swatch.
+      float n = gdNoise(wp * 2.8);
+      float grit = gdHash(floor(wp * 8.0));
+      m = mix(0.965, 1.04, n) + (grit - 0.5) * 0.012;
     } else if (fam < 2.5) {
       // sand: mostly hash grain, with very light broad variation
       float grain = gdHash(floor(wp * 30.0));
