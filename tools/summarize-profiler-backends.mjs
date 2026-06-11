@@ -121,6 +121,57 @@ function formatFrame(pacing) {
   return `med ${formatRate(pacing.medianMs)} p95 ${formatRate(pacing.p95Ms)} >33 ${formatRate(pacing.over33Ms)} >50 ${formatRate(pacing.over50Ms)}`;
 }
 
+function formatCount(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.round(value).toLocaleString()
+    : 'n/a';
+}
+
+function mapLabel(snapshot) {
+  return String(snapshot?.currentMap ?? 'n/a');
+}
+
+function floorLabel(snapshot) {
+  return snapshot?.currentFloor == null ? 'n/a' : String(snapshot.currentFloor);
+}
+
+function ratioDelta(a, b) {
+  const left = finiteNumber(a);
+  const right = finiteNumber(b);
+  if (left == null || right == null) return null;
+  const larger = Math.max(Math.abs(left), Math.abs(right));
+  if (larger === 0) return 0;
+  return Math.abs(left - right) / larger;
+}
+
+function comparableScene(a, b) {
+  if (mapLabel(a) !== 'n/a' && mapLabel(b) !== 'n/a' && mapLabel(a) !== mapLabel(b)) return false;
+  if (floorLabel(a) !== 'n/a' && floorLabel(b) !== 'n/a' && floorLabel(a) !== floorLabel(b)) return false;
+  const meshDelta = ratioDelta(a?.activeMeshes, b?.activeMeshes);
+  const vertexDelta = ratioDelta(a?.totalVertices, b?.totalVertices);
+  return (meshDelta == null || meshDelta <= 0.35)
+    && (vertexDelta == null || vertexDelta <= 0.35);
+}
+
+function sceneComparisonText(a, b) {
+  const meshDelta = ratioDelta(a?.activeMeshes, b?.activeMeshes);
+  const vertexDelta = ratioDelta(a?.totalVertices, b?.totalVertices);
+  const parts = [
+    `map ${mapLabel(a) === mapLabel(b) ? mapLabel(a) : `${mapLabel(a)} vs ${mapLabel(b)}`}`,
+    meshDelta == null ? null : `meshes ${Math.round(meshDelta * 100)}% apart`,
+    vertexDelta == null ? null : `vertices ${Math.round(vertexDelta * 100)}% apart`,
+  ].filter(Boolean);
+  return parts.join(', ');
+}
+
+function sceneLabel(snapshot) {
+  return [
+    mapLabel(snapshot),
+    `${formatCount(finiteNumber(snapshot?.activeMeshes))}m`,
+    `${formatCount(finiteNumber(snapshot?.totalVertices))}v`,
+  ].join(' ');
+}
+
 function isStableLowCadence(fps, pacing) {
   const median = finiteNumber(pacing?.medianMs);
   const p95 = finiteNumber(pacing?.p95Ms);
@@ -197,6 +248,7 @@ function printRows(runs) {
     ['fps', 7],
     ['frame', 31],
     ['class', 12],
+    ['scene', 22],
     ['webgl/gpu status', 20],
     ['renderer', 58],
   ];
@@ -217,6 +269,7 @@ function printRows(runs) {
       [formatRate(snapshot.measuredFps), 7],
       [clip(formatFrame(framePacing(snapshot)), 31), 31],
       [classification(snapshot, browserDiagnostics), 12],
+      [clip(sceneLabel(snapshot), 22), 22],
       [clip(status || 'n/a', 20), 20],
       [clip(rendererLabel(snapshot, browserDiagnostics)), 58],
     ];
@@ -262,12 +315,16 @@ function printVerdict(runs) {
 
   console.log(`- Worst: ${basename(worst.run.dir)} (${worst.angle}) ${formatRate(worst.fps)} FPS, ${worst.className}`);
   const ratio = best.fps / Math.max(1, worst.fps);
-  if (best.fps >= 55 && worst.fps < 55 && ratio >= 1.5) {
-    console.log('- Strong backend signal: one browser GPU path is playable while another is low FPS in the same scene.');
+  const sceneComparable = comparableScene(best.run.snapshot, worst.run.snapshot);
+  console.log(`- Scene comparison: comparable=${sceneComparable ? 'yes' : 'no'}, ${sceneComparisonText(best.run.snapshot, worst.run.snapshot)}`);
+  if (sceneComparable && best.fps >= 55 && worst.fps < 55 && ratio >= 1.5) {
+    console.log('- Strong backend signal: one browser GPU path is playable while another is low FPS in a comparable scene.');
   } else if (measured.every((row) => row.className === 'healthy')) {
     console.log('- No low-FPS backend failure reproduced in these captures.');
   } else if (measured.every((row) => row.fps < 55)) {
     console.log('- All captured backends are low FPS; check software rendering, battery/efficiency settings, or scene-specific CPU stalls next.');
+  } else if (!sceneComparable) {
+    console.log('- FPS differs, but the best and worst captures are not comparable scenes. Re-capture from the same logged-in location.');
   } else {
     console.log('- Mixed result; compare the best and worst run with compare-profiler-runs.mjs for the next clue.');
   }

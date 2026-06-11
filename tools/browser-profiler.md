@@ -79,6 +79,8 @@ records the command-line flags and `SystemInfo.getInfo()` GPU status in each
 run, so summarize the backend test matrix with
 `tools/summarize-profiler-backends.mjs` or compare two run directories with
 `tools/compare-profiler-runs.mjs`.
+The backend summary includes map, mesh, and vertex counts, and only calls a
+strong backend signal when the best and worst runs are comparable scenes.
 
 ```powershell
 bun tools/summarize-profiler-backends.mjs tools/profiler-runs\default-run tools/profiler-runs\d3d11-run tools/profiler-runs\gl-run
