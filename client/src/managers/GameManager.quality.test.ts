@@ -249,6 +249,26 @@ describe('GameManager render quality command', () => {
     })).toBe('median 33.4ms, p95 34.1ms, max 36.8ms, >33ms 88, >50ms 0');
   });
 
+  test('client log payloads are clipped by encoded byte size', () => {
+    const manager = Object.create(GameManager.prototype) as any;
+    manager.username = 'tester';
+
+    const payload = manager.buildClientLogPayload('client_perf_snapshot', {
+      currentMap: 'kcmap',
+      diagnosticFlags: ['low-fps-measured'],
+      webgl: { unmaskedRenderer: 'ANGLE (NVIDIA)' },
+      oversized: '\u754c'.repeat(80_000),
+    });
+    const parsed = JSON.parse(payload) as { details: Record<string, unknown> };
+
+    expect(new TextEncoder().encode(payload).byteLength).toBeLessThanOrEqual(60 * 1024);
+    expect(parsed.details.truncated).toBe(true);
+    expect(parsed.details.currentMap).toBe('kcmap');
+    expect(parsed.details.diagnosticFlags).toEqual(['low-fps-measured']);
+    expect(parsed.details.webgl).toEqual({ unmaskedRenderer: 'ANGLE (NVIDIA)' });
+    expect(parsed.details.oversized).toBeUndefined();
+  });
+
   test('stable low cadence distinguishes a 30 FPS cap from stalls', () => {
     expect(isStableLowFrameCadence(30.1, {
       intervals: 90,

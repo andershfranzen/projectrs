@@ -2368,6 +2368,7 @@ function bodyWithinLimit(req: Request, maxBytes: number): boolean {
 
 const BODY_LIMIT_AUTH = 4 * 1024;          // 4 KB — username + password JSON
 const BODY_LIMIT_OAUTH = 16 * 1024;        // 16 KB — OAuth form/token params
+const BODY_LIMIT_CLIENT_LOG = 64 * 1024;   // 64 KB — perf snapshots include scene/GPU diagnostics
 const BODY_LIMIT_DEV = 1 * 1024 * 1024;     // 1 MB — gear-overrides config
 const BODY_LIMIT_EDITOR = 200 * 1024 * 1024; // 200 MB — full map import / save
 const BODY_LIMIT_SPELL_ICON = 512 * 1024;   // 512 KB — one PNG icon
@@ -2989,13 +2990,43 @@ function gameplayMapWindowForSession(
   session: NonNullable<ReturnType<typeof getBoundBearerSession>>,
   mapPath: string,
 ): GameplayMapPlayerWindow | null {
+  const addAlternateCenter = (
+    window: GameplayMapPlayerWindow | null,
+    x: number,
+    z: number,
+  ): GameplayMapPlayerWindow | null => {
+    if (!window || !Number.isFinite(x) || !Number.isFinite(z) || x < 0 || z < 0) return window;
+    const chunkX = Math.floor(x / CHUNK_SIZE);
+    const chunkZ = Math.floor(z / CHUNK_SIZE);
+    if (chunkX === window.currentChunkX && chunkZ === window.currentChunkZ) return window;
+    if (window.alternateChunks?.some(center => center.chunkX === chunkX && center.chunkZ === chunkZ)) return window;
+    return {
+      ...window,
+      alternateChunks: [...(window.alternateChunks ?? []), { chunkX, chunkZ }],
+    };
+  };
+
+  const addMapSpawnCenter = (window: GameplayMapPlayerWindow | null, mapId: string): GameplayMapPlayerWindow | null => {
+    if (!window) return null;
+    try {
+      const spawn = world.getMap(mapId).findSpawnPoint();
+      return addAlternateCenter(window, spawn.x, spawn.z);
+    } catch {
+      return window;
+    }
+  };
+
   const activePlayer = world.getActivePlayerByAccountId(session.accountId);
   if (activePlayer) {
-    return {
+    let window: GameplayMapPlayerWindow | null = {
       currentMapLevel: activePlayer.currentMapLevel,
       currentChunkX: activePlayer.currentChunkX,
       currentChunkZ: activePlayer.currentChunkZ,
     };
+    const destination = activePlayer.getMoveDestination();
+    if (destination) window = addAlternateCenter(window, destination.x, destination.z);
+    window = addMapSpawnCenter(window, activePlayer.currentMapLevel);
+    return window;
   }
 
   const requestedMapId = mapIdFromGameplayMapPath(mapPath);
@@ -3015,8 +3046,11 @@ function gameplayMapWindowForSession(
       || saved.z < 0
       || saved.x >= map.width
       || saved.z >= map.height;
-    const pos = useSpawn ? map.findSpawnPoint() : { x: saved.x, z: saved.z };
-    return gameplayMapPlayerWindowFromWorldPosition(savedMapId, pos.x, pos.z);
+    const spawn = map.findSpawnPoint();
+    const pos = useSpawn ? spawn : { x: saved.x, z: saved.z };
+    let window = gameplayMapPlayerWindowFromWorldPosition(savedMapId, pos.x, pos.z);
+    window = addAlternateCenter(window, spawn.x, spawn.z);
+    return window;
   } catch {
     return null;
   }
@@ -3107,7 +3141,7 @@ const server = Bun.serve<SocketData>({
 
     if (url.pathname === '/api/client-log' && req.method === 'POST') {
       if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
-      if (!bodyWithinLimit(req, 8 * 1024)) return tooLarge();
+      if (!bodyWithinLimit(req, BODY_LIMIT_CLIENT_LOG)) return tooLarge();
       try {
         const body = await req.json() as { event?: string; username?: string; details?: unknown; at?: number };
         const event = String(body.event ?? 'unknown').slice(0, 96);

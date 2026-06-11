@@ -86,6 +86,7 @@ const EMERGENCY_LOW_QUALITY_HARDWARE_SCALE = 3.0;
 const LOW_FPS_DIAGNOSTIC_WARMUP_MS = 5000;
 const LOW_FPS_DIAGNOSTIC_SAMPLE_MS = 3000;
 const LOW_FPS_DIAGNOSTIC_THRESHOLD = 50;
+const CLIENT_LOG_PAYLOAD_SOFT_LIMIT = 60 * 1024;
 const MANUAL_LOW_QUALITY_STORAGE_KEY = 'projectrs_low_quality';
 const LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY = 'projectrs_auto_low_quality';
 const SOFTWARE_RENDERER_PATTERNS = [
@@ -1366,12 +1367,7 @@ export class GameManager {
 
   private reportClientLog(event: string, details: Record<string, unknown>): void {
     try {
-      const payload = JSON.stringify({
-        event,
-        username: this.username,
-        details,
-        at: Date.now(),
-      });
+      const payload = this.buildClientLogPayload(event, details);
       if (navigator.sendBeacon) {
         navigator.sendBeacon('/api/client-log', new Blob([payload], { type: 'application/json' }));
         return;
@@ -1383,6 +1379,67 @@ export class GameManager {
         keepalive: true,
       });
     } catch { /* best-effort diagnostics only */ }
+  }
+
+  private buildClientLogPayload(event: string, details: Record<string, unknown>): string {
+    const at = Date.now();
+    const makePayload = (payloadDetails: Record<string, unknown>): string => JSON.stringify({
+      event,
+      username: this.username,
+      details: payloadDetails,
+      at,
+    });
+
+    const fullPayload = makePayload(details);
+    const fullPayloadBytes = this.clientLogPayloadBytes(fullPayload);
+    if (fullPayloadBytes <= CLIENT_LOG_PAYLOAD_SOFT_LIMIT) return fullPayload;
+
+    const compactDetails: Record<string, unknown> = {
+      truncated: true,
+      originalBytes: fullPayloadBytes,
+    };
+    const keepKeys = [
+      'measuredFps',
+      'engineFps',
+      'drawCalls',
+      'activeMeshes',
+      'totalMeshes',
+      'totalVertices',
+      'totalIndices',
+      'renderScale',
+      'baseRenderScale',
+      'currentMap',
+      'currentFloor',
+      'player',
+      'canvas',
+      'diagnosticFlags',
+      'browser',
+      'webgl',
+      'lowFpsAction',
+      'lowFpsInitialFps',
+      'lowFpsInitialDurationMs',
+    ];
+    for (const key of keepKeys) {
+      if (Object.prototype.hasOwnProperty.call(details, key)) compactDetails[key] = details[key];
+    }
+
+    const compactPayload = makePayload(compactDetails);
+    const compactPayloadBytes = this.clientLogPayloadBytes(compactPayload);
+    if (compactPayloadBytes <= CLIENT_LOG_PAYLOAD_SOFT_LIMIT) return compactPayload;
+
+    return makePayload({
+      truncated: true,
+      originalBytes: fullPayloadBytes,
+      compactBytes: compactPayloadBytes,
+      diagnosticFlags: details.diagnosticFlags,
+      currentMap: details.currentMap,
+    });
+  }
+
+  private clientLogPayloadBytes(payload: string): number {
+    return typeof TextEncoder !== 'undefined'
+      ? new TextEncoder().encode(payload).byteLength
+      : payload.length;
   }
 
   private getWebGlDiagnostics(): Record<string, unknown> {
