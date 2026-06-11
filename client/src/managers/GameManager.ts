@@ -305,7 +305,7 @@ export class GameManager {
   private network: NetworkManager;
   private readonly onFatalDisconnect?: () => void;
   private destroyed: boolean = false;
-  private readonly baseHardwareScalingLevel: number;
+  private baseHardwareScalingLevel: number;
   private renderHardwareScalingLevel: number = 1;
 
   private connectionFrozen: boolean = false;
@@ -1517,6 +1517,66 @@ export class GameManager {
     if (targetCanvas) {
       targetCanvas.dataset.renderScale = next.toFixed(2);
     }
+  }
+
+  private setLowQualityPreference(enabled: boolean): void {
+    try {
+      if (enabled) {
+        localStorage.setItem('projectrs_low_quality', '1');
+      } else {
+        localStorage.removeItem('projectrs_low_quality');
+      }
+    } catch {
+      // Storage can be blocked in privacy modes; the current session still changes.
+    }
+  }
+
+  private reportRenderQualityChange(requestedQuality: string): void {
+    const canvas = this.engine.getRenderingCanvas();
+    const browser = this.getBrowserDiagnostics();
+    const webgl = this.getWebGlDiagnostics();
+    this.reportClientLog('client_quality_change', {
+      requestedQuality,
+      renderScale: this.renderHardwareScalingLevel,
+      baseRenderScale: this.baseHardwareScalingLevel,
+      canvas: canvas ? {
+        width: canvas.width,
+        height: canvas.height,
+        clientWidth: canvas.clientWidth,
+        clientHeight: canvas.clientHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        renderScale: canvas.dataset.renderScale,
+      } : null,
+      diagnosticFlags: this.getPerformanceDiagnosticFlags(webgl, browser, canvas),
+      browser,
+      webgl,
+    });
+  }
+
+  private handleQualityCommand(msg: string): void {
+    const parts = msg.trim().split(/\s+/);
+    const requestedQuality = parts[1]?.toLowerCase();
+    if (parts.length !== 2 || !requestedQuality || !['low', 'high', 'auto'].includes(requestedQuality)) {
+      this.chatPanel?.addSystemMessage(`Render quality: scale ${this.renderHardwareScalingLevel.toFixed(1)}. Usage: /quality low, /quality high, or /quality auto.`);
+      return;
+    }
+
+    let nextScale = 1;
+    if (requestedQuality === 'low') {
+      this.setLowQualityPreference(true);
+      nextScale = LOW_QUALITY_HARDWARE_SCALE;
+    } else if (requestedQuality === 'high') {
+      this.setLowQualityPreference(false);
+      nextScale = 1;
+    } else {
+      this.setLowQualityPreference(false);
+      nextScale = this.detectBaseHardwareScalingLevel();
+    }
+
+    this.baseHardwareScalingLevel = nextScale;
+    this.setRenderHardwareScalingLevel(nextScale);
+    this.chatPanel?.addSystemMessage(`Render quality set to ${requestedQuality} (scale ${this.renderHardwareScalingLevel.toFixed(1)}).`);
+    this.reportRenderQualityChange(requestedQuality);
   }
 
   private maybeApplyLowFpsRenderScale(): number | null {
@@ -7725,13 +7785,21 @@ export class GameManager {
   }
 
   private handleChatCommand(msg: string): boolean {
-    if (msg.trim().toLowerCase() === '/fps') {
+    const trimmed = msg.trim();
+    const lower = trimmed.toLowerCase();
+
+    if (lower === '/fps') {
       this.toggleFpsCounter();
       return true;
     }
 
-    if (msg.trim().toLowerCase() === '/perf') {
+    if (lower === '/perf') {
       void this.handlePerfCommand();
+      return true;
+    }
+
+    if (lower === '/quality' || lower.startsWith('/quality ')) {
+      this.handleQualityCommand(trimmed);
       return true;
     }
 
@@ -7740,8 +7808,8 @@ export class GameManager {
       return true;
     }
 
-    if (msg.trim().toLowerCase().startsWith('/rotatedebug')) {
-      void this.handleRotateDebugCommand(msg);
+    if (lower.startsWith('/rotatedebug')) {
+      void this.handleRotateDebugCommand(trimmed);
       return true;
     }
 
