@@ -43,6 +43,11 @@ To also create a zip of the newest profiler run after you type `quit`:
 .\tools\profile-windows-brave.ps1 -ZipLatest
 ```
 
+The helper runs `diagnose-profiler-run.mjs` on the newly-created capture before
+it zips anything. That writes `diagnosis.txt` and `diagnosis.json` into the run
+folder, so the zip includes the likely-cause summary alongside the raw profiler
+files.
+
 ```powershell
 $env:BROWSER_BIN = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
 $env:CHROME_PROFILE_DIR = "$env:TEMP\evilquest-profiler-brave"
@@ -148,6 +153,19 @@ With no arguments it compares the latest two run directories:
 ```bash
 bun tools/compare-profiler-runs.mjs
 ```
+
+To diagnose one run by itself, pass the run directory. With no arguments it
+diagnoses the latest run:
+
+```bash
+bun tools/diagnose-profiler-run.mjs tools/profiler-runs/<run>
+bun tools/diagnose-profiler-run.mjs --write
+```
+
+`--write` adds `diagnosis.txt` and `diagnosis.json` to the run directory. The
+single-run diagnosis is meant for the Windows Brave case where the first
+question is whether the bad tab is using SwiftShader/software rendering, a
+masked renderer, a high-DPR canvas, or an incomplete login-screen capture.
 
 If a live run reports `hasGameManager: false` and the body text is the login
 screen, it did not capture steady-state gameplay. Reuse a logged-in

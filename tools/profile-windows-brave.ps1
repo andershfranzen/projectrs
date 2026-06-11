@@ -25,6 +25,18 @@ function Wait-CdpPort {
   throw "Chrome DevTools endpoint did not appear on $endpoint"
 }
 
+function Get-LatestProfilerRun {
+  param([string]$RunRoot)
+
+  if (-not (Test-Path $RunRoot)) {
+    return $null
+  }
+
+  return Get-ChildItem -Path $RunRoot -Directory |
+    Sort-Object Name -Descending |
+    Select-Object -First 1
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $oldCdpPort = $env:CDP_PORT
 $oldAttach = $env:PROFILE_ATTACH_EXISTING_CDP
@@ -67,6 +79,10 @@ try {
 
   Push-Location $repoRoot
   try {
+    $runRoot = Join-Path $repoRoot "tools\profiler-runs"
+    $previousLatestRun = Get-LatestProfilerRun -RunRoot $runRoot
+    $previousLatestRunName = if ($null -eq $previousLatestRun) { $null } else { $previousLatestRun.Name }
+
     if (-not $Autorun) {
       Write-Host ""
       Write-Host "Log in to EvilQuest in Brave, wait until the bad FPS is visible, then type 'capture' here."
@@ -75,14 +91,26 @@ try {
       Write-Host ""
     }
     bun tools/browser-profiler.mjs $Url
+    if ($LASTEXITCODE -ne 0) {
+      throw "browser-profiler failed with exit code $LASTEXITCODE"
+    }
+
+    $latestRun = Get-LatestProfilerRun -RunRoot $runRoot
+    $createdNewRun = $null -ne $latestRun -and $latestRun.Name -ne $previousLatestRunName
+    if (-not $createdNewRun) {
+      Write-Warning "No new profiler run was created. Type 'capture' before 'quit' to record one."
+    } else {
+      Write-Host ""
+      Write-Host "Diagnosing profiler run: $($latestRun.Name)"
+      bun tools/diagnose-profiler-run.mjs $latestRun.FullName --write
+      if ($LASTEXITCODE -ne 0) {
+        Write-Warning "diagnose-profiler-run failed with exit code $LASTEXITCODE"
+      }
+    }
 
     if ($ZipLatest) {
-      $runRoot = Join-Path $repoRoot "tools\profiler-runs"
-      $latestRun = Get-ChildItem -Path $runRoot -Directory |
-        Sort-Object Name -Descending |
-        Select-Object -First 1
-      if ($null -eq $latestRun) {
-        Write-Warning "No profiler run directory found under $runRoot"
+      if (-not $createdNewRun) {
+        Write-Warning "Skipping zip because no new profiler run was created."
       } else {
         $zipPath = Join-Path $runRoot ($latestRun.Name + ".zip")
         if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
