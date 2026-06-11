@@ -1329,11 +1329,16 @@ const WEBSITE_DIST = resolve(ROOT_DIR, 'website/dist');
 const WEBSITE_PUBLIC = resolve(ROOT_DIR, 'website/public');
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 const DATA_DIR = resolve(import.meta.dir, '../data');
+const AUDIT_LOG_PATH = resolve(DATA_DIR, 'audit.log');
 const RUNTIME_DATA_DIR = process.env.PROJECTRS_RUNTIME_DATA_DIR ? resolve(process.env.PROJECTRS_RUNTIME_DATA_DIR) : DATA_DIR;
 const FORUM_MEDIA_DIR = resolve(RUNTIME_DATA_DIR, 'forum-media');
 const FORUM_AVATAR_DIR = resolve(RUNTIME_DATA_DIR, 'forum-avatars');
 const FORUM_AVATAR_BAKE_SECRET = process.env.FORUM_AVATAR_BAKE_SECRET || randomUUID();
 const DEFAULT_DISCORD_GUILD_ID = '1504534632799010816';
+const CLIENT_DIAGNOSTICS_DEFAULT_LIMIT = 50;
+const CLIENT_DIAGNOSTICS_MAX_LIMIT = 500;
+const CLIENT_DIAGNOSTICS_DEFAULT_TAIL_BYTES = 1024 * 1024;
+const CLIENT_DIAGNOSTICS_MAX_TAIL_BYTES = 4 * 1024 * 1024;
 const DISCORD_EMOJI_SYNC_INTERVAL_MS = (() => {
   const raw = Number(process.env.DISCORD_EMOJI_SYNC_INTERVAL_MS ?? 15 * 60_000);
   return Number.isFinite(raw) && raw >= 60_000 ? raw : 15 * 60_000;
@@ -1674,6 +1679,93 @@ function htmlResponse(html: string, status: number = 200, headers: Record<string
     status,
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...headers },
   });
+}
+
+type ClientDiagnosticLogEntry = {
+  ts: string;
+  tick: number | null;
+  event: string;
+  username: string;
+  clientAt: number | null;
+  payload: unknown;
+};
+
+function boundedIntegerParam(raw: string | null, fallback: number, min: number, max: number): number {
+  const parsed = raw === null ? fallback : Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.trunc(clampNumber(parsed, min, max));
+}
+
+async function readRecentClientDiagnostics(options: {
+  limit: number;
+  tailBytes: number;
+  event?: string | null;
+  username?: string | null;
+  query?: string | null;
+}): Promise<{ events: ClientDiagnosticLogEntry[]; bytesScanned: number }> {
+  let size = 0;
+  try {
+    size = (await fsp.stat(AUDIT_LOG_PATH)).size;
+  } catch {
+    return { events: [], bytesScanned: 0 };
+  }
+
+  const start = Math.max(0, size - options.tailBytes);
+  const bytesToRead = size - start;
+  if (bytesToRead <= 0) return { events: [], bytesScanned: 0 };
+
+  const handle = await fsp.open(AUDIT_LOG_PATH, 'r');
+  try {
+    const buffer = Buffer.alloc(bytesToRead);
+    const { bytesRead } = await handle.read(buffer, 0, bytesToRead, start);
+    const lines = buffer.subarray(0, bytesRead).toString('utf-8').split('\n');
+    if (start > 0) lines.shift();
+
+    const eventFilter = options.event?.trim().toLowerCase() || '';
+    const usernameFilter = options.username?.trim().toLowerCase() || '';
+    const queryFilter = options.query?.trim().toLowerCase() || '';
+    const events: ClientDiagnosticLogEntry[] = [];
+
+    for (let i = lines.length - 1; i >= 0 && events.length < options.limit; i--) {
+      const line = lines[i]?.trim();
+      if (!line) continue;
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!isPlainRecord(parsed) || parsed.type !== 'client.log' || !isPlainRecord(parsed.details)) continue;
+
+      const details = parsed.details;
+      const event = String(details.event ?? 'unknown');
+      const username = String(details.username ?? 'unknown');
+      if (eventFilter && event.toLowerCase() !== eventFilter) continue;
+      if (usernameFilter && !username.toLowerCase().includes(usernameFilter)) continue;
+
+      const payload = details.payload ?? {};
+      if (queryFilter) {
+        const haystack = `${event} ${username} ${JSON.stringify(payload)}`.toLowerCase();
+        if (!haystack.includes(queryFilter)) continue;
+      }
+
+      const tick = Number(parsed.tick);
+      const clientAt = Number(details.clientAt);
+      events.push({
+        ts: typeof parsed.ts === 'string' ? parsed.ts : '',
+        tick: Number.isFinite(tick) ? tick : null,
+        event,
+        username,
+        clientAt: Number.isFinite(clientAt) ? clientAt : null,
+        payload,
+      });
+    }
+
+    return { events, bytesScanned: bytesRead };
+  } finally {
+    await handle.close();
+  }
 }
 
 function forumAvatarFilePath(urlOrPath: string): string | null {
@@ -3521,6 +3613,35 @@ const server = Bun.serve<SocketData>({
         latestId: snapshot.latestId,
         events: snapshot.events,
       });
+    }
+
+    if (url.pathname === '/api/admin/client-diagnostics' && req.method === 'GET') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      const limit = boundedIntegerParam(
+        url.searchParams.get('limit'),
+        CLIENT_DIAGNOSTICS_DEFAULT_LIMIT,
+        1,
+        CLIENT_DIAGNOSTICS_MAX_LIMIT,
+      );
+      const tailBytes = boundedIntegerParam(
+        url.searchParams.get('bytes'),
+        CLIENT_DIAGNOSTICS_DEFAULT_TAIL_BYTES,
+        1024,
+        CLIENT_DIAGNOSTICS_MAX_TAIL_BYTES,
+      );
+      const diagnostics = await readRecentClientDiagnostics({
+        limit,
+        tailBytes,
+        event: url.searchParams.get('event'),
+        username: url.searchParams.get('user') ?? url.searchParams.get('username'),
+        query: url.searchParams.get('q') ?? url.searchParams.get('query'),
+      });
+      return jsonResponse({
+        ok: true,
+        generatedAt: Math.floor(Date.now() / 1000),
+        ...diagnostics,
+      }, 200, { 'Cache-Control': 'no-store' });
     }
 
     if (url.pathname === '/api/admin/ban-account' && req.method === 'POST') {
