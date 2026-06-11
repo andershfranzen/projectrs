@@ -196,6 +196,11 @@ type BatchedPlacedVisualRef = {
   hiddenMatrix: Matrix;
 };
 
+type GrassBladeChunkBatch = {
+  matrices: Matrix[];
+  enabled: boolean;
+};
+
 interface ElevatedThinInstanceSource {
   mesh: Mesh;
   minX: number;
@@ -462,6 +467,8 @@ export class ChunkManager {
   private chunkRoofThinInstSources: Map<string, Mesh[]> = new Map();
   private chunkElevatedThinInstSources: Map<string, ElevatedThinInstanceSource[]> = new Map();
   private chunkStructuralThinInstSources: Map<string, ElevatedThinInstanceSource[]> = new Map();
+  private grassBladeBatch: Mesh | null = null;
+  private grassBladeChunks: Map<string, GrassBladeChunkBatch> = new Map();
 
   private doorEdgeKey(floor: number, tileIdx: number): string {
     return `${Math.floor(floor)}:${tileIdx}`;
@@ -642,7 +649,6 @@ export class ChunkManager {
     if (this.chunkMeshesEnabled.get(chunkKey) === enabled) return false;
     this.chunkMeshesEnabled.set(chunkKey, enabled);
     meshes.ground.setEnabled(enabled);
-    meshes.grassBlades?.setEnabled(enabled);
     meshes.stoneRocks?.setEnabled(enabled);
     for (const overlay of meshes.overlays) overlay.setEnabled(enabled);
     meshes.water?.setEnabled(enabled);
@@ -662,6 +668,7 @@ export class ChunkManager {
         floorSet.stairs?.setEnabled(false);
       }
     }
+    this.setGrassBladeChunkEnabled(chunkKey, enabled);
     return true;
   }
 
@@ -675,7 +682,7 @@ export class ChunkManager {
   private disposeChunkMeshes(key: string, meshes: ChunkMeshes): void {
     this.clearRoofObjectGridForChunk(this.terrainRoofChunkKey(key));
     meshes.ground.dispose();
-    meshes.grassBlades?.dispose();
+    this.unregisterGrassBladeChunk(key);
     meshes.stoneRocks?.dispose();
     this.disposeChunkTextureOverlays(key);
     meshes.water?.dispose();
@@ -1764,13 +1771,15 @@ export class ChunkManager {
   }
 
   private buildChunkMeshes(chunkX: number, chunkZ: number): ChunkMeshes {
+    const chunkKey = `${chunkX},${chunkZ}`;
     const startX = chunkX * CHUNK_SIZE;
     const startZ = chunkZ * CHUNK_SIZE;
     const endX = Math.min(startX + CHUNK_SIZE, this.mapWidth);
     const endZ = Math.min(startZ + CHUNK_SIZE, this.mapHeight);
 
     const ground = this.buildGroundMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
-    const grassBlades = this.buildGrassBladeMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
+    this.registerGrassBladeChunk(chunkKey, this.buildGrassBladeMatrices(startX, startZ, endX, endZ), false);
+    const grassBlades = null;
     const stoneRocks = this.buildStoneRockMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
     const overlays = this.buildTextureOverlays(chunkX, chunkZ, startX, startZ, endX, endZ);
     const water = this.buildWaterMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
@@ -2059,12 +2068,8 @@ export class ChunkManager {
 
   // --- Grass strands: sparse upright blades on grass tiles ---
 
-  private buildGrassBladeMesh(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number): Mesh | null {
-    const positions: number[] = [];
-    const indices: number[] = [];
-    const colors: number[] = [];
-    let vi = 0;
-
+  private buildGrassBladeMatrices(startX: number, startZ: number, endX: number, endZ: number): Matrix[] {
+    const matrices: Matrix[] = [];
     // Deterministic per-position pseudo-random in [0,1) so blades don't shimmer
     // or change between chunk rebuilds.
     const rand = (a: number, b: number): number => {
@@ -2078,8 +2083,6 @@ export class ChunkManager {
     const BOUNDARY_BLADES_PER_TILE = 1;
     const EDGE_SPILL_BLADES = 1;
     const HALF_WIDTH = 0.035;
-    const base = groundColor('grass', 0.80);
-    const tip = groundColor('grass', 1.18);
 
     // Emit one blade at world (bx,bz); uses tile (tx,tz) corner heights for ground Y.
     const emitBlade = (bx: number, bz: number, h: { tl: number; tr: number; bl: number; br: number }, tx: number, tz: number, seed: number): void => {
@@ -2091,10 +2094,12 @@ export class ChunkManager {
       const height = 0.14 + rand(tx + seed * 7, tz * 3) * 0.18;
       const leanX = (rand(tx * 2 + seed, tz) - 0.5) * 0.16;
       const leanZ = (rand(tz * 2 + 5, tx + seed) - 0.5) * 0.16;
-      positions.push(bx - HALF_WIDTH, by, bz, bx + HALF_WIDTH, by, bz, bx + leanX, by + height, bz + leanZ);
-      colors.push(base.r, base.g, base.b, 1, base.r, base.g, base.b, 1, tip.r, tip.g, tip.b, 1);
-      indices.push(vi, vi + 1, vi + 2);
-      vi += 3;
+      matrices.push(Matrix.FromValues(
+        HALF_WIDTH, 0, 0, 0,
+        leanX, height, leanZ, 0,
+        0, 0, HALF_WIDTH, 0,
+        bx, by, bz, 1,
+      ));
     };
 
     const isGrass = (tx: number, tz: number): boolean =>
@@ -2144,18 +2149,84 @@ export class ChunkManager {
       }
     }
 
-    if (positions.length === 0) return null;
+    return matrices;
+  }
 
-    const mesh = new Mesh(`chunk_grass_${chunkX}_${chunkZ}`, this.scene);
+  private ensureGrassBladeBatch(): Mesh {
+    if (this.grassBladeBatch && !this.grassBladeBatch.isDisposed()) return this.grassBladeBatch;
+    const base = groundColor('grass', 0.80);
+    const tip = groundColor('grass', 1.18);
+    const mesh = new Mesh('terrain_grass_blades', this.scene);
     const vertexData = new VertexData();
-    vertexData.positions = positions;
-    vertexData.indices = indices;
-    vertexData.colors = colors;
+    vertexData.positions = [-1, 0, 0, 1, 0, 0, 0, 1, 0];
+    vertexData.indices = [0, 1, 2];
+    vertexData.colors = [
+      base.r, base.g, base.b, 1,
+      base.r, base.g, base.b, 1,
+      tip.r, tip.g, tip.b, 1,
+    ];
     vertexData.applyToMesh(mesh);
     mesh.material = this.grassBladeMat;
     mesh.hasVertexAlpha = false;
     mesh.isPickable = false;
+    mesh.setEnabled(false);
+    mesh.freezeWorldMatrix();
+    this.grassBladeBatch = mesh;
     return mesh;
+  }
+
+  private registerGrassBladeChunk(chunkKey: string, matrices: Matrix[], enabled: boolean): void {
+    this.grassBladeChunks.set(chunkKey, { matrices, enabled });
+    this.rebuildGrassBladeBatch();
+  }
+
+  private setGrassBladeChunkEnabled(chunkKey: string, enabled: boolean): void {
+    const chunk = this.grassBladeChunks.get(chunkKey);
+    if (!chunk || chunk.enabled === enabled) return;
+    chunk.enabled = enabled;
+    this.rebuildGrassBladeBatch();
+  }
+
+  private unregisterGrassBladeChunk(chunkKey: string): void {
+    if (!this.grassBladeChunks.delete(chunkKey)) return;
+    this.rebuildGrassBladeBatch();
+  }
+
+  private rebuildGrassBladeBatch(): void {
+    const mesh = this.ensureGrassBladeBatch();
+    let instanceCount = 0;
+    for (const chunk of this.grassBladeChunks.values()) {
+      if (chunk.enabled) instanceCount += chunk.matrices.length;
+    }
+    if (instanceCount === 0) {
+      mesh.thinInstanceSetBuffer('matrix', null);
+      mesh.thinInstanceCount = 0;
+      mesh.setEnabled(false);
+      return;
+    }
+
+    const matrixBuffer = new Float32Array(instanceCount * 16);
+    let offset = 0;
+    for (const chunk of this.grassBladeChunks.values()) {
+      if (!chunk.enabled) continue;
+      for (const matrix of chunk.matrices) {
+        matrixBuffer.set(matrix.m, offset);
+        offset += 16;
+      }
+    }
+    mesh.thinInstanceSetBuffer('matrix', matrixBuffer, 16, true);
+    mesh.thinInstanceCount = instanceCount;
+    mesh.thinInstanceRefreshBoundingInfo(true);
+    mesh.doNotSyncBoundingInfo = true;
+    mesh.setEnabled(true);
+  }
+
+  private disposeGrassBladeBatch(): void {
+    this.grassBladeChunks.clear();
+    if (this.grassBladeBatch && !this.grassBladeBatch.isDisposed()) {
+      this.grassBladeBatch.dispose();
+    }
+    this.grassBladeBatch = null;
   }
 
   // --- Stone pebbles: small round rocks scattered on stone-family ground ---
@@ -6357,6 +6428,7 @@ export class ChunkManager {
     this.overlayMatCache.clear();
     for (const [, m] of this.texPlaneMaterialCache) m.dispose();
     this.texPlaneMaterialCache.clear();
+    this.disposeGrassBladeBatch();
 
     for (const [, meshes] of this.chunks) {
       meshes.ground.dispose();

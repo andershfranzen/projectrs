@@ -1427,11 +1427,23 @@ export class GameManager {
     const vertexCount = meshes.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0);
     const indexCount = meshes.reduce((sum, mesh) => sum + mesh.getTotalIndices(), 0);
     const groundMeshes = meshes.filter(mesh => /^chunk_-?\d+_-?\d+$/.test(mesh.name));
-    const grassMeshes = meshes.filter(mesh => /^chunk_grass_/.test(mesh.name));
+    const grassMeshes = meshes.filter(mesh => /^chunk_grass_/.test(mesh.name) || mesh.name === 'terrain_grass_blades');
     const rockMeshes = meshes.filter(mesh => /^chunk_rocks_/.test(mesh.name));
     const detailMeshes = [...grassMeshes, ...rockMeshes];
     const countVertices = (items: typeof meshes): number => items.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0);
     const countIndices = (items: typeof meshes): number => items.reduce((sum, mesh) => sum + mesh.getTotalIndices(), 0);
+    const thinInstanceCount = (mesh: (typeof meshes)[number]): number =>
+      mesh instanceof Mesh ? Math.max(0, mesh.thinInstanceCount || 0) : 0;
+    const effectiveInstanceMultiplier = (mesh: (typeof meshes)[number]): number => {
+      const instances = thinInstanceCount(mesh);
+      return instances > 0 ? instances : 1;
+    };
+    const countEffectiveVertices = (items: typeof meshes): number =>
+      items.reduce((sum, mesh) => sum + mesh.getTotalVertices() * effectiveInstanceMultiplier(mesh), 0);
+    const countEffectiveIndices = (items: typeof meshes): number =>
+      items.reduce((sum, mesh) => sum + mesh.getTotalIndices() * effectiveInstanceMultiplier(mesh), 0);
+    const countThinInstances = (items: typeof meshes): number =>
+      items.reduce((sum, mesh) => sum + thinInstanceCount(mesh), 0);
     const browser = this.getBrowserDiagnostics();
     const webgl = this.getWebGlDiagnostics();
     const sceneBudget = buildSceneBudget(this.scene);
@@ -1469,10 +1481,15 @@ export class GameManager {
         grass: grassMeshes.length,
         rocks: rockMeshes.length,
         groundDetailAttributes: groundMeshes.filter(mesh => !!mesh.getVerticesData('groundDetail')).length,
-        detailVertices: countVertices(detailMeshes),
-        detailIndices: countIndices(detailMeshes),
-        grassVertices: countVertices(grassMeshes),
-        grassIndices: countIndices(grassMeshes),
+        detailVertices: countEffectiveVertices(detailMeshes),
+        detailIndices: countEffectiveIndices(detailMeshes),
+        detailGeometryVertices: countVertices(detailMeshes),
+        detailGeometryIndices: countIndices(detailMeshes),
+        grassVertices: countEffectiveVertices(grassMeshes),
+        grassIndices: countEffectiveIndices(grassMeshes),
+        grassGeometryVertices: countVertices(grassMeshes),
+        grassGeometryIndices: countIndices(grassMeshes),
+        grassInstances: countThinInstances(grassMeshes),
         rockVertices: countVertices(rockMeshes),
         rockIndices: countIndices(rockMeshes),
       },

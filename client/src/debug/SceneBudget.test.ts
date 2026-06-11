@@ -13,5 +13,6 @@ test('scene budget bucket names group thin sources and npc instances', () => {
 
 test('scene budget bucket names keep existing terrain and proxy grouping', () => {
   expect(bucketName('chunk_grass_5_4')).toBe('chunk_grass_*');
+  expect(bucketName('terrain_grass_blades')).toBe('terrain_grass_blades');
   expect(bucketName('worldObject_pickProxy_10747')).toBe('worldObject_pickProxy_*');
 });

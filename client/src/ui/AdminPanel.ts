@@ -1074,6 +1074,7 @@ export class AdminPanel {
       this.metricCell('Detail attrs', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'groundDetailAttributes'))),
       this.metricCell('Detail verts', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'detailVertices'))),
       this.metricCell('Grass verts', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'grassVertices'))),
+      this.metricCell('Grass instances', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'grassInstances'))),
       this.metricCell('Client at', entry.clientAt === null ? '-' : new Date(entry.clientAt).toLocaleString()),
       this.metricCell('Server tick', entry.tick === null ? '-' : String(entry.tick)),
     );

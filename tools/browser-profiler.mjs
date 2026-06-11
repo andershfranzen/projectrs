@@ -69,9 +69,9 @@ class CdpClient {
   onMessage(raw) {
     const msg = JSON.parse(raw);
     if (msg.id && this.pending.has(msg.id)) {
-      const { resolve, reject } = this.pending.get(msg.id);
+      const { resolve, reject, method } = this.pending.get(msg.id);
       this.pending.delete(msg.id);
-      if (msg.error) reject(new Error(`${msg.error.message}: ${msg.error.data || ''}`));
+      if (msg.error) reject(new Error(`${method}: ${msg.error.message}: ${msg.error.data || ''}`));
       else resolve(msg.result || {});
       return;
     }
@@ -84,7 +84,7 @@ class CdpClient {
     this.nextId += 1;
     this.ws.send(JSON.stringify({ id, method, params }));
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { resolve, reject, method });
     });
   }
 
@@ -314,7 +314,9 @@ function formatBudgetRow(row) {
   const name = row.name || row.chunk || '<unnamed>';
   const vertices = row.vertices == null ? '' : `, ${formatCount(row.vertices)}v`;
   const indices = row.indices == null ? '' : `, ${formatCount(row.indices)}i`;
-  return `${name} (${formatCount(row.count)}x${vertices}${indices})`;
+  const instances = row.instances == null || row.instances === 0 ? '' : `, ${formatCount(row.instances)} inst`;
+  const effectiveVertices = row.effectiveVertices == null || row.effectiveVertices === row.vertices ? '' : `, ${formatCount(row.effectiveVertices)} eff-v`;
+  return `${name} (${formatCount(row.count)}x${vertices}${indices}${instances}${effectiveVertices})`;
 }
 
 function printBudgetRows(label, rows, limit = 5) {
@@ -482,7 +484,11 @@ async function main() {
   await cdp.send('Network.enable');
   await cdp.send('Page.enable');
   await cdp.send('Profiler.enable');
-  await cdp.send('Runtime.setAsyncCallStackDepth', { maxDepth: 32 });
+  try {
+    await cdp.send('Runtime.setAsyncCallStackDepth', { maxDepth: 32 });
+  } catch (error) {
+    console.warn(`[evilquest-profiler] Runtime async stack depth unavailable: ${error.message}`);
+  }
   await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: injectedProfiler });
   if (authToken && authUsername) {
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
