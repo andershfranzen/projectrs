@@ -43,6 +43,20 @@ To also create a zip of the newest profiler run after you type `quit`:
 .\tools\profile-windows-brave.ps1 -ZipLatest
 ```
 
+To test whether the Brave slowdown is tied to its default ANGLE/GPU backend,
+close Brave fully between runs and capture the same scene with forced backends:
+
+```powershell
+.\tools\profile-windows-brave.ps1 -ZipLatest
+.\tools\profile-windows-brave.ps1 -AngleBackend d3d11 -ZipLatest
+.\tools\profile-windows-brave.ps1 -AngleBackend gl -ZipLatest
+```
+
+If one forced backend is fast while the default run is slow, the issue is in
+Brave/Windows GPU backend selection rather than the game scene. The profiler
+records the command-line flags and `SystemInfo.getInfo()` GPU status in each
+run, so compare the run directories with `tools/compare-profiler-runs.mjs`.
+
 The helper runs `diagnose-profiler-run.mjs` on the newly-created capture before
 it zips anything. That writes `diagnosis.txt` and `diagnosis.json` into the run
 folder, so the zip includes the likely-cause summary alongside the raw profiler

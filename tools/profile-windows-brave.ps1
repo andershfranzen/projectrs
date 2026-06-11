@@ -3,6 +3,8 @@ param(
   [string]$BravePath = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
   [int]$Port = 9223,
   [int]$Seconds = 20,
+  [string]$AngleBackend = "",
+  [string[]]$ExtraBrowserArg = @(),
   [switch]$NoLaunch,
   [switch]$Autorun,
   [switch]$ZipLatest
@@ -49,18 +51,37 @@ try {
     throw "bun was not found in PATH. Run this from the same shell where Bun works."
   }
 
+  $validAngleBackends = @("d3d11", "d3d11on12", "d3d9", "gl", "vulkan", "swiftshader")
+  if ($AngleBackend -and $validAngleBackends -notcontains $AngleBackend) {
+    throw "Invalid -AngleBackend '$AngleBackend'. Expected one of: $($validAngleBackends -join ', ')"
+  }
+
   if (-not $NoLaunch) {
     if (-not (Test-Path $BravePath)) {
       throw "Brave was not found at '$BravePath'. Pass -BravePath with the installed brave.exe path."
     }
 
+    $browserArgs = @(
+      "--remote-debugging-port=$Port",
+      "--enable-precise-memory-info"
+    )
+    if ($AngleBackend) {
+      $browserArgs += "--use-angle=$AngleBackend"
+    }
+    if ($ExtraBrowserArg.Count -gt 0) {
+      $browserArgs += $ExtraBrowserArg
+    }
+    $browserArgs += $Url
+
     Write-Host "Starting Brave with DevTools port $Port..."
     Write-Host "If Brave was already running, close it fully first so the debugging flag is applied."
-    Start-Process -FilePath $BravePath -ArgumentList @(
-      "--remote-debugging-port=$Port",
-      "--enable-precise-memory-info",
-      $Url
-    )
+    if ($AngleBackend) {
+      Write-Host "Forcing ANGLE backend: $AngleBackend"
+    }
+    if ($ExtraBrowserArg.Count -gt 0) {
+      Write-Host "Extra browser args: $($ExtraBrowserArg -join ' ')"
+    }
+    Start-Process -FilePath $BravePath -ArgumentList $browserArgs
   } else {
     Write-Host "Using an already-running Brave/Chromium DevTools port $Port."
   }
