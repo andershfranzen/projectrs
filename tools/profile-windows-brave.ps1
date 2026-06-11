@@ -1,6 +1,8 @@
 param(
   [string]$Url = "https://evilquest.net/play",
   [string]$BravePath = "C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+  [string]$BrowserName = "Brave",
+  [string]$BrowserPath = "",
   [int]$Port = 9223,
   [int]$Seconds = 20,
   [string]$AngleBackend = "",
@@ -57,8 +59,9 @@ try {
   }
 
   if (-not $NoLaunch) {
-    if (-not (Test-Path $BravePath)) {
-      throw "Brave was not found at '$BravePath'. Pass -BravePath with the installed brave.exe path."
+    $launchPath = if ($BrowserPath) { $BrowserPath } else { $BravePath }
+    if (-not (Test-Path $launchPath)) {
+      throw "$BrowserName was not found at '$launchPath'. Pass -BrowserPath with the installed browser .exe path."
     }
 
     $browserArgs = @(
@@ -73,17 +76,17 @@ try {
     }
     $browserArgs += $Url
 
-    Write-Host "Starting Brave with DevTools port $Port..."
-    Write-Host "If Brave was already running, close it fully first so the debugging flag is applied."
+    Write-Host "Starting $BrowserName with DevTools port $Port..."
+    Write-Host "If $BrowserName was already running, close it fully first so the debugging flag is applied."
     if ($AngleBackend) {
       Write-Host "Forcing ANGLE backend: $AngleBackend"
     }
     if ($ExtraBrowserArg.Count -gt 0) {
       Write-Host "Extra browser args: $($ExtraBrowserArg -join ' ')"
     }
-    Start-Process -FilePath $BravePath -ArgumentList $browserArgs
+    Start-Process -FilePath $launchPath -ArgumentList $browserArgs
   } else {
-    Write-Host "Using an already-running Brave/Chromium DevTools port $Port."
+    Write-Host "Using an already-running $BrowserName/Chromium DevTools port $Port."
   }
 
   Wait-CdpPort -Port $Port
@@ -106,7 +109,7 @@ try {
 
     if (-not $Autorun) {
       Write-Host ""
-      Write-Host "Log in to EvilQuest in Brave, wait until the bad FPS is visible, then type 'capture' here."
+      Write-Host "Log in to EvilQuest in $BrowserName, wait until the FPS state is visible, then type 'capture' here."
       Write-Host "The profiler will attach to the existing tab and will not reload it."
       Write-Host "After the capture finishes, type 'quit' to return to PowerShell."
       Write-Host ""

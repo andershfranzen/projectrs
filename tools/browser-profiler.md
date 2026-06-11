@@ -36,6 +36,16 @@ shortest workflow is:
 If PowerShell blocks local scripts, run it as
 `powershell -ExecutionPolicy Bypass -File .\tools\profile-windows-brave.ps1`.
 
+To capture the same live scene across Chrome, Brave, and Edge on the same
+Windows machine:
+
+```powershell
+.\tools\profile-windows-browsers.ps1 -ZipLatest
+```
+
+That helper prompts you to close each browser, records one run per browser, then
+prints the same backend/FPS matrix used by the Brave backend test.
+
 Close Brave fully first, let the script start Brave with a DevTools port, log in
 to EvilQuest, wait until the bad FPS is visible, then type `capture` in the
 profiler terminal. After it writes the run, type `quit` to return to
