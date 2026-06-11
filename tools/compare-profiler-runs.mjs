@@ -387,7 +387,7 @@ function printComparisonHints(aRun, bRun) {
 
   const aPacing = framePacing(aRun);
   const bPacing = framePacing(bRun);
-  const stableLow = (fps, pacing) => (
+  const stableLow = (fps, pacing) => !!(
     fps != null
     && pacing
     && fps >= 27
