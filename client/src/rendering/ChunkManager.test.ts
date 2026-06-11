@@ -118,6 +118,22 @@ describe('terrain object shadow receivers', () => {
 });
 
 describe('placed object thin-instance grouping', () => {
+  test('batches static world-object visuals but keeps doors unique', () => {
+    const manager = Object.assign(Object.create(ChunkManager.prototype), {
+      modelAnimationGroups: new Map(),
+      assetRegistry: new Map(),
+    }) as any;
+    const basePlacement = {
+      position: { x: 1, y: 0, z: 2 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+    };
+
+    expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'sTree 1' })).toBe(true);
+    expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'wheat2' })).toBe(true);
+    expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'castleTruedoor' })).toBe(false);
+  });
+
   test('separates elevated scenery by storey height for indoor culling', () => {
     const firstFloorWall = placedObjectThinGroupKey('stone wall', 'elevated', 2.73);
     const upperWall = placedObjectThinGroupKey('stone wall', 'elevated', 5.49);

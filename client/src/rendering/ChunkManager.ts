@@ -13,7 +13,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB, worldAABBForMaterials } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { isGroundItemSpawnAssetId, isCropPlacedAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, createObjectShadowCaster, createWallEdgeShadowCaster, isLinearCasterCoveredByWallRuns, isLinearShadowAsset, objectShadowBounds, objectShadowFactorAt, wallShadowRunsFromEntries } from '@projectrs/shared';
+import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, createObjectShadowCaster, createWallEdgeShadowCaster, isLinearCasterCoveredByWallRuns, isLinearShadowAsset, objectShadowBounds, objectShadowFactorAt, wallShadowRunsFromEntries } from '@projectrs/shared';
 import { groundDetailFamily } from '@projectrs/shared';
 import { GroundDetailPluginMaterial } from './GroundDetailPlugin';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, DEFAULT_CUT_ANGLE, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, waterFlowUvFromTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
@@ -46,6 +46,7 @@ const ROOF_REVEAL_NEARBY_TILE_PADDING = 2;
 const ROOF_REVEAL_OBJECT_LAYER_BELOW_TOLERANCE = 0.75;
 const ROOF_REVEAL_TEXTURE_PLANE_BBOX_PADDING = 10;
 const STALL_FRAME_MATERIAL_NAMES = new Set(['material.001', 'material.002', 'material.003']);
+const DOOR_OBJECT_DEF_ID = 13;
 
 export function isRoofLikePlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
@@ -4108,11 +4109,17 @@ export class ChunkManager {
     return true;
   }
 
-  private canBatchCropVisual(obj: PlacedObject): boolean {
-    if (!isCropPlacedAssetId(obj.assetId)) return false;
+  private canBatchPlacedObjectVisual(obj: PlacedObject): boolean {
+    const objectDefId = objectDefIdForPlacedAsset(obj.assetId);
+    if (objectDefId == null) return false;
+    if (objectDefId === DOOR_OBJECT_DEF_ID) return false;
     if (this.modelAnimationGroups.has(obj.assetId)) return false;
     if (this.isRoofLikeAsset(obj.assetId)) return false;
     if (this.isAlphaBlendAsset(obj.assetId)) return false;
+    // Door-like decorative frames can share names with interactable objects.
+    // Keep any door-named asset unique so pick metadata and door pivots remain
+    // tied to the actual transform hierarchy.
+    if (obj.assetId.toLowerCase().includes('door')) return false;
     return true;
   }
 
@@ -4542,8 +4549,8 @@ export class ChunkManager {
       return true;
     };
 
-    // Split into thin-instanceable static scenery vs regular interactable,
-    // animated, door, and stair hierarchies.
+    // Split into thin-instanceable static scenery, batched world-object
+    // visuals with placeholder roots, and regular animated/door hierarchies.
     // Need to load templates first so canThinInstance can check for animations.
     const templateAssetIds = new Set<string>();
     for (const obj of renderableObjects) {
@@ -4572,16 +4579,16 @@ export class ChunkManager {
     type ThinGroup = { assetId: string; visibility: 'ground' | 'elevated' | 'roof'; placements: PlacedObject[] };
     const regularObjects: PlacedObject[] = [];
     const thinGroups = new Map<string, ThinGroup>();
-    const cropVisualGroups = new Map<string, ThinGroup>();
+    const batchedVisualGroups = new Map<string, ThinGroup>();
     for (const obj of renderableObjects) {
       if (!this.loadedModelCache.get(obj.assetId)) continue;
-      if (this.canBatchCropVisual(obj)) {
+      if (this.canBatchPlacedObjectVisual(obj)) {
         const visibility = this.getThinVisibilityClass(obj);
         const groupKey = placedObjectThinGroupKey(obj.assetId, visibility, obj.position.y);
-        let group = cropVisualGroups.get(groupKey);
+        let group = batchedVisualGroups.get(groupKey);
         if (!group) {
           group = { assetId: obj.assetId, visibility, placements: [] };
-          cropVisualGroups.set(groupKey, group);
+          batchedVisualGroups.set(groupKey, group);
         }
         group.placements.push(obj);
       } else if (this.canThinInstance(obj)) {
@@ -4653,12 +4660,12 @@ export class ChunkManager {
     const _tmpMatrix = Matrix.Identity();
     const _placementMatrix = Matrix.Identity();
     let placedNodeIndex = 0;
-    const cropPlaceholderByObject = new Map<PlacedObject, TransformNode>();
+    const batchedPlaceholderByObject = new Map<PlacedObject, TransformNode>();
 
-    for (const { placements } of cropVisualGroups.values()) {
+    for (const { placements } of batchedVisualGroups.values()) {
       for (const obj of placements) {
         const root = this.createPlacedObjectPlaceholder(chunkKey, placedNodeIndex++, obj);
-        cropPlaceholderByObject.set(obj, root);
+        batchedPlaceholderByObject.set(obj, root);
         this.addPlacedObjectNode(root, obj, nodes);
         await this.yieldIfFrameBudgetSpent(workSlice);
         if (abortPartialLoadIfStopped()) return;
@@ -4679,7 +4686,7 @@ export class ChunkManager {
         : null;
 
       for (const { sourceMesh, baseMatrix } of baseEntries) {
-        const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null)!;
+        const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null, true)!;
         src.parent = null;
         src.position.set(0, 0, 0);
         src.rotation.set(0, 0, 0);
@@ -4736,16 +4743,16 @@ export class ChunkManager {
       }
     }
 
-    for (const { assetId, placements } of cropVisualGroups.values()) {
+    for (const { assetId, placements } of batchedVisualGroups.values()) {
       const template = this.loadedModelCache.get(assetId)!;
       const baseEntries = this.getTemplateBaseMatrices(assetId, template);
       if (baseEntries.length === 0) continue;
 
       const scaleBoost = this.getPlacedObjectScaleBoost(assetId);
-      const placeholders = placements.map(obj => cropPlaceholderByObject.get(obj) ?? null);
+      const placeholders = placements.map(obj => batchedPlaceholderByObject.get(obj) ?? null);
 
       for (const { sourceMesh, baseMatrix } of baseEntries) {
-        const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null)!;
+        const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null, true)!;
         src.parent = null;
         src.position.set(0, 0, 0);
         src.rotation.set(0, 0, 0);
