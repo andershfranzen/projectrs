@@ -16,14 +16,18 @@ function bucketName(name: string | undefined): string {
     .slice(0, 56);
 }
 
-function grouped(meshes: readonly AbstractMesh[], limit = 30): Array<{ name: string; count: number }> {
-  const counts = new Map<string, number>();
+function grouped(meshes: readonly AbstractMesh[], limit = 30): Array<{ name: string; count: number; vertices: number; indices: number }> {
+  const counts = new Map<string, { count: number; vertices: number; indices: number }>();
   for (const mesh of meshes) {
     const key = bucketName(mesh.name);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    const prev = counts.get(key) ?? { count: 0, vertices: 0, indices: 0 };
+    prev.count++;
+    prev.vertices += mesh.getTotalVertices?.() ?? 0;
+    prev.indices += mesh.getTotalIndices?.() ?? 0;
+    counts.set(key, prev);
   }
-  return Array.from(counts, ([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count)
+  return Array.from(counts, ([name, value]) => ({ name, ...value }))
+    .sort((a, b) => b.vertices - a.vertices || b.indices - a.indices || b.count - a.count)
     .slice(0, limit);
 }
 

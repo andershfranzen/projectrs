@@ -59,7 +59,7 @@ import { CharacterCreator } from '../ui/CharacterCreator';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick } from '../ui/popupStyle';
-import { logSceneBudget } from '../debug/SceneBudget';
+import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
@@ -1412,6 +1412,7 @@ export class GameManager {
     const countIndices = (items: typeof meshes): number => items.reduce((sum, mesh) => sum + mesh.getTotalIndices(), 0);
     const browser = this.getBrowserDiagnostics();
     const webgl = this.getWebGlDiagnostics();
+    const sceneBudget = buildSceneBudget(this.scene);
 
     return {
       measuredFps: sample ? Math.round(sample.fps * 10) / 10 : null,
@@ -1453,6 +1454,7 @@ export class GameManager {
         rockVertices: countVertices(rockMeshes),
         rockIndices: countIndices(rockMeshes),
       },
+      sceneBudget,
       diagnosticFlags: this.getPerformanceDiagnosticFlags(webgl, browser, canvas),
       browser,
       webgl,
