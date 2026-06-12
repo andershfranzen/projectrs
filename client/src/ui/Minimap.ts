@@ -52,6 +52,11 @@ const VIEW_RADIUS = 22;
 // Render buffer matches displaySize 1:1 for crisp pixels. Keep this in sync
 // with the displaySize passed to `new Minimap(...)` in GameManager.
 const RENDER_SIZE = 260;
+// Rows of the offscreen terrain raster to render per frame while a rebuild is
+// in flight. The full per-pixel pass is ~12ms in one frame; spreading it over
+// ~RENDER_SIZE/this many frames keeps each frame well under budget so stepping
+// onto a new tile no longer spikes the framerate.
+const MINIMAP_REBUILD_ROWS_PER_FRAME = 48;
 const COMPASS_SIZE = 72;
 const COMPASS_RADIUS = 30;
 const PLAYER_ARROW_TURN_RATE = Math.PI * 2.5;
@@ -96,6 +101,17 @@ export class Minimap {
   private cachedFloorZ: number = Number.NaN;
   private cachedStartX: number = 0;
   private cachedStartZ: number = 0;
+
+  // Amortized terrain rebuild state. `rebuildRow` is the next offscreen row to
+  // raster (null = no rebuild in flight). The previously-completed offscreen
+  // keeps displaying until the new one finishes, so the minimap never shows a
+  // half-rendered frame and stepping onto a new tile costs ~2ms/frame instead
+  // of one ~12ms spike.
+  private rebuildRow: number | null = null;
+  private rebuildStartX: number = 0;
+  private rebuildStartZ: number = 0;
+  private rebuildQuery: ReturnType<ChunkManager['getTilesForMinimap']> | null = null;
+  private hasRenderedTerrain: boolean = false;
 
   private tileColorBuf: Uint8Array;
   private heightBuf: Float32Array;
@@ -247,6 +263,10 @@ export class Minimap {
   invalidateTileCache(): void {
     this.cachedFloorX = Number.NaN;
     this.cachedFloorZ = Number.NaN;
+    // Force the next rebuild to run in one frame so an explicit invalidation
+    // (map change / terrain edit) never briefly shows the stale raster while it
+    // amortizes. Per-tile movement doesn't invalidate, so it stays amortized.
+    this.hasRenderedTerrain = false;
   }
 
   setDestination(worldX: number, worldZ: number): void {
@@ -325,239 +345,18 @@ export class Minimap {
     if (floorX !== this.cachedFloorX || floorZ !== this.cachedFloorZ) {
       this.cachedFloorX = floorX;
       this.cachedFloorZ = floorZ;
-      startX = floorX;
-      startZ = floorZ;
-      this.cachedStartX = startX;
-      this.cachedStartZ = startZ;
-
-      const queried = chunkManager.getTilesForMinimap(playerX, playerZ, VIEW_RADIUS);
-      const tiles = queried.tiles;
-      const grounds = queried.grounds;
-      const walls = queried.walls;
-      const roofs = queried.roofs;
-      const textured = queried.textured;
-      const voidTiles = queried.voidTiles;
-      const overrideColors = queried.overrideColors;
-      const hasOverride = queried.hasOverride;
-      const tcBuf = this.tileColorBuf;
-
-      const clamp = (v: number) => v < 0 ? 0 : v > 255 ? 255 : v | 0;
-      const tileHash = (x: number, z: number): number => {
-        const h = (x * 73856093) ^ (z * 19349663);
-        return ((h & 0xff) / 255) * 6 - 3;
-      };
-
-      // Pre-fetch vertex heights into a grid for per-pixel hillshading
-      const hGridW = tileSize + 1;
-      const heights = this.heightBuf;
-      for (let vz = 0; vz < hGridW; vz++) {
-        for (let vx = 0; vx < hGridW; vx++) {
-          heights[vz * hGridW + vx] = chunkManager.getVertexHeight(startX + vx, startZ + vz);
-        }
-      }
-
-      // Pass 1: base color per tile (tile type + subtle noise, NO height shading)
-      for (let dz = 0; dz < tileSize; dz++) {
-        for (let dx = 0; dx < tileSize; dx++) {
-          const tIdx = dz * tileSize + dx;
-          const cIdx = tIdx * 4;
-
-          if (voidTiles[tIdx]) {
-            tcBuf[cIdx] = 0; tcBuf[cIdx + 1] = 0; tcBuf[cIdx + 2] = 0; tcBuf[cIdx + 3] = 255;
-            continue;
-          }
-
-          const tileType = tiles[tIdx];
-
-          const wallMask = walls[tIdx];
-          const isCollision = tileType === TileType.WALL
-            || (wallMask & 5) === 5    // N+S opposing walls (thick wall interior)
-            || (wallMask & 10) === 10; // E+W opposing walls
-
-          const isRoofed = !isCollision && roofs[tIdx] === 1;
-          const isTextured = !isCollision && textured[tIdx] === 1;
-          // Color priority (low → high): tile-type fallback → per-GroundType
-          // (distinguishes sand/drysand/desert + stone/sandstone/rock) →
-          // FLOOR_COLOR → sampled override → roof → collision-darkened.
-          // WATER and MUD short-circuit to the TileType colour: lakes keep
-          // their underlying 'grass' ground, and the editor's "Mud" swatch
-          // may sit on the 'water' GroundType — without the gate, painted-
-          // water tiles paint as that blue and look identical to real water.
-          const groundId = grounds[tIdx];
-          const fallback = TILE_COLORS[tileType] ?? TILE_COLORS[TileType.GRASS];
-          const useTileColor = tileType === TileType.WATER
-            || tileType === TileType.MUD
-            || groundId === GROUND_TYPE_NONE;
-          let base: [number, number, number] = useTileColor
-            ? fallback
-            : (GROUND_COLORS[groundId] ?? fallback);
-          if (isTextured) base = FLOOR_COLOR;
-          if (hasOverride[tIdx] === 1) {
-            const oOff = tIdx * 3;
-            base = [overrideColors[oOff], overrideColors[oOff + 1], overrideColors[oOff + 2]];
-          }
-          if (isRoofed) base = ROOF_COLOR;
-          if (isCollision) base = [(base[0] * 0.55) | 0, (base[1] * 0.55) | 0, (base[2] * 0.55) | 0];
-          const wx = startX + dx;
-          const wz = startZ + dz;
-          const noise = tileHash(wx, wz);
-
-          if (tileType === TileType.WATER) {
-            const wn = tileHash(wx * 3, wz * 7);
-            tcBuf[cIdx]     = clamp(base[0] + wn * 0.5);
-            tcBuf[cIdx + 1] = clamp(base[1] + wn * 0.3);
-            tcBuf[cIdx + 2] = clamp(base[2] + wn * 0.2);
-          } else {
-            tcBuf[cIdx]     = clamp(base[0] + noise);
-            tcBuf[cIdx + 1] = clamp(base[1] + noise);
-            tcBuf[cIdx + 2] = clamp(base[2] + noise);
-          }
-          tcBuf[cIdx + 3] = 255;
-        }
-      }
-
-      // Flatten vertex heights around collision tiles so hillshade doesn't create visible blocks
-      for (let dz = 0; dz < tileSize; dz++) {
-        for (let dx = 0; dx < tileSize; dx++) {
-          const tIdx = dz * tileSize + dx;
-          if (voidTiles[tIdx]) continue;
-          const tileType = tiles[tIdx];
-          const wallMask = walls[tIdx];
-          if (tileType === TileType.WALL
-            || (wallMask & 5) === 5
-            || (wallMask & 10) === 10
-          ) {
-            let sum = 0, cnt = 0;
-            for (let nz = -1; nz <= 1; nz++) {
-              for (let nx = -1; nx <= 1; nx++) {
-                const ndx = dx + nx, ndz = dz + nz;
-                if (ndx < 0 || ndx >= tileSize || ndz < 0 || ndz >= tileSize) continue;
-                const nIdx = ndz * tileSize + ndx;
-                const nt = tiles[nIdx];
-                const nw = walls[nIdx];
-                if (nt !== TileType.WALL && (nw & 5) !== 5 && (nw & 10) !== 10) {
-                  sum += heights[ndz * hGridW + ndx];
-                  cnt++;
-                }
-              }
-            }
-            const avg = cnt > 0 ? sum / cnt : 0;
-            heights[dz * hGridW + dx] = avg;
-            heights[dz * hGridW + dx + 1] = avg;
-            heights[(dz + 1) * hGridW + dx] = avg;
-            heights[(dz + 1) * hGridW + dx + 1] = avg;
-          }
-        }
-      }
-
-      // Pass 2: per-pixel render — bilinear color blend + continuous hillshade
-      const data = this.imageData.data;
-      data.fill(0);
-
-      const getTileColor = (tx: number, tz: number): number => {
-        if (tx < 0 || tx >= tileSize || tz < 0 || tz >= tileSize) return -1;
-        const idx = (tz * tileSize + tx) * 4;
-        if (tcBuf[idx + 3] === 0) return -1;
-        return idx;
-      };
-
-      for (let py = 0; py < RENDER_SIZE; py++) {
-        // Color interpolation coordinates (centered on tiles)
-        const colorFtZ = py / pxPerTile - 0.5;
-        const cTz0 = Math.floor(colorFtZ);
-        const cTz1 = cTz0 + 1;
-        const cFz = colorFtZ - cTz0;
-
-        // Height grid coordinates (pixel position in tile-space)
-        const htZ = py / pxPerTile;
-        const hTz = Math.floor(htZ);
-        const hFz = htZ - hTz;
-        const hTzClamped = hTz < 0 ? 0 : hTz >= tileSize ? tileSize - 1 : hTz;
-
-        for (let px = 0; px < RENDER_SIZE; px++) {
-          const colorFtX = px / pxPerTile - 0.5;
-          const cTx0 = Math.floor(colorFtX);
-          const cTx1 = cTx0 + 1;
-          const cFx = colorFtX - cTx0;
-
-          // Bilinear color blend from 4 nearest tile centers
-          const i00 = getTileColor(cTx0, cTz0);
-          const i10 = getTileColor(cTx1, cTz0);
-          const i01 = getTileColor(cTx0, cTz1);
-          const i11 = getTileColor(cTx1, cTz1);
-
-          let r = 0, g = 0, b = 0, tw = 0;
-          if (i00 >= 0) { const w = (1 - cFx) * (1 - cFz); r += tcBuf[i00] * w; g += tcBuf[i00 + 1] * w; b += tcBuf[i00 + 2] * w; tw += w; }
-          if (i10 >= 0) { const w = cFx * (1 - cFz);       r += tcBuf[i10] * w; g += tcBuf[i10 + 1] * w; b += tcBuf[i10 + 2] * w; tw += w; }
-          if (i01 >= 0) { const w = (1 - cFx) * cFz;       r += tcBuf[i01] * w; g += tcBuf[i01 + 1] * w; b += tcBuf[i01 + 2] * w; tw += w; }
-          if (i11 >= 0) { const w = cFx * cFz;             r += tcBuf[i11] * w; g += tcBuf[i11 + 1] * w; b += tcBuf[i11 + 2] * w; tw += w; }
-
-          if (tw <= 0) continue;
-
-          const inv = 1 / tw;
-          r *= inv; g *= inv; b *= inv;
-
-          // Skip hillshade for water tiles
-          const nearTx = Math.round(px / pxPerTile - 0.5);
-          const nearTz = Math.round(py / pxPerTile - 0.5);
-          const isWater = nearTx >= 0 && nearTx < tileSize && nearTz >= 0 && nearTz < tileSize
-            && tiles[nearTz * tileSize + nearTx] === TileType.WATER;
-
-          let hillshade = 0;
-          if (!isWater) {
-            const htX = px / pxPerTile;
-            const hTx = Math.floor(htX);
-            const hFx = htX - hTx;
-            const hTxClamped = hTx < 0 ? 0 : hTx >= tileSize ? tileSize - 1 : hTx;
-
-            const h00 = heights[hTzClamped * hGridW + hTxClamped];
-            const h10 = heights[hTzClamped * hGridW + hTxClamped + 1];
-            const h01 = heights[(hTzClamped + 1) * hGridW + hTxClamped];
-            const h11 = heights[(hTzClamped + 1) * hGridW + hTxClamped + 1];
-
-            const dhdx = (h10 - h00) * (1 - hFz) + (h11 - h01) * hFz;
-            const dhdz = (h01 - h00) * (1 - hFx) + (h11 - h10) * hFx;
-
-            hillshade = (-dhdx * 0.7 - dhdz * 0.7) * 30;
-          }
-
-          const pidx = (py * RENDER_SIZE + px) * 4;
-          data[pidx]     = clamp(r + hillshade);
-          data[pidx + 1] = clamp(g + hillshade);
-          data[pidx + 2] = clamp(b + hillshade);
-          data[pidx + 3] = 255;
-        }
-      }
-
-      // Pass 3: wall lines (cream/white, RS2 style)
-      const wallThick = Math.max(1, (pxPerTile * 0.22) | 0);
-      for (let dz = 0; dz < tileSize; dz++) {
-        for (let dx = 0; dx < tileSize; dx++) {
-          const mask = walls[dz * tileSize + dx];
-          if (!mask) continue;
-          if (tiles[dz * tileSize + dx] === TileType.WALL) continue;
-          if ((mask & 5) === 5 || (mask & 10) === 10) continue;
-          const px0 = (dx * pxPerTile) | 0;
-          const pz0 = (dz * pxPerTile) | 0;
-          const px1 = ((dx + 1) * pxPerTile) | 0;
-          const pz1 = ((dz + 1) * pxPerTile) | 0;
-          const setW = (x: number, z: number) => {
-            if (x < 0 || x >= RENDER_SIZE || z < 0 || z >= RENDER_SIZE) return;
-            const idx = (z * RENDER_SIZE + x) * 4;
-            data[idx] = 0xdc; data[idx + 1] = 0xd8; data[idx + 2] = 0xc8; data[idx + 3] = 255;
-          };
-          if (mask & WallEdge.N) for (let t = 0; t < wallThick; t++) for (let x = px0; x < px1; x++) setW(x, pz0 + t);
-          if (mask & WallEdge.S) for (let t = 0; t < wallThick; t++) for (let x = px0; x < px1; x++) setW(x, pz1 - 1 - t);
-          if (mask & WallEdge.W) for (let t = 0; t < wallThick; t++) for (let z = pz0; z < pz1; z++) setW(px0 + t, z);
-          if (mask & WallEdge.E) for (let t = 0; t < wallThick; t++) for (let z = pz0; z < pz1; z++) setW(px1 - 1 - t, z);
-        }
-      }
-
-      this.offCtx.putImageData(this.imageData, 0, 0);
-    } else {
-      startX = this.cachedStartX;
-      startZ = this.cachedStartZ;
+      this.beginTerrainRebuild(playerX, playerZ, chunkManager);
     }
+    if (this.rebuildRow !== null) {
+      // First terrain build runs in one frame so the minimap never shows a
+      // blank; later rebuilds spread across frames so stepping onto a new tile
+      // doesn't spike the frame with a full per-pixel re-raster. The previously
+      // completed offscreen keeps displaying (via cachedStartX/Z, which only
+      // advance when the new raster finishes), so there is never a torn frame.
+      this.stepTerrainRebuild(this.hasRenderedTerrain ? MINIMAP_REBUILD_ROWS_PER_FRAME : RENDER_SIZE);
+    }
+    startX = this.cachedStartX;
+    startZ = this.cachedStartZ;
 
     const scale = pxPerTile;
     const center = RENDER_SIZE / 2;
@@ -659,6 +458,270 @@ export class Minimap {
     ctx.restore();
 
     this.drawCompass(cameraAlpha);
+  }
+
+  /** Start an amortized terrain re-raster for a new view origin. Runs the cheap
+   *  passes synchronously (tile colors + height flatten) and arms the per-pixel
+   *  pass to run across the next frames via stepTerrainRebuild(). Does NOT touch
+   *  cachedStartX/Z — the previously completed offscreen keeps displaying until
+   *  the new one finishes, so the minimap never shows a half-rendered frame. */
+  private beginTerrainRebuild(playerX: number, playerZ: number, chunkManager: ChunkManager): void {
+    const tileSize = this.tileSize;
+    const startX = Math.floor(playerX) - VIEW_RADIUS;
+    const startZ = Math.floor(playerZ) - VIEW_RADIUS;
+    this.rebuildStartX = startX;
+    this.rebuildStartZ = startZ;
+
+    const queried = chunkManager.getTilesForMinimap(playerX, playerZ, VIEW_RADIUS);
+    this.rebuildQuery = queried;
+    const tiles = queried.tiles;
+    const grounds = queried.grounds;
+    const walls = queried.walls;
+    const roofs = queried.roofs;
+    const textured = queried.textured;
+    const voidTiles = queried.voidTiles;
+    const overrideColors = queried.overrideColors;
+    const hasOverride = queried.hasOverride;
+    const tcBuf = this.tileColorBuf;
+
+    const clamp = (v: number) => v < 0 ? 0 : v > 255 ? 255 : v | 0;
+    const tileHash = (x: number, z: number): number => {
+      const h = (x * 73856093) ^ (z * 19349663);
+      return ((h & 0xff) / 255) * 6 - 3;
+    };
+
+    // Pre-fetch vertex heights into a grid for per-pixel hillshading
+    const hGridW = tileSize + 1;
+    const heights = this.heightBuf;
+    for (let vz = 0; vz < hGridW; vz++) {
+      for (let vx = 0; vx < hGridW; vx++) {
+        heights[vz * hGridW + vx] = chunkManager.getVertexHeight(startX + vx, startZ + vz);
+      }
+    }
+
+    // Pass 1: base color per tile (tile type + subtle noise, NO height shading)
+    for (let dz = 0; dz < tileSize; dz++) {
+      for (let dx = 0; dx < tileSize; dx++) {
+        const tIdx = dz * tileSize + dx;
+        const cIdx = tIdx * 4;
+
+        if (voidTiles[tIdx]) {
+          tcBuf[cIdx] = 0; tcBuf[cIdx + 1] = 0; tcBuf[cIdx + 2] = 0; tcBuf[cIdx + 3] = 255;
+          continue;
+        }
+
+        const tileType = tiles[tIdx];
+
+        const wallMask = walls[tIdx];
+        const isCollision = tileType === TileType.WALL
+          || (wallMask & 5) === 5    // N+S opposing walls (thick wall interior)
+          || (wallMask & 10) === 10; // E+W opposing walls
+
+        const isRoofed = !isCollision && roofs[tIdx] === 1;
+        const isTextured = !isCollision && textured[tIdx] === 1;
+        // Color priority (low → high): tile-type fallback → per-GroundType
+        // (distinguishes sand/drysand/desert + stone/sandstone/rock) →
+        // FLOOR_COLOR → sampled override → roof → collision-darkened.
+        // WATER and MUD short-circuit to the TileType colour: lakes keep
+        // their underlying 'grass' ground, and the editor's "Mud" swatch
+        // may sit on the 'water' GroundType — without the gate, painted-
+        // water tiles paint as that blue and look identical to real water.
+        const groundId = grounds[tIdx];
+        const fallback = TILE_COLORS[tileType] ?? TILE_COLORS[TileType.GRASS];
+        const useTileColor = tileType === TileType.WATER
+          || tileType === TileType.MUD
+          || groundId === GROUND_TYPE_NONE;
+        let base: [number, number, number] = useTileColor
+          ? fallback
+          : (GROUND_COLORS[groundId] ?? fallback);
+        if (isTextured) base = FLOOR_COLOR;
+        if (hasOverride[tIdx] === 1) {
+          const oOff = tIdx * 3;
+          base = [overrideColors[oOff], overrideColors[oOff + 1], overrideColors[oOff + 2]];
+        }
+        if (isRoofed) base = ROOF_COLOR;
+        if (isCollision) base = [(base[0] * 0.55) | 0, (base[1] * 0.55) | 0, (base[2] * 0.55) | 0];
+        const wx = startX + dx;
+        const wz = startZ + dz;
+        const noise = tileHash(wx, wz);
+
+        if (tileType === TileType.WATER) {
+          const wn = tileHash(wx * 3, wz * 7);
+          tcBuf[cIdx]     = clamp(base[0] + wn * 0.5);
+          tcBuf[cIdx + 1] = clamp(base[1] + wn * 0.3);
+          tcBuf[cIdx + 2] = clamp(base[2] + wn * 0.2);
+        } else {
+          tcBuf[cIdx]     = clamp(base[0] + noise);
+          tcBuf[cIdx + 1] = clamp(base[1] + noise);
+          tcBuf[cIdx + 2] = clamp(base[2] + noise);
+        }
+        tcBuf[cIdx + 3] = 255;
+      }
+    }
+
+    // Flatten vertex heights around collision tiles so hillshade doesn't create visible blocks
+    for (let dz = 0; dz < tileSize; dz++) {
+      for (let dx = 0; dx < tileSize; dx++) {
+        const tIdx = dz * tileSize + dx;
+        if (voidTiles[tIdx]) continue;
+        const tileType = tiles[tIdx];
+        const wallMask = walls[tIdx];
+        if (tileType === TileType.WALL
+          || (wallMask & 5) === 5
+          || (wallMask & 10) === 10
+        ) {
+          let sum = 0, cnt = 0;
+          for (let nz = -1; nz <= 1; nz++) {
+            for (let nx = -1; nx <= 1; nx++) {
+              const ndx = dx + nx, ndz = dz + nz;
+              if (ndx < 0 || ndx >= tileSize || ndz < 0 || ndz >= tileSize) continue;
+              const nIdx = ndz * tileSize + ndx;
+              const nt = tiles[nIdx];
+              const nw = walls[nIdx];
+              if (nt !== TileType.WALL && (nw & 5) !== 5 && (nw & 10) !== 10) {
+                sum += heights[ndz * hGridW + ndx];
+                cnt++;
+              }
+            }
+          }
+          const avg = cnt > 0 ? sum / cnt : 0;
+          heights[dz * hGridW + dx] = avg;
+          heights[dz * hGridW + dx + 1] = avg;
+          heights[(dz + 1) * hGridW + dx] = avg;
+          heights[(dz + 1) * hGridW + dx + 1] = avg;
+        }
+      }
+    }
+
+    this.imageData.data.fill(0);
+    this.rebuildRow = 0;
+  }
+
+  /** Raster up to `maxRows` rows of the offscreen terrain this frame (Pass 2:
+   *  bilinear color + hillshade). When the last row finishes, draws the wall
+   *  lines (Pass 3), blits to the offscreen, and swaps the display origin to the
+   *  just-built raster. */
+  private stepTerrainRebuild(maxRows: number): void {
+    if (this.rebuildRow === null || this.rebuildQuery === null) return;
+    const tileSize = this.tileSize;
+    const pxPerTile = RENDER_SIZE / tileSize;
+    const hGridW = tileSize + 1;
+    const tcBuf = this.tileColorBuf;
+    const heights = this.heightBuf;
+    const tiles = this.rebuildQuery.tiles;
+    const data = this.imageData.data;
+    const clamp = (v: number) => v < 0 ? 0 : v > 255 ? 255 : v | 0;
+    const getTileColor = (tx: number, tz: number): number => {
+      if (tx < 0 || tx >= tileSize || tz < 0 || tz >= tileSize) return -1;
+      const idx = (tz * tileSize + tx) * 4;
+      if (tcBuf[idx + 3] === 0) return -1;
+      return idx;
+    };
+
+    const rowStart = this.rebuildRow;
+    const rowEnd = Math.min(RENDER_SIZE, rowStart + maxRows);
+    for (let py = rowStart; py < rowEnd; py++) {
+      // Color interpolation coordinates (centered on tiles)
+      const colorFtZ = py / pxPerTile - 0.5;
+      const cTz0 = Math.floor(colorFtZ);
+      const cTz1 = cTz0 + 1;
+      const cFz = colorFtZ - cTz0;
+
+      // Height grid coordinates (pixel position in tile-space)
+      const htZ = py / pxPerTile;
+      const hTz = Math.floor(htZ);
+      const hFz = htZ - hTz;
+      const hTzClamped = hTz < 0 ? 0 : hTz >= tileSize ? tileSize - 1 : hTz;
+
+      for (let px = 0; px < RENDER_SIZE; px++) {
+        const colorFtX = px / pxPerTile - 0.5;
+        const cTx0 = Math.floor(colorFtX);
+        const cTx1 = cTx0 + 1;
+        const cFx = colorFtX - cTx0;
+
+        // Bilinear color blend from 4 nearest tile centers
+        const i00 = getTileColor(cTx0, cTz0);
+        const i10 = getTileColor(cTx1, cTz0);
+        const i01 = getTileColor(cTx0, cTz1);
+        const i11 = getTileColor(cTx1, cTz1);
+
+        let r = 0, g = 0, b = 0, tw = 0;
+        if (i00 >= 0) { const w = (1 - cFx) * (1 - cFz); r += tcBuf[i00] * w; g += tcBuf[i00 + 1] * w; b += tcBuf[i00 + 2] * w; tw += w; }
+        if (i10 >= 0) { const w = cFx * (1 - cFz);       r += tcBuf[i10] * w; g += tcBuf[i10 + 1] * w; b += tcBuf[i10 + 2] * w; tw += w; }
+        if (i01 >= 0) { const w = (1 - cFx) * cFz;       r += tcBuf[i01] * w; g += tcBuf[i01 + 1] * w; b += tcBuf[i01 + 2] * w; tw += w; }
+        if (i11 >= 0) { const w = cFx * cFz;             r += tcBuf[i11] * w; g += tcBuf[i11 + 1] * w; b += tcBuf[i11 + 2] * w; tw += w; }
+
+        if (tw <= 0) continue;
+
+        const inv = 1 / tw;
+        r *= inv; g *= inv; b *= inv;
+
+        // Skip hillshade for water tiles
+        const nearTx = Math.round(px / pxPerTile - 0.5);
+        const nearTz = Math.round(py / pxPerTile - 0.5);
+        const isWater = nearTx >= 0 && nearTx < tileSize && nearTz >= 0 && nearTz < tileSize
+          && tiles[nearTz * tileSize + nearTx] === TileType.WATER;
+
+        let hillshade = 0;
+        if (!isWater) {
+          const htX = px / pxPerTile;
+          const hTx = Math.floor(htX);
+          const hFx = htX - hTx;
+          const hTxClamped = hTx < 0 ? 0 : hTx >= tileSize ? tileSize - 1 : hTx;
+
+          const h00 = heights[hTzClamped * hGridW + hTxClamped];
+          const h10 = heights[hTzClamped * hGridW + hTxClamped + 1];
+          const h01 = heights[(hTzClamped + 1) * hGridW + hTxClamped];
+          const h11 = heights[(hTzClamped + 1) * hGridW + hTxClamped + 1];
+
+          const dhdx = (h10 - h00) * (1 - hFz) + (h11 - h01) * hFz;
+          const dhdz = (h01 - h00) * (1 - hFx) + (h11 - h10) * hFx;
+
+          hillshade = (-dhdx * 0.7 - dhdz * 0.7) * 30;
+        }
+
+        const pidx = (py * RENDER_SIZE + px) * 4;
+        data[pidx]     = clamp(r + hillshade);
+        data[pidx + 1] = clamp(g + hillshade);
+        data[pidx + 2] = clamp(b + hillshade);
+        data[pidx + 3] = 255;
+      }
+    }
+
+    this.rebuildRow = rowEnd;
+    if (rowEnd < RENDER_SIZE) return;
+
+    // Pass 3: wall lines (cream/white, RS2 style)
+    const walls = this.rebuildQuery.walls;
+    const wallThick = Math.max(1, (pxPerTile * 0.22) | 0);
+    for (let dz = 0; dz < tileSize; dz++) {
+      for (let dx = 0; dx < tileSize; dx++) {
+        const mask = walls[dz * tileSize + dx];
+        if (!mask) continue;
+        if (tiles[dz * tileSize + dx] === TileType.WALL) continue;
+        if ((mask & 5) === 5 || (mask & 10) === 10) continue;
+        const px0 = (dx * pxPerTile) | 0;
+        const pz0 = (dz * pxPerTile) | 0;
+        const px1 = ((dx + 1) * pxPerTile) | 0;
+        const pz1 = ((dz + 1) * pxPerTile) | 0;
+        const setW = (x: number, z: number) => {
+          if (x < 0 || x >= RENDER_SIZE || z < 0 || z >= RENDER_SIZE) return;
+          const idx = (z * RENDER_SIZE + x) * 4;
+          data[idx] = 0xdc; data[idx + 1] = 0xd8; data[idx + 2] = 0xc8; data[idx + 3] = 255;
+        };
+        if (mask & WallEdge.N) for (let t = 0; t < wallThick; t++) for (let x = px0; x < px1; x++) setW(x, pz0 + t);
+        if (mask & WallEdge.S) for (let t = 0; t < wallThick; t++) for (let x = px0; x < px1; x++) setW(x, pz1 - 1 - t);
+        if (mask & WallEdge.W) for (let t = 0; t < wallThick; t++) for (let z = pz0; z < pz1; z++) setW(px0 + t, z);
+        if (mask & WallEdge.E) for (let t = 0; t < wallThick; t++) for (let z = pz0; z < pz1; z++) setW(px1 - 1 - t, z);
+      }
+    }
+
+    this.offCtx.putImageData(this.imageData, 0, 0);
+    this.cachedStartX = this.rebuildStartX;
+    this.cachedStartZ = this.rebuildStartZ;
+    this.rebuildRow = null;
+    this.rebuildQuery = null;
+    this.hasRenderedTerrain = true;
   }
 
   private getIconImage(icon: string): HTMLImageElement | null {
