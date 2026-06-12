@@ -11,6 +11,33 @@ export type GroundClickCallback = (worldX: number, worldZ: number) => void;
 export type TeleportClickCallback = (worldX: number, worldZ: number) => void;
 export type ObjectClickCallback = (objectEntityId: number) => void;
 
+function isBatchedObjectPickKind(kind: unknown): boolean {
+  return kind === 'cropPickProxyBatch'
+    || kind === 'worldObjectPickProxyBatch'
+    || kind === 'worldObjectVisualBatch';
+}
+
+function objectIdFromBatchedPickMetadata(metadata: unknown, thinInstanceIndex: number): number | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const record = metadata as { kind?: unknown; objectEntityIdsByThinInstance?: unknown };
+  if (!isBatchedObjectPickKind(record.kind)) return null;
+  if (!Array.isArray(record.objectEntityIdsByThinInstance)) return null;
+  const id = record.objectEntityIdsByThinInstance[thinInstanceIndex];
+  return typeof id === 'number' ? id : null;
+}
+
+function hasActiveBatchedPickInstances(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== 'object') return false;
+  const record = metadata as {
+    kind?: unknown;
+    objectEntityIdsByThinInstance?: unknown;
+    activeObjectPickInstanceCount?: unknown;
+  };
+  if (!isBatchedObjectPickKind(record.kind) || !Array.isArray(record.objectEntityIdsByThinInstance)) return false;
+  if (typeof record.activeObjectPickInstanceCount === 'number') return record.activeObjectPickInstanceCount > 0;
+  return record.objectEntityIdsByThinInstance.some(id => typeof id === 'number');
+}
+
 /**
  * Handles mouse/keyboard input for the game.
  *
@@ -82,11 +109,14 @@ export class InputManager {
       const pick = this.scene.pick(
         pointerX,
         pointerY,
-        (mesh) => {
+        (mesh, thinInstanceIndex) => {
+          const batchThinInstanceIndex = typeof thinInstanceIndex === 'number' ? thinInstanceIndex : -1;
           // Only pick meshes that belong to interactive objects
           let node: Node | null = mesh;
           while (node) {
             if (node.metadata?.objectEntityId != null) return true;
+            if (batchThinInstanceIndex >= 0 && objectIdFromBatchedPickMetadata(node.metadata, batchThinInstanceIndex) !== null) return true;
+            if (batchThinInstanceIndex < 0 && hasActiveBatchedPickInstances(node.metadata)) return true;
             node = node.parent;
           }
           return false;
@@ -97,6 +127,11 @@ export class InputManager {
       if (pick?.hit && pick.pickedMesh) {
         let node: Node | null = pick.pickedMesh;
         while (node) {
+          const batchedObjectId = objectIdFromBatchedPickMetadata(node.metadata, pick.thinInstanceIndex);
+          if (batchedObjectId !== null) {
+            this.onObjectClick(batchedObjectId);
+            return true;
+          }
           if (node.metadata?.objectEntityId != null) {
             this.onObjectClick(node.metadata.objectEntityId);
             return true;

@@ -6,8 +6,8 @@ import type { SkillId } from '@projectrs/shared';
 /**
  * Per-player bot-detection telemetry. Lives on each connected Player,
  * accumulates signal in memory, persists periodically to the bot_stats
- * SQLite table, and emits a session-summary JSONL line to the audit log
- * on logout / 30-min checkpoint.
+ * SQLite table via checkpoint(), and emits a session-summary JSONL line to
+ * the audit log on logout (finalize()).
  *
  * Design notes:
  *
@@ -142,6 +142,12 @@ export interface SessionSummary {
   gameplayCommandIntervalSamples: number;
   gameplayCommandIntervalStdDevMs: number | null;
   gameplayCommandIntervalMedianMs: number | null;
+  /** Coefficient of variation (stddev/mean) of command intervals; low-but-nonzero = mechanical jitter. */
+  commandIntervalCv: number | null;
+  /** p90/median of command intervals; ~1 = no human heavy tail. */
+  commandIntervalTailRatio: number | null;
+  /** Touch-dominant client: cursor-absence signals are exempted to avoid mobile false positives. */
+  isLikelyMobile: boolean;
   sameCommandIntervalSamples: number;
   sameCommandIntervalStdDevMs: number | null;
   sameCommandIntervalMedianMs: number | null;
@@ -178,14 +184,45 @@ export interface SessionSummary {
   riskScore: number;
   riskLevel: BotRiskLevel;
   riskReasons: string[];
+  /** Structured per-signal breakdown for the admin panel (ranked by points). */
+  riskSignals: BotSignalDetail[];
+  /** Whether the score includes a hard-evidence signal (else it is capped). */
+  riskHardEvidence: boolean;
 }
 
 export type BotRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+/** One scored signal that contributed to a player's bot-risk score. This is
+ *  the structured form the admin panel renders so a reviewer can see exactly
+ *  what tripped, the value it measured, the threshold it had to beat, and how
+ *  many points it added. */
+export interface BotSignalDetail {
+  /** Stable signal id (matches the flag), e.g. `gameplayCommandCadenceRegular`. */
+  flag: string;
+  /** Human-readable name shown to admins. */
+  label: string;
+  /** Plain-language description of the behaviour this signal catches. */
+  description: string;
+  /** The threshold a player must cross for this signal to fire. */
+  threshold: string;
+  /** The measured value for this player (already formatted), e.g. `14ms stddev`. */
+  measured: string;
+  /** Points this signal added to the score. */
+  points: number;
+  /** hard = strong standalone evidence; soft = supporting; context = combo bonus. */
+  tier: 'hard' | 'soft' | 'context';
+}
 
 export interface BotRiskProfile {
   score: number;
   level: BotRiskLevel;
   reasons: string[];
+  /** Structured per-signal breakdown, ranked by points. Powers the admin
+   *  panel's "why flagged" view. `reasons` is the legacy flat-string form. */
+  signals: BotSignalDetail[];
+  /** True when the score reflects at least one hard-evidence signal. When
+   *  false the score is capped (see computeBotRiskProfile). */
+  hardEvidence: boolean;
 }
 
 export interface SessionHistoryEntry extends SessionSummary {
@@ -202,6 +239,8 @@ export class BotStats {
   totalChatMessages: number = 0;
   totalSessionMinutes: number = 0;
   totalFlagEvents: number = 0;
+  /** Lifetime sessions that ended with hard bot evidence (persisted). */
+  totalHardFlagEvents: number = 0;
   totalSuspiciousPackets: number = 0;
   lastChatTs: number | null = null;
   lastActionTs: number | null = null;
@@ -300,6 +339,7 @@ export class BotStats {
     s.totalChatMessages = row.total_chat_messages;
     s.totalSessionMinutes = row.total_session_minutes;
     s.totalFlagEvents = row.total_flag_events;
+    s.totalHardFlagEvents = row.total_hard_flag_events ?? 0;
     s.totalSuspiciousPackets = row.total_suspicious_packets ?? 0;
     s.lastChatTs = row.last_chat_ts;
     s.lastActionTs = row.last_action_ts;
@@ -351,6 +391,7 @@ export class BotStats {
       total_chat_messages: this.totalChatMessages,
       total_session_minutes: this.totalSessionMinutes,
       total_flag_events: this.totalFlagEvents,
+      total_hard_flag_events: this.totalHardFlagEvents,
       total_suspicious_packets: this.totalSuspiciousPackets,
       last_chat_ts: this.lastChatTs,
       last_action_ts: this.lastActionTs,
@@ -824,6 +865,19 @@ export class BotStats {
     const activeEvents = this.sessionSkillingActions + this.sessionCombatSwings + this.sessionMovements;
     const directGameplayEvents = this.sessionSkillingActions + this.sessionCombatSwings;
     const sessionActionSignatureCount = mapTotal(this.sessionActionSignatures);
+
+    // Touch-dominant activity = phone/tablet. Such clients legitimately emit
+    // little/no cursor-move (pointermove) telemetry, so the cursor-ABSENCE
+    // signals below would false-flag them. We suppress only those for mobile;
+    // every positive automation detector still applies, and touch counts are
+    // client-asserted so reporting "mobile" can never grant a bot immunity.
+    const isLikelyMobile = isLikelyMobileSession(
+      this.sessionTouchActivityEvents,
+      this.sessionPointerActivityEvents,
+      this.sessionKeyboardActivityEvents,
+    );
+
+    const mechanicalJitter = analyzeMechanicalJitter(this.gameplayCommandIntervalSamples);
     // tickAligned: stddev < 30ms over ≥30 samples → near-zero variance
     if (this.tickAlignSamples.length >= 30 && tickAlignStdDevMs !== null && tickAlignStdDevMs < 30) {
       flags.push('tickAligned');
@@ -855,6 +909,12 @@ export class BotStats {
       && gameplayCommandIntervalStdDevMs < 65
     ) {
       flags.push('gameplayCommandCadenceRegular');
+    }
+    // Computer "humanized" jitter: nonzero variance (slips past the cadence gate)
+    // but a tight, tail-less distribution no human sustains. Distinct from the
+    // metronome case above.
+    if (mechanicalJitter.isMechanical && !flags.includes('gameplayCommandCadenceRegular')) {
+      flags.push('mechanicalJitter');
     }
     if (
       this.sameCommandIntervalSamples.length >= 12
@@ -989,7 +1049,8 @@ export class BotStats {
       flags.push('noClientActivityTelemetry');
     }
     if (
-      sessionMinutes >= 5
+      !isLikelyMobile
+      && sessionMinutes >= 5
       && (activeEvents >= 50 || directGameplayEvents >= 25)
       && this.sessionCursorEvents === 0
     ) {
@@ -1018,7 +1079,7 @@ export class BotStats {
     ) {
       flags.push('activitylessCommandRatio');
     }
-    if (this.sessionCursorEvents >= 20 && topCursorCellRepetition !== null && topCursorCellRepetition > 0.95) {
+    if (!isLikelyMobile && this.sessionCursorEvents >= 20 && topCursorCellRepetition !== null && topCursorCellRepetition > 0.95) {
       flags.push('cursorStatic');
     }
     // marathonSession: > 8hr session
@@ -1081,6 +1142,7 @@ export class BotStats {
       sessionSuspiciousPacketClasses,
       totalSuspiciousPacketClasses,
       totalFlagEvents: this.totalFlagEvents,
+      totalHardFlagEvents: this.totalHardFlagEvents,
       tickAlignSamples: this.tickAlignSamples.length,
       tickAlignStdDevMs,
       pingIntervalSamples: this.pingIntervalSamples.length,
@@ -1089,6 +1151,8 @@ export class BotStats {
       activityIntervalStdDevMs,
       gameplayCommandIntervalSamples: this.gameplayCommandIntervalSamples.length,
       gameplayCommandIntervalStdDevMs,
+      commandIntervalCv: mechanicalJitter.coefficientOfVariation,
+      commandIntervalTailRatio: mechanicalJitter.tailRatio,
       sameCommandIntervalSamples: this.sameCommandIntervalSamples.length,
       sameCommandIntervalStdDevMs,
       gameplayCommandPatternEvents: this.gameplayCommandPatternSignatures.length,
@@ -1165,6 +1229,9 @@ export class BotStats {
       gameplayCommandIntervalSamples: this.gameplayCommandIntervalSamples.length,
       gameplayCommandIntervalStdDevMs,
       gameplayCommandIntervalMedianMs,
+      commandIntervalCv: mechanicalJitter.coefficientOfVariation,
+      commandIntervalTailRatio: mechanicalJitter.tailRatio,
+      isLikelyMobile,
       sameCommandIntervalSamples: this.sameCommandIntervalSamples.length,
       sameCommandIntervalStdDevMs,
       sameCommandIntervalMedianMs,
@@ -1201,6 +1268,8 @@ export class BotStats {
       riskScore: risk.score,
       riskLevel: risk.level,
       riskReasons: risk.reasons,
+      riskSignals: risk.signals,
+      riskHardEvidence: risk.hardEvidence,
     };
   }
 
@@ -1218,14 +1287,18 @@ export class BotStats {
     db.saveBotStats(accountId, this.toRow(this.lastSessionSummary));
   }
 
-  /** Session end (logout, or 30-min auto-checkpoint with reset). Computes
-   *  the summary, writes it both to DB (overwrites last_session_summary)
-   *  and to audit.log (one JSONL line). Updates totalSessionMinutes and
-   *  totalFlagEvents counters. */
+  /** Session end (logout). Computes the summary, writes it both to DB
+   *  (overwrites last_session_summary) and to audit.log (one JSONL line).
+   *  Updates totalSessionMinutes and totalFlagEvents counters. */
   finalize(db: GameDatabase, accountId: number, currentXp: Record<string, number>, tick: number): SessionSummary {
     const summary = this.computeSummary(currentXp);
     this.totalSessionMinutes += summary.sessionMinutes;
     this.totalFlagEvents += summary.evidenceFlags.length;
+    // Persist the strongest tell across logouts: a session that ended with hard
+    // evidence (or a behavioral cluster) increments the lifetime conviction so a
+    // bot that reconnects often — never reaching per-session cadence thresholds —
+    // still accrues hard evidence over time.
+    if (summary.riskHardEvidence) this.totalHardFlagEvents += 1;
     const entry: SessionHistoryEntry = {
       ...summary,
       finalizedAt: Math.floor(Date.now() / 1000),
@@ -1299,6 +1372,60 @@ function median(samples: number[]): number | null {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
+/** Touch-dominant activity → playing on a phone/tablet. Such clients emit
+ *  little/no cursor-move telemetry, so cursor-absence signals must be exempted
+ *  to avoid false-flagging them. Requires a meaningful number of touch events
+ *  AND touch outnumbering pointer events, so a desktop with a stray tap (or a
+ *  bot emitting a few fake touch packets) does not read as mobile. */
+export const MOBILE_MIN_TOUCH_EVENTS = 20;
+export const MOBILE_MIN_TOUCH_RATIO = 0.6;
+export function isLikelyMobileSession(touchEvents: number, pointerEvents: number, keyboardEvents: number): boolean {
+  const total = touchEvents + pointerEvents + keyboardEvents;
+  if (total <= 0) return false;
+  return touchEvents >= MOBILE_MIN_TOUCH_EVENTS
+    && touchEvents / total >= MOBILE_MIN_TOUCH_RATIO
+    && pointerEvents < touchEvents;
+}
+
+function percentile(samples: number[], p: number): number | null {
+  if (samples.length === 0) return null;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))));
+  return sorted[idx];
+}
+
+/** Markers of computer-generated "humanized" jitter in inter-action intervals.
+ *  Human timing is heavy-tailed (occasional long pauses), positively skewed, and
+ *  high-variance; a script adding uniform/gaussian ±X ms jitter around a fixed
+ *  mean produces a *tight, tail-less* distribution that still has nonzero stddev
+ *  (so it slips past the metronome/cadence gate). We flag the band between
+ *  "perfectly regular" and "human": low-but-nonzero coefficient of variation with
+ *  no heavy tail. Returns the metrics so the admin panel can show the evidence. */
+export interface MechanicalJitterMetrics {
+  coefficientOfVariation: number | null;
+  tailRatio: number | null;
+  isMechanical: boolean;
+}
+const MECHANICAL_JITTER_MIN_SAMPLES = 40;
+const MECHANICAL_JITTER_MIN_CV = 0.02;
+const MECHANICAL_JITTER_MAX_CV = 0.15;
+const MECHANICAL_JITTER_MAX_TAIL_RATIO = 1.5;
+export function analyzeMechanicalJitter(intervals: number[]): MechanicalJitterMetrics {
+  if (intervals.length < MECHANICAL_JITTER_MIN_SAMPLES) {
+    return { coefficientOfVariation: null, tailRatio: null, isMechanical: false };
+  }
+  const sd = stdDev(intervals);
+  const med = median(intervals);
+  const p90 = percentile(intervals, 0.9);
+  const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+  const cv = sd !== null && mean > 0 ? sd / mean : null;
+  const tailRatio = p90 !== null && med !== null && med > 0 ? p90 / med : null;
+  const isMechanical = cv !== null && tailRatio !== null
+    && cv >= MECHANICAL_JITTER_MIN_CV && cv <= MECHANICAL_JITTER_MAX_CV
+    && tailRatio <= MECHANICAL_JITTER_MAX_TAIL_RATIO;
+  return { coefficientOfVariation: cv, tailRatio, isMechanical };
+}
+
 function topRatio(destinations: Map<string, number>): number | null {
   if (destinations.size === 0) return null;
   let total = 0;
@@ -1338,6 +1465,7 @@ const EVIDENCE_SIGNAL_FLAGS = new Set([
   'gameplayCommandCadenceRegular',
   'sameCommandCadenceRegular',
   'gameplayCommandIntervalPattern',
+  'mechanicalJitter',
   'mapDataScrape',
   'browserlessActiveGameplay',
   'commandsWithoutRecentInput',
@@ -1415,6 +1543,7 @@ interface BotRiskInput {
   sessionSuspiciousPacketClasses: SuspiciousPacketClassCounts;
   totalSuspiciousPacketClasses: SuspiciousPacketClassCounts;
   totalFlagEvents: number;
+  totalHardFlagEvents: number;
   tickAlignSamples: number;
   tickAlignStdDevMs: number | null;
   pingIntervalSamples: number;
@@ -1423,6 +1552,8 @@ interface BotRiskInput {
   activityIntervalStdDevMs: number | null;
   gameplayCommandIntervalSamples: number;
   gameplayCommandIntervalStdDevMs: number | null;
+  commandIntervalCv: number | null;
+  commandIntervalTailRatio: number | null;
   sameCommandIntervalSamples: number;
   sameCommandIntervalStdDevMs: number | null;
   gameplayCommandPatternEvents: number;
@@ -1456,176 +1587,267 @@ interface BotRiskInput {
   xpPerHour: Record<string, number>;
 }
 
+/** Self-documenting registry for every scored bot signal: the human label, a
+ *  plain-language description, and the exact threshold a player must cross. This
+ *  is the single source of truth the admin panel renders so a reviewer can see
+ *  *why* someone tripped — and the only place to look when tuning a signal.
+ *  `tier` mirrors the evidence weighting (hard = strong standalone, soft =
+ *  supporting). Combo bonuses are emitted as `context` signals at score time. */
+interface BotSignalMeta { label: string; description: string; threshold: string; tier: 'hard' | 'soft'; }
+const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
+  pingRegular: { label: 'Robotic heartbeat timing', description: 'Client heartbeat fires on a near-perfect interval.', threshold: '≥12 pings, <20ms stddev', tier: 'soft' },
+  activityHeartbeatCoupled: { label: 'Activity coupled to heartbeat', description: 'Activity packets fire in lockstep with the heartbeat — one timer drives both.', threshold: '≥10 events, ≥80% within ±350ms', tier: 'soft' },
+  activityRegular: { label: 'Robotic activity timing', description: 'Client activity events fire on a near-perfect interval.', threshold: '≥10 events, <75ms stddev', tier: 'soft' },
+  gameplayCommandCadenceRegular: { label: 'Robotic click cadence', description: 'Gameplay commands arrive on a near-perfect interval.', threshold: '≥24 commands, <65ms stddev', tier: 'hard' },
+  sameCommandCadenceRegular: { label: 'Robotic repeated-click cadence', description: 'The same command repeats on a near-perfect interval.', threshold: '≥12 repeats, <75ms stddev', tier: 'hard' },
+  gameplayCommandSequencePattern: { label: 'Repeated command order', description: 'Commands repeat in a fixed order (e.g. ABAB) regardless of timing.', threshold: '≥30 commands, ≥85% lag-match', tier: 'soft' },
+  gameplayCommandIntervalPattern: { label: 'Repeated interval pattern', description: 'Command intervals repeat in a fixed pattern even with added jitter.', threshold: '≥24 intervals, ≥85% lag-match', tier: 'hard' },
+  mechanicalJitter: { label: 'Computer-generated timing jitter', description: 'Command timing has small randomization but a tight, tail-less spread no human sustains — the "humanize" setting of an auto-clicker. Catches jitter that slips past the regular-cadence gate.', threshold: '≥40 commands, CV 0.02–0.15, p90/median ≤1.5', tier: 'hard' },
+  legacyActivityTelemetry: { label: 'Legacy-only activity telemetry', description: 'Client sends only old-format activity packets (no kind/seq) — common for spoofed telemetry.', threshold: '≥10 events, ≤20% detailed', tier: 'soft' },
+  browserlessActiveGameplay: { label: 'No browser input telemetry', description: 'Active gameplay with zero activity and cursor packets — a headless/raw-socket client.', threshold: '≥2min, ≥25 actions, 0 activity + 0 cursor', tier: 'hard' },
+  inputlessCommandBurst: { label: 'Commands before any input', description: 'Gameplay commands fired before the client reported any browser input.', threshold: '≥5 commands', tier: 'soft' },
+  commandsWithoutRecentInput: { label: 'Commands without recent input', description: 'Gameplay commands with no browser input reported in the last 15s.', threshold: '≥5 commands', tier: 'hard' },
+  commandsWithoutRecentActivity: { label: 'Commands without recent activity', description: 'Gameplay commands with no activity packet in the last 15s.', threshold: '≥5 commands', tier: 'hard' },
+  inputlessCommandRatio: { label: 'High no-input command ratio', description: 'A large fraction of commands had no recent browser input.', threshold: '≥10 commands, ≥50%', tier: 'soft' },
+  activitylessCommandRatio: { label: 'High no-activity command ratio', description: 'A large fraction of commands had no recent activity packet.', threshold: '≥10 commands, ≥50%', tier: 'soft' },
+  noClientActivityTelemetry: { label: 'No activity telemetry', description: 'Active session with zero activity packets at all.', threshold: '≥5min, ≥50 actions, 0 activity', tier: 'soft' },
+  noCursorTelemetry: { label: 'No cursor telemetry', description: 'Active session with zero cursor-position packets.', threshold: '≥5min, ≥50 actions, 0 cursor', tier: 'soft' },
+  cursorStatic: { label: 'Static cursor', description: 'Cursor parked in a single grid cell while playing.', threshold: '≥20 cursor events, >95% one cell', tier: 'soft' },
+  deviceRotating: { label: 'Rotating device IDs', description: 'Many distinct browser device IDs with little reuse — account/session cycling.', threshold: '≥5 logins, ≥5 device IDs, ≤25% reuse', tier: 'hard' },
+  noChat: { label: 'Silent grinder', description: 'Long active session with no chat at all.', threshold: '≥120min, ≥100 actions, 0 chats', tier: 'soft' },
+  pathRepetitive: { label: 'Repetitive destination', description: 'Most movement targets a single tile.', threshold: '≥50 moves, >50% one tile', tier: 'soft' },
+  noMoveRedirects: { label: 'No mid-path redirects', description: 'Player never redirects mid-path; humans frequently do.', threshold: '≥25 moves, 0 redirects', tier: 'soft' },
+  maxPathCommandRatio: { label: 'Max-length pathing', description: 'Most paths are max length — programmatic click-to-edge movement.', threshold: '≥20 moves, ≥65% max-length', tier: 'soft' },
+  pathTruncationPattern: { label: 'Repeated path truncations', description: 'Client repeatedly paths through walls; the server truncates.', threshold: '≥5 truncations, ≥10% of moves', tier: 'soft' },
+  postDeathRouteLoop: { label: 'Auto-return after death', description: 'Returns to the same destination after each death.', threshold: '≥3 deaths, ≥3 post-death moves, ≥80% one tile', tier: 'soft' },
+  routeActionLoop: { label: 'Repeated route→action loop', description: 'The same walk-to-tile→action signature repeats.', threshold: '≥20 actions, >45% one signature', tier: 'soft' },
+  lifetimePathConcentration: { label: 'Lifetime path concentration', description: 'Long-term movement concentrated on few tiles.', threshold: '≥5000 actions, ≥12% one tile', tier: 'soft' },
+  lifetimeRouteActionLoop: { label: 'Lifetime route/action loop', description: 'Long-term route/action signature concentration.', threshold: '≥200 actions, ≥18% one signature', tier: 'soft' },
+  marathonSession: { label: 'Marathon session', description: 'A single session running 8+ hours.', threshold: '≥480 minutes', tier: 'soft' },
+  noIdleBreaks: { label: 'No idle breaks', description: 'Long active session with no 5-minute idle gaps.', threshold: '≥240min, ≥400 actions, 0 breaks', tier: 'soft' },
+  marathonNoIdleBreaks: { label: 'Marathon with no idle breaks', description: 'A 6+ hour session with no idle gaps at all.', threshold: '≥360min, ≥800 actions, 0 breaks', tier: 'soft' },
+  fastReaction: { label: 'Inhuman re-engage speed', description: 'Median time from an NPC death to the next combat swing is faster than a human reaction.', threshold: '≥10 samples, <200ms median', tier: 'hard' },
+  mapDataScrape: { label: 'Map-data scrape', description: 'Rapid bulk fetching of map files — scraping the world.', threshold: '≥180 files or ≥260 requests in 60s', tier: 'hard' },
+  protocolPackets: { label: 'Malformed protocol packets', description: 'Repeated protocol-invalid packets this session.', threshold: '≥3 this session', tier: 'hard' },
+  rateLimitPackets: { label: 'Rate-limit automation', description: 'Repeated rate-limit-tripping packets — faster-than-human request rate.', threshold: '≥3 this session', tier: 'hard' },
+  automationInvalidPackets: { label: 'Automation-shaped packets', description: 'Many automation-shaped invalid packets.', threshold: '≥10 this session', tier: 'hard' },
+  lifetimeHardInvalidPackets: { label: 'Lifetime invalid packets', description: 'Large lifetime volume of protocol / rate-limit packets.', threshold: '≥25 lifetime', tier: 'hard' },
+  lifetimeLowSocialHighActivity: { label: 'Low-social high-activity (lifetime)', description: 'Very high lifetime activity with almost no chat.', threshold: '≥600min, ≥10000 actions, <2 chats/hr', tier: 'soft' },
+  lifetimeExtremeLowSocialHighActivity: { label: 'Extreme low-social high-activity (lifetime)', description: 'Extreme lifetime activity with virtually no chat.', threshold: '≥1200min, ≥25000 actions, <1 chat/hr', tier: 'soft' },
+  xpVelocity: { label: 'Impossible XP rate', description: 'XP/hour exceeds the highest rate a human could plausibly grind for a skill.', threshold: 'over the per-skill XP/hr ceiling', tier: 'hard' },
+  lifetimeHardEvidence: { label: 'Repeat hard-evidence offender', description: 'Multiple prior sessions ended with hard bot evidence — convicts bots that reconnect often to dodge per-session thresholds.', threshold: '≥3 prior hard-evidence sessions', tier: 'hard' },
+};
+
+/** Automation-MECHANISM signals (how a script behaves), deliberately excluding
+ *  lifestyle/grinder signals (noChat, marathon*, pathRepetitive, lifetime-social)
+ *  that a dedicated *human* also trips. Several of these co-occurring is strong
+ *  evidence on its own — it's how we catch a careful bot that spoofs input
+ *  telemetry and jitters its timing to dodge every single-signal hard flag, yet
+ *  still loops routes, never misclicks, paths max-length, etc. `pingRegular` is
+ *  excluded: a stable network produces low heartbeat jitter for legit clients. */
+const BEHAVIORAL_EVIDENCE_FLAGS = new Set([
+  'activityHeartbeatCoupled',
+  'activityRegular',
+  'gameplayCommandSequencePattern',
+  'routeActionLoop',
+  'lifetimeRouteActionLoop',
+  'noMoveRedirects',
+  'maxPathCommandRatio',
+  'pathTruncationPattern',
+  'postDeathRouteLoop',
+  'cursorStatic',
+  'inputlessCommandRatio',
+  'activitylessCommandRatio',
+  'inputlessCommandBurst',
+  'legacyActivityTelemetry',
+  'noClientActivityTelemetry',
+  'noCursorTelemetry',
+]);
+/** Distinct behavioral signals that together count as hard evidence (lifting the
+ *  soft-score cap). Conservative: 4 independent automation tells. */
+export const BEHAVIORAL_EVIDENCE_THRESHOLD = 4;
+
+/** Count of DISTINCT behavioral-evidence signals present in `flags`. Lifestyle/
+ *  grinder signals don't count (see BEHAVIORAL_EVIDENCE_FLAGS). xpVelocity:* and
+ *  other suffixed flags are normalized to their base id first. */
+export function behavioralEvidenceFlagCount(flags: Iterable<string>): number {
+  const seen = new Set<string>();
+  for (const flag of flags) {
+    const base = normalizeSignalFlag(flag);
+    if (BEHAVIORAL_EVIDENCE_FLAGS.has(base)) seen.add(base);
+  }
+  return seen.size;
+}
+
 export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   let score = 0;
   const reasons: string[] = [];
-  const add = (points: number, reason: string) => {
-    if (points <= 0) return;
-    score += points;
-    reasons.push(`${reason} (+${points})`);
-  };
+  const signals: BotSignalDetail[] = [];
   const flagSet = new Set(input.flags.map(normalizeSignalFlag));
   const evidenceFlagSet = new Set(input.evidenceFlags.map(normalizeSignalFlag));
+  // Record a scored signal. `measured` is the player's formatted value for this
+  // signal (e.g. "14ms stddev"); label/description/threshold come from the
+  // registry so the admin panel can show exactly what tripped and by how much.
+  const add = (flag: string, points: number, measured: string) => {
+    if (points <= 0) return;
+    score += points;
+    const meta = BOT_SIGNAL_META[flag];
+    const label = meta?.label ?? flag;
+    signals.push({
+      flag,
+      label,
+      description: meta?.description ?? '',
+      threshold: meta?.threshold ?? '',
+      measured,
+      points,
+      tier: meta?.tier ?? 'soft',
+    });
+    reasons.push(`${label}${measured ? ` — ${measured}` : ''} (+${points})`);
+  };
+  // Combo bonus: two or more signals reinforcing each other. No single
+  // threshold — emitted as a `context` signal so admins see the stacking.
+  const addCombo = (points: number, label: string) => {
+    if (points <= 0) return;
+    score += points;
+    signals.push({ flag: `combo:${label}`, label, description: 'Multiple signals reinforcing each other.', threshold: 'combination', measured: '', points, tier: 'context' });
+    reasons.push(`${label} (+${points})`);
+  };
 
-  if (flagSet.has('tickAligned') && (flagSet.has('routeActionLoop') || flagSet.has('lifetimeRouteActionLoop') || flagSet.has('fastReaction'))) {
-    add(6, `server-tick alignment paired with behavioral loop (${input.tickAlignStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
-  }
-  if (flagSet.has('pingRegular')) add(12, `script-regular heartbeat timing (${input.pingIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
+  // NOTE: `tickAligned` is intentionally not scored. Skilling/combat actions
+  // always resolve on a server tick boundary, so the measured offset reflects
+  // server scheduling, not the player — its stddev is near-zero for everyone.
+  // It is kept as a diagnostic-only flag, never a score contributor.
+  if (flagSet.has('pingRegular')) add('pingRegular', 12, `${input.pingIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev`);
   // Sequence resets are noisy around reconnects/page reloads. Keep them in
   // diagnostic flags, but do not score them directly.
-  if (flagSet.has('activityHeartbeatCoupled')) add(20, `activity packets coupled to heartbeat (${ratioLabel(input.heartbeatActivityCouplingRatio)})`);
-  if (flagSet.has('activityRegular')) add(18, `script-regular activity timing (${input.activityIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
-  if (flagSet.has('gameplayCommandCadenceRegular')) add(
-    16,
-    `script-regular gameplay command cadence (${input.gameplayCommandIntervalSamples} samples, ${input.gameplayCommandIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`,
-  );
-  if (flagSet.has('sameCommandCadenceRegular')) add(
-    32,
-    `script-regular repeated command cadence (${input.sameCommandIntervalSamples} samples, ${input.sameCommandIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`,
-  );
-  if (flagSet.has('gameplayCommandSequencePattern')) add(
-    10,
-    `repeated gameplay command sequence (${input.gameplayCommandPatternEvents} commands, top lag ${ratioLabel(input.gameplayCommandSequencePatternRatio)})`,
-  );
-  if (flagSet.has('gameplayCommandIntervalPattern')) add(
-    30,
-    `repeated gameplay interval pattern (${input.gameplayCommandIntervalPatternEvents} intervals, top lag ${ratioLabel(input.gameplayCommandIntervalPatternRatio)})`,
-  );
-  if (flagSet.has('legacyActivityTelemetry')) add(
-    10,
-    `legacy/no-detail activity telemetry (${input.sessionDetailedActivityEvents}/${input.sessionActivityEvents} detailed)`,
-  );
-  if (flagSet.has('browserlessActiveGameplay')) add(
-    46,
-    `active gameplay without browser input telemetry (${input.sessionSkillingActions + input.sessionCombatSwings + input.sessionMovements} actions)`,
-  );
+  if (flagSet.has('activityHeartbeatCoupled')) add('activityHeartbeatCoupled', 20, `${ratioLabel(input.heartbeatActivityCouplingRatio)} coupled`);
+  if (flagSet.has('activityRegular')) add('activityRegular', 18, `${input.activityIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev`);
+  if (flagSet.has('gameplayCommandCadenceRegular')) add('gameplayCommandCadenceRegular', 16, `${input.gameplayCommandIntervalSamples} samples, ${input.gameplayCommandIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev`);
+  if (flagSet.has('sameCommandCadenceRegular')) add('sameCommandCadenceRegular', 32, `${input.sameCommandIntervalSamples} samples, ${input.sameCommandIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev`);
+  if (flagSet.has('gameplayCommandSequencePattern')) add('gameplayCommandSequencePattern', 10, `${input.gameplayCommandPatternEvents} commands, ${ratioLabel(input.gameplayCommandSequencePatternRatio)} lag-match`);
+  if (flagSet.has('gameplayCommandIntervalPattern')) add('gameplayCommandIntervalPattern', 30, `${input.gameplayCommandIntervalPatternEvents} intervals, ${ratioLabel(input.gameplayCommandIntervalPatternRatio)} lag-match`);
+  if (flagSet.has('mechanicalJitter')) add('mechanicalJitter', 26, `CV ${input.commandIntervalCv?.toFixed(2) ?? '?'}, tail ${input.commandIntervalTailRatio?.toFixed(2) ?? '?'}`);
+  if (flagSet.has('legacyActivityTelemetry')) add('legacyActivityTelemetry', 10, `${input.sessionDetailedActivityEvents}/${input.sessionActivityEvents} detailed`);
+  if (flagSet.has('browserlessActiveGameplay')) add('browserlessActiveGameplay', 46, `${input.sessionSkillingActions + input.sessionCombatSwings + input.sessionMovements} actions, 0 telemetry`);
   if (flagSet.has('inputlessCommandBurst') && !flagSet.has('commandsWithoutRecentInput')) {
-    add(28, `gameplay commands before browser input telemetry (${input.sessionInputlessCommands})`);
+    add('inputlessCommandBurst', 28, `${input.sessionInputlessCommands} commands`);
   }
-  if (flagSet.has('commandsWithoutRecentInput')) add(
-    28,
-    `gameplay commands without recent browser input (${input.sessionCommandsWithoutRecentInput}/${input.sessionGameplayCommands})`,
-  );
-  if (flagSet.has('commandsWithoutRecentActivity')) add(
-    42,
-    `gameplay commands without recent browser activity (${input.sessionCommandsWithoutRecentActivity}/${input.sessionGameplayCommands})`,
-  );
-  if (flagSet.has('inputlessCommandRatio') && !flagSet.has('commandsWithoutRecentInput')) add(
-    18,
-    `high no-input gameplay command ratio (${ratioLabel(input.inputlessCommandRatio)})`,
-  );
-  if (flagSet.has('activitylessCommandRatio') && !flagSet.has('commandsWithoutRecentActivity')) add(
-    22,
-    `high no-activity gameplay command ratio (${ratioLabel(input.activitylessCommandRatio)})`,
-  );
+  if (flagSet.has('commandsWithoutRecentInput')) add('commandsWithoutRecentInput', 28, `${input.sessionCommandsWithoutRecentInput}/${input.sessionGameplayCommands} commands`);
+  if (flagSet.has('commandsWithoutRecentActivity')) add('commandsWithoutRecentActivity', 42, `${input.sessionCommandsWithoutRecentActivity}/${input.sessionGameplayCommands} commands`);
+  if (flagSet.has('inputlessCommandRatio') && !flagSet.has('commandsWithoutRecentInput')) add('inputlessCommandRatio', 18, `${ratioLabel(input.inputlessCommandRatio)}`);
+  if (flagSet.has('activitylessCommandRatio') && !flagSet.has('commandsWithoutRecentActivity')) add('activitylessCommandRatio', 22, `${ratioLabel(input.activitylessCommandRatio)}`);
   if (flagSet.has('noClientActivityTelemetry') && !flagSet.has('commandsWithoutRecentActivity')) {
-    add(12, 'active session without client activity telemetry');
+    add('noClientActivityTelemetry', 12, '0 activity packets');
   }
-  if (flagSet.has('deviceRotating')) add(24, `rotating browser device IDs (${input.deviceIdsSeen} seen)`);
-  if (flagSet.has('noChat')) add(8, 'long active session with no chat');
-  if (flagSet.has('pathRepetitive')) add(8, `repetitive movement destination (${ratioLabel(input.topPathRepetition)})`);
-  if (flagSet.has('noMoveRedirects')) add(
-    6,
-    `no mid-path redirects (${input.sessionMoveRedirects}/${input.sessionMoveCommands} move commands)`,
-  );
-  if (flagSet.has('maxPathCommandRatio')) add(
-    6,
-    `high max-length path command ratio (${ratioLabel(input.maxPathCommandRatio)})`,
-  );
-  if (flagSet.has('pathTruncationPattern')) add(
-    14,
-    `repeated path truncations (${input.sessionPathTruncations}/${input.sessionMoveCommands} move commands)`,
-  );
-  if (flagSet.has('postDeathRouteLoop')) add(
-    12,
-    `repeated post-death route destination (${input.sessionPostDeathMoves}/${input.sessionPlayerDeaths}, top ${ratioLabel(input.topPostDeathDestinationRepetition)})`,
-  );
-  if (flagSet.has('mapDataScrape')) add(
-    34,
-    `rapid map-data scrape (${input.sessionUniqueMapDataFiles} files, ${input.sessionMapDataRequests} requests, ${input.sessionMapDataScanBursts} burst)`,
-  );
-  if (flagSet.has('routeActionLoop')) add(10, `repeated route/action loop (${ratioLabel(input.topActionLoopRepetition)})`);
+  if (flagSet.has('deviceRotating')) add('deviceRotating', 24, `${input.deviceIdsSeen} device IDs`);
+  if (flagSet.has('noChat')) add('noChat', 8, '0 chats');
+  if (flagSet.has('pathRepetitive')) add('pathRepetitive', 8, `${ratioLabel(input.topPathRepetition)} one tile`);
+  if (flagSet.has('noMoveRedirects')) add('noMoveRedirects', 6, `${input.sessionMoveRedirects}/${input.sessionMoveCommands} redirects`);
+  if (flagSet.has('maxPathCommandRatio')) add('maxPathCommandRatio', 6, `${ratioLabel(input.maxPathCommandRatio)} max-length`);
+  if (flagSet.has('pathTruncationPattern')) add('pathTruncationPattern', 14, `${input.sessionPathTruncations}/${input.sessionMoveCommands} truncated`);
+  if (flagSet.has('postDeathRouteLoop')) add('postDeathRouteLoop', 12, `${input.sessionPostDeathMoves}/${input.sessionPlayerDeaths} deaths, ${ratioLabel(input.topPostDeathDestinationRepetition)} one tile`);
+  if (flagSet.has('mapDataScrape')) add('mapDataScrape', 34, `${input.sessionUniqueMapDataFiles} files, ${input.sessionMapDataRequests} requests`);
+  if (flagSet.has('routeActionLoop')) add('routeActionLoop', 10, `${ratioLabel(input.topActionLoopRepetition)} one signature`);
   if (flagSet.has('lifetimePathConcentration')) add(
+    'lifetimePathConcentration',
     input.topLifetimePathRepetition !== null && input.topLifetimePathRepetition >= 0.2 ? 14 : 8,
-    `lifetime path concentration (${ratioLabel(input.topLifetimePathRepetition)} over ${input.lifetimeActiveActions} actions)`,
+    `${ratioLabel(input.topLifetimePathRepetition)} over ${input.lifetimeActiveActions} actions`,
   );
-  if (flagSet.has('lifetimeRouteActionLoop')) add(10, `lifetime route/action loop (${ratioLabel(input.topLifetimeActionLoopRepetition)})`);
+  if (flagSet.has('lifetimeRouteActionLoop')) add('lifetimeRouteActionLoop', 10, `${ratioLabel(input.topLifetimeActionLoopRepetition)} one signature`);
   if (flagSet.has('noCursorTelemetry') && !flagSet.has('browserlessActiveGameplay')) {
-    add(4, 'active session without cursor telemetry');
+    add('noCursorTelemetry', 4, '0 cursor packets');
   }
-  if (flagSet.has('cursorStatic')) add(10, `static cursor telemetry (${ratioLabel(input.topCursorCellRepetition)})`);
-  if (flagSet.has('marathonSession')) add(10, `marathon session (${input.sessionMinutes} minutes)`);
-  if (flagSet.has('marathonNoIdleBreaks')) add(
-    14,
-    `marathon active session without idle breaks (${input.sessionActiveIdleBreaks} breaks, longest ${minutesLabel(input.longestActiveGapMinutes)})`,
-  );
-  else if (flagSet.has('noIdleBreaks')) add(
-    8,
-    `long active session without idle breaks (${input.sessionActiveIdleBreaks} breaks, longest ${minutesLabel(input.longestActiveGapMinutes)})`,
-  );
-  if (flagSet.has('fastReaction')) add(22, `fast NPC re-engage median (${input.reactionMedianMs?.toFixed(0) ?? '?'}ms)`);
-  if (flagSet.has('protocolPackets')) add(18, `malformed/protocol packet abuse (${input.sessionSuspiciousPacketClasses.protocol} this session)`);
-  if (flagSet.has('rateLimitPackets')) add(18, `rate-limit automation packets (${input.sessionSuspiciousPacketClasses.rateLimit} this session)`);
-  if (flagSet.has('automationInvalidPackets')) add(10, `automation-shaped invalid packets (${input.sessionSuspiciousPacketClasses.automation} this session)`);
+  if (flagSet.has('cursorStatic')) add('cursorStatic', 10, `${ratioLabel(input.topCursorCellRepetition)} one cell`);
+  if (flagSet.has('marathonSession')) add('marathonSession', 10, `${input.sessionMinutes} minutes`);
+  if (flagSet.has('marathonNoIdleBreaks')) add('marathonNoIdleBreaks', 14, `${input.sessionActiveIdleBreaks} breaks, longest gap ${minutesLabel(input.longestActiveGapMinutes)}`);
+  else if (flagSet.has('noIdleBreaks')) add('noIdleBreaks', 8, `${input.sessionActiveIdleBreaks} breaks, longest gap ${minutesLabel(input.longestActiveGapMinutes)}`);
+  if (flagSet.has('fastReaction')) add('fastReaction', 22, `${input.reactionMedianMs?.toFixed(0) ?? '?'}ms median`);
+  if (flagSet.has('protocolPackets')) add('protocolPackets', 18, `${input.sessionSuspiciousPacketClasses.protocol} this session`);
+  if (flagSet.has('rateLimitPackets')) add('rateLimitPackets', 18, `${input.sessionSuspiciousPacketClasses.rateLimit} this session`);
+  if (flagSet.has('automationInvalidPackets')) add('automationInvalidPackets', 10, `${input.sessionSuspiciousPacketClasses.automation} this session`);
   if (flagSet.has('lifetimeHardInvalidPackets')) add(
+    'lifetimeHardInvalidPackets',
     input.totalSuspiciousPacketClasses.protocol + input.totalSuspiciousPacketClasses.rateLimit >= 100 ? 22 : 14,
-    `lifetime hard invalid packets (${input.totalSuspiciousPacketClasses.protocol + input.totalSuspiciousPacketClasses.rateLimit})`,
+    `${input.totalSuspiciousPacketClasses.protocol + input.totalSuspiciousPacketClasses.rateLimit} lifetime`,
   );
   if (flagSet.has('lifetimeExtremeLowSocialHighActivity')) {
-    add(22, `extreme low-social high-activity lifetime (${rateLabel(input.chatRatePerHour)} chats/hr, ${input.lifetimeActiveActions} actions)`);
+    add('lifetimeExtremeLowSocialHighActivity', 22, `${rateLabel(input.chatRatePerHour)} chats/hr, ${input.lifetimeActiveActions} actions`);
   } else if (flagSet.has('lifetimeLowSocialHighActivity')) {
-    add(12, `low-social high-activity lifetime (${rateLabel(input.chatRatePerHour)} chats/hr, ${input.lifetimeActiveActions} actions)`);
+    add('lifetimeLowSocialHighActivity', 12, `${rateLabel(input.chatRatePerHour)} chats/hr, ${input.lifetimeActiveActions} actions`);
   }
 
   const xpVelocitySkills = input.flags.filter((flag) => flag.startsWith('xpVelocity:')).map((flag) => flag.split(':')[1]).filter(Boolean);
-  if (xpVelocitySkills.length > 0) add(26 + Math.min(12, xpVelocitySkills.length * 3), `impossible XP velocity (${xpVelocitySkills.join(', ')})`);
+  if (xpVelocitySkills.length > 0) add('xpVelocity', 26 + Math.min(12, xpVelocitySkills.length * 3), `${xpVelocitySkills.join(', ')}`);
 
-  if (input.totalFlagEvents >= 25) add(8, `lifetime flag history (${input.totalFlagEvents} prior fires)`);
-  else if (input.totalFlagEvents >= 10) add(4, `lifetime flag history (${input.totalFlagEvents} prior fires)`);
-  else if (input.totalFlagEvents >= 5) add(2, `lifetime flag history (${input.totalFlagEvents} prior fires)`);
+  if (input.totalHardFlagEvents >= 3) {
+    add('lifetimeHardEvidence', 8 + Math.min(10, input.totalHardFlagEvents), `${input.totalHardFlagEvents} prior hard-evidence sessions`);
+  }
 
-  if (input.totalSuspiciousPackets >= 500) add(4, `lifetime stale/noisy invalid packet volume (${input.totalSuspiciousPackets})`);
-  else if (input.totalSuspiciousPackets >= 100) add(2, `lifetime stale/noisy invalid packet volume (${input.totalSuspiciousPackets})`);
+  if (input.totalFlagEvents >= 25) addCombo(8, `Lifetime flag history (${input.totalFlagEvents} prior fires)`);
+  else if (input.totalFlagEvents >= 10) addCombo(4, `Lifetime flag history (${input.totalFlagEvents} prior fires)`);
+  else if (input.totalFlagEvents >= 5) addCombo(2, `Lifetime flag history (${input.totalFlagEvents} prior fires)`);
 
-  if (flagSet.has('activityHeartbeatCoupled') && flagSet.has('pingRegular')) add(8, 'heartbeat cadence controls activity cadence');
-  if (flagSet.has('activityRegular') && flagSet.has('routeActionLoop')) add(8, 'regular activity cadence during repeated route/action loop');
-  if (flagSet.has('sameCommandCadenceRegular') && flagSet.has('routeActionLoop')) add(10, 'regular click cadence during repeated route/action loop');
-  if (flagSet.has('gameplayCommandCadenceRegular') && flagSet.has('activityRegular')) add(6, 'regular gameplay commands match regular activity telemetry');
-  if (flagSet.has('gameplayCommandSequencePattern') && flagSet.has('gameplayCommandIntervalPattern')) add(12, 'repeated command sequence with repeated interval pattern');
-  if (flagSet.has('gameplayCommandIntervalPattern') && flagSet.has('routeActionLoop')) add(8, 'repeated interval pattern during route/action loop');
-  if (flagSet.has('noIdleBreaks') && flagSet.has('routeActionLoop')) add(4, 'no idle breaks during repeated route/action loop');
-  if (flagSet.has('marathonNoIdleBreaks') && flagSet.has('activityRegular')) add(6, 'script-regular activity over a no-break marathon');
-  if (flagSet.has('legacyActivityTelemetry') && flagSet.has('commandsWithoutRecentActivity')) add(6, 'legacy activity telemetry still missing near gameplay commands');
-  if (flagSet.has('noMoveRedirects') && flagSet.has('routeActionLoop')) add(6, 'uninterrupted movement during repeated route/action loop');
-  if (flagSet.has('maxPathCommandRatio') && flagSet.has('routeActionLoop')) add(4, 'max-length pathing during repeated route/action loop');
-  if (flagSet.has('pathTruncationPattern') && flagSet.has('routeActionLoop')) add(6, 'path truncation pattern during repeated route/action loop');
-  if (flagSet.has('postDeathRouteLoop') && flagSet.has('routeActionLoop')) add(6, 'death recovery returns into repeated route/action loop');
-  if (flagSet.has('fastReaction') && flagSet.has('pathRepetitive')) add(6, 'fast reactions while following a repetitive route');
-  if (flagSet.has('browserlessActiveGameplay') && flagSet.has('routeActionLoop')) add(10, 'browserless repeated route/action loop');
-  if (flagSet.has('noCursorTelemetry') && flagSet.has('routeActionLoop')) add(4, 'repeated route/action loop without cursor input');
-  if (flagSet.has('commandsWithoutRecentInput') && flagSet.has('browserlessActiveGameplay')) add(8, 'raw socket commands during browserless gameplay');
+  if (input.totalSuspiciousPackets >= 500) addCombo(4, `Lifetime stale/noisy invalid packet volume (${input.totalSuspiciousPackets})`);
+  else if (input.totalSuspiciousPackets >= 100) addCombo(2, `Lifetime stale/noisy invalid packet volume (${input.totalSuspiciousPackets})`);
+
+  if (flagSet.has('activityHeartbeatCoupled') && flagSet.has('pingRegular')) addCombo(8, 'Heartbeat cadence controls activity cadence');
+  if (flagSet.has('activityRegular') && flagSet.has('routeActionLoop')) addCombo(8, 'Regular activity cadence during repeated route/action loop');
+  if (flagSet.has('sameCommandCadenceRegular') && flagSet.has('routeActionLoop')) addCombo(10, 'Regular click cadence during repeated route/action loop');
+  if (flagSet.has('gameplayCommandCadenceRegular') && flagSet.has('activityRegular')) addCombo(6, 'Regular gameplay commands match regular activity telemetry');
+  if (flagSet.has('gameplayCommandSequencePattern') && flagSet.has('gameplayCommandIntervalPattern')) addCombo(12, 'Repeated command sequence with repeated interval pattern');
+  if (flagSet.has('gameplayCommandIntervalPattern') && flagSet.has('routeActionLoop')) addCombo(8, 'Repeated interval pattern during route/action loop');
+  if (flagSet.has('noIdleBreaks') && flagSet.has('routeActionLoop')) addCombo(4, 'No idle breaks during repeated route/action loop');
+  if (flagSet.has('marathonNoIdleBreaks') && flagSet.has('activityRegular')) addCombo(6, 'Script-regular activity over a no-break marathon');
+  if (flagSet.has('legacyActivityTelemetry') && flagSet.has('commandsWithoutRecentActivity')) addCombo(6, 'Legacy activity telemetry still missing near gameplay commands');
+  if (flagSet.has('noMoveRedirects') && flagSet.has('routeActionLoop')) addCombo(6, 'Uninterrupted movement during repeated route/action loop');
+  if (flagSet.has('maxPathCommandRatio') && flagSet.has('routeActionLoop')) addCombo(4, 'Max-length pathing during repeated route/action loop');
+  if (flagSet.has('pathTruncationPattern') && flagSet.has('routeActionLoop')) addCombo(6, 'Path truncation pattern during repeated route/action loop');
+  if (flagSet.has('postDeathRouteLoop') && flagSet.has('routeActionLoop')) addCombo(6, 'Death recovery returns into repeated route/action loop');
+  if (flagSet.has('fastReaction') && flagSet.has('pathRepetitive')) addCombo(6, 'Fast reactions while following a repetitive route');
+  if (flagSet.has('browserlessActiveGameplay') && flagSet.has('routeActionLoop')) addCombo(10, 'Browserless repeated route/action loop');
+  if (flagSet.has('noCursorTelemetry') && flagSet.has('routeActionLoop')) addCombo(4, 'Repeated route/action loop without cursor input');
+  if (flagSet.has('commandsWithoutRecentInput') && flagSet.has('browserlessActiveGameplay')) addCombo(8, 'Raw socket commands during browserless gameplay');
   if (
     flagSet.has('commandsWithoutRecentActivity')
     && flagSet.has('noClientActivityTelemetry')
     && !flagSet.has('browserlessActiveGameplay')
   ) {
-    add(8, 'gameplay commands without browser activity telemetry');
+    addCombo(8, 'Gameplay commands without browser activity telemetry');
   }
-  if (xpVelocitySkills.length > 0 && flagSet.has('noChat')) add(6, 'high XP velocity with no social activity');
+  if (xpVelocitySkills.length > 0 && flagSet.has('noChat')) addCombo(6, 'High XP velocity with no social activity');
 
   if (input.sessionMinutes >= 240 && input.sessionChats === 0 && input.sessionMovements >= 100) {
-    add(6, 'multi-hour silent movement-heavy session');
+    addCombo(6, 'Multi-hour silent movement-heavy session');
   }
 
-  if (!hasHardBotEvidence(evidenceFlagSet)) {
-    score = Math.min(score, 29);
+  let hardEvidence = hasHardBotEvidence(evidenceFlagSet) || input.totalHardFlagEvents >= 3;
+  if (!hardEvidence) {
+    const behavioralCount = behavioralEvidenceFlagCount(flagSet);
+    if (behavioralCount >= BEHAVIORAL_EVIDENCE_THRESHOLD) {
+      hardEvidence = true;
+      // Surface the reason the score wasn't capped, even though it adds no points.
+      signals.push({
+        flag: 'behavioralEvidenceCluster',
+        label: `${behavioralCount} independent automation signals`,
+        description: 'Several independent automation tells co-occur. Treated as hard evidence so the score is not capped, even without a single standalone hard flag.',
+        threshold: `≥${BEHAVIORAL_EVIDENCE_THRESHOLD} automation signals`,
+        measured: `${behavioralCount} signals`,
+        points: 0,
+        tier: 'context',
+      });
+    } else {
+      score = Math.min(score, 29);
+    }
   }
 
   const capped = Math.min(100, Math.round(score));
+  signals.sort((a, b) => b.points - a.points);
   return {
     score: capped,
     level: riskLevelForScore(capped),
     reasons: reasons.slice(0, 12),
+    signals: signals.slice(0, 16),
+    hardEvidence,
   };
 }
 
@@ -1633,6 +1855,7 @@ function hasHardBotEvidence(flagSet: Set<string>): boolean {
   return flagSet.has('gameplayCommandCadenceRegular')
     || flagSet.has('sameCommandCadenceRegular')
     || flagSet.has('gameplayCommandIntervalPattern')
+    || flagSet.has('mechanicalJitter')
     || flagSet.has('browserlessActiveGameplay')
     || flagSet.has('commandsWithoutRecentInput')
     || flagSet.has('commandsWithoutRecentActivity')

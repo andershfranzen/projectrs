@@ -34,6 +34,18 @@ describe('map data access hardening', () => {
     expect(canFetchScopedGameplayMapDataPath('kcmap/heights/chunk_20_20.json', player)).toBe(false);
   });
 
+  test('allows map chunks around an alternate legitimate stream center', () => {
+    const savedFarFromWarmStart: GameplayMapPlayerWindow = {
+      currentMapLevel: 'kcmap',
+      currentChunkX: 10,
+      currentChunkZ: 20,
+      alternateChunks: [{ chunkX: 6, chunkZ: 4 }],
+    };
+    expect(canFetchScopedGameplayMapDataPath('kcmap/tiles/chunk_1_0.json', savedFarFromWarmStart)).toBe(true);
+    expect(canFetchScopedGameplayMapDataPath('kcmap/heights/chunk_3_0.json', savedFarFromWarmStart)).toBe(true);
+    expect(canFetchScopedGameplayMapDataPath('kcmap/heights/chunk_20_20.json', savedFarFromWarmStart)).toBe(false);
+  });
+
   test('allows the pre-login warm-start height chunks around the kcmap spawn', () => {
     const spawnWindow = gameplayMapPlayerWindowFromWorldPosition('kcmap', 224.5, 170.5);
     expect(spawnWindow).not.toBeNull();

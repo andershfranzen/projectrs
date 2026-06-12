@@ -13,7 +13,7 @@ import { Scene } from '@babylonjs/core/scene';
 BabylonAnimation.AllowMatricesInterpolation = false;
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
-import { Vector3, Color3, Color4, Matrix, Quaternion } from '@babylonjs/core/Maths/math';
+import { Vector3, Color3, Color4, Matrix, Quaternion, TmpVectors } from '@babylonjs/core/Maths/math';
 import { Viewport } from '@babylonjs/core/Maths/math.viewport';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
@@ -59,11 +59,11 @@ import { CharacterCreator } from '../ui/CharacterCreator';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick } from '../ui/popupStyle';
-import { logSceneBudget } from '../debug/SceneBudget';
+import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -82,12 +82,33 @@ const NPC_TARGET_PATH_MAX_WAYPOINTS = 50;
 const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
+const EMERGENCY_LOW_QUALITY_HARDWARE_SCALE = 3.0;
+const LOW_FPS_DIAGNOSTIC_WARMUP_MS = 5000;
+const LOW_FPS_DIAGNOSTIC_SAMPLE_MS = 3000;
+const LOW_FPS_DIAGNOSTIC_THRESHOLD = 50;
+const CLIENT_LOG_PAYLOAD_SOFT_LIMIT = 60 * 1024;
+const MANUAL_LOW_QUALITY_STORAGE_KEY = 'projectrs_low_quality';
+const LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY = 'projectrs_auto_low_quality';
 const GROUND_ITEM_TOOLTIP_MAX_LINES = 8;
 const ROOF_HOVER_REFRESH_MS = 75;
 const ROOF_HOVER_CLEAR_GRACE_MS = 120;
 const ROOF_HOVER_STICKY_RADIUS_TILES = 1;
 const ROOF_HOVER_WALL_TRIGGER_RADIUS_TILES = 1;
 const ROOF_HOVER_RAY_SEARCH_RADIUS_TILES = 4;
+const WORLD_OBJECT_PICK_HORIZONTAL_MARGIN = 0.18;
+const WORLD_OBJECT_PICK_VERTICAL_MARGIN = 0.04;
+const WORLD_OBJECT_PICK_MIN_HEIGHT = 0.45;
+const WORLD_OBJECT_PICK_MAX_HEIGHT = 8;
+const CROP_PICK_MARGIN = 0.04;
+const CROP_PICK_MIN_SIZE = 0.45;
+
+interface FrameRateSample {
+  frames: number;
+  durationMs: number;
+  fps: number;
+  framePacing: FramePacingSample | null;
+}
+
 const ROOF_HOVER_STRUCTURAL_SAMPLE_HEIGHT_OFFSETS = [1.1, 1.8, 2.5] as const;
 const NPC_FACING_NONE = -32768;
 const TERMINAL_CLOSE_REASONS = new Set([
@@ -136,6 +157,33 @@ function isHarvestObjectDef(def: WorldObjectDef): boolean {
     || def.category === 'stall';
 }
 
+function isBatchedObjectPickKind(kind: unknown): boolean {
+  return kind === 'cropPickProxyBatch'
+    || kind === 'worldObjectPickProxyBatch'
+    || kind === 'worldObjectVisualBatch';
+}
+
+function worldObjectPickProxyHeight(def: WorldObjectDef): number {
+  const authoredHeight = Number.isFinite(def.height) && def.height > 0 ? def.height : 1.2;
+  return Math.max(
+    WORLD_OBJECT_PICK_MIN_HEIGHT,
+    Math.min(authoredHeight + WORLD_OBJECT_PICK_VERTICAL_MARGIN, WORLD_OBJECT_PICK_MAX_HEIGHT),
+  );
+}
+
+function formatPerfTiming(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)}ms` : 'n/a';
+}
+
+export function formatFramePacingForChat(pacing: FramePacingSample | null | undefined): string {
+  if (!pacing) return 'n/a';
+  return `median ${formatPerfTiming(pacing.medianMs)}, p95 ${formatPerfTiming(pacing.p95Ms)}, max ${formatPerfTiming(pacing.maxMs)}, >33ms ${pacing.over33Ms}, >50ms ${pacing.over50Ms}`;
+}
+
+export function isStableLowFrameCadence(fps: number, pacing: FramePacingSample | null | undefined): boolean {
+  return sharedIsStableLowFrameCadence(fps, pacing);
+}
+
 type InteractionOption = {
   label: string;
   labelParts?: { text: string; color?: string }[];
@@ -154,6 +202,15 @@ type DoorPickProxyBounds = {
   height: number;
 };
 
+type SerializedPickProxyBounds = {
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+};
+
 type CropPickProxyConfig = {
   width: number;
   depth: number;
@@ -161,9 +218,55 @@ type CropPickProxyConfig = {
   y: number;
 };
 
-const DEFAULT_CROP_PICK_PROXY: CropPickProxyConfig = { width: 1.2, depth: 1.2, height: 1.2, y: 0.6 };
-const RICE_CROP_PICK_PROXY: CropPickProxyConfig = { width: 0.6, depth: 0.6, height: 0.6, y: 0.3 };
-const POTATO_CROP_PICK_PROXY: CropPickProxyConfig = { width: 0.5, depth: 0.5, height: 0.5, y: 0.25 };
+type ObjectPickBatchMetadata = {
+  kind: 'cropPickProxyBatch' | 'worldObjectPickProxyBatch';
+  objectEntityIdsByThinInstance: Array<number | null>;
+  activeObjectPickInstanceCount: number;
+};
+
+type CropPickProxyBatch = {
+  mesh: Mesh;
+  config: CropPickProxyConfig;
+  metadata: ObjectPickBatchMetadata;
+  objectEntityIds: Array<number | null>;
+  refsByObjectId: Map<number, CropPickProxyRef>;
+  freeIndices: number[];
+};
+
+type CropPickProxyRef = {
+  batchKey: string;
+  index: number;
+  placedNode: TransformNode;
+  config: CropPickProxyConfig;
+};
+
+type WorldObjectPickProxyBatch = {
+  mesh: Mesh;
+  metadata: ObjectPickBatchMetadata;
+  objectEntityIds: Array<number | null>;
+  refsByObjectId: Map<number, WorldObjectPickProxyRef>;
+  freeIndices: number[];
+};
+
+type WorldObjectPickProxyRef = {
+  index: number;
+  bounds: DoorPickProxyBounds;
+};
+
+function setObjectPickBatchId(
+  metadata: ObjectPickBatchMetadata,
+  index: number,
+  objectEntityId: number | null,
+): void {
+  const previous = metadata.objectEntityIdsByThinInstance[index];
+  if (previous === objectEntityId) return;
+
+  if (typeof previous === 'number') metadata.activeObjectPickInstanceCount--;
+  if (typeof objectEntityId === 'number') metadata.activeObjectPickInstanceCount++;
+
+  metadata.objectEntityIdsByThinInstance[index] = objectEntityId;
+  metadata.activeObjectPickInstanceCount = Math.max(0, metadata.activeObjectPickInstanceCount);
+}
 
 type DoorPivotEntry = {
   pivot: TransformNode;
@@ -276,7 +379,7 @@ export class GameManager {
   private network: NetworkManager;
   private readonly onFatalDisconnect?: () => void;
   private destroyed: boolean = false;
-  private readonly baseHardwareScalingLevel: number;
+  private baseHardwareScalingLevel: number;
   private renderHardwareScalingLevel: number = 1;
 
   private connectionFrozen: boolean = false;
@@ -484,8 +587,10 @@ export class GameManager {
   private worldObjectIdByNode: WeakMap<TransformNode, number> = new WeakMap();
   private worldObjectPickState: WeakMap<TransformNode, { entityId: number; interactive: boolean }> = new WeakMap();
   private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; openDirection?: -1 | 1; locked?: boolean; interactionTiles?: { x: number; z: number }[]; ladderActionMask?: number }> = new Map();
-  /** Shared geometry for crop pick proxies, keyed by local proxy dimensions. */
-  private cropProxyTemplates: Map<string, Mesh> = new Map();
+  private cropPickProxyBatches: Map<string, CropPickProxyBatch> = new Map();
+  private cropPickProxyRefs: Map<number, CropPickProxyRef> = new Map();
+  private worldObjectPickProxyBatch: WorldObjectPickProxyBatch | null = null;
+  private worldObjectPickProxyRefs: Map<number, WorldObjectPickProxyRef> = new Map();
   private doorPivots: Map<number, DoorPivotEntry> = new Map();
   private doorPickProxies: Map<number, Mesh> = new Map();
   private doorTiles: Map<number, [number, number]> = new Map();
@@ -617,6 +722,11 @@ export class GameManager {
   private fpsFrameCount: number = 0;
   private fpsLastSampleAt: number = 0;
   private fpsCounterUserToggled: boolean = false;
+  private lowFpsDiagnosticWarmupUntil: number = 0;
+  private lowFpsDiagnosticSampleStartedAt: number = 0;
+  private lowFpsDiagnosticFrames: number = 0;
+  private lowFpsDiagnosticSent: boolean = false;
+  private lowFpsRendererWarningSent: boolean = false;
   private nativeContextMenuBlocker: ((event: MouseEvent) => void) | null = null;
   private lastWorldContextMenuEventAt: number = 0;
   private lastWorldContextMenuEventX: number = -9999;
@@ -1002,6 +1112,7 @@ export class GameManager {
       this.scene.render();
 
       this.updateFpsCounter(now);
+      this.updateLowFpsDiagnostic(now);
     });
 
     // Resize on window changes AND on canvas-element changes (catches CSS grid reflows
@@ -1193,6 +1304,9 @@ export class GameManager {
       this._pendingLoginGearLoads = [];
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
+      this.lowFpsDiagnosticSent = false;
+      this.lowFpsRendererWarningSent = false;
+      this.resetLowFpsDiagnosticWindow();
       this._initialMapReadySent = false;
       this.suppressNextMapEntryMessage = false;
       this.lastSelfAuthorityAt = 0;
@@ -1234,15 +1348,10 @@ export class GameManager {
 
   private reportClientLog(event: string, details: Record<string, unknown>): void {
     try {
-      const payload = JSON.stringify({
-        event,
-        username: this.username,
-        details,
-        at: Date.now(),
-      });
+      const payload = this.buildClientLogPayload(event, details);
       if (navigator.sendBeacon) {
-        navigator.sendBeacon('/api/client-log', new Blob([payload], { type: 'application/json' }));
-        return;
+        const queued = navigator.sendBeacon('/api/client-log', new Blob([payload], { type: 'application/json' }));
+        if (queued) return;
       }
       void fetch('/api/client-log', {
         method: 'POST',
@@ -1251,6 +1360,377 @@ export class GameManager {
         keepalive: true,
       });
     } catch { /* best-effort diagnostics only */ }
+  }
+
+  private buildClientLogPayload(event: string, details: Record<string, unknown>): string {
+    const at = Date.now();
+    const makePayload = (payloadDetails: Record<string, unknown>): string => JSON.stringify({
+      event,
+      username: this.username,
+      details: payloadDetails,
+      at,
+    });
+
+    const fullPayload = makePayload(details);
+    const fullPayloadBytes = this.clientLogPayloadBytes(fullPayload);
+    if (fullPayloadBytes <= CLIENT_LOG_PAYLOAD_SOFT_LIMIT) return fullPayload;
+
+    const compactDetails: Record<string, unknown> = {
+      truncated: true,
+      originalBytes: fullPayloadBytes,
+    };
+    const keepKeys = [
+      'measuredFps',
+      'engineFps',
+      'drawCalls',
+      'activeMeshes',
+      'totalMeshes',
+      'totalVertices',
+      'totalIndices',
+      'framePacing',
+      'renderScale',
+      'baseRenderScale',
+      'currentMap',
+      'currentFloor',
+      'player',
+      'canvas',
+      'diagnosticFlags',
+      'browser',
+      'webgl',
+      'lowFpsAction',
+      'lowFpsInitialFps',
+      'lowFpsInitialDurationMs',
+    ];
+    for (const key of keepKeys) {
+      if (Object.prototype.hasOwnProperty.call(details, key)) compactDetails[key] = details[key];
+    }
+
+    const compactPayload = makePayload(compactDetails);
+    const compactPayloadBytes = this.clientLogPayloadBytes(compactPayload);
+    if (compactPayloadBytes <= CLIENT_LOG_PAYLOAD_SOFT_LIMIT) return compactPayload;
+
+    return makePayload({
+      truncated: true,
+      originalBytes: fullPayloadBytes,
+      compactBytes: compactPayloadBytes,
+      diagnosticFlags: details.diagnosticFlags,
+      framePacing: details.framePacing,
+      currentMap: details.currentMap,
+    });
+  }
+
+  private clientLogPayloadBytes(payload: string): number {
+    return typeof TextEncoder !== 'undefined'
+      ? new TextEncoder().encode(payload).byteLength
+      : payload.length;
+  }
+
+  private getWebGlDiagnostics(): Record<string, unknown> {
+    const canvas = this.engine.getRenderingCanvas();
+    if (!canvas) return {};
+
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    if (!gl) return { context: 'unavailable' };
+
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    const info: Record<string, unknown> = {
+      context: gl instanceof WebGL2RenderingContext ? 'webgl2' : 'webgl',
+      contextAttributes: gl.getContextAttributes(),
+      version: gl.getParameter(gl.VERSION),
+      shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+      vendor: gl.getParameter(gl.VENDOR),
+      renderer: gl.getParameter(gl.RENDERER),
+      maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+      maxVertexAttribs: gl.getParameter(gl.MAX_VERTEX_ATTRIBS),
+    };
+    if (debugInfo) {
+      info.unmaskedVendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+      info.unmaskedRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+    }
+    return info;
+  }
+
+  private getBrowserDiagnostics(): Record<string, unknown> {
+    type BrowserConnectionInfo = {
+      downlink?: number;
+      effectiveType?: string;
+      rtt?: number;
+      saveData?: boolean;
+      type?: string;
+    };
+    const nav = window.navigator as Navigator & {
+      brave?: unknown;
+      connection?: BrowserConnectionInfo;
+      mozConnection?: BrowserConnectionInfo;
+      webkitConnection?: BrowserConnectionInfo;
+      deviceMemory?: number;
+      userAgentData?: {
+        brands?: Array<{ brand: string; version: string }>;
+        platform?: string;
+        mobile?: boolean;
+        getHighEntropyValues?: (hints: string[]) => Promise<Record<string, unknown>>;
+      };
+    };
+    const media = typeof window.matchMedia === 'function' ? {
+      prefersReducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      prefersReducedData: window.matchMedia('(prefers-reduced-data: reduce)').matches,
+      prefersContrastMore: window.matchMedia('(prefers-contrast: more)').matches,
+      forcedColors: window.matchMedia('(forced-colors: active)').matches,
+    } : null;
+    const rawConnection = nav.connection ?? nav.mozConnection ?? nav.webkitConnection ?? null;
+    const connection = rawConnection ? {
+      downlink: rawConnection.downlink ?? null,
+      effectiveType: rawConnection.effectiveType ?? null,
+      rtt: rawConnection.rtt ?? null,
+      saveData: rawConnection.saveData ?? null,
+      type: rawConnection.type ?? null,
+    } : null;
+    const visualViewport = window.visualViewport ? {
+      width: Math.round(window.visualViewport.width),
+      height: Math.round(window.visualViewport.height),
+      scale: window.visualViewport.scale,
+      offsetLeft: Math.round(window.visualViewport.offsetLeft),
+      offsetTop: Math.round(window.visualViewport.offsetTop),
+    } : null;
+    const screenOrientation = window.screen?.orientation ? {
+      type: window.screen.orientation.type,
+      angle: window.screen.orientation.angle,
+    } : null;
+    return {
+      userAgent: nav.userAgent,
+      platform: nav.platform,
+      userAgentData: nav.userAgentData ? {
+        brands: nav.userAgentData.brands,
+        platform: nav.userAgentData.platform,
+        mobile: nav.userAgentData.mobile,
+      } : null,
+      brave: !!nav.brave,
+      hardwareConcurrency: nav.hardwareConcurrency,
+      deviceMemory: nav.deviceMemory ?? null,
+      connection,
+      language: nav.language,
+      languages: nav.languages,
+      visibilityState: document.visibilityState,
+      devicePixelRatio: window.devicePixelRatio,
+      crossOriginIsolated: window.crossOriginIsolated,
+      media,
+      window: {
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        outerWidth: window.outerWidth,
+        outerHeight: window.outerHeight,
+      },
+      visualViewport,
+      screen: window.screen ? {
+        width: window.screen.width,
+        height: window.screen.height,
+        availWidth: window.screen.availWidth,
+        availHeight: window.screen.availHeight,
+        colorDepth: window.screen.colorDepth,
+        pixelDepth: window.screen.pixelDepth,
+        orientation: screenOrientation,
+      } : null,
+    };
+  }
+
+  private async enrichBrowserDiagnostics(browser: Record<string, unknown>): Promise<void> {
+    if (typeof window === 'undefined') return;
+    const nav = window.navigator as Navigator & {
+      getBattery?: () => Promise<{
+        charging?: boolean;
+        level?: number;
+        chargingTime?: number;
+        dischargingTime?: number;
+      }>;
+      userAgentData?: {
+        getHighEntropyValues?: (hints: string[]) => Promise<Record<string, unknown>>;
+      };
+    };
+
+    if (nav.userAgentData?.getHighEntropyValues) {
+      try {
+        browser.userAgentDataHighEntropy = await nav.userAgentData.getHighEntropyValues([
+          'architecture',
+          'bitness',
+          'fullVersionList',
+          'model',
+          'platformVersion',
+          'uaFullVersion',
+          'wow64',
+        ]);
+      } catch {
+        browser.userAgentDataHighEntropy = null;
+      }
+    }
+
+    if (typeof nav.getBattery === 'function') {
+      try {
+        const rawBattery = await nav.getBattery();
+        browser.battery = rawBattery ? {
+          charging: rawBattery.charging ?? null,
+          level: rawBattery.level ?? null,
+          chargingTime: Number.isFinite(rawBattery.chargingTime) ? rawBattery.chargingTime : null,
+          dischargingTime: Number.isFinite(rawBattery.dischargingTime) ? rawBattery.dischargingTime : null,
+        } : null;
+      } catch {
+        browser.battery = null;
+      }
+    }
+  }
+
+  private async enrichPerformanceSnapshot(snapshot: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const browser = snapshot.browser;
+    if (browser && typeof browser === 'object' && !Array.isArray(browser)) {
+      await this.enrichBrowserDiagnostics(browser as Record<string, unknown>);
+    }
+    return snapshot;
+  }
+
+  private getPerformanceDiagnosticFlags(
+    webgl: Record<string, unknown>,
+    browser: Record<string, unknown>,
+    canvas: HTMLCanvasElement | null,
+    measuredFps: number | null = null,
+  ): string[] {
+    const flags: string[] = [];
+    const context = String(webgl.context ?? '');
+    if (!context || context === 'unavailable') flags.push('webgl-unavailable');
+    if (context === 'webgl') flags.push('webgl1-context');
+    if (browser.brave === true) flags.push('brave-browser');
+    if (!webgl.unmaskedRenderer) flags.push('renderer-info-masked');
+
+    const softwareRenderer = isSoftwareWebGlRenderer(webgl);
+    if (softwareRenderer) {
+      flags.push('software-renderer-likely');
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas && dpr >= 1.5 && this.renderHardwareScalingLevel <= 1) {
+      const renderPixels = canvas.width * canvas.height;
+      const clientPixels = canvas.clientWidth * canvas.clientHeight;
+      if (renderPixels > clientPixels * 1.4) flags.push('high-dpr-render-target');
+    }
+
+    if (measuredFps !== null && Number.isFinite(measuredFps) && measuredFps < LOW_FPS_DIAGNOSTIC_THRESHOLD) {
+      flags.push('low-fps-measured');
+      if (browser.brave === true) flags.push('brave-low-fps');
+      if (!softwareRenderer && context && context !== 'unavailable') flags.push('low-fps-with-hardware-renderer');
+      if (this.renderHardwareScalingLevel >= LOW_QUALITY_HARDWARE_SCALE - 0.01) flags.push('low-fps-after-render-scale');
+      if (this.renderHardwareScalingLevel >= EMERGENCY_LOW_QUALITY_HARDWARE_SCALE - 0.01) flags.push('emergency-render-scale');
+    }
+
+    return flags;
+  }
+
+  private sampleRafFps(durationMs: number = 3000): Promise<FrameRateSample> {
+    return new Promise((resolve) => {
+      let frames = 0;
+      const intervals: number[] = [];
+      const start = performance.now();
+      let lastFrame = start;
+      const tick = () => {
+        frames++;
+        const now = performance.now();
+        intervals.push(now - lastFrame);
+        lastFrame = now;
+        const elapsed = now - start;
+        if (elapsed >= durationMs) {
+          resolve({
+            frames,
+            durationMs: Math.round(elapsed),
+            fps: frames / Math.max(0.001, elapsed / 1000),
+            framePacing: summarizeFramePacing(intervals),
+          });
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  }
+
+  private collectPerformanceSnapshot(sample?: FrameRateSample): Record<string, unknown> {
+    const canvas = this.engine.getRenderingCanvas();
+    const meshes = this.scene.meshes;
+    const activeMeshes = this.scene.getActiveMeshes();
+    const drawCalls = (this.engine as unknown as { _drawCalls?: { current?: number } })._drawCalls?.current ?? null;
+    const vertexCount = meshes.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0);
+    const indexCount = meshes.reduce((sum, mesh) => sum + mesh.getTotalIndices(), 0);
+    const groundMeshes = meshes.filter(mesh => /^chunk_-?\d+_-?\d+$/.test(mesh.name));
+    const grassMeshes = meshes.filter(mesh => /^chunk_grass_/.test(mesh.name) || mesh.name === 'terrain_grass_blades');
+    const rockMeshes = meshes.filter(mesh => /^chunk_rocks_/.test(mesh.name));
+    const detailMeshes = [...grassMeshes, ...rockMeshes];
+    const countVertices = (items: typeof meshes): number => items.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0);
+    const countIndices = (items: typeof meshes): number => items.reduce((sum, mesh) => sum + mesh.getTotalIndices(), 0);
+    const thinInstanceCount = (mesh: (typeof meshes)[number]): number =>
+      mesh instanceof Mesh ? Math.max(0, mesh.thinInstanceCount || 0) : 0;
+    const effectiveInstanceMultiplier = (mesh: (typeof meshes)[number]): number => {
+      const instances = thinInstanceCount(mesh);
+      return instances > 0 ? instances : 1;
+    };
+    const countEffectiveVertices = (items: typeof meshes): number =>
+      items.reduce((sum, mesh) => sum + mesh.getTotalVertices() * effectiveInstanceMultiplier(mesh), 0);
+    const countEffectiveIndices = (items: typeof meshes): number =>
+      items.reduce((sum, mesh) => sum + mesh.getTotalIndices() * effectiveInstanceMultiplier(mesh), 0);
+    const countThinInstances = (items: typeof meshes): number =>
+      items.reduce((sum, mesh) => sum + thinInstanceCount(mesh), 0);
+    const browser = this.getBrowserDiagnostics();
+    const webgl = this.getWebGlDiagnostics();
+    const sceneBudget = buildSceneBudget(this.scene);
+    const terrainDetail = this.chunkManager.getTerrainDetailStats();
+
+    return {
+      measuredFps: sample ? Math.round(sample.fps * 10) / 10 : null,
+      measuredFrames: sample?.frames ?? null,
+      measuredDurationMs: sample?.durationMs ?? null,
+      framePacing: sample?.framePacing ?? null,
+      engineFps: Math.round(this.engine.getFps() * 10) / 10,
+      drawCalls,
+      activeMeshes: activeMeshes.length,
+      totalMeshes: meshes.length,
+      totalVertices: vertexCount,
+      totalIndices: indexCount,
+      proceduralTerrainDetail: true,
+      renderScale: this.renderHardwareScalingLevel,
+      baseRenderScale: this.baseHardwareScalingLevel,
+      currentMap: this.chunkManager.getMapId(),
+      currentFloor: this.currentFloor,
+      player: {
+        x: Math.round(this.playerX * 10) / 10,
+        z: Math.round(this.playerZ * 10) / 10,
+      },
+      canvas: canvas ? {
+        width: canvas.width,
+        height: canvas.height,
+        clientWidth: canvas.clientWidth,
+        clientHeight: canvas.clientHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        renderScale: canvas.dataset.renderScale,
+      } : null,
+      chunkMeshes: {
+        ground: groundMeshes.length,
+        detail: detailMeshes.length,
+        grass: grassMeshes.length,
+        rocks: rockMeshes.length,
+        groundDetailAttributes: groundMeshes.filter(mesh => !!mesh.getVerticesData('groundDetail')).length,
+        detailVertices: countEffectiveVertices(detailMeshes),
+        detailIndices: countEffectiveIndices(detailMeshes),
+        detailGeometryVertices: countVertices(detailMeshes),
+        detailGeometryIndices: countIndices(detailMeshes),
+        grassVertices: countEffectiveVertices(grassMeshes),
+        grassIndices: countEffectiveIndices(grassMeshes),
+        grassGeometryVertices: countVertices(grassMeshes),
+        grassGeometryIndices: countIndices(grassMeshes),
+        grassInstances: countThinInstances(grassMeshes),
+        rockVertices: countVertices(rockMeshes),
+        rockIndices: countIndices(rockMeshes),
+        terrainDetail,
+      },
+      sceneBudget,
+      diagnosticFlags: this.getPerformanceDiagnosticFlags(webgl, browser, canvas, sample?.fps ?? null),
+      browser,
+      webgl,
+    };
   }
 
   private setConnectionFrozen(frozen: boolean): void {
@@ -1278,13 +1758,14 @@ export class GameManager {
   }
 
   private detectBaseHardwareScalingLevel(): number {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
     const quality = params.get('quality')?.toLowerCase();
     if (quality === 'high') return 1;
     if (quality === 'low') return LOW_QUALITY_HARDWARE_SCALE;
 
     try {
-      if (localStorage.getItem('projectrs_low_quality') === '1') return LOW_QUALITY_HARDWARE_SCALE;
+      if (localStorage.getItem(MANUAL_LOW_QUALITY_STORAGE_KEY) === '1') return LOW_QUALITY_HARDWARE_SCALE;
+      localStorage.removeItem(LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY);
     } catch {
       // Storage can be blocked in privacy modes; default to full quality.
     }
@@ -1302,6 +1783,68 @@ export class GameManager {
     if (targetCanvas) {
       targetCanvas.dataset.renderScale = next.toFixed(2);
     }
+  }
+
+  private setLowQualityPreference(enabled: boolean): void {
+    try {
+      if (enabled) {
+        localStorage.setItem(MANUAL_LOW_QUALITY_STORAGE_KEY, '1');
+        localStorage.removeItem(LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY);
+      } else {
+        localStorage.removeItem(MANUAL_LOW_QUALITY_STORAGE_KEY);
+        localStorage.removeItem(LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY);
+      }
+    } catch {
+      // Storage can be blocked in privacy modes; the current session still changes.
+    }
+  }
+
+  private reportRenderQualityChange(requestedQuality: string): void {
+    const canvas = this.engine.getRenderingCanvas();
+    const browser = this.getBrowserDiagnostics();
+    const webgl = this.getWebGlDiagnostics();
+    this.reportClientLog('client_quality_change', {
+      requestedQuality,
+      renderScale: this.renderHardwareScalingLevel,
+      baseRenderScale: this.baseHardwareScalingLevel,
+      canvas: canvas ? {
+        width: canvas.width,
+        height: canvas.height,
+        clientWidth: canvas.clientWidth,
+        clientHeight: canvas.clientHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        renderScale: canvas.dataset.renderScale,
+      } : null,
+      diagnosticFlags: this.getPerformanceDiagnosticFlags(webgl, browser, canvas),
+      browser,
+      webgl,
+    });
+  }
+
+  private handleQualityCommand(msg: string): void {
+    const parts = msg.trim().split(/\s+/);
+    const requestedQuality = parts[1]?.toLowerCase();
+    if (parts.length !== 2 || !requestedQuality || !['low', 'high', 'auto'].includes(requestedQuality)) {
+      this.chatPanel?.addSystemMessage(`Render quality: scale ${this.renderHardwareScalingLevel.toFixed(1)}. Usage: /quality low, /quality high, or /quality auto.`);
+      return;
+    }
+
+    let nextScale = 1;
+    if (requestedQuality === 'low') {
+      this.setLowQualityPreference(true);
+      nextScale = LOW_QUALITY_HARDWARE_SCALE;
+    } else if (requestedQuality === 'high') {
+      this.setLowQualityPreference(false);
+      nextScale = 1;
+    } else {
+      this.setLowQualityPreference(false);
+      nextScale = this.detectBaseHardwareScalingLevel();
+    }
+
+    this.baseHardwareScalingLevel = nextScale;
+    this.setRenderHardwareScalingLevel(nextScale);
+    this.chatPanel?.addSystemMessage(`Render quality set to ${requestedQuality} (scale ${this.renderHardwareScalingLevel.toFixed(1)}).`);
+    this.reportRenderQualityChange(requestedQuality);
   }
 
   private setFpsCounterVisible(visible: boolean, announce: boolean = false): void {
@@ -1334,13 +1877,160 @@ export class GameManager {
     this.setFpsCounterVisible(!this.fpsCounterEl, true);
   }
 
+  private isGameFrameVisible(): boolean {
+    const frame = document.getElementById('game-frame') as HTMLElement | null;
+    return !!frame && frame.style.display !== 'none' && frame.style.visibility !== 'hidden';
+  }
+
+  private resetLowFpsDiagnosticWindow(): void {
+    this.lowFpsDiagnosticWarmupUntil = 0;
+    this.lowFpsDiagnosticSampleStartedAt = 0;
+    this.lowFpsDiagnosticFrames = 0;
+  }
+
+  private shouldCapturePerformanceDiagnostic(): boolean {
+    return !this.destroyed
+      && document.visibilityState === 'visible'
+      && this._loginSettled
+      && this.localPlayerId > 0
+      && this.network.isConnected()
+      && !this.reconnecting
+      && !this.connectionFrozen
+      && this.isGameFrameVisible();
+  }
+
+  private shouldRunLowFpsDiagnostic(): boolean {
+    return !this.lowFpsDiagnosticSent
+      && this.shouldCapturePerformanceDiagnostic();
+  }
+
+  private rendererWarningForDiagnosticFlags(diagnosticFlags: readonly string[]): string | null {
+    if (diagnosticFlags.includes('software-renderer-likely')) {
+      return 'Renderer warning: WebGL is using software rendering (SwiftShader/CPU). Enable browser hardware acceleration and check GPU blocklist settings.';
+    }
+    if (diagnosticFlags.includes('brave-low-fps')) {
+      return 'Brave warning: FPS is low on a hardware renderer. Check Brave hardware acceleration, ANGLE/GPU settings, or compare Chrome.';
+    }
+    if (diagnosticFlags.includes('low-fps-with-hardware-renderer')) {
+      return 'Renderer warning: FPS is low on an apparently hardware-backed renderer. Send the perf snapshot so we can compare the browser/GPU backend.';
+    }
+    return null;
+  }
+
+  private maybeShowLowFpsRendererWarning(snapshot: Record<string, unknown>): void {
+    if (this.lowFpsRendererWarningSent) return;
+    const diagnosticFlags = Array.isArray(snapshot.diagnosticFlags) ? snapshot.diagnosticFlags.map(String) : [];
+    const warning = this.rendererWarningForDiagnosticFlags(diagnosticFlags);
+    if (!warning) return;
+    this.lowFpsRendererWarningSent = true;
+    this.chatPanel?.addSystemMessage(warning, '#ffb347');
+  }
+
+  private async captureLowFpsDiagnosticSnapshot(initialSample: FrameRateSample): Promise<void> {
+    let sample = initialSample;
+    if (this.shouldCapturePerformanceDiagnostic()) {
+      sample = await this.sampleRafFps(LOW_FPS_DIAGNOSTIC_SAMPLE_MS);
+    }
+    if (!this.shouldCapturePerformanceDiagnostic()) return;
+
+    const snapshot = this.collectPerformanceSnapshot(sample);
+    await this.enrichPerformanceSnapshot(snapshot);
+    snapshot.lowFpsAction = 'diagnostic-only';
+    snapshot.lowFpsInitialFps = Math.round(initialSample.fps * 10) / 10;
+    snapshot.lowFpsInitialDurationMs = initialSample.durationMs;
+    this.maybeShowLowFpsRendererWarning(snapshot);
+    this.reportClientLog('client_low_fps_snapshot', snapshot);
+  }
+
+  private updateLowFpsDiagnostic(now: number): void {
+    if (!this.shouldRunLowFpsDiagnostic()) {
+      this.resetLowFpsDiagnosticWindow();
+      return;
+    }
+
+    if (this.lowFpsDiagnosticWarmupUntil === 0) {
+      this.lowFpsDiagnosticWarmupUntil = now + LOW_FPS_DIAGNOSTIC_WARMUP_MS;
+      return;
+    }
+    if (now < this.lowFpsDiagnosticWarmupUntil) return;
+
+    if (this.lowFpsDiagnosticSampleStartedAt === 0) {
+      this.lowFpsDiagnosticSampleStartedAt = now;
+      this.lowFpsDiagnosticFrames = 0;
+      return;
+    }
+
+    this.lowFpsDiagnosticFrames++;
+    const elapsed = now - this.lowFpsDiagnosticSampleStartedAt;
+    if (elapsed < LOW_FPS_DIAGNOSTIC_SAMPLE_MS) return;
+
+    const fps = this.lowFpsDiagnosticFrames / Math.max(0.001, elapsed / 1000);
+    if (fps < LOW_FPS_DIAGNOSTIC_THRESHOLD && this.scene.getActiveMeshes().length > 100) {
+      this.lowFpsDiagnosticSent = true;
+      void this.captureLowFpsDiagnosticSnapshot({
+        frames: this.lowFpsDiagnosticFrames,
+        durationMs: Math.round(elapsed),
+        fps,
+        framePacing: null,
+      });
+      return;
+    }
+
+    this.lowFpsDiagnosticSampleStartedAt = now;
+    this.lowFpsDiagnosticFrames = 0;
+  }
+
   private updateFpsCounter(now: number): void {
     if (!this.fpsCounterEl) return;
     this.fpsFrameCount++;
     if (now - this.fpsLastSampleAt < 1000) return;
-    this.fpsCounterEl.textContent = `${this.fpsFrameCount} FPS | ${this.scene.getActiveMeshes().length} meshes`;
+    const fps = Math.round(this.engine.getFps());
+    const scale = this.renderHardwareScalingLevel.toFixed(1);
+    this.fpsCounterEl.textContent = `${this.fpsFrameCount} FPS (${fps}) | ${this.scene.getActiveMeshes().length} meshes | scale ${scale}`;
     this.fpsFrameCount = 0;
     this.fpsLastSampleAt = now;
+  }
+
+  private async handlePerfCommand(): Promise<void> {
+    this.chatPanel?.addSystemMessage('Measuring client performance for 3 seconds...');
+    const sample = await this.sampleRafFps(3000);
+    const snapshot = this.collectPerformanceSnapshot(sample);
+    await this.enrichPerformanceSnapshot(snapshot);
+    this.reportClientLog('client_perf_snapshot', snapshot);
+
+    const webgl = snapshot.webgl as Record<string, unknown> | undefined;
+    const renderer = String(webgl?.unmaskedRenderer ?? webgl?.renderer ?? 'unknown');
+    const clippedRenderer = renderer.length > 80 ? `${renderer.slice(0, 77)}...` : renderer;
+    const meshes = Number(snapshot.activeMeshes ?? 0);
+    const vertices = Number(snapshot.totalVertices ?? 0);
+    const diagnosticFlags = Array.isArray(snapshot.diagnosticFlags) ? snapshot.diagnosticFlags.map(String) : [];
+    const renderScale = Number(snapshot.renderScale ?? 1);
+    const canvas = snapshot.canvas as { width?: unknown; height?: unknown; clientWidth?: unknown; clientHeight?: unknown } | null | undefined;
+    const canvasText = canvas
+      ? `${Number(canvas.width ?? 0)}x${Number(canvas.height ?? 0)}/${Number(canvas.clientWidth ?? 0)}x${Number(canvas.clientHeight ?? 0)}`
+      : 'unknown';
+    const framePacingText = formatFramePacingForChat(sample.framePacing);
+    this.chatPanel?.addSystemMessage(
+      `Perf: ${sample.fps.toFixed(1)} FPS, scale ${renderScale.toFixed(1)}, ${meshes} active meshes, ${Math.round(vertices / 1000)}k vertices, canvas ${canvasText}. Frame ${framePacingText}. Renderer: ${clippedRenderer}`,
+    );
+    if (isStableLowFrameCadence(sample.fps, sample.framePacing)) {
+      this.chatPanel?.addSystemMessage('Perf cadence: stable ~30 FPS; this looks more like a browser/display/GPU scheduling cap than random render stalls.', '#ffb347');
+    } else if ((sample.framePacing?.over50Ms ?? 0) >= 3 || (sample.framePacing?.p95Ms ?? 0) >= 50) {
+      this.chatPanel?.addSystemMessage('Perf cadence: uneven frames with long stalls; compare the copied snapshot against a good Chrome run.', '#ffb347');
+    }
+    if (diagnosticFlags.length > 0) {
+      this.chatPanel?.addSystemMessage(`Perf flags: ${diagnosticFlags.join(', ')}`);
+    }
+    const rendererWarning = this.rendererWarningForDiagnosticFlags(diagnosticFlags);
+    if (rendererWarning) this.chatPanel?.addSystemMessage(rendererWarning, '#ffb347');
+    this.chatPanel?.addSystemMessage('Perf snapshot sent to the server log.');
+
+    try {
+      await navigator.clipboard?.writeText(JSON.stringify(snapshot, null, 2));
+      this.chatPanel?.addSystemMessage('Perf snapshot copied to clipboard.');
+    } catch {
+      // Clipboard write requires focus/permission in some browsers; server log is enough.
+    }
   }
 
   private updateResponsiveCameraZoom(): void {
@@ -1434,6 +2124,9 @@ export class GameManager {
       this._pendingLoginGearLoads = [];
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
+      this.lowFpsDiagnosticSent = false;
+      this.lowFpsRendererWarningSent = false;
+      this.resetLowFpsDiagnosticWindow();
       this._initialMapReadySent = false;
       this.suppressNextMapEntryMessage = true;
       this.lastSelfAuthorityAt = 0;
@@ -2130,13 +2823,19 @@ export class GameManager {
       return;
     }
     if (previous) {
+      this.chunkManager.setPlacedObjectVisualPickId(previous, null);
       this.worldObjectIdByNode.delete(previous);
       this.worldObjectPickState.delete(previous);
       this.disposeDoorVisualState(objectEntityId);
+      this.disposeCropPickProxy(objectEntityId);
+      this.disposeWorldObjectPickProxy(objectEntityId);
     }
     const currentEntityId = this.worldObjectIdByNode.get(node);
     if (currentEntityId != null && currentEntityId !== objectEntityId) {
+      this.chunkManager.setPlacedObjectVisualPickId(node, null);
       this.disposeDoorVisualState(currentEntityId);
+      this.disposeCropPickProxy(currentEntityId);
+      this.disposeWorldObjectPickProxy(currentEntityId);
       this.worldObjectModels.delete(currentEntityId);
       this.worldObjectPickState.delete(node);
     }
@@ -2146,9 +2845,12 @@ export class GameManager {
 
   private deleteWorldObjectModel(objectEntityId: number): void {
     this.disposeDoorVisualState(objectEntityId);
+    this.disposeCropPickProxy(objectEntityId);
+    this.disposeWorldObjectPickProxy(objectEntityId);
     this.objectModels.deleteActiveModelAnimations(objectEntityId);
     const node = this.worldObjectModels.get(objectEntityId);
     if (node) {
+      this.chunkManager.setPlacedObjectVisualPickId(node, null);
       this.worldObjectIdByNode.delete(node);
       this.worldObjectPickState.delete(node);
       if (!this.chunkManager.isPlacedObjectNode(node) && !node.isDisposed()) {
@@ -2184,23 +2886,28 @@ export class GameManager {
 
   private setPlacedWorldObjectEnabled(node: TransformNode, enabled: boolean): void {
     if (!enabled) {
+      this.chunkManager.setPlacedObjectVisualEnabled(node, false);
       if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
     const roofDefaultEnabled = this.chunkManager.roofNodeDefaultEnabled(node);
     if (roofDefaultEnabled === false) {
+      this.chunkManager.setPlacedObjectVisualEnabled(node, false);
       if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
     const objectEntityId = this.worldObjectIdForNode(node);
     if (objectEntityId !== null && !this.shouldPlacedWorldObjectBeEnabled(objectEntityId)) {
+      this.chunkManager.setPlacedObjectVisualEnabled(node, false);
       if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
     if (this.isRoofNodeHidden(node)) {
+      this.chunkManager.setPlacedObjectVisualEnabled(node, false);
       if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
+    this.chunkManager.setPlacedObjectVisualEnabled(node, true);
     if (!node.isEnabled(false)) node.setEnabled(true);
   }
 
@@ -2250,9 +2957,10 @@ export class GameManager {
     this.setWorldObjectModel(objectEntityId, placedNode);
 
     const def = this.objectDefsCache.get(data.defId);
-    this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, data.depleted), placedNode);
+    this.setWorldObjectPickTarget(objectEntityId, false, placedNode);
     if (def?.category === 'door') {
       this.setWorldObjectPickTarget(objectEntityId, false, placedNode);
+      this.disposeWorldObjectPickProxy(objectEntityId);
       const modelRotY = this.modelRotY(placedNode);
       const pickBounds = this.computeDoorPickProxyBounds(placedNode, data.x, data.z, modelRotY, placedNode.getAbsolutePosition().y);
       const { tile: [tx, tz], edge: wallEdge } = doorEdgeFromPlacement(data.x, data.z, modelRotY);
@@ -2282,30 +2990,76 @@ export class GameManager {
     }
 
     if (def?.category === 'crop') {
+      this.disposeWorldObjectPickProxy(objectEntityId);
       this.createCropPickProxy(objectEntityId, placedNode, def, data.depleted);
+      this.setCropPickTarget(objectEntityId, def, data.depleted, placedNode);
+    } else if (def && def.category !== 'door') {
+      this.setGenericWorldObjectPickTarget(
+        objectEntityId,
+        data,
+        def,
+        this.isWorldObjectInteractable(def, data.depleted),
+        placedNode,
+      );
     }
   }
 
   private cropPickProxyConfig(def: WorldObjectDef): CropPickProxyConfig {
-    if (def.id === RICE_PLANT_OBJECT_DEF_ID) return RICE_CROP_PICK_PROXY;
-    return def.id === POTATO_PLANT_OBJECT_DEF_ID ? POTATO_CROP_PICK_PROXY : DEFAULT_CROP_PICK_PROXY;
+    const authoredWidth = Number.isFinite(def.width) && def.width > 0 ? def.width : 0.6;
+    const authoredDepth = Number.isFinite(def.depth) && (def.depth ?? 0) > 0 ? def.depth! : authoredWidth;
+    const authoredHeight = Number.isFinite(def.height) && def.height > 0 ? def.height : 0.6;
+    const width = Math.max(CROP_PICK_MIN_SIZE, authoredWidth + CROP_PICK_MARGIN);
+    const depth = Math.max(CROP_PICK_MIN_SIZE, authoredDepth + CROP_PICK_MARGIN);
+    const height = Math.max(CROP_PICK_MIN_SIZE, authoredHeight + CROP_PICK_MARGIN);
+    return { width, depth, height, y: height / 2 };
   }
 
-  private cropProxyTemplateFor(config: CropPickProxyConfig): Mesh {
-    const key = `${config.width},${config.depth},${config.height}`;
-    let tmpl = this.cropProxyTemplates.get(key);
-    if (!tmpl) {
-      tmpl = MeshBuilder.CreateBox(`crop_pickProxy_tmpl_${this.cropProxyTemplates.size}`, {
+  private cropPickProxyBatchKey(config: CropPickProxyConfig): string {
+    return `${config.width},${config.depth},${config.height},${config.y}`;
+  }
+
+  private cropPickProxyMatrix(placedNode: TransformNode, config: CropPickProxyConfig): Matrix {
+    placedNode.computeWorldMatrix(true);
+    return Matrix.Translation(0, config.y, 0).multiply(placedNode.getWorldMatrix());
+  }
+
+  private cropPickProxyBatchFor(config: CropPickProxyConfig): CropPickProxyBatch {
+    const key = this.cropPickProxyBatchKey(config);
+    let batch = this.cropPickProxyBatches.get(key);
+    if (!batch) {
+      const mesh = MeshBuilder.CreateBox(`crop_pickProxy_batch_${this.cropPickProxyBatches.size}`, {
         width: config.width,
         depth: config.depth,
         height: config.height,
       }, this.scene);
-      tmpl.isVisible = false;
-      tmpl.isPickable = false;
-      tmpl.setEnabled(false);
-      this.cropProxyTemplates.set(key, tmpl);
+      mesh.isVisible = true;
+      mesh.visibility = 0;
+      mesh.isPickable = true;
+      mesh.layerMask = 0;
+      mesh.doNotSyncBoundingInfo = true;
+      mesh.thinInstanceEnablePicking = true;
+      const metadata: ObjectPickBatchMetadata = {
+        kind: 'cropPickProxyBatch',
+        objectEntityIdsByThinInstance: [],
+        activeObjectPickInstanceCount: 0,
+      };
+      mesh.metadata = metadata;
+      mesh.freezeWorldMatrix();
+      batch = {
+        mesh,
+        config,
+        metadata,
+        objectEntityIds: metadata.objectEntityIdsByThinInstance,
+        refsByObjectId: new Map(),
+        freeIndices: [],
+      };
+      this.cropPickProxyBatches.set(key, batch);
     }
-    return tmpl;
+    return batch;
+  }
+
+  private refreshCropPickProxyBatchBounds(batch: CropPickProxyBatch): void {
+    batch.mesh.thinInstanceRefreshBoundingInfo(true);
   }
 
   private createCropPickProxy(
@@ -2314,23 +3068,277 @@ export class GameManager {
     def: WorldObjectDef,
     depleted: boolean,
   ): void {
+    this.disposeCropPickProxy(objectEntityId);
     const config = this.cropPickProxyConfig(def);
-    const proxy = this.cropProxyTemplateFor(config).clone(`crop_pickProxy_${objectEntityId}`, placedNode)!;
-    proxy.setEnabled(true);
-    proxy.position.y = config.y;
-    proxy.isVisible = true;
-    proxy.visibility = 0;
-    proxy.isPickable = true;
-    proxy.layerMask = 0;
-    proxy.doNotSyncBoundingInfo = true;
-    proxy.freezeWorldMatrix();
-    proxy.metadata = { objectEntityId };
-    this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, depleted), proxy);
+    const batchKey = this.cropPickProxyBatchKey(config);
+    const batch = this.cropPickProxyBatchFor(config);
+    const index = batch.freeIndices.pop() ?? batch.objectEntityIds.length;
+    const matrix = this.cropPickProxyMatrix(placedNode, config);
+
+    if (index >= batch.objectEntityIds.length) {
+      batch.mesh.thinInstanceAdd(matrix, false);
+    } else {
+      batch.mesh.thinInstanceSetMatrixAt(index, matrix);
+    }
+    setObjectPickBatchId(batch.metadata, index, depleted ? null : objectEntityId);
+    batch.mesh.thinInstanceBufferUpdated('matrix');
+
+    const ref = { batchKey, index, placedNode, config };
+    batch.refsByObjectId.set(objectEntityId, ref);
+    this.cropPickProxyRefs.set(objectEntityId, ref);
+    this.refreshCropPickProxyBatchBounds(batch);
+  }
+
+  private disposeCropPickProxy(objectEntityId: number): void {
+    const ref = this.cropPickProxyRefs.get(objectEntityId);
+    if (ref) {
+      const batch = this.cropPickProxyBatches.get(ref.batchKey);
+      if (batch) {
+        setObjectPickBatchId(batch.metadata, ref.index, null);
+        batch.refsByObjectId.delete(objectEntityId);
+        batch.freeIndices.push(ref.index);
+        batch.mesh.thinInstanceBufferUpdated('matrix');
+        this.refreshCropPickProxyBatchBounds(batch);
+      }
+      this.cropPickProxyRefs.delete(objectEntityId);
+    }
+  }
+
+  private setCropPickProxyEnabled(objectEntityId: number, enabled: boolean): void {
+    const ref = this.cropPickProxyRefs.get(objectEntityId);
+    if (!ref) return;
+    const batch = this.cropPickProxyBatches.get(ref.batchKey);
+    if (!batch) return;
+    setObjectPickBatchId(batch.metadata, ref.index, enabled ? objectEntityId : null);
+    if (enabled) batch.mesh.thinInstanceSetMatrixAt(ref.index, this.cropPickProxyMatrix(ref.placedNode, ref.config));
+    batch.mesh.thinInstanceBufferUpdated('matrix');
+    this.refreshCropPickProxyBatchBounds(batch);
+  }
+
+  private disposeAllCropPickProxyBatches(): void {
+    for (const batch of this.cropPickProxyBatches.values()) batch.mesh.dispose();
+    this.cropPickProxyBatches.clear();
+    this.cropPickProxyRefs.clear();
+  }
+
+  private worldObjectPickProxyBoundsFromMetadata(metadata: unknown): { min: Vector3; max: Vector3 } | null {
+    if (!metadata || typeof metadata !== 'object') return null;
+    const raw = (metadata as { pickProxyBounds?: Partial<SerializedPickProxyBounds> }).pickProxyBounds;
+    if (!raw || typeof raw !== 'object') return null;
+    const values = [raw.minX, raw.minY, raw.minZ, raw.maxX, raw.maxY, raw.maxZ];
+    if (!values.every(value => typeof value === 'number' && Number.isFinite(value))) return null;
+    if (raw.maxX! <= raw.minX! || raw.maxY! <= raw.minY! || raw.maxZ! <= raw.minZ!) return null;
+    return {
+      min: new Vector3(raw.minX!, raw.minY!, raw.minZ!),
+      max: new Vector3(raw.maxX!, raw.maxY!, raw.maxZ!),
+    };
+  }
+
+  private fallbackWorldObjectPickProxyBounds(
+    data: { x: number; z: number; y?: number; rotY?: number },
+    def: WorldObjectDef,
+  ): DoorPickProxyBounds {
+    const bounds = getObjectFootprintBounds(data.x, data.z, def, data.rotY ?? 0);
+    const baseY = Number.isFinite(data.y) ? (data.y ?? 0) : 0;
+    const height = worldObjectPickProxyHeight(def);
+    return {
+      center: new Vector3(
+        bounds.minX + bounds.width / 2,
+        baseY + height / 2,
+        bounds.minZ + bounds.depth / 2,
+      ),
+      width: Math.max(0.8, bounds.width + WORLD_OBJECT_PICK_HORIZONTAL_MARGIN),
+      depth: Math.max(0.8, bounds.depth + WORLD_OBJECT_PICK_HORIZONTAL_MARGIN),
+      height,
+    };
+  }
+
+  private computeWorldObjectPickProxyBounds(
+    model: TransformNode,
+    data: { x: number; z: number; y?: number; rotY?: number },
+    def: WorldObjectDef,
+  ): DoorPickProxyBounds {
+    const fallback = this.fallbackWorldObjectPickProxyBounds(data, def);
+    let bounds = this.worldObjectPickProxyBoundsFromMetadata(model.metadata) as ReturnType<TransformNode['getHierarchyBoundingVectors']> | null;
+    if (!bounds) {
+      model.computeWorldMatrix(true);
+      try {
+        bounds = model.getHierarchyBoundingVectors(true);
+      } catch {
+        return fallback;
+      }
+    }
+
+    const width = bounds.max.x - bounds.min.x;
+    const depth = bounds.max.z - bounds.min.z;
+    const height = bounds.max.y - bounds.min.y;
+    if (!Number.isFinite(width) || !Number.isFinite(depth) || !Number.isFinite(height) || width <= 0 || depth <= 0 || height <= 0) {
+      return fallback;
+    }
+
+    // Tree meshes include broad canopies; use visual bounds only for centering,
+    // not for proxy size, or clicks spill far outside the trunk/footprint.
+    const useAuthoredFootprintSize = def.category === 'tree';
+    return {
+      center: new Vector3(
+        (bounds.min.x + bounds.max.x) / 2,
+        bounds.min.y + fallback.height / 2,
+        (bounds.min.z + bounds.max.z) / 2,
+      ),
+      width: useAuthoredFootprintSize
+        ? fallback.width
+        : Math.max(fallback.width, Math.min(width + WORLD_OBJECT_PICK_HORIZONTAL_MARGIN, 6)),
+      depth: useAuthoredFootprintSize
+        ? fallback.depth
+        : Math.max(fallback.depth, Math.min(depth + WORLD_OBJECT_PICK_HORIZONTAL_MARGIN, 6)),
+      height: fallback.height,
+    };
+  }
+
+  private worldObjectPickProxyMatrix(bounds: DoorPickProxyBounds): Matrix {
+    return Matrix.Compose(
+      TmpVectors.Vector3[0].set(bounds.width, bounds.height, bounds.depth),
+      Quaternion.Identity(),
+      bounds.center,
+    );
+  }
+
+  private worldObjectPickProxyBatchFor(): WorldObjectPickProxyBatch {
+    if (!this.worldObjectPickProxyBatch) {
+      const mesh = MeshBuilder.CreateBox('worldObject_pickProxy_batch', { size: 1 }, this.scene);
+      mesh.isVisible = true;
+      mesh.visibility = 0;
+      mesh.isPickable = true;
+      mesh.layerMask = 0;
+      mesh.doNotSyncBoundingInfo = true;
+      mesh.thinInstanceEnablePicking = true;
+      const metadata: ObjectPickBatchMetadata = {
+        kind: 'worldObjectPickProxyBatch',
+        objectEntityIdsByThinInstance: [],
+        activeObjectPickInstanceCount: 0,
+      };
+      mesh.metadata = metadata;
+      mesh.freezeWorldMatrix();
+      this.worldObjectPickProxyBatch = {
+        mesh,
+        metadata,
+        objectEntityIds: metadata.objectEntityIdsByThinInstance,
+        refsByObjectId: new Map(),
+        freeIndices: [],
+      };
+    }
+    return this.worldObjectPickProxyBatch;
+  }
+
+  private refreshWorldObjectPickProxyBatchBounds(batch: WorldObjectPickProxyBatch): void {
+    batch.mesh.thinInstanceRefreshBoundingInfo(true);
+  }
+
+  private createWorldObjectPickProxy(
+    objectEntityId: number,
+    data: { x: number; z: number; y?: number; rotY?: number },
+    def: WorldObjectDef,
+    model: TransformNode,
+  ): void {
+    this.disposeWorldObjectPickProxy(objectEntityId);
+    const bounds = this.computeWorldObjectPickProxyBounds(model, data, def);
+    const batch = this.worldObjectPickProxyBatchFor();
+    const index = batch.freeIndices.pop() ?? batch.objectEntityIds.length;
+    const matrix = this.worldObjectPickProxyMatrix(bounds);
+
+    if (index >= batch.objectEntityIds.length) {
+      batch.mesh.thinInstanceAdd(matrix, false);
+    } else {
+      batch.mesh.thinInstanceSetMatrixAt(index, matrix);
+    }
+    setObjectPickBatchId(batch.metadata, index, objectEntityId);
+    batch.mesh.thinInstanceBufferUpdated('matrix');
+
+    const ref = { index, bounds };
+    batch.refsByObjectId.set(objectEntityId, ref);
+    this.worldObjectPickProxyRefs.set(objectEntityId, ref);
+    this.refreshWorldObjectPickProxyBatchBounds(batch);
+  }
+
+  private disposeWorldObjectPickProxy(objectEntityId: number): void {
+    const ref = this.worldObjectPickProxyRefs.get(objectEntityId);
+    const batch = this.worldObjectPickProxyBatch;
+    if (ref && batch) {
+      setObjectPickBatchId(batch.metadata, ref.index, null);
+      batch.refsByObjectId.delete(objectEntityId);
+      batch.freeIndices.push(ref.index);
+      batch.mesh.thinInstanceBufferUpdated('matrix');
+      this.refreshWorldObjectPickProxyBatchBounds(batch);
+    }
+    this.worldObjectPickProxyRefs.delete(objectEntityId);
+  }
+
+  private setWorldObjectPickProxyEnabled(objectEntityId: number, enabled: boolean): void {
+    const ref = this.worldObjectPickProxyRefs.get(objectEntityId);
+    const batch = this.worldObjectPickProxyBatch;
+    if (!ref || !batch) return;
+    setObjectPickBatchId(batch.metadata, ref.index, enabled ? objectEntityId : null);
+    if (enabled) batch.mesh.thinInstanceSetMatrixAt(ref.index, this.worldObjectPickProxyMatrix(ref.bounds));
+    batch.mesh.thinInstanceBufferUpdated('matrix');
+    this.refreshWorldObjectPickProxyBatchBounds(batch);
+  }
+
+  private disposeWorldObjectPickProxyBatch(): void {
+    this.worldObjectPickProxyBatch?.mesh.dispose();
+    this.worldObjectPickProxyBatch = null;
+    this.worldObjectPickProxyRefs.clear();
+  }
+
+  private setGenericWorldObjectPickTarget(
+    objectEntityId: number,
+    data: { x: number; z: number; y?: number; rotY?: number },
+    def: WorldObjectDef,
+    interactive: boolean,
+    model: TransformNode,
+  ): void {
+    if (this.chunkManager.setPlacedObjectVisualPickId(model, interactive ? objectEntityId : null)) {
+      this.disposeWorldObjectPickProxy(objectEntityId);
+      this.setWorldObjectPickTarget(objectEntityId, false, model);
+      return;
+    }
+
+    if (this.hasWorldObjectMeshPickGeometry(model)) {
+      this.disposeWorldObjectPickProxy(objectEntityId);
+      this.setWorldObjectPickTarget(objectEntityId, interactive, model);
+      return;
+    }
+
+    this.setWorldObjectPickTarget(objectEntityId, false, model);
+    if (interactive && !this.worldObjectPickProxyRefs.has(objectEntityId)) {
+      this.createWorldObjectPickProxy(objectEntityId, data, def, model);
+    }
+    this.setWorldObjectPickProxyEnabled(objectEntityId, interactive);
+  }
+
+  private hasWorldObjectMeshPickGeometry(model: TransformNode): boolean {
+    if (model instanceof Mesh && model.getTotalVertices() > 0) return true;
+    return model.getChildMeshes(false).some(mesh => mesh.getTotalVertices() > 0);
+  }
+
+  private setCropPickTarget(
+    objectEntityId: number,
+    def: WorldObjectDef,
+    depleted: boolean,
+    model: TransformNode,
+  ): void {
+    this.setWorldObjectPickTarget(objectEntityId, false, model);
+    if (!this.cropPickProxyRefs.has(objectEntityId)) {
+      this.createCropPickProxy(objectEntityId, model, def, depleted);
+    }
+    const interactive = this.isWorldObjectInteractable(def, depleted);
+    this.setCropPickProxyEnabled(objectEntityId, interactive);
   }
 
   /** Create a depleted model (stump/depleted rock) at the placed node's position */
   private setupKeyboard(): void {
-    window.addEventListener('keydown', (e) => {
+    // Stored on `this` so destroy() can remove them — inline arrows would leak
+    // the entire GameManager (closure captures `this`) across logout/re-login.
+    this._keydownHandler = (e) => {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
       if (e.key === 'Escape' && this.bankPanel?.isVisible()) {
         this.keysDown.delete('escape');
@@ -2348,11 +3356,16 @@ export class GameManager {
         return;
       }
       this.keysDown.add(e.key.toLowerCase());
-    });
-    window.addEventListener('keyup', (e) => {
+    };
+    this._keyupHandler = (e) => {
       this.keysDown.delete(e.key.toLowerCase());
-    });
+    };
+    window.addEventListener('keydown', this._keydownHandler);
+    window.addEventListener('keyup', this._keyupHandler);
   }
+
+  private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+  private _keyupHandler: ((e: KeyboardEvent) => void) | null = null;
 
   /** Apply an equipment-slot array (matches PLAYER_REMOTE_EQUIPMENT layout)
    *  to a CharacterEntity. Each slot is loaded asynchronously; ordering
@@ -3277,16 +4290,18 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.GROUND_ITEM_SYNC, (_op, v) => {
-      const [groundItemId, itemId, quantity, x10, z10] = v;
+      // Layout: [groundItemId, itemId, qtyHigh, qtyLow, x10, z10, floor, y10]
+      const [groundItemId, itemId, qtyHi, qtyLo] = v;
       if (itemId === 0) {
         this.entities.removeGroundItem(groundItemId);
         return;
       }
 
-      const x = x10 / 10;
-      const z = z10 / 10;
-      const floor = v.length >= 6 ? Math.floor(v[5] ?? 0) : 0;
-      const y = v.length >= 7 ? (v[6] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
+      const quantity = (qtyHi & 0xFFFF) * 0x10000 + (qtyLo & 0xFFFF);
+      const x = (v[4] ?? 0) / 10;
+      const z = (v[5] ?? 0) / 10;
+      const floor = v.length >= 7 ? Math.floor(v[6] ?? 0) : 0;
+      const y = v.length >= 8 ? (v[7] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
       this.entities.createGroundItem(groundItemId, itemId, quantity, x, z, floor, y);
     });
 
@@ -3334,6 +4349,7 @@ export class GameManager {
         if (model) this.setWorldObjectPickTarget(entityId, false, model);
         this.objectModels.deleteStump(entityId);
         this.disposeDoorVisualState(entityId);
+        this.disposeWorldObjectPickProxy(entityId);
         if (model && this.chunkManager.isPlacedObjectNode(model) && !model.isDisposed()) {
           // Keep the placed-node association across floor/range visibility
           // churn. Re-entering a dense ground floor can resync hundreds of
@@ -3507,10 +4523,11 @@ export class GameManager {
       const itemCount = v[1];
       const items: ShopItem[] = [];
       for (let i = 0; i < itemCount; i++) {
+        const base = 2 + i * 4;
         items.push({
-          itemId: v[2 + i * 3],
-          price: v[2 + i * 3 + 1],
-          stock: v[2 + i * 3 + 2],
+          itemId: v[base],
+          price: (v[base + 1] & 0xFFFF) * 0x10000 + (v[base + 2] & 0xFFFF),
+          stock: v[base + 3],
         });
       }
       if (this.shopPanel) {
@@ -3639,7 +4656,16 @@ export class GameManager {
           );
           if (activeModel) {
             this.setWorldObjectModel(objectEntityId, activeModel);
-            this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), activeModel);
+            this.setWorldObjectPickTarget(objectEntityId, false, activeModel);
+            if (def.category !== 'crop' && def.category !== 'door') {
+              this.setGenericWorldObjectPickTarget(
+                objectEntityId,
+                objectData,
+                def,
+                this.isWorldObjectInteractable(def, isDepleted),
+                activeModel,
+              );
+            }
             model = activeModel;
           }
         }
@@ -3655,6 +4681,7 @@ export class GameManager {
           // Doors stay visible — animate rotation instead
           model.setEnabled(true);
           this.setWorldObjectPickTarget(objectEntityId, false, model);
+          this.disposeWorldObjectPickProxy(objectEntityId);
           if (!this.doorPickProxies.has(objectEntityId)) {
             const rotY = this.doorPivots.get(objectEntityId)?.closedRotY ?? (rotY1000 / 1000);
             this.createDoorPickProxy(objectEntityId, x, z, rotY, model.getAbsolutePosition().y);
@@ -3670,9 +4697,20 @@ export class GameManager {
           depletedModel.setEnabled(isDepleted);
           this.setWorldObjectPickTarget(objectEntityId, false, depletedModel);
         }
-        if (def?.category !== 'door') {
+        if (def && def.category !== 'door') {
           this.setPlacedWorldObjectEnabled(model, !isDepleted);
-          this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), model);
+          if (def?.category === 'crop') {
+            this.disposeWorldObjectPickProxy(objectEntityId);
+            this.setCropPickTarget(objectEntityId, def, isDepleted, model);
+          } else {
+            this.setGenericWorldObjectPickTarget(
+              objectEntityId,
+              objectData,
+              def,
+              this.isWorldObjectInteractable(def, isDepleted),
+              model,
+            );
+          }
         }
       }
     });
@@ -3721,7 +4759,7 @@ export class GameManager {
         // Doors stay visible — animation is handled above
       } else {
         const model = this.worldObjectModels.get(objectEntityId);
-        if (hasDepleteModel && data) {
+        if (def && hasDepleteModel && data) {
           const placedNode = model ?? this.chunkManager.findPlacedObjectNear(
             data.x,
             data.z,
@@ -3742,11 +4780,30 @@ export class GameManager {
               this.setWorldObjectPickTarget(objectEntityId, false, depleted);
             }
             this.setPlacedWorldObjectEnabled(placedNode, isDepleted === 0);
-            this.setWorldObjectPickTarget(objectEntityId, isDepleted === 0, placedNode);
+            if (def?.category === 'crop') {
+              this.disposeWorldObjectPickProxy(objectEntityId);
+              this.setCropPickTarget(objectEntityId, def, isDepleted === 1, placedNode);
+            } else {
+              this.setGenericWorldObjectPickTarget(objectEntityId, data, def, isDepleted === 0, placedNode);
+            }
+          }
+        } else if (model && def && data) {
+          this.setPlacedWorldObjectEnabled(model, isDepleted === 0);
+          if (def?.category === 'crop') {
+            this.disposeWorldObjectPickProxy(objectEntityId);
+            this.setCropPickTarget(objectEntityId, def, isDepleted === 1, model);
+          } else {
+            this.setGenericWorldObjectPickTarget(
+              objectEntityId,
+              data,
+              def,
+              this.isWorldObjectInteractable(def, isDepleted === 1),
+              model,
+            );
           }
         } else if (model) {
-          this.setPlacedWorldObjectEnabled(model, isDepleted === 0);
-          this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted === 1), model);
+          this.setWorldObjectPickTarget(objectEntityId, false, model);
+          this.disposeWorldObjectPickProxy(objectEntityId);
         }
       }
     });
@@ -3826,14 +4883,17 @@ export class GameManager {
       this.sidePanel?.setRenown(v[0] ?? 0);
     });
 
-    // Batch inventory: [slot0_itemId, slot0_qty, slot1_itemId, slot1_qty, ...]
+    // Batch inventory: [slot0_itemId, slot0_qtyHigh, slot0_qtyLow, ...] — quantity
+    // is split into high/low words so stacks past int16 don't wrap (see sendInventory).
     this.network.on(ServerOpcode.PLAYER_INVENTORY_BATCH, (_op, v) => {
-      for (let i = 0; i < v.length; i += 2) {
-        const slot = i / 2;
-        if (this.sidePanel) this.sidePanel.updateInvSlot(slot, v[i], v[i + 1]);
-        if (this.bankPanel) this.bankPanel.updateInventorySlot(slot, v[i], v[i + 1]);
-        if (this.tradePanel) this.tradePanel.updateInventorySlot(slot, v[i], v[i + 1]);
-        if (this.duelPanel) this.duelPanel.updateInventorySlot(slot, v[i], v[i + 1]);
+      for (let i = 0; i + 3 <= v.length; i += 3) {
+        const slot = i / 3;
+        const itemId = v[i];
+        const qty = (v[i + 1] & 0xFFFF) * 0x10000 + (v[i + 2] & 0xFFFF);
+        if (this.sidePanel) this.sidePanel.updateInvSlot(slot, itemId, qty);
+        if (this.bankPanel) this.bankPanel.updateInventorySlot(slot, itemId, qty);
+        if (this.tradePanel) this.tradePanel.updateInventorySlot(slot, itemId, qty);
+        if (this.duelPanel) this.duelPanel.updateInventorySlot(slot, itemId, qty);
       }
       this.noteLoginBootstrapPacket('inventory');
     });
@@ -4323,6 +5383,8 @@ export class GameManager {
         this.blockedObjectTiles.clear();
         this.closedCenteredDoorTileCounts.clear();
         this.closedCenteredDoorTileKeysByObjectId.clear();
+        this.disposeAllCropPickProxyBatches();
+        this.disposeWorldObjectPickProxyBatch();
         for (const [, proxy] of this.doorPickProxies) proxy.dispose();
         this.doorPickProxies.clear();
         for (const [, entry] of this.doorPivots) entry.pivot.dispose();
@@ -4985,7 +6047,10 @@ export class GameManager {
     }
 
     if (pickResult?.pickedMesh) {
-      const pickedObjectEntityId = this.findWorldObjectIdFromPick(pickResult.pickedMesh as unknown as TransformNode);
+      const pickedObjectEntityId = this.findWorldObjectIdFromPick(
+        pickResult.pickedMesh as unknown as TransformNode,
+        pickResult.thinInstanceIndex ?? -1,
+      );
       if (pickedObjectEntityId != null) {
         options.push(...this.getWorldObjectInteractionOptions(pickedObjectEntityId));
       }
@@ -5246,7 +6311,19 @@ export class GameManager {
     }).filter((opt): opt is InteractionOption => opt !== null);
   }
 
-  private findWorldObjectIdFromPick(pickedMesh: TransformNode): number | null {
+  private findWorldObjectIdFromPick(pickedMesh: TransformNode, thinInstanceIndex: number = -1): number | null {
+    if (
+      isBatchedObjectPickKind(pickedMesh.metadata?.kind)
+      && thinInstanceIndex >= 0
+      && Array.isArray(pickedMesh.metadata.objectEntityIdsByThinInstance)
+    ) {
+      const id = pickedMesh.metadata.objectEntityIdsByThinInstance[thinInstanceIndex];
+      if (typeof id === 'number') {
+        const data = this.worldObjectDefs.get(id);
+        return data && this.isWorldObjectOnCurrentInteractionFloor(data) ? id : null;
+      }
+    }
+
     // Check 3D models (trees, rocks, placed objects) by walking up the parent
     // chain looking for objectEntityId metadata.
     let walkMesh: TransformNode | null = pickedMesh;
@@ -7173,8 +8250,21 @@ export class GameManager {
   }
 
   private handleChatCommand(msg: string): boolean {
-    if (msg.trim().toLowerCase() === '/fps') {
+    const trimmed = msg.trim();
+    const lower = trimmed.toLowerCase();
+
+    if (lower === '/fps') {
       this.toggleFpsCounter();
+      return true;
+    }
+
+    if (lower === '/perf') {
+      void this.handlePerfCommand();
+      return true;
+    }
+
+    if (lower === '/quality' || lower.startsWith('/quality ')) {
+      this.handleQualityCommand(trimmed);
       return true;
     }
 
@@ -7183,8 +8273,8 @@ export class GameManager {
       return true;
     }
 
-    if (msg.trim().toLowerCase().startsWith('/rotatedebug')) {
-      void this.handleRotateDebugCommand(msg);
+    if (lower.startsWith('/rotatedebug')) {
+      void this.handleRotateDebugCommand(trimmed);
       return true;
     }
 
@@ -8380,6 +9470,8 @@ export class GameManager {
       this.onWindowResize = null;
     }
     this.clearHiddenCatchupTimer();
+    if (this._keydownHandler) { window.removeEventListener('keydown', this._keydownHandler); this._keydownHandler = null; }
+    if (this._keyupHandler) { window.removeEventListener('keyup', this._keyupHandler); this._keyupHandler = null; }
     if (this._visibilityHandler) { document.removeEventListener('visibilitychange', this._visibilityHandler); this._visibilityHandler = null; }
     if (this.nativeContextMenuBlocker) {
       document.removeEventListener('contextmenu', this.nativeContextMenuBlocker, true);
@@ -8415,6 +9507,8 @@ export class GameManager {
     this.worldObjectModels.clear();
     this.worldObjectIdByNode = new WeakMap();
     this.worldObjectPickState = new WeakMap();
+    this.disposeAllCropPickProxyBatches();
+    this.disposeWorldObjectPickProxyBatch();
     for (const [, proxy] of this.doorPickProxies) proxy.dispose();
     this.doorPickProxies.clear();
     for (const [, entry] of this.doorPivots) entry.pivot.dispose();

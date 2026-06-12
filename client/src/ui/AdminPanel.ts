@@ -1,7 +1,16 @@
 import { createModalPanel } from './ModalPanel';
+import {
+  areComparableDiagnosticScenes,
+  browserFamilyFromDiagnosticPayload,
+  diagnosticFlagsFromPayload,
+  hasUnevenFramePacing as sharedHasUnevenFramePacing,
+  isPlayerChromiumBrowserFamily,
+  isStableLowFrameCadence as sharedIsStableLowFrameCadence,
+  measuredFpsFromDiagnosticPayload,
+} from '@projectrs/shared';
 
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
-type AdminTab = 'bots' | 'events';
+type AdminTab = 'bots' | 'events' | 'diagnostics';
 
 interface AdminBotAccount {
   accountId: number;
@@ -44,11 +53,26 @@ interface AdminBotAccount {
     devices: number;
     logins: number;
     lastSeenTs: number | null;
+    riskScore: number;
+    riskLevel: string;
+    banned: boolean;
   }>;
   lastSessionSummary: Record<string, unknown> | null;
   accountBan: AdminAccountBan | null;
   ipBan: AdminIpBan | null;
   accountMute: AdminAccountMute | null;
+}
+
+/** One scored signal in the "why flagged" breakdown (mirrors the server's
+ *  BotSignalDetail; carried inside lastSessionSummary.riskSignals). */
+interface AdminBotSignal {
+  flag: string;
+  label: string;
+  description: string;
+  threshold: string;
+  measured: string;
+  points: number;
+  tier: 'hard' | 'soft' | 'context';
 }
 
 interface AdminBanBase {
@@ -113,9 +137,35 @@ interface GameEventLogResponse {
   error?: string;
 }
 
+interface ClientDiagnosticLogEntry {
+  ts: string;
+  tick: number | null;
+  event: string;
+  username: string;
+  clientAt: number | null;
+  payload: unknown;
+}
+
+interface ClientDiagnosticsResponse {
+  ok: boolean;
+  generatedAt: number;
+  bytesScanned: number;
+  events: ClientDiagnosticLogEntry[];
+  error?: string;
+}
+
+interface DiagnosticBrowserGap {
+  high: ClientDiagnosticLogEntry;
+  low: ClientDiagnosticLogEntry;
+  highFps: number;
+  lowFps: number;
+  ratio: number;
+}
+
 const TEXT_SHADOW = '1px 1px 0 #000';
 const BOT_GRID_COLUMNS = 'minmax(92px, 1.1fr) 54px 72px minmax(130px, 1.4fr) 102px';
 const EVENT_GRID_COLUMNS = '76px 82px minmax(94px, 0.9fr) minmax(180px, 2fr) 96px';
+const DIAGNOSTIC_GRID_COLUMNS = '78px 98px minmax(80px, 0.8fr) minmax(170px, 2fr) 64px';
 const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
   { type: 'chat', label: 'Chat' },
   { type: 'private_chat', label: 'Private' },
@@ -133,6 +183,14 @@ const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
   { type: 'duel', label: 'Duels' },
   { type: 'player_death', label: 'Deaths' },
 ];
+const CLIENT_DIAGNOSTIC_EVENTS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'All events' },
+  { value: 'client_low_fps_snapshot', label: 'Low FPS' },
+  { value: 'client_low_fps_post_scale_snapshot', label: 'Post-scale FPS' },
+  { value: 'client_perf_snapshot', label: 'Perf' },
+  { value: 'client_quality_change', label: 'Quality' },
+  { value: 'game_connection_lost', label: 'Disconnects' },
+];
 const BAN_DURATIONS = [
   { label: '1 hour', seconds: 3600 },
   { label: '24 hours', seconds: 24 * 3600 },
@@ -149,9 +207,13 @@ export class AdminPanel {
   private gridHeaderEl: HTMLDivElement;
   private eventFilterEl: HTMLDivElement;
   private eventTypeChipsEl: HTMLDivElement;
+  private diagnosticFilterEl: HTMLDivElement;
   private botSearchInput: HTMLInputElement;
   private eventSearchInput: HTMLInputElement;
   private eventUserInput: HTMLInputElement;
+  private diagnosticSearchInput: HTMLInputElement;
+  private diagnosticUserInput: HTMLInputElement;
+  private diagnosticEventSelect: HTMLSelectElement;
   private refreshButton: HTMLButtonElement;
   private clearRiskButton: HTMLButtonElement;
   private subtitleEl: HTMLSpanElement | null = null;
@@ -161,13 +223,21 @@ export class AdminPanel {
   private selectedAccountId: number | null = null;
   private events: GameEventLogEntry[] = [];
   private selectedEventId: number | null = null;
+  private diagnostics: ClientDiagnosticLogEntry[] = [];
+  private selectedDiagnosticKey: string | null = null;
+  private diagnosticBytesScanned = 0;
   private eventAfterId = 0;
   private eventPollTimer: number | null = null;
   private eventLoading = false;
+  private diagnosticLoading = false;
   private readonly hiddenEventTypes = new Set<string>();
   private eventSearchQuery = '';
   private eventUserFilter = '';
   private eventFilterDebounceTimer: number | null = null;
+  private diagnosticSearchQuery = '';
+  private diagnosticUserFilter = '';
+  private diagnosticEventFilter = '';
+  private diagnosticFilterDebounceTimer: number | null = null;
   private botSearchQuery = '';
   private botSearchDebounceTimer: number | null = null;
   private accountContextMenuEl: HTMLDivElement | null = null;
@@ -225,7 +295,7 @@ export class AdminPanel {
       min-width: 0;
       margin-left: auto;
     `;
-    for (const [tab, label] of [['bots', 'Bot review'], ['events', 'Game log']] as const) {
+    for (const [tab, label] of [['bots', 'Bot review'], ['events', 'Game log'], ['diagnostics', 'Diagnostics']] as const) {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = label;
@@ -361,6 +431,73 @@ export class AdminPanel {
     this.eventFilterEl.appendChild(this.eventTypeChipsEl);
     body.appendChild(this.eventFilterEl);
 
+    this.diagnosticFilterEl = document.createElement('div');
+    this.diagnosticFilterEl.style.cssText = `
+      display: none;
+      grid-template-columns: minmax(150px, 1.3fr) minmax(110px, 0.8fr) minmax(112px, 0.7fr) 68px;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+      padding: 6px;
+      border: 1px solid rgba(74, 64, 53, 0.58);
+      background: rgba(12, 8, 6, 0.36);
+    `;
+    this.diagnosticSearchInput = document.createElement('input');
+    this.diagnosticSearchInput.type = 'search';
+    this.diagnosticSearchInput.placeholder = 'Search';
+    this.diagnosticSearchInput.spellcheck = false;
+    this.diagnosticSearchInput.style.cssText = this.eventFilterInputCss();
+    this.diagnosticSearchInput.addEventListener('input', () => {
+      this.diagnosticSearchQuery = this.diagnosticSearchInput.value.trim();
+      this.scheduleDiagnosticFilterRefresh();
+    });
+    this.diagnosticSearchInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.flushDiagnosticFilterRefresh();
+      }
+    });
+    this.diagnosticUserInput = document.createElement('input');
+    this.diagnosticUserInput.type = 'search';
+    this.diagnosticUserInput.placeholder = 'User';
+    this.diagnosticUserInput.spellcheck = false;
+    this.diagnosticUserInput.style.cssText = this.eventFilterInputCss();
+    this.diagnosticUserInput.addEventListener('input', () => {
+      this.diagnosticUserFilter = this.diagnosticUserInput.value.trim();
+      this.scheduleDiagnosticFilterRefresh();
+    });
+    this.diagnosticUserInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.flushDiagnosticFilterRefresh();
+      }
+    });
+    this.diagnosticEventSelect = document.createElement('select');
+    this.diagnosticEventSelect.style.cssText = this.eventFilterInputCss();
+    for (const config of CLIENT_DIAGNOSTIC_EVENTS) {
+      const option = document.createElement('option');
+      option.value = config.value;
+      option.textContent = config.label;
+      this.diagnosticEventSelect.appendChild(option);
+    }
+    this.diagnosticEventSelect.addEventListener('change', () => {
+      this.diagnosticEventFilter = this.diagnosticEventSelect.value;
+      this.flushDiagnosticFilterRefresh();
+    });
+    const clearDiagnosticFiltersButton = this.smallButton('Clear', 'rgba(50, 38, 28, 0.9)');
+    clearDiagnosticFiltersButton.style.minWidth = '68px';
+    clearDiagnosticFiltersButton.addEventListener('click', () => {
+      this.diagnosticSearchInput.value = '';
+      this.diagnosticUserInput.value = '';
+      this.diagnosticEventSelect.value = '';
+      this.diagnosticSearchQuery = '';
+      this.diagnosticUserFilter = '';
+      this.diagnosticEventFilter = '';
+      this.flushDiagnosticFilterRefresh();
+    });
+    this.diagnosticFilterEl.append(this.diagnosticSearchInput, this.diagnosticUserInput, this.diagnosticEventSelect, clearDiagnosticFiltersButton);
+    body.appendChild(this.diagnosticFilterEl);
+
     this.gridHeaderEl = document.createElement('div');
     this.gridHeaderEl.style.cssText = `
       display: grid;
@@ -425,6 +562,7 @@ export class AdminPanel {
   destroy(): void {
     this.stopEventPolling();
     this.clearEventFilterDebounce();
+    this.clearDiagnosticFilterDebounce();
     this.clearBotSearchDebounce();
     this.hideAccountContextMenu();
     document.removeEventListener('keydown', this.keydownHandler);
@@ -434,6 +572,7 @@ export class AdminPanel {
 
   private async refresh(): Promise<void> {
     if (this.activeTab === 'events') return this.refreshGameEvents(true);
+    if (this.activeTab === 'diagnostics') return this.refreshClientDiagnostics();
     return this.refreshBotReview();
   }
 
@@ -497,7 +636,13 @@ export class AdminPanel {
     for (const [tab, button] of this.tabButtons) {
       button.style.cssText = this.tabButtonCss(tab === this.activeTab);
     }
-    if (this.subtitleEl) this.subtitleEl.textContent = this.activeTab === 'events' ? 'Game log' : 'Bot review';
+    if (this.subtitleEl) {
+      this.subtitleEl.textContent = this.activeTab === 'events'
+        ? 'Game log'
+        : this.activeTab === 'diagnostics'
+          ? 'Client diagnostics'
+          : 'Bot review';
+    }
     this.clearRiskButton.style.display = this.activeTab === 'bots' ? '' : 'none';
   }
 
@@ -572,6 +717,52 @@ export class AdminPanel {
     }
   }
 
+  private async refreshClientDiagnostics(): Promise<void> {
+    if (this.diagnosticLoading) return;
+    this.diagnosticLoading = true;
+    this.refreshButton.disabled = true;
+    this.clearRiskButton.disabled = true;
+    this.refreshButton.textContent = 'Loading';
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', '200');
+      params.set('bytes', String(4 * 1024 * 1024));
+      if (this.diagnosticEventFilter) params.set('event', this.diagnosticEventFilter);
+      if (this.diagnosticSearchQuery) params.set('q', this.diagnosticSearchQuery);
+      if (this.diagnosticUserFilter) params.set('user', this.diagnosticUserFilter);
+      const res = await fetch(`/api/admin/client-diagnostics?${params.toString()}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.token}` },
+        credentials: 'same-origin',
+      });
+      if (res.status === 401 || res.status === 403) {
+        this.diagnostics = [];
+        this.renderEmpty('');
+        this.hide();
+        return;
+      }
+      const payload = await res.json() as ClientDiagnosticsResponse;
+      if (!res.ok || !payload.ok) {
+        throw new Error(payload.error || `Client diagnostics failed (${res.status})`);
+      }
+      this.diagnostics = payload.events ?? [];
+      this.diagnosticBytesScanned = payload.bytesScanned ?? 0;
+      if (this.diagnostics.length === 0) {
+        this.selectedDiagnosticKey = null;
+      } else if (!this.diagnostics.some(entry => this.diagnosticKey(entry) === this.selectedDiagnosticKey)) {
+        this.selectedDiagnosticKey = this.diagnosticKey(this.diagnostics[0]);
+      }
+      this.renderClientDiagnostics();
+    } catch (err) {
+      this.renderEmpty(err instanceof Error ? err.message : 'Unable to load client diagnostics.');
+    } finally {
+      this.diagnosticLoading = false;
+      this.refreshButton.disabled = false;
+      this.clearRiskButton.disabled = false;
+      this.refreshButton.textContent = 'Refresh';
+    }
+  }
+
   private async clearBotRiskLevels(): Promise<void> {
     if (this.loading || this.eventLoading) return;
     const confirmed = window.confirm('Clear all bot review risk levels and telemetry? Accounts, bans, mutes, and login history stay intact.');
@@ -614,6 +805,7 @@ export class AdminPanel {
     this.botSearchInput.style.display = '';
     this.clearRiskButton.style.display = '';
     this.eventFilterEl.style.display = 'none';
+    this.diagnosticFilterEl.style.display = 'none';
     this.setGridHeader(BOT_GRID_COLUMNS, ['Account', 'Score', 'Risk', 'Signals', 'Last login']);
     const total = this.accounts.length;
     const high = this.accounts.filter((a) => a.riskLevel === 'high' || a.riskLevel === 'critical').length;
@@ -643,6 +835,7 @@ export class AdminPanel {
     this.botSearchInput.style.display = 'none';
     this.clearRiskButton.style.display = 'none';
     this.eventFilterEl.style.display = 'flex';
+    this.diagnosticFilterEl.style.display = 'none';
     this.renderEventFilters();
     this.setGridHeader(EVENT_GRID_COLUMNS, ['Time', 'Type', 'Actor', 'Event', 'Location']);
     const rare = this.events.filter(event => event.severity === 'rare' || event.type === 'rare_drop').length;
@@ -670,6 +863,82 @@ export class AdminPanel {
       this.detailEl.replaceChildren();
       const empty = document.createElement('div');
       empty.textContent = 'No game events yet.';
+      empty.style.cssText = `font-size: 12px; color: #d9c6a2; padding: 8px;`;
+      this.detailEl.appendChild(empty);
+    }
+  }
+
+  private renderClientDiagnostics(): void {
+    this.botSearchInput.style.display = 'none';
+    this.clearRiskButton.style.display = 'none';
+    this.eventFilterEl.style.display = 'none';
+    this.diagnosticFilterEl.style.display = 'grid';
+    this.setGridHeader(DIAGNOSTIC_GRID_COLUMNS, ['Time', 'Event', 'User', 'Renderer', 'FPS']);
+    const counts = {
+      lowFps: 0,
+      postScale: 0,
+      perf: 0,
+      quality: 0,
+      software: 0,
+      brave: 0,
+      braveLow: 0,
+      hardwareLow: 0,
+      emergencyScale: 0,
+      stable30: 0,
+      uneven: 0,
+    };
+    for (const entry of this.diagnostics) {
+      if (entry.event === 'client_low_fps_snapshot') counts.lowFps++;
+      else if (entry.event === 'client_low_fps_post_scale_snapshot') counts.postScale++;
+      else if (entry.event === 'client_perf_snapshot') counts.perf++;
+      else if (entry.event === 'client_quality_change') counts.quality++;
+      const flags = this.diagnosticFlags(entry);
+      if (flags.includes('software-renderer-likely')) counts.software++;
+      if (flags.includes('brave-browser')) counts.brave++;
+      if (flags.includes('brave-low-fps')) counts.braveLow++;
+      if (flags.includes('low-fps-with-hardware-renderer')) counts.hardwareLow++;
+      if (flags.includes('emergency-render-scale')) counts.emergencyScale++;
+      if (this.isStableLowFrameCadence(entry)) counts.stable30++;
+      if (this.hasUnevenFramePacing(entry)) counts.uneven++;
+    }
+    const browserGap = this.strongDiagnosticBrowserGap();
+    const activeFilters = (this.diagnosticEventFilter ? 1 : 0)
+      + (this.diagnosticSearchQuery ? 1 : 0)
+      + (this.diagnosticUserFilter ? 1 : 0);
+    const summaryPills = [
+      this.summaryPill(`${this.diagnostics.length} snapshots`, '#6c5c43'),
+      this.summaryPill(`${counts.lowFps} low FPS`, counts.lowFps > 0 ? '#8f2f28' : '#4d5d45'),
+      this.summaryPill(`${counts.postScale} post-scale`, counts.postScale > 0 ? '#8f6d2d' : '#4d5d45'),
+      this.summaryPill(`${counts.perf} perf`, '#2f5f8f'),
+      this.summaryPill(`${counts.quality} quality`, counts.quality > 0 ? '#2f5f8f' : '#4d5d45'),
+      this.summaryPill(`${counts.hardwareLow} hardware low`, counts.hardwareLow > 0 ? '#8f6d2d' : '#4d5d45'),
+      this.summaryPill(`${counts.stable30} stable 30`, counts.stable30 > 0 ? '#7a5a25' : '#4d5d45'),
+      this.summaryPill(`${counts.uneven} stalls`, counts.uneven > 0 ? '#8f2f28' : '#4d5d45'),
+      this.summaryPill(`${counts.emergencyScale} emergency`, counts.emergencyScale > 0 ? '#8f2f28' : '#4d5d45'),
+      this.summaryPill(`${counts.software} software`, counts.software > 0 ? '#8f2f28' : '#4d5d45'),
+      this.summaryPill(`${counts.brave} Brave`, counts.brave > 0 ? '#5f4a7d' : '#4d5d45'),
+      this.summaryPill(`${counts.braveLow} Brave low`, counts.braveLow > 0 ? '#5f4a7d' : '#4d5d45'),
+      this.summaryPill(`${Math.round(this.diagnosticBytesScanned / 1024)} KB`, '#564428'),
+      this.summaryPill(`${activeFilters} filters`, activeFilters > 0 ? '#7a5a25' : '#4d5d45'),
+    ];
+    if (browserGap) {
+      const highBrowser = this.diagnosticBrowserFamily(browserGap.high);
+      const lowBrowser = this.diagnosticBrowserFamily(browserGap.low);
+      summaryPills.splice(6, 0, this.summaryPill(`browser gap ${highBrowser}>${lowBrowser} ${browserGap.ratio.toFixed(1)}x`, '#8f2f28'));
+    }
+    this.summaryEl.replaceChildren(...summaryPills);
+
+    this.rowsEl.replaceChildren();
+    for (const entry of this.diagnostics) {
+      this.rowsEl.appendChild(this.diagnosticRow(entry));
+    }
+
+    const selected = this.diagnostics.find(entry => this.diagnosticKey(entry) === this.selectedDiagnosticKey) ?? null;
+    if (selected) this.renderDiagnosticDetail(selected);
+    else {
+      this.detailEl.replaceChildren();
+      const empty = document.createElement('div');
+      empty.textContent = 'No client diagnostics yet.';
       empty.style.cssText = `font-size: 12px; color: #d9c6a2; padding: 8px;`;
       this.detailEl.appendChild(empty);
     }
@@ -732,6 +1001,26 @@ export class AdminPanel {
     this.eventFilterDebounceTimer = null;
   }
 
+  private scheduleDiagnosticFilterRefresh(): void {
+    this.clearDiagnosticFilterDebounce();
+    this.diagnosticFilterDebounceTimer = window.setTimeout(() => {
+      this.diagnosticFilterDebounceTimer = null;
+      if (this.visible && this.activeTab === 'diagnostics') void this.refreshClientDiagnostics();
+    }, 250);
+  }
+
+  private flushDiagnosticFilterRefresh(): void {
+    this.clearDiagnosticFilterDebounce();
+    this.selectedDiagnosticKey = null;
+    if (this.visible && this.activeTab === 'diagnostics') void this.refreshClientDiagnostics();
+  }
+
+  private clearDiagnosticFilterDebounce(): void {
+    if (this.diagnosticFilterDebounceTimer === null) return;
+    window.clearTimeout(this.diagnosticFilterDebounceTimer);
+    this.diagnosticFilterDebounceTimer = null;
+  }
+
   private scheduleBotSearchRefresh(): void {
     this.clearBotSearchDebounce();
     this.botSearchDebounceTimer = window.setTimeout(() => {
@@ -749,6 +1038,139 @@ export class AdminPanel {
     if (this.botSearchDebounceTimer === null) return;
     window.clearTimeout(this.botSearchDebounceTimer);
     this.botSearchDebounceTimer = null;
+  }
+
+  private diagnosticRow(entry: ClientDiagnosticLogEntry): HTMLButtonElement {
+    const selected = this.diagnosticKey(entry) === this.selectedDiagnosticKey;
+    const flags = this.diagnosticFlags(entry);
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.style.cssText = `
+      appearance: none;
+      width: 100%;
+      display: grid;
+      grid-template-columns: ${DIAGNOSTIC_GRID_COLUMNS};
+      gap: 6px;
+      padding: 6px 7px;
+      border: 0;
+      border-bottom: 1px solid rgba(74, 64, 53, 0.55);
+      background: ${this.diagnosticRowBackground(flags, selected)};
+      color: #f1d6b6;
+      font: 11px Arial, Helvetica, sans-serif;
+      text-align: left;
+      cursor: pointer;
+      text-shadow: ${TEXT_SHADOW};
+    `;
+    row.addEventListener('click', () => {
+      this.selectedDiagnosticKey = this.diagnosticKey(entry);
+      this.renderClientDiagnostics();
+    });
+    row.append(
+      this.truncateCell(this.formatDiagnosticClock(entry)),
+      this.diagnosticEventPill(entry.event),
+      this.truncateCell(entry.username || '-'),
+      this.truncateCell(this.diagnosticRenderer(entry)),
+      this.truncateCell(this.formatRate(this.diagnosticFps(entry))),
+    );
+    return row;
+  }
+
+  private renderDiagnosticDetail(entry: ClientDiagnosticLogEntry): void {
+    const payload = this.diagnosticPayload(entry);
+    const webgl = this.recordObject(payload, 'webgl');
+    const browser = this.recordObject(payload, 'browser');
+    const canvas = this.recordObject(payload, 'canvas');
+    const chunkMeshes = this.recordObject(payload, 'chunkMeshes');
+    const terrainDetail = this.recordObject(chunkMeshes, 'terrainDetail');
+    const player = this.recordObject(payload, 'player');
+    const framePacing = this.recordObject(payload, 'framePacing');
+    const flags = this.diagnosticFlags(entry);
+
+    const root = document.createElement('div');
+    root.style.cssText = `display: flex; flex-direction: column; gap: 8px;`;
+
+    const title = document.createElement('div');
+    title.style.cssText = `display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13px; font-weight: bold; color: #f4ded5;`;
+    title.append(
+      document.createTextNode(`${this.diagnosticEventLabel(entry.event)} · ${entry.username || 'unknown'}`),
+      this.diagnosticEventPill(entry.event),
+    );
+    root.appendChild(title);
+
+    const chips = document.createElement('div');
+    chips.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px; min-height: 20px;`;
+    if (flags.length === 0) {
+      chips.appendChild(this.summaryPill('no diagnostic flags', '#4d5d45'));
+    } else {
+      for (const flag of flags.slice(0, 10)) {
+        chips.appendChild(this.summaryPill(flag, this.diagnosticFlagColor(flag)));
+      }
+    }
+    if (this.isStableLowFrameCadence(entry)) {
+      chips.appendChild(this.summaryPill('stable ~30 FPS cadence', '#7a5a25'));
+    } else if (this.hasUnevenFramePacing(entry)) {
+      chips.appendChild(this.summaryPill('uneven frame stalls', '#8f2f28'));
+    }
+    root.appendChild(chips);
+
+    const metrics = document.createElement('div');
+    metrics.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(4, minmax(100px, 1fr));
+      gap: 6px;
+    `;
+    metrics.append(
+      this.metricCell('Time', this.formatDiagnosticTime(entry)),
+      this.metricCell('FPS', this.formatRate(this.diagnosticFps(entry))),
+      this.metricCell('Engine FPS', this.formatRate(this.recordNumber(payload, 'engineFps'))),
+      this.metricCell('Frame median', this.formatFrameMs(this.recordNumber(framePacing, 'medianMs'))),
+      this.metricCell('Frame p95', this.formatFrameMs(this.recordNumber(framePacing, 'p95Ms'))),
+      this.metricCell('Frame max', this.formatFrameMs(this.recordNumber(framePacing, 'maxMs'))),
+      this.metricCell('Frames >33ms', this.formatNullableNumber(this.recordNumber(framePacing, 'over33Ms'))),
+      this.metricCell('Frames >50ms', this.formatNullableNumber(this.recordNumber(framePacing, 'over50Ms'))),
+      this.metricCell('Draw calls', this.formatNullableNumber(this.recordNumber(payload, 'drawCalls'))),
+      this.metricCell('Active meshes', this.formatNullableNumber(this.recordNumber(payload, 'activeMeshes'))),
+      this.metricCell('Total meshes', this.formatNullableNumber(this.recordNumber(payload, 'totalMeshes'))),
+      this.metricCell('Vertices', this.formatNullableNumber(this.recordNumber(payload, 'totalVertices'))),
+      this.metricCell('Indices', this.formatNullableNumber(this.recordNumber(payload, 'totalIndices'))),
+      this.metricCell('Renderer', this.diagnosticRenderer(entry)),
+      this.metricCell('WebGL', String(webgl.context ?? '-')),
+      this.metricCell('Browser', this.diagnosticBrowser(entry)),
+      this.metricCell('DPR', this.formatRate(this.recordNumber(browser, 'devicePixelRatio'))),
+      this.metricCell('Render scale', this.formatRate(this.recordNumber(payload, 'renderScale'))),
+      this.metricCell('Canvas', this.formatCanvas(canvas)),
+      this.metricCell('Map', String(payload.currentMap ?? '-')),
+      this.metricCell('Player', this.formatPlayer(player)),
+      this.metricCell('Ground/detail', `${this.formatNullableNumber(this.recordNumber(chunkMeshes, 'ground'))}/${this.formatNullableNumber(this.recordNumber(chunkMeshes, 'detail'))}`),
+      this.metricCell('Detail attrs', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'groundDetailAttributes'))),
+      this.metricCell('Detail verts', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'detailVertices'))),
+      this.metricCell('Grass verts', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'grassVertices'))),
+      this.metricCell('Grass instances', this.formatNullableNumber(this.recordNumber(chunkMeshes, 'grassInstances'))),
+      this.metricCell('Grass rebuilds', this.formatNullableNumber(this.recordNumber(terrainDetail, 'grassBladeBatchRebuilds'))),
+      this.metricCell('Grass max ms', this.formatRate(this.recordNumber(terrainDetail, 'grassBladeBatchMaxRebuildMs'))),
+      this.metricCell('Client at', entry.clientAt === null ? '-' : new Date(entry.clientAt).toLocaleString()),
+      this.metricCell('Server tick', entry.tick === null ? '-' : String(entry.tick)),
+    );
+    root.appendChild(metrics);
+
+    const details = document.createElement('pre');
+    details.textContent = JSON.stringify(entry.payload ?? {}, null, 2);
+    details.style.cssText = `
+      margin: 0;
+      padding: 7px;
+      max-height: 150px;
+      overflow: auto;
+      border: 1px solid rgba(84, 70, 50, 0.6);
+      background: rgba(8, 6, 5, 0.45);
+      color: #d9c6a2;
+      font: 10px/14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-shadow: none;
+      white-space: pre-wrap;
+      word-break: break-word;
+    `;
+    root.appendChild(details);
+
+    this.detailEl.replaceChildren(root);
   }
 
   private eventRow(event: GameEventLogEntry): HTMLButtonElement {
@@ -1105,6 +1527,8 @@ export class AdminPanel {
     }
     root.appendChild(chips);
 
+    root.appendChild(this.renderWhyFlagged(account, summary, reasons));
+
     if (contextFlags.length > 0 || diagnosticFlags.length > 0) {
       const weakSignals = document.createElement('div');
       weakSignals.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px; min-height: 20px;`;
@@ -1217,7 +1641,14 @@ export class AdminPanel {
         context.appendChild(this.summaryPill(`${entry.tile}: ${this.formatNumber(entry.count)} moves`, '#564428'));
       }
       for (const alt of account.sharedDeviceAlts.slice(0, 5)) {
-        context.appendChild(this.summaryPill(`device alt ${alt.username}: ${alt.devices} dev/${alt.logins} logins`, '#6b3b34'));
+        // Highlight alts that are themselves banned or high-risk — a strong
+        // alt-account / gold-farm-fleet signal an admin should not miss.
+        const flagged = alt.banned || alt.riskLevel === 'high' || alt.riskLevel === 'critical';
+        const tag = alt.banned ? ' ⛔ BANNED' : flagged ? ` ⚠ ${alt.riskLevel} ${alt.riskScore}` : '';
+        const color = alt.banned ? '#b52f24' : flagged ? '#8f2f28' : '#6b3b34';
+        const pill = this.summaryPill(`device alt ${alt.username}: ${alt.devices} dev/${alt.logins} logins${tag}`, color);
+        if (flagged) pill.title = 'Shares a device with this account and is itself flagged/banned — likely the same operator.';
+        context.appendChild(pill);
       }
       root.appendChild(context);
     }
@@ -1228,12 +1659,8 @@ export class AdminPanel {
 
     root.appendChild(this.moderationControls(account));
 
-    if (reasons.length > 0) {
-      const reasonText = document.createElement('div');
-      reasonText.textContent = reasons.join(' | ');
-      reasonText.style.cssText = `font-size: 11px; line-height: 15px; color: #d9c6a2;`;
-      root.appendChild(reasonText);
-    }
+    // The flat reasons line is superseded by the ranked "Why flagged" breakdown
+    // rendered near the top of the pane (see renderWhyFlagged).
 
     this.detailEl.replaceChildren(root);
   }
@@ -1441,6 +1868,116 @@ export class AdminPanel {
     return evidenceFlags.length > 0 ? evidenceFlags : this.summaryStringArray(summary, 'flags');
   }
 
+  /** Structured per-signal breakdown from the session summary (server-ranked). */
+  private summarySignals(summary: Record<string, unknown> | null): AdminBotSignal[] {
+    const raw = summary?.riskSignals;
+    if (!Array.isArray(raw)) return [];
+    const out: AdminBotSignal[] = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const s = item as Record<string, unknown>;
+      const tier = s.tier === 'hard' || s.tier === 'context' ? s.tier : 'soft';
+      out.push({
+        flag: String(s.flag ?? ''),
+        label: String(s.label ?? s.flag ?? 'signal'),
+        description: String(s.description ?? ''),
+        threshold: String(s.threshold ?? ''),
+        measured: String(s.measured ?? ''),
+        points: typeof s.points === 'number' ? s.points : 0,
+        tier,
+      });
+    }
+    return out;
+  }
+
+  /** The headline "why flagged" view: a ranked, per-signal breakdown showing
+   *  what tripped, the player's value vs the threshold, the points each added,
+   *  and whether the score rests on hard evidence (or is capped without it).
+   *  Falls back to the legacy reason strings when structured signals are absent
+   *  (e.g. accounts scored by the lifetime-calibration path). */
+  private renderWhyFlagged(account: AdminBotAccount, summary: Record<string, unknown> | null, reasons: string[]): HTMLElement {
+    const TIER_COLOR: Record<AdminBotSignal['tier'], string> = { hard: '#8f2f28', soft: '#7a5a25', context: '#4d535f' };
+    const TIER_NAME: Record<AdminBotSignal['tier'], string> = { hard: 'hard evidence', soft: 'supporting', context: 'combo' };
+
+    const box = document.createElement('div');
+    box.style.cssText = `border: 1px solid #4a3f33; border-radius: 6px; padding: 8px 9px; display: flex; flex-direction: column; gap: 6px; background: #241d16;`;
+
+    const head = document.createElement('div');
+    head.style.cssText = `display: flex; align-items: center; gap: 7px; flex-wrap: wrap;`;
+    const heading = document.createElement('span');
+    heading.textContent = 'Why flagged';
+    heading.style.cssText = `font-size: 12px; font-weight: bold; color: #f4ded5;`;
+    head.appendChild(heading);
+
+    const signals = this.summarySignals(summary);
+    const hardEvidence = summary?.riskHardEvidence === true || signals.some(s => s.tier === 'hard');
+    head.appendChild(this.summaryPill(
+      hardEvidence ? 'hard evidence' : 'no hard evidence — score capped at 29',
+      hardEvidence ? '#8f2f28' : '#4d5d45',
+    ));
+    if (signals.length === 0 && reasons.length > 0) {
+      head.appendChild(this.summaryPill('legacy calibration', '#564428'));
+    }
+    if (summary?.isLikelyMobile === true) {
+      const pill = this.summaryPill('📱 mobile — cursor signals exempt', '#2f5f8f');
+      pill.title = 'Touch-dominant client. Cursor-absence signals are suppressed to avoid false-flagging phone players; all automation detectors still apply.';
+      head.appendChild(pill);
+    }
+    box.appendChild(head);
+
+    if (signals.length === 0) {
+      if (reasons.length === 0) {
+        const none = document.createElement('div');
+        none.textContent = 'No scored signals — risk score is 0 or from lifetime history only.';
+        none.style.cssText = `font-size: 11px; color: #9b8e7a;`;
+        box.appendChild(none);
+        return box;
+      }
+      for (const reason of reasons.slice(0, 12)) {
+        const row = document.createElement('div');
+        row.textContent = `• ${reason}`;
+        row.style.cssText = `font-size: 11px; line-height: 15px; color: #d9c6a2;`;
+        box.appendChild(row);
+      }
+      return box;
+    }
+
+    for (const sig of signals) {
+      const row = document.createElement('div');
+      row.style.cssText = `display: grid; grid-template-columns: 44px 1fr; gap: 8px; align-items: start;`;
+
+      const pts = document.createElement('div');
+      pts.textContent = `+${sig.points}`;
+      pts.title = TIER_NAME[sig.tier];
+      pts.style.cssText = `font-size: 12px; font-weight: bold; text-align: center; color: #fff; background: ${TIER_COLOR[sig.tier]}; border-radius: 4px; padding: 2px 0; align-self: center;`;
+      row.appendChild(pts);
+
+      const text = document.createElement('div');
+      text.style.cssText = `min-width: 0; display: flex; flex-direction: column; gap: 1px;`;
+      const label = document.createElement('div');
+      label.textContent = sig.label;
+      label.style.cssText = `font-size: 12px; font-weight: 600; color: #f4ded5;`;
+      text.appendChild(label);
+      if (sig.measured || sig.threshold) {
+        const cmp = document.createElement('div');
+        cmp.style.cssText = `font-size: 11px; color: #c9b48f;`;
+        cmp.textContent = sig.tier === 'context'
+          ? 'combination of signals above'
+          : `${sig.measured || '—'}${sig.threshold ? `  ·  fires at ${sig.threshold}` : ''}`;
+        text.appendChild(cmp);
+      }
+      if (sig.description) {
+        const desc = document.createElement('div');
+        desc.textContent = sig.description;
+        desc.style.cssText = `font-size: 10px; color: #8f8268;`;
+        text.appendChild(desc);
+      }
+      row.appendChild(text);
+      box.appendChild(row);
+    }
+    return box;
+  }
+
   private summaryStringArray(summary: Record<string, unknown> | null, key: string): string[] {
     const value = summary?.[key];
     return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
@@ -1520,6 +2057,164 @@ export class AdminPanel {
 
   private muteTitle(mute: AdminAccountMute): string {
     return `Mute ${this.formatModerationExpiry(mute.expiresAt)} by ${mute.mutedBy || 'unknown'}${mute.reason ? `: ${mute.reason}` : ''}`;
+  }
+
+  private diagnosticKey(entry: ClientDiagnosticLogEntry): string {
+    return `${entry.ts}|${entry.clientAt ?? ''}|${entry.event}|${entry.username}`;
+  }
+
+  private diagnosticPayload(entry: ClientDiagnosticLogEntry): Record<string, unknown> {
+    return entry.payload && typeof entry.payload === 'object' && !Array.isArray(entry.payload)
+      ? entry.payload as Record<string, unknown>
+      : {};
+  }
+
+  private recordObject(record: Record<string, unknown>, key: string): Record<string, unknown> {
+    const value = record[key];
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  }
+
+  private diagnosticFlags(entry: ClientDiagnosticLogEntry): string[] {
+    return diagnosticFlagsFromPayload(this.diagnosticPayload(entry));
+  }
+
+  private diagnosticFramePacing(entry: ClientDiagnosticLogEntry): Record<string, unknown> {
+    return this.recordObject(this.diagnosticPayload(entry), 'framePacing');
+  }
+
+  private comparableDiagnosticScene(a: ClientDiagnosticLogEntry, b: ClientDiagnosticLogEntry): boolean {
+    return areComparableDiagnosticScenes(this.diagnosticPayload(a), this.diagnosticPayload(b));
+  }
+
+  private diagnosticBrowserFamily(entry: ClientDiagnosticLogEntry): string {
+    return browserFamilyFromDiagnosticPayload(this.diagnosticPayload(entry));
+  }
+
+  private isPlayerChromiumDiagnostic(entry: ClientDiagnosticLogEntry): boolean {
+    return isPlayerChromiumBrowserFamily(this.diagnosticBrowserFamily(entry));
+  }
+
+  private strongDiagnosticBrowserGap(): DiagnosticBrowserGap | null {
+    const byUser = new Map<string, ClientDiagnosticLogEntry[]>();
+    for (const entry of this.diagnostics) {
+      if (!entry.username || this.diagnosticFps(entry) === null || !this.isPlayerChromiumDiagnostic(entry)) continue;
+      const entries = byUser.get(entry.username) ?? [];
+      entries.push(entry);
+      byUser.set(entry.username, entries);
+    }
+    let best: DiagnosticBrowserGap | null = null;
+    for (const measured of byUser.values()) {
+      for (let i = 0; i < measured.length; i++) {
+        for (let j = i + 1; j < measured.length; j++) {
+          const a = measured[i];
+          const b = measured[j];
+          if (this.diagnosticBrowserFamily(a) === this.diagnosticBrowserFamily(b)) continue;
+          if (!this.comparableDiagnosticScene(a, b)) continue;
+          const aFps = this.diagnosticFps(a);
+          const bFps = this.diagnosticFps(b);
+          if (aFps === null || bFps === null) continue;
+          const high = aFps >= bFps ? a : b;
+          const low = high === a ? b : a;
+          const highFps = Math.max(aFps, bFps);
+          const lowFps = Math.min(aFps, bFps);
+          const ratio = highFps / Math.max(1, lowFps);
+          if (highFps < 100 || lowFps >= 55 || ratio < 1.5) continue;
+          if (!best || ratio > best.ratio) best = { high, low, highFps, lowFps, ratio };
+        }
+      }
+    }
+    return best;
+  }
+
+  private isStableLowFrameCadence(entry: ClientDiagnosticLogEntry): boolean {
+    const fps = this.diagnosticFps(entry);
+    return sharedIsStableLowFrameCadence(fps, this.diagnosticFramePacing(entry));
+  }
+
+  private hasUnevenFramePacing(entry: ClientDiagnosticLogEntry): boolean {
+    return sharedHasUnevenFramePacing(this.diagnosticFramePacing(entry));
+  }
+
+  private diagnosticFlagColor(flag: string): string {
+    switch (flag) {
+      case 'software-renderer-likely':
+      case 'emergency-render-scale':
+        return '#8f2f28';
+      case 'low-fps-after-render-scale':
+      case 'low-fps-with-hardware-renderer':
+      case 'low-fps-measured':
+        return '#8f6d2d';
+      case 'brave-browser':
+      case 'brave-low-fps':
+        return '#5f4a7d';
+      case 'high-dpr-render-target':
+      case 'renderer-info-masked':
+      case 'webgl1-context':
+        return '#7a5a25';
+      default:
+        return '#4d535f';
+    }
+  }
+
+  private diagnosticRowBackground(flags: readonly string[], selected: boolean): string {
+    if (selected) return 'rgba(122, 50, 40, 0.48)';
+    if (flags.includes('emergency-render-scale') || flags.includes('software-renderer-likely')) return 'rgba(73, 17, 13, 0.5)';
+    if (flags.includes('low-fps-after-render-scale') || flags.includes('low-fps-with-hardware-renderer')) return 'rgba(88, 49, 17, 0.48)';
+    if (flags.includes('brave-low-fps')) return 'rgba(62, 37, 82, 0.46)';
+    return 'rgba(22, 16, 12, 0.38)';
+  }
+
+  private diagnosticFps(entry: ClientDiagnosticLogEntry): number | null {
+    return measuredFpsFromDiagnosticPayload(this.diagnosticPayload(entry));
+  }
+
+  private diagnosticRenderer(entry: ClientDiagnosticLogEntry): string {
+    const webgl = this.recordObject(this.diagnosticPayload(entry), 'webgl');
+    return String(webgl.unmaskedRenderer ?? webgl.renderer ?? 'unknown');
+  }
+
+  private diagnosticBrowser(entry: ClientDiagnosticLogEntry): string {
+    const payload = this.diagnosticPayload(entry);
+    const browser = this.recordObject(payload, 'browser');
+    if (browser.brave === true) return 'Brave';
+    const uaData = this.recordObject(browser, 'userAgentData');
+    const brands = uaData.brands;
+    if (Array.isArray(brands)) {
+      const brandNames = brands
+        .map(brand => brand && typeof brand === 'object' && !Array.isArray(brand) ? String((brand as Record<string, unknown>).brand ?? '') : '')
+        .filter(Boolean);
+      if (brandNames.length > 0) return brandNames.join(', ');
+    }
+    const ua = String(browser.userAgent ?? '');
+    if (ua.includes('Edg/')) return 'Edge';
+    if (ua.includes('Chrome/')) return 'Chrome';
+    return String(browser.platform ?? 'unknown');
+  }
+
+  private diagnosticEventLabel(event: string): string {
+    switch (event) {
+      case 'client_low_fps_snapshot': return 'Low FPS';
+      case 'client_low_fps_post_scale_snapshot': return 'Post-scale FPS';
+      case 'client_perf_snapshot': return 'Perf';
+      case 'client_quality_change': return 'Quality';
+      case 'game_connection_lost': return 'Disconnect';
+      default: return event.replace(/_/g, ' ');
+    }
+  }
+
+  private diagnosticEventPill(event: string): HTMLDivElement {
+    const color = event === 'client_low_fps_snapshot'
+      ? '#8f2f28'
+      : event === 'client_low_fps_post_scale_snapshot'
+        ? '#8f6d2d'
+      : event === 'client_perf_snapshot'
+        ? '#2f5f8f'
+        : event === 'client_quality_change'
+          ? '#2f5f8f'
+          : event === 'game_connection_lost'
+            ? '#7a5a25'
+            : '#6c5c43';
+    return this.summaryPill(this.diagnosticEventLabel(event), color);
   }
 
   private eventTypeLabel(type: string): string {
@@ -1704,11 +2399,46 @@ export class AdminPanel {
     });
   }
 
+  private formatDiagnosticClock(entry: ClientDiagnosticLogEntry): string {
+    const timestamp = Date.parse(entry.ts);
+    if (!Number.isFinite(timestamp)) return '-';
+    return new Date(timestamp).toLocaleTimeString(undefined, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  }
+
+  private formatDiagnosticTime(entry: ClientDiagnosticLogEntry): string {
+    const timestamp = Date.parse(entry.ts);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : '-';
+  }
+
   private formatLocation(event: GameEventLogEntry): string {
     if (!event.mapLevel) return '-';
     const x = event.x == null ? '?' : event.x.toFixed(1);
     const z = event.z == null ? '?' : event.z.toFixed(1);
     return `${event.mapLevel} F${event.floor ?? 0} ${x},${z}`;
+  }
+
+  private formatNullableNumber(value: number | null): string {
+    return value === null ? '-' : this.formatNumber(value);
+  }
+
+  private formatCanvas(canvas: Record<string, unknown>): string {
+    const width = this.recordNumber(canvas, 'width');
+    const height = this.recordNumber(canvas, 'height');
+    const clientWidth = this.recordNumber(canvas, 'clientWidth');
+    const clientHeight = this.recordNumber(canvas, 'clientHeight');
+    if (width === null || height === null) return '-';
+    if (clientWidth === null || clientHeight === null) return `${Math.round(width)}x${Math.round(height)}`;
+    return `${Math.round(width)}x${Math.round(height)} / ${Math.round(clientWidth)}x${Math.round(clientHeight)}`;
+  }
+
+  private formatPlayer(player: Record<string, unknown>): string {
+    const x = this.recordNumber(player, 'x');
+    const z = this.recordNumber(player, 'z');
+    return x === null || z === null ? '-' : `${x.toFixed(1)}, ${z.toFixed(1)}`;
   }
 
   private formatBanExpiry(unixSeconds: number | null): string {
@@ -1735,6 +2465,10 @@ export class AdminPanel {
   private formatRate(value: number | null): string {
     if (value === null || !Number.isFinite(value)) return '-';
     return value >= 100 ? Math.round(value).toLocaleString() : value.toFixed(2);
+  }
+
+  private formatFrameMs(value: number | null): string {
+    return value === null || !Number.isFinite(value) ? '-' : `${value.toFixed(1)} ms`;
   }
 
   private formatMs(value: number | null): string {

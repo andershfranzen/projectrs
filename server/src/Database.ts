@@ -214,6 +214,10 @@ export interface BotStatsRow {
   total_chat_messages: number;
   total_session_minutes: number;
   total_flag_events: number;
+  /** Lifetime count of sessions that ended with hard bot evidence. Persists the
+   *  strongest tells across logouts so a bot that reconnects every few minutes
+   *  (defeating per-session cadence thresholds) still accrues a conviction. */
+  total_hard_flag_events?: number;
   total_suspicious_packets: number;
   last_chat_ts: number | null;
   last_action_ts: number | null;
@@ -260,6 +264,11 @@ export interface AdminSharedDeviceAlt {
   devices: number;
   logins: number;
   lastSeenTs: number | null;
+  /** The alt's own bot-risk score/level — surfaces gold-farm fleets where one
+   *  shared-device account is already flagged or banned. */
+  riskScore: number;
+  riskLevel: string;
+  banned: boolean;
 }
 
 export interface AdminBotReviewAccount {
@@ -1215,6 +1224,7 @@ export class GameDatabase {
         total_chat_messages INTEGER NOT NULL DEFAULT 0,
         total_session_minutes INTEGER NOT NULL DEFAULT 0,
         total_flag_events INTEGER NOT NULL DEFAULT 0,
+        total_hard_flag_events INTEGER NOT NULL DEFAULT 0,
         total_suspicious_packets INTEGER NOT NULL DEFAULT 0,
         last_chat_ts INTEGER,
         last_action_ts INTEGER,
@@ -1261,6 +1271,9 @@ export class GameDatabase {
     } catch { /* column already exists */ }
     try {
       this.db.exec(`ALTER TABLE bot_stats ADD COLUMN session_history TEXT NOT NULL DEFAULT '[]'`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE bot_stats ADD COLUMN total_hard_flag_events INTEGER NOT NULL DEFAULT 0`);
     } catch { /* column already exists */ }
     this.runOneTimeBotStatsMigrations();
 
@@ -3380,6 +3393,7 @@ export class GameDatabase {
     const row = this.db.query(`
 	      SELECT total_skilling_actions, total_combat_swings, total_movements,
 	             total_chat_messages, total_session_minutes, total_flag_events,
+	             total_hard_flag_events,
 	             total_suspicious_packets,
 	             last_chat_ts, last_action_ts, last_login_ts,
 	             risk_score, risk_level, risk_reasons,
@@ -3432,12 +3446,12 @@ export class GameDatabase {
     this.db.query(`
 	      INSERT INTO bot_stats (
 	        account_id, total_skilling_actions, total_combat_swings, total_movements,
-	        total_chat_messages, total_session_minutes, total_flag_events, total_suspicious_packets,
+	        total_chat_messages, total_session_minutes, total_flag_events, total_hard_flag_events, total_suspicious_packets,
 	        last_chat_ts, last_action_ts, last_login_ts, risk_score, risk_level, risk_reasons,
 	        tick_align_samples, reaction_samples, path_destinations,
 	        action_signatures, ping_interval_samples, device_ids, suspicious_packet_reasons,
 	        xp_baseline, last_session_summary, session_history, updated_at
-	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
+	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
       ON CONFLICT(account_id) DO UPDATE SET
         total_skilling_actions = excluded.total_skilling_actions,
         total_combat_swings = excluded.total_combat_swings,
@@ -3445,6 +3459,7 @@ export class GameDatabase {
         total_chat_messages = excluded.total_chat_messages,
         total_session_minutes = excluded.total_session_minutes,
         total_flag_events = excluded.total_flag_events,
+        total_hard_flag_events = excluded.total_hard_flag_events,
         total_suspicious_packets = excluded.total_suspicious_packets,
         last_chat_ts = excluded.last_chat_ts,
         last_action_ts = excluded.last_action_ts,
@@ -3471,6 +3486,7 @@ export class GameDatabase {
       row.total_chat_messages,
       row.total_session_minutes,
       row.total_flag_events,
+      row.total_hard_flag_events ?? 0,
       row.total_suspicious_packets,
       row.last_chat_ts ?? null,
       row.last_action_ts ?? null,
@@ -3679,13 +3695,18 @@ export class GameDatabase {
         a.username,
         COUNT(DISTINCT lh.device_id) AS devices,
         COUNT(*) AS logins,
-        MAX(lh.login_ts) AS last_seen_ts
+        MAX(lh.login_ts) AS last_seen_ts,
+        COALESCE(bs.risk_score, 0) AS risk_score,
+        COALESCE(bs.risk_level, 'low') AS risk_level,
+        MAX(CASE WHEN ab.account_id IS NOT NULL THEN 1 ELSE 0 END) AS banned
       FROM login_history lh
       JOIN my_devices md ON md.device_id = lh.device_id
       JOIN accounts a ON a.id = lh.account_id
+      LEFT JOIN bot_stats bs ON bs.account_id = a.id
+      LEFT JOIN account_bans ab ON ab.account_id = a.id AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
       WHERE lh.account_id <> ?
-      GROUP BY a.id, a.username
-      ORDER BY devices DESC, logins DESC, last_seen_ts DESC
+      GROUP BY a.id, a.username, bs.risk_score, bs.risk_level
+      ORDER BY banned DESC, risk_score DESC, devices DESC, logins DESC, last_seen_ts DESC
       LIMIT ?
     `).all(accountId, accountId, Math.max(1, Math.min(20, limit))) as Array<{
       account_id: number;
@@ -3693,6 +3714,9 @@ export class GameDatabase {
       devices: number;
       logins: number;
       last_seen_ts: number | null;
+      risk_score: number;
+      risk_level: string;
+      banned: number;
     }>;
     return rows.map((row) => ({
       accountId: row.account_id,
@@ -3700,6 +3724,9 @@ export class GameDatabase {
       devices: row.devices,
       logins: row.logins,
       lastSeenTs: row.last_seen_ts,
+      riskScore: row.risk_score,
+      riskLevel: row.risk_level,
+      banned: row.banned === 1,
     }));
   }
 

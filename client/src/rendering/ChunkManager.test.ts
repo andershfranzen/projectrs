@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Matrix, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { ChunkManager, assertOptionalMapResourceResponse, isInteractiveDoorPlacedAsset, isObjectShadowReceiverGround, isRoofLikePlacedAsset, placedObjectThinGroupKey } from './ChunkManager';
-import type { GroundType } from '@projectrs/shared';
+import type { GroundType, KCTile } from '@projectrs/shared';
 
 const originalFetch = globalThis.fetch;
 const originalConsoleWarn = console.warn;
@@ -31,6 +32,7 @@ type ObjectChunkManagerHarness = {
   objectLoadGeneration: number;
   scene: { isDisposed: boolean };
   loadingObjectChunks: Set<string>;
+  loadingObjectJsonPromises: Map<string, Promise<unknown[] | null>>;
   chunkPlacedNodes: Map<string, TransformNode[]>;
   chunksKnownEmpty: Set<string>;
   placedObjectsByChunk: Map<string, unknown[]>;
@@ -46,12 +48,51 @@ function makeObjectChunkManager(): ObjectChunkManagerHarness {
     objectLoadGeneration: 1,
     scene: { isDisposed: false },
     loadingObjectChunks: new Set<string>(['1,2']),
+    loadingObjectJsonPromises: new Map<string, Promise<unknown[] | null>>(),
     chunkPlacedNodes: new Map<string, TransformNode[]>(),
     chunksKnownEmpty: new Set<string>(),
     placedObjectsByChunk: new Map<string, unknown[]>(),
     objectLoadChunks: new Set<string>(),
     desiredObjectChunks: new Set<string>(),
     touchObjectChunk: () => {},
+  });
+}
+
+function makeKCTile(overrides: Partial<KCTile> = {}): KCTile {
+  return {
+    ground: 'grass',
+    groundB: null,
+    split: 'forward',
+    textureId: null,
+    textureRotation: 0,
+    textureScale: 1,
+    textureWorldUV: false,
+    textureHalfMode: false,
+    textureIdB: null,
+    textureRotationB: 0,
+    textureScaleB: 1,
+    textureCutAngle: 0,
+    textureCutOffset: 0,
+    waterPainted: false,
+    waterSurface: false,
+    waterSurfaceB: false,
+    ...overrides,
+  };
+}
+
+function makeGrassChunkManager(tiles: KCTile[][]): any {
+  return Object.assign(Object.create(ChunkManager.prototype), {
+    mapWidth: tiles[0]?.length ?? 0,
+    mapHeight: tiles.length,
+    defaultGround: 'grass' as GroundType,
+    activeChunks: null,
+    holeTiles: new Set<number>(),
+    floorHeights: new Map<number, number>(),
+    stairData: new Map<number, unknown>(),
+    texturePlaneFloorTiles: new Set<number>(),
+    tilePaintedEntries: new Map<number, { color: [number, number, number]; y: number }>(),
+    mapData: { tiles },
+    getTileCornerHeights: () => ({ tl: 0, tr: 0, bl: 0, br: 0 }),
   });
 }
 
@@ -116,7 +157,136 @@ describe('terrain object shadow receivers', () => {
   });
 });
 
+describe('procedural grass batching', () => {
+  test('coalesces grass thin-instance rebuilds across chunk changes', () => {
+    const callbacks: FrameRequestCallback[] = [];
+    let rebuilds = 0;
+    const manager = Object.assign(Object.create(ChunkManager.prototype), {
+      grassBladeChunks: new Map<string, { matrices: Float32Array; enabled: boolean }>(),
+      grassBladeBatchDirty: false,
+      grassBladeBatchRebuildScheduled: false,
+      grassBladeBatchRebuilds: 0,
+      grassBladeBatchLastRebuildMs: 0,
+      grassBladeBatchMaxRebuildMs: 0,
+      grassBladeBatchTotalRebuildMs: 0,
+      grassBladeBatchLastInstances: 0,
+      grassBladeBatchLastBufferBytes: 0,
+      loadMapToken: 1,
+      scheduleNextFrame: (callback: FrameRequestCallback) => {
+        callbacks.push(callback);
+      },
+      rebuildGrassBladeBatchNow: () => {
+        rebuilds++;
+      },
+    }) as any;
+
+    manager.registerGrassBladeChunk('0,0', new Float32Array(16), true);
+    manager.registerGrassBladeChunk('0,1', new Float32Array(32), false);
+    manager.setGrassBladeChunkEnabled('0,1', true);
+
+    expect(callbacks).toHaveLength(1);
+    expect(rebuilds).toBe(0);
+    expect(manager.getTerrainDetailStats()).toMatchObject({
+      grassBladeChunks: 2,
+      grassBladeEnabledChunks: 2,
+      grassBladeStoredInstances: 3,
+      grassBladeEnabledInstances: 3,
+      grassBladeBatchDirty: true,
+      grassBladeBatchRebuildScheduled: true,
+      grassBladeBatchRebuilds: 0,
+    });
+
+    callbacks[0](performance.now());
+
+    expect(rebuilds).toBe(1);
+    expect(manager.grassBladeBatchDirty).toBe(false);
+    expect(manager.grassBladeBatchRebuildScheduled).toBe(false);
+    expect(manager.getTerrainDetailStats()).toMatchObject({
+      grassBladeBatchDirty: false,
+      grassBladeBatchRebuildScheduled: false,
+    });
+  });
+});
+
+describe('procedural grass placement', () => {
+  test('uses only uncovered visible grass surfaces', () => {
+    const manager = makeGrassChunkManager([[
+      makeKCTile(),
+      makeKCTile({ textureId: 'tex-road' }),
+      makeKCTile(),
+      makeKCTile(),
+      makeKCTile({ groundB: 'dirt' }),
+      makeKCTile(),
+      makeKCTile(),
+    ]]);
+
+    manager.texturePlaneFloorTiles.add(2);
+    manager.tilePaintedEntries.set(3, { color: [80, 70, 60], y: 0 });
+    manager.floorHeights.set(5, 2.75);
+    manager.stairData.set(6, {});
+
+    expect(manager.isGrassBladeSurface(0, 0)).toBe(true);
+    expect(manager.isGrassBladeSurface(1, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(2, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(3, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(4, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(5, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(6, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(-1, 0)).toBe(false);
+  });
+
+  test('keeps seam blades inside the grass tile', () => {
+    const manager = makeGrassChunkManager([[
+      makeKCTile(),
+      makeKCTile({ ground: 'road' }),
+    ]]);
+
+    const matrices = manager.buildGrassBladeMatrices(0, 0, 2, 1);
+
+    expect(matrices.length).toBeGreaterThan(0);
+    for (let offset = 0; offset < matrices.length; offset += 16) {
+      expect(matrices[offset + 12]).toBeGreaterThanOrEqual(0);
+      expect(matrices[offset + 12]).toBeLessThanOrEqual(1);
+      expect(matrices[offset + 14]).toBeGreaterThanOrEqual(0);
+      expect(matrices[offset + 14]).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test('adds sparse field blades away from grass edges', () => {
+    const tiles = Array.from({ length: 12 }, () => (
+      Array.from({ length: 12 }, () => makeKCTile())
+    ));
+    const manager = makeGrassChunkManager(tiles);
+
+    const matrices = manager.buildGrassBladeMatrices(0, 0, 12, 12);
+    let interiorBlades = 0;
+    for (let offset = 0; offset < matrices.length; offset += 16) {
+      const x = matrices[offset + 12];
+      const z = matrices[offset + 14];
+      if (x > 1 && x < 11 && z > 1 && z < 11) interiorBlades++;
+    }
+
+    expect(interiorBlades).toBeGreaterThan(0);
+  });
+});
+
 describe('placed object thin-instance grouping', () => {
+  test('batches static world-object visuals but keeps doors unique', () => {
+    const manager = Object.assign(Object.create(ChunkManager.prototype), {
+      modelAnimationGroups: new Map(),
+      assetRegistry: new Map(),
+    }) as any;
+    const basePlacement = {
+      position: { x: 1, y: 0, z: 2 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+    };
+
+    expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'sTree 1' })).toBe(true);
+    expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'wheat2' })).toBe(true);
+    expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'castleTruedoor' })).toBe(false);
+  });
+
   test('separates elevated scenery by storey height for indoor culling', () => {
     const firstFloorWall = placedObjectThinGroupKey('stone wall', 'elevated', 2.73);
     const upperWall = placedObjectThinGroupKey('stone wall', 'elevated', 5.49);
@@ -134,6 +304,75 @@ describe('placed object thin-instance grouping', () => {
       .toBe(placedObjectThinGroupKey('stone wall', 'ground', 2.73));
     expect(placedObjectThinGroupKey('tile roofing', 'roof', 2.73))
       .toBe(placedObjectThinGroupKey('tile roofing', 'roof', 5.49));
+  });
+
+  test('toggles a batched placed visual through its thin-instance matrix', () => {
+    const manager = Object.create(ChunkManager.prototype) as any;
+    const node = {} as TransformNode;
+    const visibleMatrix = Matrix.Translation(1, 2, 3);
+    const hiddenMatrix = Matrix.Translation(4, 5, 6);
+    const matrixCalls: Array<{ index: number; matrix: Matrix; refresh: boolean }> = [];
+    const bufferUpdates: string[] = [];
+    const mesh = {
+      thinInstanceSetMatrixAt: (index: number, matrix: Matrix, refresh: boolean) => {
+        matrixCalls.push({ index, matrix, refresh });
+      },
+      thinInstanceBufferUpdated: (kind: string) => {
+        bufferUpdates.push(kind);
+      },
+    } as unknown as Mesh;
+
+    manager.placedObjectVisualRefs = new WeakMap([[node, [{
+      mesh,
+      index: 7,
+      visibleMatrix,
+      hiddenMatrix,
+    }]]]);
+
+    expect(manager.setPlacedObjectVisualEnabled(node, false)).toBe(true);
+    expect(manager.setPlacedObjectVisualEnabled(node, true)).toBe(true);
+    expect(manager.setPlacedObjectVisualEnabled({} as TransformNode, true)).toBe(false);
+
+    expect(matrixCalls).toEqual([
+      { index: 7, matrix: hiddenMatrix, refresh: false },
+      { index: 7, matrix: visibleMatrix, refresh: false },
+    ]);
+    expect(bufferUpdates).toEqual(['matrix', 'matrix']);
+  });
+
+  test('assigns object ids to batched placed visual thin instances for picking', () => {
+    const manager = Object.create(ChunkManager.prototype) as any;
+    const node = {} as TransformNode;
+    const ids: Array<number | null> = [null, null, null];
+    const metadata = {
+      kind: 'worldObjectVisualBatch',
+      objectEntityIdsByThinInstance: ids,
+      activeObjectPickInstanceCount: 0,
+    };
+    const mesh = {
+      metadata,
+    } as unknown as Mesh;
+
+    manager.placedObjectVisualRefs = new WeakMap([[node, [{
+      mesh,
+      index: 1,
+      visibleMatrix: Matrix.Identity(),
+      hiddenMatrix: Matrix.Identity(),
+    }]]]);
+
+    expect(manager.setPlacedObjectVisualPickId(node, 12345)).toBe(true);
+    expect(ids).toEqual([null, 12345, null]);
+    expect(metadata.activeObjectPickInstanceCount).toBe(1);
+    expect((mesh as any).isPickable).toBe(true);
+    expect(manager.setPlacedObjectVisualPickId(node, 12345)).toBe(true);
+    expect(ids).toEqual([null, 12345, null]);
+    expect(metadata.activeObjectPickInstanceCount).toBe(1);
+    expect((mesh as any).isPickable).toBe(true);
+    expect(manager.setPlacedObjectVisualPickId(node, null)).toBe(true);
+    expect(ids).toEqual([null, null, null]);
+    expect(metadata.activeObjectPickInstanceCount).toBe(0);
+    expect((mesh as any).isPickable).toBe(false);
+    expect(manager.setPlacedObjectVisualPickId({} as TransformNode, 12345)).toBe(false);
   });
 });
 

@@ -217,33 +217,62 @@ export function groundColor(type: GroundType, shade: number): RGB {
   return { r: r * shade, g: g * shade, b: b * shade };
 }
 
+// Per-vertex shade grain, as [largePatches, mediumMottle, fineTexture] amplitudes.
+// Three octaves give each ground type a living, non-uniform surface without any
+// texture asset: low frequency breaks up large flat areas, mid frequency adds
+// mottling, high frequency adds fine grain that reads as surface texture. Tuned
+// so natural ground (grass/dirt/moss) varies the most and hard surfaces
+// (road/stone/basalt) stay subtle. water/void are intentionally flat (0).
+const GROUND_NOISE_AMPLITUDES: Record<GroundType, readonly [number, number, number]> = {
+  grass:                [0.090, 0.040, 0.020],
+  dirt:                 [0.055, 0.030, 0.018],
+  sand:                 [0.045, 0.026, 0.015],
+  path:                 [0.045, 0.024, 0.014],
+  road:                 [0.024, 0.018, 0.012],
+  desert:               [0.050, 0.028, 0.016],
+  sandstone:            [0.048, 0.028, 0.018],
+  rock:                 [0.044, 0.032, 0.022],
+  drysand:              [0.050, 0.028, 0.016],
+  'dungeon-floor':      [0.032, 0.024, 0.018],
+  'dungeon-stone':      [0.028, 0.024, 0.016],
+  'dungeon-slate':      [0.030, 0.024, 0.016],
+  'dungeon-rubble':     [0.040, 0.030, 0.022],
+  'dungeon-basalt':     [0.026, 0.020, 0.014],
+  'dungeon-moss':       [0.060, 0.034, 0.020],
+  'dungeon-torchlight': [0.030, 0.024, 0.016],
+  'dungeon-rock':       [0.044, 0.030, 0.022],
+  'dungeon-grey-rock':  [0.034, 0.026, 0.018],
+  'dungeon-dark-rock':  [0.030, 0.024, 0.018],
+  water:                [0, 0, 0],
+  void:                 [0, 0, 0],
+};
+
 export function getNoiseExtra(type: GroundType, vx: number, vz: number): number {
-  if (type === 'grass') {
-    return sampleNoise(vx * 0.18, vz * 0.18, 1.0, 1.2) * 0.10
-      + sampleNoise(vx * 0.42, vz * 0.42, 0.8, 1.0) * 0.038
-      + sampleNoise(vx * 2.4, vz * 2.4, 1.5, 1.9) * 0.014;
-  } else if (type === 'path') {
-    return sampleNoise(vx * 0.22, vz * 0.22, 1.0, 1.1) * 0.04
-      + sampleNoise(vx * 1.8, vz * 1.8, 1.3, 1.7) * 0.012;
-  } else if (type === 'road') {
-    return sampleNoise(vx * 1.2, vz * 1.2, 1.5, 0.9) * 0.025
-      + sampleNoise(vx * 3.0, vz * 3.0, 2.0, 1.5) * 0.01;
-  } else if (
-    type === 'dungeon-stone'
-    || type === 'dungeon-slate'
-    || type === 'dungeon-rubble'
-    || type === 'dungeon-basalt'
-    || type === 'dungeon-moss'
-    || type === 'dungeon-torchlight'
-    || type === 'dungeon-grey-rock'
-    || type === 'dungeon-dark-rock'
-  ) {
-    return sampleNoise(vx * 0.9, vz * 0.9, 1.4, 1.1) * 0.024
-      + sampleNoise(vx * 3.2, vz * 3.2, 1.7, 2.2) * 0.014;
-  } else if (type === 'dirt' || type === 'sand') {
-    return sampleNoise(vx * 0.5, vz * 0.5, 0.8, 1.1) * 0.02;
+  const amp = GROUND_NOISE_AMPLITUDES[type];
+  if (!amp || (amp[0] === 0 && amp[1] === 0 && amp[2] === 0)) return 0;
+  return sampleNoise(vx * 0.18, vz * 0.18, 1.0, 1.2) * amp[0]
+    + sampleNoise(vx * 0.55, vz * 0.55, 0.8, 1.0) * amp[1]
+    + sampleNoise(vx * 2.4, vz * 2.4, 1.5, 1.9) * amp[2];
+}
+
+/** Detail-pattern family for the procedural ground shader. The fragment shader
+ *  picks a micro-pattern per family: 0 grass/moss (organic speckle), 1 dirt/path
+ *  (clumps), 2 sand/desert (fine grain), 3 stone/rock/road/dungeon (cracked cells).
+ *  -1 means "no detail" (water/void) and the shader leaves those untouched. */
+export function groundDetailFamily(type: GroundType): number {
+  switch (type) {
+    case 'grass': case 'dungeon-moss':
+      return 0;
+    case 'dirt': case 'path':
+      return 1;
+    case 'sand': case 'desert': case 'drysand': case 'sandstone':
+      return 2;
+    case 'water': case 'void':
+      return -1;
+    default:
+      // road, rock, and every dungeon stone/rubble/basalt/rock variant.
+      return 3;
   }
-  return 0;
 }
 
 export interface CornerHeights { tl: number; tr: number; bl: number; br: number; }

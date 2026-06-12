@@ -6,6 +6,7 @@ export interface GameplayMapPlayerWindow {
   currentMapLevel: string;
   currentChunkX: number;
   currentChunkZ: number;
+  alternateChunks?: Array<{ chunkX: number; chunkZ: number }>;
 }
 
 export interface GameplayMapChunkPath {
@@ -63,6 +64,26 @@ export function isGameplayMapChunkInPlayerWindow(
 ): boolean {
   if (player.currentMapLevel !== chunk.mapId) return false;
 
+  const isNearCenter = (chunkX: number, chunkZ: number): boolean => {
+    const center: GameplayMapPlayerWindow = {
+      currentMapLevel: player.currentMapLevel,
+      currentChunkX: chunkX,
+      currentChunkZ: chunkZ,
+    };
+    return isGameplayMapChunkNearSingleCenter(chunk, center);
+  };
+
+  if (isNearCenter(player.currentChunkX, player.currentChunkZ)) return true;
+  for (const alternate of player.alternateChunks ?? []) {
+    if (isNearCenter(alternate.chunkX, alternate.chunkZ)) return true;
+  }
+  return false;
+}
+
+function isGameplayMapChunkNearSingleCenter(
+  chunk: GameplayMapChunkPath,
+  player: Pick<GameplayMapPlayerWindow, 'currentMapLevel' | 'currentChunkX' | 'currentChunkZ'>,
+): boolean {
   if (chunk.kind === 'objects') {
     const radius = CHUNK_LOAD_RADIUS + OBJECT_CHUNK_RADIUS_SLACK;
     return Math.abs(chunk.chunkX - player.currentChunkX) <= radius

@@ -1639,7 +1639,7 @@
       "npcId": 7,
       "x": 75.5,
       "z": 35.5,
-      "wanderRange": 8,
+      "wanderRange": 9,
       "aggressive": false,
       "appearance": {
         "shirtColor": 8,

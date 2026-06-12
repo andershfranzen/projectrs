@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS, isValidMinimapIconFilename, normalizeMinimapMarkers } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS, isValidMinimapIconFilename, normalizeMinimapMarkers, diagnosticFlagsFromPayload, diagnosticRecordField, measuredFpsFromDiagnosticPayload, rendererFromWebGlDiagnostics } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -11,7 +11,9 @@ import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } fr
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
 import { requestClientIp } from './network/clientIp';
-import { hasForbiddenStaticSourceExtension, requiresAuthenticatedGameStaticAsset } from './security/StaticAssetAccess';
+import { hasForbiddenStaticSourceExtension, requiresAuthenticatedGameStaticAsset, staticGameAssetCacheControl } from './security/StaticAssetAccess';
+import { maybeCompressResponse } from './network/compress';
+import type { Server } from 'bun';
 import { audit } from './Audit';
 import { sanitizeForumUpload } from './forumUploadSecurity';
 import { parseOAuthClients, validateOAuthAuthorizeParams, verifyPkceS256, type OAuthAuthorizeParams, type OAuthAuthorizeRequest } from './oauth';
@@ -1329,11 +1331,16 @@ const WEBSITE_DIST = resolve(ROOT_DIR, 'website/dist');
 const WEBSITE_PUBLIC = resolve(ROOT_DIR, 'website/public');
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 const DATA_DIR = resolve(import.meta.dir, '../data');
+const AUDIT_LOG_PATH = resolve(DATA_DIR, 'audit.log');
 const RUNTIME_DATA_DIR = process.env.PROJECTRS_RUNTIME_DATA_DIR ? resolve(process.env.PROJECTRS_RUNTIME_DATA_DIR) : DATA_DIR;
 const FORUM_MEDIA_DIR = resolve(RUNTIME_DATA_DIR, 'forum-media');
 const FORUM_AVATAR_DIR = resolve(RUNTIME_DATA_DIR, 'forum-avatars');
 const FORUM_AVATAR_BAKE_SECRET = process.env.FORUM_AVATAR_BAKE_SECRET || randomUUID();
 const DEFAULT_DISCORD_GUILD_ID = '1504534632799010816';
+const CLIENT_DIAGNOSTICS_DEFAULT_LIMIT = 50;
+const CLIENT_DIAGNOSTICS_MAX_LIMIT = 500;
+const CLIENT_DIAGNOSTICS_DEFAULT_TAIL_BYTES = 1024 * 1024;
+const CLIENT_DIAGNOSTICS_MAX_TAIL_BYTES = 4 * 1024 * 1024;
 const DISCORD_EMOJI_SYNC_INTERVAL_MS = (() => {
   const raw = Number(process.env.DISCORD_EMOJI_SYNC_INTERVAL_MS ?? 15 * 60_000);
   return Number.isFinite(raw) && raw >= 60_000 ? raw : 15 * 60_000;
@@ -1412,6 +1419,10 @@ function getMimeType(path: string): string {
   return MIME_TYPES[ext] || 'application/octet-stream';
 }
 
+function gameStaticAssetCacheControl(decodedPath: string): string {
+  return staticGameAssetCacheControl(decodedPath, isProductionLike());
+}
+
 interface StaticFileCacheEntry {
   mtimeMs: number;
   size: number;
@@ -1477,7 +1488,7 @@ function serveStatic(req: Request, pathname: string, allowIndexFallback = false)
     } else if (decoded.startsWith('/assets/') && (filePath.endsWith('.js') || filePath.endsWith('.css'))) {
       cacheControl = 'public, max-age=31536000, immutable';
     } else if (requiresAuthenticatedGameStaticAsset(decoded)) {
-      cacheControl = 'private, no-cache, must-revalidate';
+      cacheControl = gameStaticAssetCacheControl(decoded);
     }
     const headers: Record<string, string> = {
       'Content-Type': getMimeType(filePath),
@@ -1674,6 +1685,104 @@ function htmlResponse(html: string, status: number = 200, headers: Record<string
     status,
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...headers },
   });
+}
+
+type ClientDiagnosticLogEntry = {
+  ts: string;
+  tick: number | null;
+  event: string;
+  username: string;
+  clientAt: number | null;
+  payload: unknown;
+};
+
+function boundedIntegerParam(raw: string | null, fallback: number, min: number, max: number): number {
+  const parsed = raw === null ? fallback : Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.trunc(clampNumber(parsed, min, max));
+}
+
+async function readRecentClientDiagnostics(options: {
+  limit: number;
+  tailBytes: number;
+  event?: string | null;
+  username?: string | null;
+  query?: string | null;
+}): Promise<{ events: ClientDiagnosticLogEntry[]; bytesScanned: number }> {
+  let size = 0;
+  try {
+    size = (await fsp.stat(AUDIT_LOG_PATH)).size;
+  } catch {
+    return { events: [], bytesScanned: 0 };
+  }
+
+  const start = Math.max(0, size - options.tailBytes);
+  const bytesToRead = size - start;
+  if (bytesToRead <= 0) return { events: [], bytesScanned: 0 };
+
+  const handle = await fsp.open(AUDIT_LOG_PATH, 'r');
+  try {
+    const buffer = Buffer.alloc(bytesToRead);
+    const { bytesRead } = await handle.read(buffer, 0, bytesToRead, start);
+    const lines = buffer.subarray(0, bytesRead).toString('utf-8').split('\n');
+    if (start > 0) lines.shift();
+
+    const eventFilter = options.event?.trim().toLowerCase() || '';
+    const usernameFilter = options.username?.trim().toLowerCase() || '';
+    const queryFilter = options.query?.trim().toLowerCase() || '';
+    const events: ClientDiagnosticLogEntry[] = [];
+
+    for (let i = lines.length - 1; i >= 0 && events.length < options.limit; i--) {
+      const line = lines[i]?.trim();
+      if (!line) continue;
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!isPlainRecord(parsed) || parsed.type !== 'client.log' || !isPlainRecord(parsed.details)) continue;
+
+      const details = parsed.details;
+      const event = String(details.event ?? 'unknown');
+      const username = String(details.username ?? 'unknown');
+      if (eventFilter && event.toLowerCase() !== eventFilter) continue;
+      if (usernameFilter && !username.toLowerCase().includes(usernameFilter)) continue;
+
+      const payload = details.payload ?? {};
+      if (queryFilter) {
+        const haystack = `${event} ${username} ${JSON.stringify(payload)}`.toLowerCase();
+        if (!haystack.includes(queryFilter)) continue;
+      }
+
+      const tick = Number(parsed.tick);
+      const clientAt = Number(details.clientAt);
+      events.push({
+        ts: typeof parsed.ts === 'string' ? parsed.ts : '',
+        tick: Number.isFinite(tick) ? tick : null,
+        event,
+        username,
+        clientAt: Number.isFinite(clientAt) ? clientAt : null,
+        payload,
+      });
+    }
+
+    return { events, bytesScanned: bytesRead };
+  } finally {
+    await handle.close();
+  }
+}
+
+function clientLogConsoleSummary(event: string, username: string, payload: unknown): string {
+  const fps = measuredFpsFromDiagnosticPayload(payload);
+  const fpsText = fps === null ? 'n/a' : (fps >= 100 ? Math.round(fps).toString() : fps.toFixed(1));
+  const flags = diagnosticFlagsFromPayload(payload);
+  const payloadRecord = isPlainRecord(payload) ? payload : {};
+  const map = String(payloadRecord.currentMap ?? 'n/a').slice(0, 48);
+  const renderer = rendererFromWebGlDiagnostics(diagnosticRecordField(payload, 'webgl')).slice(0, 120);
+  const flagText = flags.length > 0 ? flags.slice(0, 8).join(',') : 'none';
+  return `[client-log] ${event} user=${username} fps=${fpsText} map=${map} flags=${flagText} renderer=${renderer}`;
 }
 
 function forumAvatarFilePath(urlOrPath: string): string | null {
@@ -2276,6 +2385,7 @@ function bodyWithinLimit(req: Request, maxBytes: number): boolean {
 
 const BODY_LIMIT_AUTH = 4 * 1024;          // 4 KB — username + password JSON
 const BODY_LIMIT_OAUTH = 16 * 1024;        // 16 KB — OAuth form/token params
+const BODY_LIMIT_CLIENT_LOG = 64 * 1024;   // 64 KB — perf snapshots include scene/GPU diagnostics
 const BODY_LIMIT_DEV = 1 * 1024 * 1024;     // 1 MB — gear-overrides config
 const BODY_LIMIT_EDITOR = 200 * 1024 * 1024; // 200 MB — full map import / save
 const BODY_LIMIT_SPELL_ICON = 512 * 1024;   // 512 KB — one PNG icon
@@ -2897,13 +3007,43 @@ function gameplayMapWindowForSession(
   session: NonNullable<ReturnType<typeof getBoundBearerSession>>,
   mapPath: string,
 ): GameplayMapPlayerWindow | null {
+  const addAlternateCenter = (
+    window: GameplayMapPlayerWindow | null,
+    x: number,
+    z: number,
+  ): GameplayMapPlayerWindow | null => {
+    if (!window || !Number.isFinite(x) || !Number.isFinite(z) || x < 0 || z < 0) return window;
+    const chunkX = Math.floor(x / CHUNK_SIZE);
+    const chunkZ = Math.floor(z / CHUNK_SIZE);
+    if (chunkX === window.currentChunkX && chunkZ === window.currentChunkZ) return window;
+    if (window.alternateChunks?.some(center => center.chunkX === chunkX && center.chunkZ === chunkZ)) return window;
+    return {
+      ...window,
+      alternateChunks: [...(window.alternateChunks ?? []), { chunkX, chunkZ }],
+    };
+  };
+
+  const addMapSpawnCenter = (window: GameplayMapPlayerWindow | null, mapId: string): GameplayMapPlayerWindow | null => {
+    if (!window) return null;
+    try {
+      const spawn = world.getMap(mapId).findSpawnPoint();
+      return addAlternateCenter(window, spawn.x, spawn.z);
+    } catch {
+      return window;
+    }
+  };
+
   const activePlayer = world.getActivePlayerByAccountId(session.accountId);
   if (activePlayer) {
-    return {
+    let window: GameplayMapPlayerWindow | null = {
       currentMapLevel: activePlayer.currentMapLevel,
       currentChunkX: activePlayer.currentChunkX,
       currentChunkZ: activePlayer.currentChunkZ,
     };
+    const destination = activePlayer.getMoveDestination();
+    if (destination) window = addAlternateCenter(window, destination.x, destination.z);
+    window = addMapSpawnCenter(window, activePlayer.currentMapLevel);
+    return window;
   }
 
   const requestedMapId = mapIdFromGameplayMapPath(mapPath);
@@ -2923,8 +3063,11 @@ function gameplayMapWindowForSession(
       || saved.z < 0
       || saved.x >= map.width
       || saved.z >= map.height;
-    const pos = useSpawn ? map.findSpawnPoint() : { x: saved.x, z: saved.z };
-    return gameplayMapPlayerWindowFromWorldPosition(savedMapId, pos.x, pos.z);
+    const spawn = map.findSpawnPoint();
+    const pos = useSpawn ? spawn : { x: saved.x, z: saved.z };
+    let window = gameplayMapPlayerWindowFromWorldPosition(savedMapId, pos.x, pos.z);
+    window = addAlternateCenter(window, spawn.x, spawn.z);
+    return window;
   } catch {
     return null;
   }
@@ -2966,10 +3109,7 @@ type WebsiteDevSocketData = {
 
 type SocketData = GameSocketData | ChatSocketData | WebsiteDevSocketData;
 
-const server = Bun.serve<SocketData>({
-  port: SERVER_PORT,
-
-  async fetch(req, server) {
+async function rawFetch(req: Request, server: Server<SocketData>): Promise<Response | undefined> {
     const url = new URL(req.url);
 
     if (url.pathname === '/favicon.ico' && (req.method === 'GET' || req.method === 'HEAD')) {
@@ -3015,10 +3155,22 @@ const server = Bun.serve<SocketData>({
 
     if (url.pathname === '/api/client-log' && req.method === 'POST') {
       if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
-      if (!bodyWithinLimit(req, 8 * 1024)) return tooLarge();
+      if (!bodyWithinLimit(req, BODY_LIMIT_CLIENT_LOG)) return tooLarge();
       try {
         const body = await req.json() as { event?: string; username?: string; details?: unknown; at?: number };
-        console.warn(`[client-log] ${body.event ?? 'unknown'} user=${body.username ?? 'unknown'} details=${JSON.stringify(body.details ?? {})}`);
+        const event = String(body.event ?? 'unknown').slice(0, 96);
+        const username = String(body.username ?? 'unknown').slice(0, 64);
+        console.warn(clientLogConsoleSummary(event, username, body.details ?? {}));
+        audit({
+          type: 'client.log',
+          tick: world.getCurrentTick(),
+          details: {
+            event,
+            username,
+            clientAt: Number.isFinite(body.at) ? body.at : undefined,
+            payload: body.details ?? {},
+          },
+        });
       } catch {
         console.warn('[client-log] invalid payload');
       }
@@ -3509,6 +3661,35 @@ const server = Bun.serve<SocketData>({
         latestId: snapshot.latestId,
         events: snapshot.events,
       });
+    }
+
+    if (url.pathname === '/api/admin/client-diagnostics' && req.method === 'GET') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      const limit = boundedIntegerParam(
+        url.searchParams.get('limit'),
+        CLIENT_DIAGNOSTICS_DEFAULT_LIMIT,
+        1,
+        CLIENT_DIAGNOSTICS_MAX_LIMIT,
+      );
+      const tailBytes = boundedIntegerParam(
+        url.searchParams.get('bytes'),
+        CLIENT_DIAGNOSTICS_DEFAULT_TAIL_BYTES,
+        1024,
+        CLIENT_DIAGNOSTICS_MAX_TAIL_BYTES,
+      );
+      const diagnostics = await readRecentClientDiagnostics({
+        limit,
+        tailBytes,
+        event: url.searchParams.get('event'),
+        username: url.searchParams.get('user') ?? url.searchParams.get('username'),
+        query: url.searchParams.get('q') ?? url.searchParams.get('query'),
+      });
+      return jsonResponse({
+        ok: true,
+        generatedAt: Math.floor(Date.now() / 1000),
+        ...diagnostics,
+      }, 200, { 'Cache-Control': 'no-store' });
     }
 
     if (url.pathname === '/api/admin/ban-account' && req.method === 'POST') {
@@ -4983,12 +5164,9 @@ const server = Bun.serve<SocketData>({
           // from client/public/assets/) still uses a short cache so swapped
           // assets show up without forcing browser-data clears during dev.
           const isHashedBundle = filePath.endsWith('.js') || filePath.endsWith('.css');
-          const isProtectedAsset = requiresAuthenticatedGameStaticAsset(decodedPath);
           const cacheControl = isHashedBundle
             ? 'public, max-age=31536000, immutable'
-            : isProtectedAsset
-              ? 'private, no-cache, must-revalidate'
-            : 'no-cache, must-revalidate';
+            : gameStaticAssetCacheControl(decodedPath);
           return new Response(content, {
             headers: {
               'Content-Type': getMimeType(filePath),
@@ -5018,7 +5196,7 @@ const server = Bun.serve<SocketData>({
         try {
           const content = readCachedStaticFile(filePath);
           return new Response(content, {
-            headers: { 'Content-Type': getMimeType(filePath), 'Cache-Control': 'private, no-cache, must-revalidate' },
+            headers: { 'Content-Type': getMimeType(filePath), 'Cache-Control': gameStaticAssetCacheControl(decodedPath) },
           });
         } catch { /* try next */ }
       }
@@ -5049,6 +5227,14 @@ const server = Bun.serve<SocketData>({
     if (shouldServeWebsiteNotFound(req, url.pathname)) return serveWebsiteNotFound();
 
     return new Response('Not Found', { status: 404 });
+}
+
+const server = Bun.serve<SocketData>({
+  port: SERVER_PORT,
+
+  async fetch(req, server) {
+    const res = await rawFetch(req, server);
+    return res ? await maybeCompressResponse(req, res) : res;
   },
 
   websocket: {

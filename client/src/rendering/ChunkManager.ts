@@ -14,11 +14,14 @@ import '@babylonjs/loaders/glTF';
 import { worldAABB, worldAABBForMaterials } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, createObjectShadowCaster, createWallEdgeShadowCaster, isLinearCasterCoveredByWallRuns, isLinearShadowAsset, objectShadowBounds, objectShadowFactorAt, wallShadowRunsFromEntries } from '@projectrs/shared';
+import { groundDetailFamily } from '@projectrs/shared';
+import { GroundDetailPluginMaterial } from './GroundDetailPlugin';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, DEFAULT_CUT_ANGLE, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, waterFlowUvFromTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB, TorchlightInfluenceGrid, TorchlightPaintTile } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, PlacedObjectInteraction, TexturePlane, WaterFlow, WaterFlowUvTransform, WallShadowRun, MinimapMarker } from '@projectrs/shared';
 import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
+import { mapWithConcurrency } from '../util/concurrency';
 
 const EDITOR_CHUNK_SIZE = 64;
 const CHUNK_RENDER_PADDING_TILES = 8;
@@ -36,6 +39,11 @@ const OBJECT_VISIBILITY_BUCKET_TILES = 4;
 const FLAT_TEXTURE_PICK_CELL_SIZE = 8;
 const FLAT_TEXTURE_PICK_Y_BUCKET_SIZE = SAME_PLANE_PICK_Y_TOLERANCE;
 const HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS = 220;
+// Max placed-object GLB fetches in flight at once. The old loader awaited one
+// GLB at a time, so a high-latency client serialized every fetch into a
+// multi-minute chain. 6 keeps within HTTP/1.1's per-origin cap while letting
+// the browser overlap downloads.
+const OBJECT_GLB_LOAD_CONCURRENCY = 6;
 const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 1.25;
 const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
 const ROOF_REVEAL_CONNECTED_TILE_LIMIT = 2048;
@@ -44,6 +52,7 @@ const ROOF_REVEAL_NEARBY_TILE_PADDING = 2;
 const ROOF_REVEAL_OBJECT_LAYER_BELOW_TOLERANCE = 0.75;
 const ROOF_REVEAL_TEXTURE_PLANE_BBOX_PADDING = 10;
 const STALL_FRAME_MATERIAL_NAMES = new Set(['material.001', 'material.002', 'material.003']);
+const DOOR_OBJECT_DEF_ID = 13;
 
 export function isRoofLikePlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
@@ -168,6 +177,8 @@ interface FloorMeshSet {
 
 interface ChunkMeshes {
   ground: Mesh;
+  grassBlades: Mesh | null;
+  stoneRocks: Mesh | null;
   overlays: Mesh[];
   water: Mesh | null;
   paddyWater: Mesh | null;
@@ -184,6 +195,55 @@ interface ChunkBuildResult {
   built: boolean;
   visible: boolean;
 }
+
+type BatchedPlacedVisualRef = {
+  mesh: Mesh;
+  index: number;
+  visibleMatrix: Matrix;
+  hiddenMatrix: Matrix;
+};
+
+type BatchedPlacedVisualMetadata = {
+  kind?: string;
+  objectEntityIdsByThinInstance?: Array<number | null>;
+  activeObjectPickInstanceCount?: number;
+};
+
+function setBatchedPlacedVisualPickId(
+  metadata: BatchedPlacedVisualMetadata,
+  index: number,
+  objectEntityId: number | null,
+): boolean {
+  const ids = metadata.objectEntityIdsByThinInstance;
+  if (!ids) return false;
+  const previous = ids[index];
+  if (previous === objectEntityId) return false;
+
+  let activeCount = typeof metadata.activeObjectPickInstanceCount === 'number'
+    ? metadata.activeObjectPickInstanceCount
+    : ids.reduce<number>((count, id) => count + (typeof id === 'number' ? 1 : 0), 0);
+  if (typeof previous === 'number') activeCount--;
+  if (typeof objectEntityId === 'number') activeCount++;
+
+  ids[index] = objectEntityId;
+  metadata.activeObjectPickInstanceCount = Math.max(0, activeCount);
+  return true;
+}
+
+function batchedPlacedVisualActivePickCount(metadata: BatchedPlacedVisualMetadata): number {
+  if (typeof metadata.activeObjectPickInstanceCount === 'number') return metadata.activeObjectPickInstanceCount;
+  const ids = metadata.objectEntityIdsByThinInstance;
+  const activeCount = ids
+    ? ids.reduce<number>((count, id) => count + (typeof id === 'number' ? 1 : 0), 0)
+    : 0;
+  metadata.activeObjectPickInstanceCount = activeCount;
+  return activeCount;
+}
+
+type GrassBladeChunkBatch = {
+  matrices: Float32Array;
+  enabled: boolean;
+};
 
 interface ElevatedThinInstanceSource {
   mesh: Mesh;
@@ -240,6 +300,14 @@ interface PlacedObjectNodeMetadata {
   interactions?: PlacedObjectInteraction[];
   isNoRoof?: boolean;
   roofGridKeys?: string[];
+  pickProxyBounds?: {
+    minX: number;
+    minY: number;
+    minZ: number;
+    maxX: number;
+    maxY: number;
+    maxZ: number;
+  };
 }
 
 type RoofObjectGridEntry = { node?: TransformNode; chunkKey?: string; floor: number; y: number };
@@ -321,6 +389,8 @@ export class ChunkManager {
 
   // Shared materials
   private groundMat: StandardMaterial | null = null;
+  private grassBladeMat: StandardMaterial | null = null;
+  private stoneRockMat: StandardMaterial | null = null;
   private waterMat: StandardMaterial | null = null;
   private cliffMat: StandardMaterial | null = null;
   private wallMat: StandardMaterial | null = null;
@@ -378,6 +448,9 @@ export class ChunkManager {
   private chunkPlacedEnabled: Map<string, boolean> = new Map();
   /** Chunks currently loading placed objects (prevents double-load) */
   private loadingObjectChunks: Set<string> = new Set();
+  /** In-flight per-chunk object-JSON fetches, so the background asset prefetch
+   *  and the serial instantiation queue never double-fetch the same chunk. */
+  private loadingObjectJsonPromises: Map<string, Promise<PlacedObject[] | null>> = new Map();
   /** FIFO of object chunks waiting for instantiation. Keeps many chunks from
    *  resuming into mesh creation in the same frame after their assets load. */
   private objectChunkQueue: string[] = [];
@@ -427,6 +500,7 @@ export class ChunkManager {
   private loadingModelPromises: Map<string, Promise<TransformNode | null>> = new Map();
   private modelAnimationGroups: Map<string, AnimationGroup[]> = new Map();
   private placedObjectAnimationGroups: WeakMap<TransformNode, AnimationGroup[]> = new WeakMap();
+  private placedObjectVisualRefs: WeakMap<TransformNode, BatchedPlacedVisualRef[]> = new WeakMap();
   private oneShotPlacedAnimationGroups: WeakSet<AnimationGroup> = new WeakSet();
   private activeAnimationGroups: AnimationGroup[] = [];
   private textureCache: Map<string, Texture> = new Map();
@@ -448,6 +522,16 @@ export class ChunkManager {
   private chunkRoofThinInstSources: Map<string, Mesh[]> = new Map();
   private chunkElevatedThinInstSources: Map<string, ElevatedThinInstanceSource[]> = new Map();
   private chunkStructuralThinInstSources: Map<string, ElevatedThinInstanceSource[]> = new Map();
+  private grassBladeBatch: Mesh | null = null;
+  private grassBladeChunks: Map<string, GrassBladeChunkBatch> = new Map();
+  private grassBladeBatchDirty: boolean = false;
+  private grassBladeBatchRebuildScheduled: boolean = false;
+  private grassBladeBatchRebuilds: number = 0;
+  private grassBladeBatchLastRebuildMs: number = 0;
+  private grassBladeBatchMaxRebuildMs: number = 0;
+  private grassBladeBatchTotalRebuildMs: number = 0;
+  private grassBladeBatchLastInstances: number = 0;
+  private grassBladeBatchLastBufferBytes: number = 0;
 
   private doorEdgeKey(floor: number, tileIdx: number): string {
     return `${Math.floor(floor)}:${tileIdx}`;
@@ -486,6 +570,34 @@ export class ChunkManager {
   getMapWidth(): number { return this.mapWidth; }
   getMapHeight(): number { return this.mapHeight; }
 
+  getTerrainDetailStats(): Record<string, unknown> {
+    let totalGrassInstances = 0;
+    let enabledGrassInstances = 0;
+    let enabledGrassChunks = 0;
+    for (const chunk of this.grassBladeChunks.values()) {
+      const instances = chunk.matrices.length / 16;
+      totalGrassInstances += instances;
+      if (chunk.enabled) {
+        enabledGrassChunks++;
+        enabledGrassInstances += instances;
+      }
+    }
+    return {
+      grassBladeChunks: this.grassBladeChunks.size,
+      grassBladeEnabledChunks: enabledGrassChunks,
+      grassBladeStoredInstances: totalGrassInstances,
+      grassBladeEnabledInstances: enabledGrassInstances,
+      grassBladeBatchDirty: this.grassBladeBatchDirty,
+      grassBladeBatchRebuildScheduled: this.grassBladeBatchRebuildScheduled,
+      grassBladeBatchRebuilds: this.grassBladeBatchRebuilds,
+      grassBladeBatchLastRebuildMs: Math.round(this.grassBladeBatchLastRebuildMs * 100) / 100,
+      grassBladeBatchMaxRebuildMs: Math.round(this.grassBladeBatchMaxRebuildMs * 100) / 100,
+      grassBladeBatchTotalRebuildMs: Math.round(this.grassBladeBatchTotalRebuildMs * 100) / 100,
+      grassBladeBatchLastInstances: this.grassBladeBatchLastInstances,
+      grassBladeBatchLastBufferBytes: this.grassBladeBatchLastBufferBytes,
+    };
+  }
+
   private scheduleNextFrame(callback: FrameRequestCallback): void {
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(callback);
@@ -511,6 +623,38 @@ export class ChunkManager {
     });
     this.editorChunkApplyTail = run.catch(() => {});
     return run;
+  }
+
+  private createGroundMaterial(): StandardMaterial {
+    const mat = new StandardMaterial('chunkGroundMat', this.scene);
+    mat.specularColor = new Color3(0, 0, 0);
+    mat.emissiveColor = new Color3(0.2, 0.2, 0.2);
+    // Procedural per-type surface detail (grass/dirt/sand/stone), driven by
+    // the per-vertex `groundDetail` attribute set in buildGroundMesh.
+    new GroundDetailPluginMaterial(mat);
+    return mat;
+  }
+
+  private ensureTerrainDetailMaterials(): void {
+    if (!this.grassBladeMat) {
+      // Upright grass strands are unlit vertex-color triangles; the ground
+      // shader carries the continuous grass texture.
+      this.grassBladeMat = new StandardMaterial('chunkGrassBladeMat', this.scene);
+      this.grassBladeMat.diffuseColor = new Color3(1, 1, 1);
+      this.grassBladeMat.specularColor = new Color3(0, 0, 0);
+      this.grassBladeMat.emissiveColor = new Color3(1, 1, 1);
+      this.grassBladeMat.disableLighting = true;
+      this.grassBladeMat.backFaceCulling = false;
+    }
+    if (!this.stoneRockMat) {
+      // Small scattered pebbles on stone ground. Its own material (not groundMat,
+      // whose detail plugin expects a per-vertex groundDetail attribute the rocks
+      // don't carry); matches ground emissive so pebbles sit in naturally.
+      this.stoneRockMat = new StandardMaterial('chunkStoneRockMat', this.scene);
+      this.stoneRockMat.specularColor = new Color3(0, 0, 0);
+      this.stoneRockMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
+      this.stoneRockMat.backFaceCulling = false;
+    }
   }
 
   private getVisibilityDistanceTiles(paddingTiles: number): number {
@@ -597,6 +741,7 @@ export class ChunkManager {
     if (this.chunkMeshesEnabled.get(chunkKey) === enabled) return false;
     this.chunkMeshesEnabled.set(chunkKey, enabled);
     meshes.ground.setEnabled(enabled);
+    meshes.stoneRocks?.setEnabled(enabled);
     for (const overlay of meshes.overlays) overlay.setEnabled(enabled);
     meshes.water?.setEnabled(enabled);
     meshes.paddyWater?.setEnabled(enabled);
@@ -615,6 +760,7 @@ export class ChunkManager {
         floorSet.stairs?.setEnabled(false);
       }
     }
+    this.setGrassBladeChunkEnabled(chunkKey, enabled);
     return true;
   }
 
@@ -628,6 +774,8 @@ export class ChunkManager {
   private disposeChunkMeshes(key: string, meshes: ChunkMeshes): void {
     this.clearRoofObjectGridForChunk(this.terrainRoofChunkKey(key));
     meshes.ground.dispose();
+    this.unregisterGrassBladeChunk(key);
+    meshes.stoneRocks?.dispose();
     this.disposeChunkTextureOverlays(key);
     meshes.water?.dispose();
     meshes.paddyWater?.dispose();
@@ -843,10 +991,9 @@ export class ChunkManager {
 
     // Create shared materials
     if (!this.groundMat) {
-      this.groundMat = new StandardMaterial('chunkGroundMat', this.scene);
-      this.groundMat.specularColor = new Color3(0, 0, 0);
-      this.groundMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
+      this.groundMat = this.createGroundMaterial();
     }
+    this.ensureTerrainDetailMaterials();
     if (!this.waterMat) {
       this.waterMat = new StandardMaterial('chunkWaterMat', this.scene);
       this.waterMat.specularColor = new Color3(0, 0, 0);
@@ -909,7 +1056,7 @@ export class ChunkManager {
     }
 
     // Freeze shared materials — they never change after setup (big perf win)
-    for (const mat of [this.groundMat, this.cliffMat, this.wallMat, this.roofMat, this.floorMat, this.stairMat]) {
+    for (const mat of [this.groundMat, this.grassBladeMat, this.stoneRockMat, this.cliffMat, this.wallMat, this.roofMat, this.floorMat, this.stairMat]) {
       if (mat) mat.freeze();
     }
 
@@ -1248,6 +1395,14 @@ export class ChunkManager {
         this.queueChunkPlacedObjects(key);
       }
     }
+
+    // Warm JSON + GLB templates for the whole load window in parallel, ahead of
+    // the serial instantiation queue. Visible chunks first so the player's
+    // immediate surroundings download before the prefetch padding ring.
+    const prefetchKeys = [...objectLoad].sort((a, b) =>
+      Number(objectDesired.has(b)) - Number(objectDesired.has(a)),
+    );
+    this.prefetchObjectChunkAssets(prefetchKeys, this.objectLoadGeneration);
 
     changed = this.evictObjectChunkCache(centerChunkX, centerChunkZ, objectLoad) || changed;
 
@@ -1716,12 +1871,16 @@ export class ChunkManager {
   }
 
   private buildChunkMeshes(chunkX: number, chunkZ: number): ChunkMeshes {
+    const chunkKey = `${chunkX},${chunkZ}`;
     const startX = chunkX * CHUNK_SIZE;
     const startZ = chunkZ * CHUNK_SIZE;
     const endX = Math.min(startX + CHUNK_SIZE, this.mapWidth);
     const endZ = Math.min(startZ + CHUNK_SIZE, this.mapHeight);
 
     const ground = this.buildGroundMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
+    this.registerGrassBladeChunk(chunkKey, this.buildGrassBladeMatrices(startX, startZ, endX, endZ), false);
+    const grassBlades = null;
+    const stoneRocks = this.buildStoneRockMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
     const overlays = this.buildTextureOverlays(chunkX, chunkZ, startX, startZ, endX, endZ);
     const water = this.buildWaterMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
     const paddyWater = this.buildPaddyWaterMesh(chunkX, chunkZ, startX, startZ, endX, endZ);
@@ -1743,7 +1902,7 @@ export class ChunkManager {
     }
 
     // Freeze world matrices on all static chunk meshes — big perf win since these never move
-    const allMeshes = [ground, water, paddyWater, cliff, ceiling, wall, roof, floor, stairs];
+    const allMeshes = [ground, grassBlades, stoneRocks, water, paddyWater, cliff, ceiling, wall, roof, floor, stairs];
     for (const [, floorSet] of upperFloors) {
       allMeshes.push(floorSet.wall ?? null, floorSet.roof ?? null, floorSet.floor ?? null, floorSet.stairs ?? null);
     }
@@ -1754,7 +1913,7 @@ export class ChunkManager {
       }
     }
 
-    return { ground, overlays, water, paddyWater, cliff, ceiling, wall, roof, floor, stairs, upperFloors };
+    return { ground, grassBlades, stoneRocks, overlays, water, paddyWater, cliff, ceiling, wall, roof, floor, stairs, upperFloors };
   }
 
   // --- Ground mesh with KC editor shading ---
@@ -1772,6 +1931,8 @@ export class ChunkManager {
     cTR: RGB,
     cBL: RGB,
     cBR: RGB,
+    detail: number[],
+    detailFamily: number,
   ): number {
     const steps = TORCHLIGHT_GLOW_SUBDIVISIONS;
     const row = steps + 1;
@@ -1784,6 +1945,7 @@ export class ChunkManager {
         applyTorchlightTint(color, sampleTorchlightInfluenceGrid(grid, x + u, z + v));
         positions.push(x + u, bilerpCorners(h.tl, h.tr, h.bl, h.br, u, v), z + v);
         colors.push(color.r, color.g, color.b, 1);
+        detail.push(detailFamily);
       }
     }
 
@@ -1804,6 +1966,7 @@ export class ChunkManager {
     const positions: number[] = [];
     const indices: number[] = [];
     const colors: number[] = [];
+    const detail: number[] = []; // per-vertex ground-detail family for the procedural shader
     const torchlightGrid = this.buildTorchlightGridForRegion(startX, startZ, endX, endZ);
     let vertexIndex = 0;
 
@@ -1820,6 +1983,8 @@ export class ChunkManager {
         const isTorchlightPaint = hasTorchlightPaint(tileType, rawGroundBType);
         const renderTileType = visualGroundForTorchlight(tileType, rawGroundBType);
         const groundBType = rawGroundBType && !isTorchlightPaint ? rawGroundBType : null;
+        const detailFamily = groundDetailFamily(renderTileType);
+        const detailFamilyB = groundBType ? groundDetailFamily(groundBType) : detailFamily;
 
         // Compute per-vertex shading
         const shadeTL = this.getVertexSlopeShade(x, z);
@@ -1855,16 +2020,20 @@ export class ChunkManager {
             // Triangle A (CCW): TL, TR, BL
             positions.push(x, h.tl, z, x + 1, h.tr, z, x, h.bl, z + 1);
             colors.push(cA.r, cA.g, cA.b, 1, cA.r, cA.g, cA.b, 1, cA.r, cA.g, cA.b, 1);
+            detail.push(detailFamily, detailFamily, detailFamily);
             // Triangle B (CCW): TR, BR, BL
             positions.push(x + 1, h.tr, z, x + 1, h.br, z + 1, x, h.bl, z + 1);
             colors.push(cB.r, cB.g, cB.b, 1, cB.r, cB.g, cB.b, 1, cB.r, cB.g, cB.b, 1);
+            detail.push(detailFamilyB, detailFamilyB, detailFamilyB);
           } else {
             // Triangle A (CCW): TL, TR, BR
             positions.push(x, h.tl, z, x + 1, h.tr, z, x + 1, h.br, z + 1);
             colors.push(cA.r, cA.g, cA.b, 1, cA.r, cA.g, cA.b, 1, cA.r, cA.g, cA.b, 1);
+            detail.push(detailFamily, detailFamily, detailFamily);
             // Triangle B (CCW): TL, BR, BL
             positions.push(x, h.tl, z, x + 1, h.br, z + 1, x, h.bl, z + 1);
             colors.push(cB.r, cB.g, cB.b, 1, cB.r, cB.g, cB.b, 1, cB.r, cB.g, cB.b, 1);
+            detail.push(detailFamilyB, detailFamilyB, detailFamilyB);
           }
           indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex + 3, vertexIndex + 4, vertexIndex + 5);
           vertexIndex += 6;
@@ -1947,6 +2116,8 @@ export class ChunkManager {
             cTR,
             cBL,
             cBR,
+            detail,
+            detailFamily,
           );
           continue;
         }
@@ -1959,6 +2130,7 @@ export class ChunkManager {
           cBL.r, cBL.g, cBL.b, 1,
           cBR.r, cBR.g, cBR.b, 1,
         );
+        detail.push(detailFamily, detailFamily, detailFamily, detailFamily);
 
         if (splitDir === 'forward') {
           // 0=TL, 1=TR, 2=BL, 3=BR; diagonal TL-BR; CCW winding for upward normals
@@ -1986,9 +2158,329 @@ export class ChunkManager {
     VertexData.ComputeNormals(positions, indices, normals);
     vertexData.normals = normals;
     vertexData.applyToMesh(mesh);
+    // Custom per-vertex attribute feeding the procedural ground-detail shader.
+    mesh.setVerticesData('groundDetail', detail, false, 1);
     mesh.material = this.groundMat;
     mesh.hasVertexAlpha = false;
     mesh.isPickable = true;
+    return mesh;
+  }
+
+  // --- Grass strands: sparse upright blades on grass tiles ---
+
+  private isGrassBladeSurface(x: number, z: number): boolean {
+    if (x < 0 || z < 0 || x >= this.mapWidth || z >= this.mapHeight) return false;
+    if (this.activeChunks && !this.activeChunks.has(`${Math.floor(x / EDITOR_CHUNK_SIZE)},${Math.floor(z / EDITOR_CHUNK_SIZE)}`)) return false;
+
+    const idx = z * this.mapWidth + x;
+    if (this.holeTiles.has(idx)) return false;
+
+    // Texture overlays, texture planes, floors and stairs are the visible surface
+    // for the tile. The raw base ground can still be grass underneath roads or
+    // interior floors, so do not grow procedural blades through those covers.
+    if (
+      this.floorHeights.has(idx)
+      || this.stairData.has(idx)
+      || this.texturePlaneFloorTiles.has(idx)
+      || this.tilePaintedEntries.has(idx)
+    ) {
+      return false;
+    }
+
+    const tile = this.getTileRaw(x, z);
+    const ground = tile?.ground ?? this.defaultGround;
+    if (ground !== 'grass') return false;
+    if (tile?.groundB && tile.groundB !== 'grass') return false;
+    if (tile?.textureId || tile?.textureIdB) return false;
+    return true;
+  }
+
+  private buildGrassBladeMatrices(startX: number, startZ: number, endX: number, endZ: number): Float32Array {
+    const matrices: number[] = [];
+    // Deterministic per-position pseudo-random in [0,1) so blades don't shimmer
+    // or change between chunk rebuilds.
+    const rand = (a: number, b: number): number => {
+      const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+      return s - Math.floor(s);
+    };
+
+    // The fragment shader already gives grass its continuous fine pattern.
+    // These triangles are sparse silhouette/accent detail; grass seams get extra
+    // density, while open fields get a light deterministic scatter.
+    const FIELD_BLADE_CHANCE = 0.22;
+    const FIELD_BLADES_PER_TILE = 1;
+    const BOUNDARY_BLADES_PER_TILE = 1;
+    const EDGE_SPILL_BLADES = 1;
+    const HALF_WIDTH = 0.035;
+
+    // Emit one blade at world (bx,bz); uses tile (tx,tz) corner heights for ground Y.
+    const emitBlade = (bx: number, bz: number, h: { tl: number; tr: number; bl: number; br: number }, tx: number, tz: number, seed: number): void => {
+      // Clamp to [0,1] so edge-spilled blades sample the seam height rather than
+      // extrapolating across a height step into the neighbouring tile.
+      const hu = Math.min(Math.max(bx - tx, 0), 1);
+      const hv = Math.min(Math.max(bz - tz, 0), 1);
+      const by = bilerpCorners(h.tl, h.tr, h.bl, h.br, hu, hv);
+      const height = 0.14 + rand(tx + seed * 7, tz * 3) * 0.18;
+      const leanX = (rand(tx * 2 + seed, tz) - 0.5) * 0.16;
+      const leanZ = (rand(tz * 2 + 5, tx + seed) - 0.5) * 0.16;
+      matrices.push(
+        HALF_WIDTH, 0, 0, 0,
+        leanX, height, leanZ, 0,
+        0, 0, HALF_WIDTH, 0,
+        bx, by, bz, 1,
+      );
+    };
+
+    const isGrass = (tx: number, tz: number): boolean => this.isGrassBladeSurface(tx, tz);
+
+    // Neighbour offsets for grass seam accents (N/E/S/W).
+    const EDGES: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+
+    for (let x = startX; x < endX; x++) {
+      for (let z = startZ; z < endZ; z++) {
+        if (!this.isGrassBladeSurface(x, z)) continue;
+
+        const hasNonGrassNeighbor = EDGES.some(([dx, dz]) => !isGrass(x + dx, z + dz));
+        const hasFieldBlade = rand(x * 5 + 19, z * 5 + 23) < FIELD_BLADE_CHANCE;
+        if (!hasNonGrassNeighbor && !hasFieldBlade) continue;
+
+        const h = this.getTileCornerHeights(x, z);
+        if (hasFieldBlade) {
+          for (let b = 0; b < FIELD_BLADES_PER_TILE; b++) {
+            const bx = x + 0.18 + rand(x * 6 + b + 11, z * 6 + 7) * 0.64;
+            const bz = z + 0.18 + rand(x * 6 + b + 41, z * 6 + 29) * 0.64;
+            emitBlade(bx, bz, h, x, z, 20 + b);
+          }
+        }
+        if (!hasNonGrassNeighbor) continue;
+
+        for (let b = 0; b < BOUNDARY_BLADES_PER_TILE; b++) {
+          const bx = x + 0.15 + rand(x * 4 + b, z * 4) * 0.7;
+          const bz = z + 0.15 + rand(x * 4 + b + 31, z * 4 + 17) * 0.7;
+          emitBlade(bx, bz, h, x, z, b);
+        }
+
+        // Where this grass tile borders a covered/non-grass tile, scatter a few
+        // blades just inside the grass side of the seam. This keeps the boundary
+        // organic without growing grass onto roads, floors or texture-painted tiles.
+        for (let e = 0; e < EDGES.length; e++) {
+          const [dx, dz] = EDGES[e];
+          if (isGrass(x + dx, z + dz)) continue;
+          for (let s = 0; s < EDGE_SPILL_BLADES; s++) {
+            // Along-edge position 0.1..0.9, inset 0.04..0.22 into this grass tile.
+            const along = 0.1 + rand(x * 9 + e * 3 + s, z * 9) * 0.8;
+            const inset = 0.04 + rand(z * 9 + e * 3 + s, x * 9 + 5) * 0.18;
+            let bx: number, bz: number;
+            if (dz === -1) { bx = x + along; bz = z + inset; }
+            else if (dz === 1) { bx = x + along; bz = z + 1 - inset; }
+            else if (dx === -1) { bx = x + inset; bz = z + along; }
+            else { bx = x + 1 - inset; bz = z + along; }
+            emitBlade(bx, bz, h, x, z, 50 + e * 4 + s);
+          }
+        }
+      }
+    }
+
+    return Float32Array.from(matrices);
+  }
+
+  private ensureGrassBladeBatch(): Mesh {
+    if (this.grassBladeBatch && !this.grassBladeBatch.isDisposed()) return this.grassBladeBatch;
+    const base = groundColor('grass', 0.80);
+    const tip = groundColor('grass', 1.18);
+    const mesh = new Mesh('terrain_grass_blades', this.scene);
+    const vertexData = new VertexData();
+    vertexData.positions = [-1, 0, 0, 1, 0, 0, 0, 1, 0];
+    vertexData.indices = [0, 1, 2];
+    vertexData.colors = [
+      base.r, base.g, base.b, 1,
+      base.r, base.g, base.b, 1,
+      tip.r, tip.g, tip.b, 1,
+    ];
+    vertexData.applyToMesh(mesh);
+    mesh.material = this.grassBladeMat;
+    mesh.hasVertexAlpha = false;
+    mesh.isPickable = false;
+    mesh.setEnabled(false);
+    mesh.freezeWorldMatrix();
+    this.grassBladeBatch = mesh;
+    return mesh;
+  }
+
+  private registerGrassBladeChunk(chunkKey: string, matrices: Float32Array, enabled: boolean): void {
+    this.grassBladeChunks.set(chunkKey, { matrices, enabled });
+    this.markGrassBladeBatchDirty();
+  }
+
+  private setGrassBladeChunkEnabled(chunkKey: string, enabled: boolean): void {
+    const chunk = this.grassBladeChunks.get(chunkKey);
+    if (!chunk || chunk.enabled === enabled) return;
+    chunk.enabled = enabled;
+    this.markGrassBladeBatchDirty();
+  }
+
+  private unregisterGrassBladeChunk(chunkKey: string): void {
+    if (!this.grassBladeChunks.delete(chunkKey)) return;
+    this.markGrassBladeBatchDirty();
+  }
+
+  private markGrassBladeBatchDirty(): void {
+    this.grassBladeBatchDirty = true;
+    if (this.grassBladeBatchRebuildScheduled) return;
+    this.grassBladeBatchRebuildScheduled = true;
+    const generation = this.loadMapToken;
+    this.scheduleNextFrame(() => {
+      this.grassBladeBatchRebuildScheduled = false;
+      if (generation !== this.loadMapToken || !this.grassBladeBatchDirty) return;
+      this.grassBladeBatchDirty = false;
+      this.rebuildGrassBladeBatchNow();
+    });
+  }
+
+  private rebuildGrassBladeBatchNow(): void {
+    const startedAt = performance.now();
+    const mesh = this.ensureGrassBladeBatch();
+    let instanceCount = 0;
+    for (const chunk of this.grassBladeChunks.values()) {
+      if (chunk.enabled) instanceCount += chunk.matrices.length / 16;
+    }
+    if (instanceCount === 0) {
+      mesh.thinInstanceSetBuffer('matrix', null);
+      mesh.thinInstanceCount = 0;
+      this.recordGrassBladeBatchRebuild(startedAt, 0, 0);
+      mesh.setEnabled(false);
+      return;
+    }
+
+    const matrixBuffer = new Float32Array(instanceCount * 16);
+    let offset = 0;
+    for (const chunk of this.grassBladeChunks.values()) {
+      if (!chunk.enabled) continue;
+      matrixBuffer.set(chunk.matrices, offset);
+      offset += chunk.matrices.length;
+    }
+    mesh.thinInstanceSetBuffer('matrix', matrixBuffer, 16, true);
+    mesh.thinInstanceCount = instanceCount;
+    mesh.thinInstanceRefreshBoundingInfo(true);
+    mesh.doNotSyncBoundingInfo = true;
+    mesh.setEnabled(true);
+    this.recordGrassBladeBatchRebuild(startedAt, instanceCount, matrixBuffer.byteLength);
+  }
+
+  private recordGrassBladeBatchRebuild(startedAt: number, instanceCount: number, bufferBytes: number): void {
+    const durationMs = performance.now() - startedAt;
+    this.grassBladeBatchRebuilds++;
+    this.grassBladeBatchLastRebuildMs = durationMs;
+    this.grassBladeBatchMaxRebuildMs = Math.max(this.grassBladeBatchMaxRebuildMs, durationMs);
+    this.grassBladeBatchTotalRebuildMs += durationMs;
+    this.grassBladeBatchLastInstances = instanceCount;
+    this.grassBladeBatchLastBufferBytes = bufferBytes;
+  }
+
+  private disposeGrassBladeBatch(): void {
+    this.grassBladeBatchDirty = false;
+    this.grassBladeBatchRebuildScheduled = false;
+    this.grassBladeBatchRebuilds = 0;
+    this.grassBladeBatchLastRebuildMs = 0;
+    this.grassBladeBatchMaxRebuildMs = 0;
+    this.grassBladeBatchTotalRebuildMs = 0;
+    this.grassBladeBatchLastInstances = 0;
+    this.grassBladeBatchLastBufferBytes = 0;
+    this.grassBladeChunks.clear();
+    if (this.grassBladeBatch && !this.grassBladeBatch.isDisposed()) {
+      this.grassBladeBatch.dispose();
+    }
+    this.grassBladeBatch = null;
+  }
+
+  // --- Stone pebbles: small round rocks scattered on stone-family ground ---
+
+  private buildStoneRockMesh(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number): Mesh | null {
+    const positions: number[] = [];
+    const indices: number[] = [];
+    const colors: number[] = [];
+    let vi = 0;
+
+    const rand = (a: number, b: number): number => {
+      const s = Math.sin(a * 269.5 + b * 183.3) * 43758.5453;
+      return s - Math.floor(s);
+    };
+
+    const RING = 6; // low-poly rounded dome
+    const TWO_PI = Math.PI * 2;
+
+    for (let x = startX; x < endX; x++) {
+      for (let z = startZ; z < endZ; z++) {
+        if (this.activeChunks && !this.activeChunks.has(`${Math.floor(x / EDITOR_CHUNK_SIZE)},${Math.floor(z / EDITOR_CHUNK_SIZE)}`)) continue;
+        if (this.holeTiles.has(z * this.mapWidth + x)) continue;
+        const tile = this.getTileRaw(x, z);
+        const tileType = tile?.ground ?? this.defaultGround;
+        if (groundDetailFamily(tileType) !== 3) continue; // stone/rock/road/dungeon family only
+
+        // Sparse + random: most tiles get none, a few get one or two pebbles.
+        const roll = rand(x * 5 + 3, z * 5 + 9);
+        const rockCount = roll > 0.84 ? (roll > 0.97 ? 2 : 1) : 0;
+        if (rockCount === 0) continue;
+
+        const h = this.getTileCornerHeights(x, z);
+        for (let r = 0; r < rockCount; r++) {
+          const u = 0.2 + rand(x * 7 + r, z * 7) * 0.6;
+          const v = 0.2 + rand(x * 7 + r + 13, z * 7 + 4) * 0.6;
+          const cx = x + u;
+          const cz = z + v;
+          const gy = bilerpCorners(h.tl, h.tr, h.bl, h.br, u, v);
+          const radius = 0.06 + rand(x + r, z * 2) * 0.06;
+          const bodyH = radius * (0.7 + rand(z + r, x * 2) * 0.4); // flattened pebble, not spiky
+
+          const base = groundColor('rock', 0.70);
+          const mid = groundColor('rock', 0.88);
+          const top = groundColor('rock', 1.08);
+
+          // Squashed octahedron: top apex + raised mid ring + bottom apex. Gives
+          // the rock real 3D volume (rounded from every angle) instead of a flat fan.
+          const topIdx = vi;
+          positions.push(cx, gy + bodyH, cz);
+          colors.push(top.r, top.g, top.b, 1);
+          vi++;
+
+          const ringStart = vi;
+          for (let k = 0; k < RING; k++) {
+            const ang = (k / RING) * TWO_PI;
+            const rr = radius * (0.85 + rand(x * 3 + k, z * 3 + r) * 0.30); // mild irregular outline
+            positions.push(cx + Math.cos(ang) * rr, gy + bodyH * 0.38, cz + Math.sin(ang) * rr);
+            colors.push(mid.r, mid.g, mid.b, 1);
+            vi++;
+          }
+
+          const botIdx = vi;
+          positions.push(cx, gy, cz); // rests on the ground
+          colors.push(base.r, base.g, base.b, 1);
+          vi++;
+
+          for (let k = 0; k < RING; k++) {
+            const a = ringStart + k;
+            const bnext = ringStart + ((k + 1) % RING);
+            indices.push(topIdx, a, bnext);    // upper cap
+            indices.push(botIdx, bnext, a);    // lower cap
+          }
+        }
+      }
+    }
+
+    if (positions.length === 0) return null;
+
+    const mesh = new Mesh(`chunk_rocks_${chunkX}_${chunkZ}`, this.scene);
+    const vertexData = new VertexData();
+    vertexData.positions = positions;
+    vertexData.indices = indices;
+    vertexData.colors = colors;
+    const normals: number[] = [];
+    VertexData.ComputeNormals(positions, indices, normals);
+    vertexData.normals = normals;
+    vertexData.applyToMesh(mesh);
+    mesh.material = this.stoneRockMat;
+    mesh.hasVertexAlpha = false;
+    mesh.isPickable = false;
     return mesh;
   }
 
@@ -2900,6 +3392,36 @@ export class ChunkManager {
     return this.placedObjectNodeSet.has(node);
   }
 
+  setPlacedObjectVisualEnabled(node: TransformNode, enabled: boolean): boolean {
+    const refs = this.placedObjectVisualRefs.get(node);
+    if (!refs || refs.length === 0) return false;
+
+    const touched = new Set<Mesh>();
+    for (const ref of refs) {
+      ref.mesh.thinInstanceSetMatrixAt(ref.index, enabled ? ref.visibleMatrix : ref.hiddenMatrix, false);
+      touched.add(ref.mesh);
+    }
+    for (const mesh of touched) {
+      mesh.thinInstanceBufferUpdated('matrix');
+    }
+    return true;
+  }
+
+  setPlacedObjectVisualPickId(node: TransformNode, objectEntityId: number | null): boolean {
+    const refs = this.placedObjectVisualRefs.get(node);
+    if (!refs || refs.length === 0) return false;
+
+    let handled = false;
+    for (const ref of refs) {
+      const metadata = ref.mesh.metadata as BatchedPlacedVisualMetadata | null;
+      if (metadata?.kind !== 'worldObjectVisualBatch' || !Array.isArray(metadata.objectEntityIdsByThinInstance)) continue;
+      handled = true;
+      setBatchedPlacedVisualPickId(metadata, ref.index, objectEntityId);
+      ref.mesh.isPickable = batchedPlacedVisualActivePickCount(metadata) > 0;
+    }
+    return handled;
+  }
+
   /** Check if any placed GLB object exists near a world position */
   hasPlacedObjectNear(x: number, z: number, radius: number): boolean {
     return this.findPlacedObjectNear(x, z, radius) !== null;
@@ -3642,6 +4164,10 @@ export class ChunkManager {
         : Texture.NEAREST_SAMPLINGMODE;
       const alphaBlend = assetDef.alphaBlend;
       for (const mesh of result.meshes) {
+        if (mesh.getTotalVertices() === 0) {
+          mesh.isVisible = false;
+          mesh.isPickable = false;
+        }
         const mat = mesh.material;
         if (mat && 'diffuseTexture' in mat && (mat as any).diffuseTexture) {
           (mat as any).diffuseTexture.updateSamplingMode(samplingMode);
@@ -3759,6 +4285,69 @@ export class ChunkManager {
     // 'stone wall door2' or 'stone_wall_door' don't — catch them by name.
     if (obj.assetId.toLowerCase().includes('door')) return false;
     return true;
+  }
+
+  private canBatchPlacedObjectVisual(obj: PlacedObject): boolean {
+    const objectDefId = objectDefIdForPlacedAsset(obj.assetId);
+    if (objectDefId == null) return false;
+    if (objectDefId === DOOR_OBJECT_DEF_ID) return false;
+    if (this.modelAnimationGroups.has(obj.assetId)) return false;
+    if (this.isRoofLikeAsset(obj.assetId)) return false;
+    if (this.isAlphaBlendAsset(obj.assetId)) return false;
+    // Door-like decorative frames can share names with interactable objects.
+    // Keep any door-named asset unique so pick metadata and door pivots remain
+    // tied to the actual transform hierarchy.
+    if (obj.assetId.toLowerCase().includes('door')) return false;
+    return true;
+  }
+
+  private createPlacedObjectPlaceholder(chunkKey: string, idx: number, obj: PlacedObject): TransformNode {
+    const root = new TransformNode(`placed_${chunkKey}_${idx}_${obj.assetId}_placeholder`, this.scene);
+    root.position = new Vector3(obj.position.x, obj.position.y, obj.position.z);
+    const { x: orx, y: ory, z: orz } = obj.rotation;
+    root.rotationQuaternion = Quaternion.FromEulerAngles(orx, ory, orz);
+    const scaleBoost = this.getPlacedObjectScaleBoost(obj.assetId);
+    root.scaling = new Vector3(obj.scale.x * scaleBoost, obj.scale.y * scaleBoost, obj.scale.z * scaleBoost);
+    const bounds = this.getPlacedObjectTemplateBounds(obj.assetId, obj);
+    root.metadata = {
+      ...root.metadata,
+      assetId: obj.assetId,
+      chunkKey,
+      placedX: obj.position.x,
+      placedY: obj.position.y,
+      placedZ: obj.position.z,
+      interactionActions: this.placedObjectInteractionActions(obj),
+      interactions: Array.isArray(obj.interactions) && obj.interactions.length > 0 ? obj.interactions : undefined,
+      placedName: obj.name,
+      isNoRoof: obj.noRoof === true,
+      pickProxyBounds: bounds ? {
+        minX: bounds.min.x,
+        minY: bounds.min.y,
+        minZ: bounds.min.z,
+        maxX: bounds.max.x,
+        maxY: bounds.max.y,
+        maxZ: bounds.max.z,
+      } : undefined,
+    } satisfies PlacedObjectNodeMetadata;
+    root.setEnabled(false);
+    root.freezeWorldMatrix();
+    return root;
+  }
+
+  private addPlacedObjectNode(root: TransformNode, obj: PlacedObject, nodes: TransformNode[]): void {
+    nodes.push(root);
+    this.placedObjectNodes.push(root);
+    this.placedObjectNodeSet.add(root);
+
+    if (objectDefIdForPlacedAsset(obj.assetId) != null) {
+      const gridKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
+      let nodesAtTile = this.placedObjectGrid.get(gridKey);
+      if (!nodesAtTile) {
+        nodesAtTile = [];
+        this.placedObjectGrid.set(gridKey, nodesAtTile);
+      }
+      nodesAtTile.push(root);
+    }
   }
 
   private placedObjectInteractionActions(obj: PlacedObject): string[] | undefined {
@@ -4043,9 +4632,101 @@ export class ChunkManager {
     }
   }
 
+  /** Clear the loading + queued markers for a chunk so a stale early-return
+   *  can't strand them (otherwise cleanup relied entirely on disposeAll, and a
+   *  later soft-reload would see the chunk as still loading and skip it). */
+  private clearObjectChunkMarkers(chunkKey: string): void {
+    this.loadingObjectChunks.delete(chunkKey);
+    this.queuedObjectChunks.delete(chunkKey);
+  }
+
+  /** Fetch a chunk's placed-object JSON, deduping concurrent callers. Returns
+   *  the objects (possibly cached), [] for an empty/absent chunk, or null when
+   *  the load went stale. Populates placedObjectsByChunk / chunksKnownEmpty. */
+  private fetchChunkObjects(chunkKey: string, generation: number): Promise<PlacedObject[] | null> {
+    const cached = this.placedObjectsByChunk.get(chunkKey);
+    if (cached && cached.length > 0) return Promise.resolve(cached);
+    if (this.chunksKnownEmpty.has(chunkKey)) return Promise.resolve([]);
+    const inflight = this.loadingObjectJsonPromises.get(chunkKey);
+    if (inflight) return inflight;
+    const promise = this.fetchChunkObjectsUncached(chunkKey, generation).finally(() => {
+      if (this.loadingObjectJsonPromises.get(chunkKey) === promise) {
+        this.loadingObjectJsonPromises.delete(chunkKey);
+      }
+    });
+    this.loadingObjectJsonPromises.set(chunkKey, promise);
+    return promise;
+  }
+
+  private async fetchChunkObjectsUncached(chunkKey: string, generation: number): Promise<PlacedObject[] | null> {
+    if (this.isObjectLoadStale(generation)) return null;
+    const [cx, cz] = chunkKey.split(',').map(Number);
+    const resource = `${this.mapId}/objects/chunk_${cx}_${cz}.json`;
+    try {
+      const res = await fetchOptionalMapResource(`/maps/${resource}`, resource);
+      if (this.isObjectLoadStale(generation)) return null;
+      if (res.ok) {
+        const fetched: PlacedObject[] = await res.json();
+        if (this.isObjectLoadStale(generation)) return null;
+        if (fetched.length > 0) {
+          this.placedObjectsByChunk.set(chunkKey, fetched);
+          return fetched;
+        }
+        // Server returned an empty array — remember so we don't re-fetch.
+        this.chunksKnownEmpty.add(chunkKey);
+        return [];
+      }
+      if (res.status === 404) {
+        // No objects file exists for this chunk. Cache that fact.
+        this.chunksKnownEmpty.add(chunkKey);
+        return [];
+      }
+      return null;
+    } catch (e) {
+      if (isMapResourceFetchError(e)) throw e;
+      throw mapResourceFetchError(resource, 0);
+    }
+  }
+
+  /** Warm the network ahead of the serial instantiation queue: fetch each
+   *  chunk's object JSON and its GLB templates with bounded concurrency, so
+   *  loadChunkPlacedObjects finds JSON + templates already cached and spends
+   *  its frame budget on mesh instantiation instead of waiting on cold fetches.
+   *
+   *  This is what fixes multi-minute object loads for high-latency clients:
+   *  the previous design downloaded one GLB per chunk per frame, fully serial. */
+  private prefetchObjectChunkAssets(chunkKeys: string[], generation: number): void {
+    const pending = chunkKeys.filter(key =>
+      !this.chunksKnownEmpty.has(key) &&
+      !(this.placedObjectsByChunk.get(key)?.length) &&
+      !this.chunkPlacedNodes.has(key),
+    );
+    if (pending.length === 0) return;
+    void (async () => {
+      try {
+        const lists = await mapWithConcurrency(pending, OBJECT_GLB_LOAD_CONCURRENCY, (key) =>
+          this.fetchChunkObjects(key, generation).catch(() => null),
+        );
+        if (this.isObjectLoadStale(generation)) return;
+        const assetIds = new Set<string>();
+        for (const objects of lists) {
+          if (!objects) continue;
+          for (const obj of objects) {
+            if (!isGroundItemSpawnAssetId(obj.assetId)) assetIds.add(obj.assetId);
+          }
+        }
+        await mapWithConcurrency([...assetIds], OBJECT_GLB_LOAD_CONCURRENCY, (assetId) =>
+          this.loadGLBModel(assetId, generation).catch(() => null),
+        );
+      } catch (e) {
+        if (import.meta.env.DEV) console.warn('[ChunkManager] Object asset prefetch failed:', e);
+      }
+    })();
+  }
+
   /** Load and instantiate placed objects for a single chunk */
   private async loadChunkPlacedObjects(chunkKey: string, generation: number = this.objectLoadGeneration): Promise<void> {
-    if (this.isObjectLoadStale(generation)) return;
+    if (this.isObjectLoadStale(generation)) { this.clearObjectChunkMarkers(chunkKey); return; }
     if (this.chunkPlacedNodes.has(chunkKey)) {
       this.loadingObjectChunks.delete(chunkKey);
       return;
@@ -4063,31 +4744,12 @@ export class ChunkManager {
         return;
       }
       let objects = this.placedObjectsByChunk.get(chunkKey);
-    // If no pre-indexed objects, try fetching per-chunk file from server
+    // If no pre-indexed objects, fetch the per-chunk file (deduped against the
+    // background asset prefetch so the same chunk JSON isn't fetched twice).
     if (!objects || objects.length === 0) {
-      try {
-        const [cx, cz] = chunkKey.split(',').map(Number);
-        const resource = `${this.mapId}/objects/chunk_${cx}_${cz}.json`;
-        const res = await fetchOptionalMapResource(`/maps/${resource}`, resource);
-        if (this.isObjectLoadStale(generation)) return;
-        if (res.ok) {
-          const fetched: PlacedObject[] = await res.json();
-          if (this.isObjectLoadStale(generation)) return;
-          if (fetched.length > 0) {
-            this.placedObjectsByChunk.set(chunkKey, fetched);
-            objects = fetched;
-          } else {
-            // Server returned an empty array — remember so we don't re-fetch.
-            this.chunksKnownEmpty.add(chunkKey);
-          }
-        } else if (res.status === 404) {
-          // No objects file exists for this chunk. Cache that fact.
-          this.chunksKnownEmpty.add(chunkKey);
-        }
-      } catch (e) {
-        if (isMapResourceFetchError(e)) throw e;
-        throw mapResourceFetchError(`${this.mapId}/objects/chunk_${chunkKey.replace(',', '_')}.json`, 0);
-      }
+      const fetched = await this.fetchChunkObjects(chunkKey, generation);
+      if (this.isObjectLoadStale(generation)) { this.clearObjectChunkMarkers(chunkKey); return; }
+      if (fetched && fetched.length > 0) objects = fetched;
     }
     if (!objects || objects.length === 0) {
       this.chunkPlacedNodes.set(chunkKey, []);
@@ -4096,7 +4758,7 @@ export class ChunkManager {
       return;
     }
     this.registerShootOverFenceWalls(objects);
-    if (this.isObjectLoadStale(generation)) return;
+    if (this.isObjectLoadStale(generation)) { this.clearObjectChunkMarkers(chunkKey); return; }
     if (!this.shouldLoadObjectChunkNow(chunkKey)) {
       this.disposeChunkPlacedObjects(chunkKey);
       this.loadingObjectChunks.delete(chunkKey);
@@ -4139,18 +4801,19 @@ export class ChunkManager {
       return true;
     };
 
-    // Split into thin-instanceable static scenery vs regular interactable,
-    // animated, door, and stair hierarchies.
+    // Split into thin-instanceable static scenery, batched world-object
+    // visuals with placeholder roots, and regular animated/door hierarchies.
     // Need to load templates first so canThinInstance can check for animations.
     const templateAssetIds = new Set<string>();
     for (const obj of renderableObjects) {
       templateAssetIds.add(obj.assetId);
     }
-    for (const assetId of templateAssetIds) {
-      await this.loadGLBModel(assetId, generation);
-      await this.yieldIfFrameBudgetSpent(workSlice);
-      if (abortEarlyObjectLoadIfStopped()) return;
-    }
+    // Fetch this chunk's GLB templates with bounded concurrency rather than
+    // one-at-a-time. loadGLBModel dedupes in-flight loads, so templates the
+    // background prefetch already started are awaited here, not re-fetched.
+    await mapWithConcurrency([...templateAssetIds], OBJECT_GLB_LOAD_CONCURRENCY, (assetId) =>
+      this.loadGLBModel(assetId, generation),
+    );
     if (abortEarlyObjectLoadIfStopped()) return;
     if (!this.shouldLoadObjectChunkNow(chunkKey)) {
       this.disposeChunkPlacedObjects(chunkKey);
@@ -4169,9 +4832,19 @@ export class ChunkManager {
     type ThinGroup = { assetId: string; visibility: 'ground' | 'elevated' | 'roof'; placements: PlacedObject[] };
     const regularObjects: PlacedObject[] = [];
     const thinGroups = new Map<string, ThinGroup>();
+    const batchedVisualGroups = new Map<string, ThinGroup>();
     for (const obj of renderableObjects) {
       if (!this.loadedModelCache.get(obj.assetId)) continue;
-      if (this.canThinInstance(obj)) {
+      if (this.canBatchPlacedObjectVisual(obj)) {
+        const visibility = this.getThinVisibilityClass(obj);
+        const groupKey = placedObjectThinGroupKey(obj.assetId, visibility, obj.position.y);
+        let group = batchedVisualGroups.get(groupKey);
+        if (!group) {
+          group = { assetId: obj.assetId, visibility, placements: [] };
+          batchedVisualGroups.set(groupKey, group);
+        }
+        group.placements.push(obj);
+      } else if (this.canThinInstance(obj)) {
         const visibility = this.getThinVisibilityClass(obj);
         const groupKey = placedObjectThinGroupKey(obj.assetId, visibility, obj.position.y);
         let group = thinGroups.get(groupKey);
@@ -4239,6 +4912,18 @@ export class ChunkManager {
     };
     const _tmpMatrix = Matrix.Identity();
     const _placementMatrix = Matrix.Identity();
+    let placedNodeIndex = 0;
+    const batchedPlaceholderByObject = new Map<PlacedObject, TransformNode>();
+
+    for (const { placements } of batchedVisualGroups.values()) {
+      for (const obj of placements) {
+        const root = this.createPlacedObjectPlaceholder(chunkKey, placedNodeIndex++, obj);
+        batchedPlaceholderByObject.set(obj, root);
+        this.addPlacedObjectNode(root, obj, nodes);
+        await this.yieldIfFrameBudgetSpent(workSlice);
+        if (abortPartialLoadIfStopped()) return;
+      }
+    }
 
     for (const { assetId, visibility, placements } of thinGroups.values()) {
       const template = this.loadedModelCache.get(assetId)!;
@@ -4254,7 +4939,7 @@ export class ChunkManager {
         : null;
 
       for (const { sourceMesh, baseMatrix } of baseEntries) {
-        const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null)!;
+        const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null, true)!;
         src.parent = null;
         src.position.set(0, 0, 0);
         src.rotation.set(0, 0, 0);
@@ -4296,6 +4981,7 @@ export class ChunkManager {
           ));
         }
         src.doNotSyncBoundingInfo = true;
+        src.freezeWorldMatrix();
         src.metadata = { ...(src.metadata ?? {}), assetId, chunkKey };
         thinSources.push(src);
         if (visibility === 'roof') roofThinSources.push(src);
@@ -4309,18 +4995,105 @@ export class ChunkManager {
         if (abortPartialLoadIfStopped()) return;
       }
     }
+
+    for (const { assetId, placements } of batchedVisualGroups.values()) {
+      const template = this.loadedModelCache.get(assetId)!;
+      const baseEntries = this.getTemplateBaseMatrices(assetId, template);
+      if (baseEntries.length === 0) continue;
+
+      const scaleBoost = this.getPlacedObjectScaleBoost(assetId);
+      const placeholders = placements.map(obj => batchedPlaceholderByObject.get(obj) ?? null);
+
+      for (const { sourceMesh, baseMatrix } of baseEntries) {
+        const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null, true)!;
+        src.parent = null;
+        src.position.set(0, 0, 0);
+        src.rotation.set(0, 0, 0);
+        src.rotationQuaternion = null;
+        src.scaling.set(1, 1, 1);
+        src.setEnabled(false);
+        if (src instanceof Mesh) src.makeGeometryUnique();
+        const mat = src.material;
+        if (mat) this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(assetId), true);
+        src.isPickable = false;
+        src.thinInstanceEnablePicking = true;
+        const objectEntityIdsByThinInstance: Array<number | null> = [];
+
+        for (let i = 0; i < placements.length; i++) {
+          const obj = placements[i];
+          const root = placeholders[i];
+          if (!root) continue;
+
+          this.composePlacedObjectMatrix(obj, scaleBoost, _placementMatrix);
+          baseMatrix.multiplyToRef(_placementMatrix, _tmpMatrix);
+          const index = src.thinInstanceAdd(_tmpMatrix, false);
+          if (index >= 0) {
+            objectEntityIdsByThinInstance[index] = null;
+            const hiddenMatrix = Matrix.Compose(
+              TmpVectors.Vector3[2].set(0, 0, 0),
+              Quaternion.Identity(),
+              TmpVectors.Vector3[3].set(obj.position.x, obj.position.y, obj.position.z),
+            );
+            const refs = this.placedObjectVisualRefs.get(root) ?? [];
+            refs.push({
+              mesh: src,
+              index,
+              visibleMatrix: _tmpMatrix.clone(),
+              hiddenMatrix,
+            });
+            this.placedObjectVisualRefs.set(root, refs);
+          }
+
+          await this.yieldIfFrameBudgetSpent(workSlice);
+          if (abortPartialLoadIfStopped()) return;
+        }
+
+        src.thinInstanceBufferUpdated('matrix');
+        const pad = 5;
+        let bMinX = Infinity, bMinY = Infinity, bMinZ = Infinity;
+        let bMaxX = -Infinity, bMaxY = -Infinity, bMaxZ = -Infinity;
+        const matBuf = (src as any)._thinInstanceDataStorage?.matrixData;
+        if (matBuf) {
+          for (let i = 0; i < src.thinInstanceCount; i++) {
+            const tx = matBuf[i * 16 + 12], ty = matBuf[i * 16 + 13], tz = matBuf[i * 16 + 14];
+            if (tx - pad < bMinX) bMinX = tx - pad;
+            if (ty - pad < bMinY) bMinY = ty - pad;
+            if (tz - pad < bMinZ) bMinZ = tz - pad;
+            if (tx + pad > bMaxX) bMaxX = tx + pad;
+            if (ty + pad > bMaxY) bMaxY = ty + pad;
+            if (tz + pad > bMaxZ) bMaxZ = tz + pad;
+          }
+          src.setBoundingInfo(new BoundingInfo(
+            new Vector3(bMinX, bMinY, bMinZ),
+            new Vector3(bMaxX, bMaxY, bMaxZ)
+          ));
+        }
+        src.doNotSyncBoundingInfo = true;
+        src.freezeWorldMatrix();
+        src.metadata = {
+          ...(src.metadata ?? {}),
+          assetId,
+          chunkKey,
+          kind: 'worldObjectVisualBatch',
+          objectEntityIdsByThinInstance,
+          activeObjectPickInstanceCount: 0,
+        };
+        thinSources.push(src);
+        await this.yieldIfFrameBudgetSpent(workSlice);
+        if (abortPartialLoadIfStopped()) return;
+      }
+    }
     this.chunkThinInstSources.set(chunkKey, thinSources);
     if (roofThinSources.length > 0) this.chunkRoofThinInstSources.set(chunkKey, roofThinSources);
     if (elevatedThinSources.length > 0) this.chunkElevatedThinInstSources.set(chunkKey, elevatedThinSources);
     if (structuralThinSources.length > 0) this.chunkStructuralThinInstSources.set(chunkKey, structuralThinSources);
 
     // --- Regular instances: interactable, animated, doors, stairs ---
-    let idx = 0;
     for (const obj of regularObjects) {
       const template = this.loadedModelCache.get(obj.assetId)!;
 
       const instance = template.instantiateHierarchy(null, undefined, (source, cloned) => {
-        cloned.name = `placed_${chunkKey}_${idx}_${source.name}`;
+        cloned.name = `placed_${chunkKey}_${placedNodeIndex}_${source.name}`;
       });
       if (!instance) continue;
       instance.setEnabled(false);
@@ -4342,11 +5115,11 @@ export class ChunkManager {
         clonedNodes.set(instance.name, instance);
 
         for (const srcGroup of templateAnims) {
-          const clonedGroup = new AnimationGroup(`${srcGroup.name}_${chunkKey}_${idx}`, this.scene);
+          const clonedGroup = new AnimationGroup(`${srcGroup.name}_${chunkKey}_${placedNodeIndex}`, this.scene);
           for (const ta of srcGroup.targetedAnimations) {
             const srcName = ta.target?.name as string;
             const clonedTarget = srcName
-              ? clonedNodes.get(`placed_${chunkKey}_${idx}_${srcName}`)
+              ? clonedNodes.get(`placed_${chunkKey}_${placedNodeIndex}_${srcName}`)
               : null;
             if (clonedTarget) {
               clonedGroup.addTargetedAnimation(ta.animation, clonedTarget);
@@ -4401,22 +5174,10 @@ export class ChunkManager {
         }
       }
 
-      nodes.push(root);
+      this.addPlacedObjectNode(root, obj, nodes);
       if (instanceAnims.length > 0) this.placedObjectAnimationGroups.set(root, instanceAnims);
-      this.placedObjectNodes.push(root);
-      this.placedObjectNodeSet.add(root);
 
-      if (objectDefIdForPlacedAsset(obj.assetId) != null) {
-        const gridKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
-        let nodesAtTile = this.placedObjectGrid.get(gridKey);
-        if (!nodesAtTile) {
-          nodesAtTile = [];
-          this.placedObjectGrid.set(gridKey, nodesAtTile);
-        }
-        nodesAtTile.push(root);
-      }
-
-      idx++;
+      placedNodeIndex++;
       await this.yieldIfFrameBudgetSpent(workSlice);
       if (abortPartialLoadIfStopped()) return;
     }
@@ -5909,6 +6670,7 @@ export class ChunkManager {
     this.shadowGroundRebuildScheduled = false;
     this.templateBaseMatrices.clear();
     this.loadingObjectChunks.clear();
+    this.loadingObjectJsonPromises.clear();
     this.roofObjectGrid.clear();
     this.roofObjectGridKeysByChunk.clear();
     this.elevatedFloorHeights.clear();
@@ -5937,9 +6699,12 @@ export class ChunkManager {
     this.overlayMatCache.clear();
     for (const [, m] of this.texPlaneMaterialCache) m.dispose();
     this.texPlaneMaterialCache.clear();
+    this.disposeGrassBladeBatch();
 
     for (const [, meshes] of this.chunks) {
       meshes.ground.dispose();
+      meshes.grassBlades?.dispose();
+      meshes.stoneRocks?.dispose();
       meshes.water?.dispose();
       meshes.paddyWater?.dispose();
       meshes.cliff?.dispose();

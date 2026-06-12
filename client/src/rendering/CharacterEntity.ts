@@ -2852,9 +2852,13 @@ export class CharacterEntity {
     this.animGroups.clear();
     this.templateBackedAnimGroups.clear();
 
-    // Dispose meshes
+    // Dispose meshes. Pass (false, true) so each mesh's per-instance flat
+    // StandardMaterial + diffuseTexture (created in load(), uniquely owned by
+    // this character's freshly-imported GLB copy) are freed too.
     for (const mesh of this.meshes) {
-      mesh.dispose();
+      mesh.morphTargetManager?.dispose();
+      mesh.morphTargetManager = null;
+      mesh.dispose(false, true);
     }
     this.meshes = [];
     this.headMeshes = [];

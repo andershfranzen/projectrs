@@ -15,11 +15,15 @@ describe('WebSocket security helpers', () => {
     expect(isAllowedWsOrigin(hostile, { allowedOrigins: allowed, nodeEnv: 'production' })).toBe(false);
   });
 
-  test('rejects missing Origin in production but allows it in dev', () => {
+  test('rejects missing Origin unless explicitly opted in (any environment)', () => {
     const req = new Request('http://localhost:4000/ws/game');
 
+    // Missing Origin is rejected by default everywhere — not auto-allowed in dev.
     expect(isAllowedWsOrigin(req, { nodeEnv: 'production' })).toBe(false);
-    expect(isAllowedWsOrigin(req, { nodeEnv: 'development' })).toBe(true);
+    expect(isAllowedWsOrigin(req, { nodeEnv: 'development' })).toBe(false);
+    // Only an explicit opt-in accepts it.
+    expect(isAllowedWsOrigin(req, { nodeEnv: 'development', allowMissingOrigin: true })).toBe(true);
+    expect(isAllowedWsOrigin(req, { nodeEnv: 'production', allowMissingOrigin: true })).toBe(true);
   });
 
   test('extracts subprotocol auth token and rejects query token by default', () => {

@@ -268,6 +268,30 @@ function trajectoryPoint(t: number, from: Vector3, to: Vector3, def: SpellEffect
   return pos;
 }
 
+/** Scratch-vector variant of trajectoryPoint — writes into `out`, no alloc. */
+function trajectoryPointToRef(t: number, from: Vector3, to: Vector3, def: SpellEffectDef, out: Vector3): void {
+  const traj = def.trajectory;
+  if (traj.type === 'homing') {
+    const mid = Vector3.Center(from, to);
+    const cpX = mid.x;
+    const cpY = mid.y + traj.homingCurve * 0.5;
+    const cpZ = mid.z + traj.homingCurve;
+    const it = 1 - t;
+    out.set(
+      it * it * from.x + 2 * it * t * cpX + t * t * to.x,
+      it * it * from.y + 2 * it * t * cpY + t * t * to.y,
+      it * it * from.z + 2 * it * t * cpZ + t * t * to.z,
+    );
+    return;
+  }
+  Vector3.LerpToRef(from, to, t, out);
+  if (traj.type === 'arc') {
+    const dist = Vector3.Distance(from, to);
+    const distScale = Math.min(1, dist / 6);
+    out.y += traj.arcHeight * distScale * 4 * t * (1 - t);
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // SpellEffectPlayer — runs a single spell cast→travel→impact→linger sequence
 // ────────────────────────────────────────────────────────────────────────────
@@ -336,6 +360,10 @@ class ActiveCast {
   private projCoreMat: StandardMaterial | null = null;
   private projShellMat: StandardMaterial | null = null;
   private trailEmitPos = Vector3.Zero();
+  // Scratch vectors for the per-frame travel loop (avoid per-frame allocation).
+  private _travelPos = Vector3.Zero();
+  private _travelAhead = Vector3.Zero();
+  private _travelDir = Vector3.Zero();
   private trailPS: ParticleSystem | null = null;
   private castPS: ParticleSystem | null = null;
   private impactPS: ParticleSystem | null = null;
@@ -581,16 +609,20 @@ class ActiveCast {
       const elapsed = now - this.phaseStart;
       const travel = this.travelTimeMs;
       const t = Math.min(1, elapsed / travel);
-      const pos = trajectoryPoint(t, this.opts.from, this.opts.to, def);
+      const pos = this._travelPos;
+      trajectoryPointToRef(t, this.opts.from, this.opts.to, def, pos);
       this.projRoot?.position.copyFrom(pos);
       this.trailEmitPos.copyFrom(pos);
 
       // Orient toward direction of travel
       const tNext = Math.min(1, t + 0.01);
-      const ahead = trajectoryPoint(tNext, this.opts.from, this.opts.to, def);
-      const dir = ahead.subtract(pos);
+      const ahead = this._travelAhead;
+      trajectoryPointToRef(tNext, this.opts.from, this.opts.to, def, ahead);
+      const dir = this._travelDir;
+      ahead.subtractToRef(pos, dir);
+      // pos + dir === ahead, so lookAt(ahead) is equivalent to the old lookAt(pos.add(dir)).
       if (dir.lengthSquared() > 0.0001 && this.projRoot) {
-        this.projRoot.lookAt(pos.add(dir));
+        this.projRoot.lookAt(ahead);
       }
 
       // Subtle projectile pulse for blast shape
@@ -862,9 +894,9 @@ class ActiveCast {
   private regenerateArcs(): void {
     const lit = this.opts.def.impact.lightning;
     const center = this.opts.to;
-    // Dispose previous frame's lines
-    for (const a of this.arcs) a.dispose();
-    this.arcs = [];
+    // The point count per arc (jaggedness + 1) is constant for a cast, so the
+    // line meshes are created once (updatable) and re-pointed each flicker frame
+    // via the `instance` path instead of dispose+recreate (no GPU buffer churn).
     for (let i = 0; i < lit.arcCount; i++) {
       const a1 = Math.random() * Math.PI * 2;
       const a2 = Math.random() * Math.PI * 2;
@@ -872,21 +904,27 @@ class ActiveCast {
       const start = center.add(new Vector3(Math.cos(a1) * 0.1, 0.2 + Math.random() * 1.2, Math.sin(a1) * 0.1));
       const end = center.add(new Vector3(Math.cos(a2) * r, Math.random() * 0.5, Math.sin(a2) * r));
       const pts = this.genArcPoints(start, end, lit.jaggedness, lit.spread * 0.3);
-      const line = MeshBuilder.CreateLines(`spell_arc${i}`, { points: pts }, this.scene);
-      const mat = this.arcMats[i] ?? new StandardMaterial(`spell_arcMat${i}`, this.scene);
-      if (!this.arcMats[i]) {
-        mat.disableLighting = true;
-        mat.diffuseColor = Color3.Black();
-        mat.specularColor = Color3.Black();
-        this.arcMats[i] = mat;
+      const existing = this.arcs[i];
+      const line = existing
+        ? MeshBuilder.CreateLines(`spell_arc${i}`, { points: pts, instance: existing }, this.scene)
+        : MeshBuilder.CreateLines(`spell_arc${i}`, { points: pts, updatable: true }, this.scene);
+      if (!existing) {
+        const mat = this.arcMats[i] ?? new StandardMaterial(`spell_arcMat${i}`, this.scene);
+        if (!this.arcMats[i]) {
+          mat.disableLighting = true;
+          mat.diffuseColor = Color3.Black();
+          mat.specularColor = Color3.Black();
+          this.arcMats[i] = mat;
+        }
+        const g = Math.max(1, lit.glow);
+        mat.emissiveColor = new Color3(lit.color.r * g, lit.color.g * g, lit.color.b * g);
+        line.material = mat;
+        line.color = color3(lit.color);
+        line.isPickable = false;
+        this.arcs[i] = line;
       }
-      const g = Math.max(1, lit.glow);
-      mat.emissiveColor = new Color3(lit.color.r * g, lit.color.g * g, lit.color.b * g);
-      line.material = mat;
-      line.color = color3(lit.color);
+      line.isVisible = true;
       line.alpha = 0.7 + Math.random() * 0.3;
-      line.isPickable = false;
-      this.arcs.push(line);
     }
   }
 
@@ -925,7 +963,9 @@ class ActiveCast {
     for (const m of this.arcMats) m.dispose();
     for (const a of this.arcs) a.dispose();
     this.impactDecal?.dispose();
-    this.impactDecalMat?.dispose();
+    // (false, true) frees the decal's emissiveTexture (128x128 DynamicTexture)
+    // built per cast in buildDecal — otherwise it leaks on every spell.
+    this.impactDecalMat?.dispose(false, true);
     this.handGlow?.dispose();
     this.handGlowMat?.dispose();
 

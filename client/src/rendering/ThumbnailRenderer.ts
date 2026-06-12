@@ -433,62 +433,74 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-/** Trim transparent edges off a rendered PNG and resize so the opaque content
+function canvasToPngDataUrl(canvas: HTMLCanvasElement): Promise<string> {
+  return new Promise((resolve) => {
+    if (!canvas.toBlob) {
+      resolve(canvas.toDataURL('image/png'));
+      return;
+    }
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        resolve(canvas.toDataURL('image/png'));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : canvas.toDataURL('image/png'));
+      reader.onerror = () => resolve(canvas.toDataURL('image/png'));
+      reader.readAsDataURL(blob);
+    }, 'image/png');
+  });
+}
+
+/** Trim transparent edges off a rendered canvas and resize so the opaque content
  *  fills `outSize` with `THUMB_PADDING` margin. This is what gives items a
  *  uniform on-thumbnail size regardless of GLB bbox quirks (skinned-armor
  *  skeletons, off-center pivots, stray vertices). Returns null if the render
  *  is fully transparent — callers should fall back to sprite/icon rather
  *  than caching an empty image. */
-function trimAndResize(sourceUrl: string, outSize: number, iconScale = 1): Promise<string | null> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const W = img.width, H = img.height;
-      const measure = document.createElement('canvas');
-      measure.width = W;
-      measure.height = H;
-      const mctx = measure.getContext('2d');
-      if (!mctx) { resolve(sourceUrl); return; }
-      mctx.drawImage(img, 0, 0);
-      const data = mctx.getImageData(0, 0, W, H).data;
+async function trimAndResizeCanvas(source: HTMLCanvasElement, outSize: number, iconScale = 1): Promise<string | null> {
+  const W = source.width, H = source.height;
+  const measure = document.createElement('canvas');
+  measure.width = W;
+  measure.height = H;
+  const mctx = measure.getContext('2d');
+  if (!mctx) return canvasToPngDataUrl(source);
+  mctx.drawImage(source, 0, 0);
+  const data = mctx.getImageData(0, 0, W, H).data;
 
-      let minX = W, minY = H, maxX = -1, maxY = -1;
-      for (let y = 0; y < H; y++) {
-        const rowBase = y * W * 4;
-        for (let x = 0; x < W; x++) {
-          if (data[rowBase + x * 4 + 3] > TRIM_ALPHA_MIN) {
-            if (x < minX) minX = x;
-            if (y < minY) minY = y;
-            if (x > maxX) maxX = x;
-            if (y > maxY) maxY = y;
-          }
-        }
+  let minX = W, minY = H, maxX = -1, maxY = -1;
+  for (let y = 0; y < H; y++) {
+    const rowBase = y * W * 4;
+    for (let x = 0; x < W; x++) {
+      if (data[rowBase + x * 4 + 3] > TRIM_ALPHA_MIN) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
       }
-      if (maxX < 0) { resolve(null); return; }
+    }
+  }
+  if (maxX < 0) return null;
 
-      const cropW = maxX - minX + 1;
-      const cropH = maxY - minY + 1;
-      const safeIconScale = Number.isFinite(iconScale) ? Math.max(0.05, Math.min(2, iconScale)) : 1;
-      const innerSize = outSize * (1 - 2 * THUMB_PADDING) * safeIconScale;
-      const scale = innerSize / Math.max(cropW, cropH);
-      const outW = cropW * scale;
-      const outH = cropH * scale;
-      const dx = (outSize - outW) / 2;
-      const dy = (outSize - outH) / 2;
+  const cropW = maxX - minX + 1;
+  const cropH = maxY - minY + 1;
+  const safeIconScale = Number.isFinite(iconScale) ? Math.max(0.05, Math.min(2, iconScale)) : 1;
+  const innerSize = outSize * (1 - 2 * THUMB_PADDING) * safeIconScale;
+  const scale = innerSize / Math.max(cropW, cropH);
+  const outW = cropW * scale;
+  const outH = cropH * scale;
+  const dx = (outSize - outW) / 2;
+  const dy = (outSize - outH) / 2;
 
-      const out = document.createElement('canvas');
-      out.width = outSize;
-      out.height = outSize;
-      const octx = out.getContext('2d');
-      if (!octx) { resolve(sourceUrl); return; }
-      octx.imageSmoothingEnabled = true;
-      octx.imageSmoothingQuality = 'high';
-      octx.drawImage(img, minX, minY, cropW, cropH, dx, dy, outW, outH);
-      resolve(out.toDataURL('image/png'));
-    };
-    img.onerror = () => resolve(sourceUrl);
-    img.src = sourceUrl;
-  });
+  const out = document.createElement('canvas');
+  out.width = outSize;
+  out.height = outSize;
+  const octx = out.getContext('2d');
+  if (!octx) return canvasToPngDataUrl(source);
+  octx.imageSmoothingEnabled = true;
+  octx.imageSmoothingQuality = 'high';
+  octx.drawImage(source, minX, minY, cropW, cropH, dx, dy, outW, outH);
+  return canvasToPngDataUrl(out);
 }
 
 function disposeLoadResult(result: { meshes: any[]; animationGroups: any[]; skeletons: any[]; transformNodes: any[] }): void {
@@ -594,8 +606,7 @@ async function renderOne(path: string, options: ThumbnailOptions): Promise<strin
     await _scene!.whenReadyAsync();
     _scene!.render();
     _scene!.render();
-    const rawUrl = _canvas!.toDataURL('image/png');
-    return await trimAndResize(rawUrl, THUMB_SIZE, options.iconScale ?? 1);
+    return await trimAndResizeCanvas(_canvas!, THUMB_SIZE, options.iconScale ?? 1);
   } finally {
     disposeLoadResult(result);
     poseRoot?.dispose(false, false);

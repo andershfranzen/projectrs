@@ -17,12 +17,28 @@ function ensureEncodeCapacity(needed: number): void {
   _encU8 = new Uint8Array(_encBuf);
 }
 
+// Dev-only guard: a value passed to setInt16 only round-trips if it fits 16
+// bits as a signed value [-32768, 32767] OR an already-masked unsigned value
+// [0, 65535] (the high/low split fields deliberately use the unsigned half).
+// Anything outside [-32768, 65535] silently loses data on the wire. Off in the
+// browser (no `process`) and in production — this is a development trip-wire.
+// Accessed via globalThis so this typechecks in browser/editor builds that
+// don't pull in Node's `process` typings.
+const _proc = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process;
+const DEV_ENCODE_ASSERT = _proc !== undefined && _proc.env?.NODE_ENV !== 'production';
+
 export function encodePacket(opcode: number, ...values: number[]): Uint8Array {
   const len = 1 + values.length * 2;
   ensureEncodeCapacity(len);
   _encView.setUint8(0, opcode);
   for (let i = 0; i < values.length; i++) {
-    _encView.setInt16(1 + i * 2, values[i]);
+    const value = values[i];
+    if (DEV_ENCODE_ASSERT && (!Number.isInteger(value) || value < -32768 || value > 0xFFFF)) {
+      throw new RangeError(
+        `encodePacket: value ${value} at index ${i} (opcode ${opcode}) does not fit a 16-bit field — split large numbers into high/low words`,
+      );
+    }
+    _encView.setInt16(1 + i * 2, value);
   }
   return _encU8.slice(0, len);
 }
