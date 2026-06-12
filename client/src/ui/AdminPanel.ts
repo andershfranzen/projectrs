@@ -53,11 +53,26 @@ interface AdminBotAccount {
     devices: number;
     logins: number;
     lastSeenTs: number | null;
+    riskScore: number;
+    riskLevel: string;
+    banned: boolean;
   }>;
   lastSessionSummary: Record<string, unknown> | null;
   accountBan: AdminAccountBan | null;
   ipBan: AdminIpBan | null;
   accountMute: AdminAccountMute | null;
+}
+
+/** One scored signal in the "why flagged" breakdown (mirrors the server's
+ *  BotSignalDetail; carried inside lastSessionSummary.riskSignals). */
+interface AdminBotSignal {
+  flag: string;
+  label: string;
+  description: string;
+  threshold: string;
+  measured: string;
+  points: number;
+  tier: 'hard' | 'soft' | 'context';
 }
 
 interface AdminBanBase {
@@ -1512,6 +1527,8 @@ export class AdminPanel {
     }
     root.appendChild(chips);
 
+    root.appendChild(this.renderWhyFlagged(account, summary, reasons));
+
     if (contextFlags.length > 0 || diagnosticFlags.length > 0) {
       const weakSignals = document.createElement('div');
       weakSignals.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px; min-height: 20px;`;
@@ -1624,7 +1641,14 @@ export class AdminPanel {
         context.appendChild(this.summaryPill(`${entry.tile}: ${this.formatNumber(entry.count)} moves`, '#564428'));
       }
       for (const alt of account.sharedDeviceAlts.slice(0, 5)) {
-        context.appendChild(this.summaryPill(`device alt ${alt.username}: ${alt.devices} dev/${alt.logins} logins`, '#6b3b34'));
+        // Highlight alts that are themselves banned or high-risk — a strong
+        // alt-account / gold-farm-fleet signal an admin should not miss.
+        const flagged = alt.banned || alt.riskLevel === 'high' || alt.riskLevel === 'critical';
+        const tag = alt.banned ? ' ⛔ BANNED' : flagged ? ` ⚠ ${alt.riskLevel} ${alt.riskScore}` : '';
+        const color = alt.banned ? '#b52f24' : flagged ? '#8f2f28' : '#6b3b34';
+        const pill = this.summaryPill(`device alt ${alt.username}: ${alt.devices} dev/${alt.logins} logins${tag}`, color);
+        if (flagged) pill.title = 'Shares a device with this account and is itself flagged/banned — likely the same operator.';
+        context.appendChild(pill);
       }
       root.appendChild(context);
     }
@@ -1635,12 +1659,8 @@ export class AdminPanel {
 
     root.appendChild(this.moderationControls(account));
 
-    if (reasons.length > 0) {
-      const reasonText = document.createElement('div');
-      reasonText.textContent = reasons.join(' | ');
-      reasonText.style.cssText = `font-size: 11px; line-height: 15px; color: #d9c6a2;`;
-      root.appendChild(reasonText);
-    }
+    // The flat reasons line is superseded by the ranked "Why flagged" breakdown
+    // rendered near the top of the pane (see renderWhyFlagged).
 
     this.detailEl.replaceChildren(root);
   }
@@ -1846,6 +1866,116 @@ export class AdminPanel {
   private summaryEvidenceFlags(summary: Record<string, unknown> | null): string[] {
     const evidenceFlags = this.summaryStringArray(summary, 'evidenceFlags');
     return evidenceFlags.length > 0 ? evidenceFlags : this.summaryStringArray(summary, 'flags');
+  }
+
+  /** Structured per-signal breakdown from the session summary (server-ranked). */
+  private summarySignals(summary: Record<string, unknown> | null): AdminBotSignal[] {
+    const raw = summary?.riskSignals;
+    if (!Array.isArray(raw)) return [];
+    const out: AdminBotSignal[] = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const s = item as Record<string, unknown>;
+      const tier = s.tier === 'hard' || s.tier === 'context' ? s.tier : 'soft';
+      out.push({
+        flag: String(s.flag ?? ''),
+        label: String(s.label ?? s.flag ?? 'signal'),
+        description: String(s.description ?? ''),
+        threshold: String(s.threshold ?? ''),
+        measured: String(s.measured ?? ''),
+        points: typeof s.points === 'number' ? s.points : 0,
+        tier,
+      });
+    }
+    return out;
+  }
+
+  /** The headline "why flagged" view: a ranked, per-signal breakdown showing
+   *  what tripped, the player's value vs the threshold, the points each added,
+   *  and whether the score rests on hard evidence (or is capped without it).
+   *  Falls back to the legacy reason strings when structured signals are absent
+   *  (e.g. accounts scored by the lifetime-calibration path). */
+  private renderWhyFlagged(account: AdminBotAccount, summary: Record<string, unknown> | null, reasons: string[]): HTMLElement {
+    const TIER_COLOR: Record<AdminBotSignal['tier'], string> = { hard: '#8f2f28', soft: '#7a5a25', context: '#4d535f' };
+    const TIER_NAME: Record<AdminBotSignal['tier'], string> = { hard: 'hard evidence', soft: 'supporting', context: 'combo' };
+
+    const box = document.createElement('div');
+    box.style.cssText = `border: 1px solid #4a3f33; border-radius: 6px; padding: 8px 9px; display: flex; flex-direction: column; gap: 6px; background: #241d16;`;
+
+    const head = document.createElement('div');
+    head.style.cssText = `display: flex; align-items: center; gap: 7px; flex-wrap: wrap;`;
+    const heading = document.createElement('span');
+    heading.textContent = 'Why flagged';
+    heading.style.cssText = `font-size: 12px; font-weight: bold; color: #f4ded5;`;
+    head.appendChild(heading);
+
+    const signals = this.summarySignals(summary);
+    const hardEvidence = summary?.riskHardEvidence === true || signals.some(s => s.tier === 'hard');
+    head.appendChild(this.summaryPill(
+      hardEvidence ? 'hard evidence' : 'no hard evidence — score capped at 29',
+      hardEvidence ? '#8f2f28' : '#4d5d45',
+    ));
+    if (signals.length === 0 && reasons.length > 0) {
+      head.appendChild(this.summaryPill('legacy calibration', '#564428'));
+    }
+    if (summary?.isLikelyMobile === true) {
+      const pill = this.summaryPill('📱 mobile — cursor signals exempt', '#2f5f8f');
+      pill.title = 'Touch-dominant client. Cursor-absence signals are suppressed to avoid false-flagging phone players; all automation detectors still apply.';
+      head.appendChild(pill);
+    }
+    box.appendChild(head);
+
+    if (signals.length === 0) {
+      if (reasons.length === 0) {
+        const none = document.createElement('div');
+        none.textContent = 'No scored signals — risk score is 0 or from lifetime history only.';
+        none.style.cssText = `font-size: 11px; color: #9b8e7a;`;
+        box.appendChild(none);
+        return box;
+      }
+      for (const reason of reasons.slice(0, 12)) {
+        const row = document.createElement('div');
+        row.textContent = `• ${reason}`;
+        row.style.cssText = `font-size: 11px; line-height: 15px; color: #d9c6a2;`;
+        box.appendChild(row);
+      }
+      return box;
+    }
+
+    for (const sig of signals) {
+      const row = document.createElement('div');
+      row.style.cssText = `display: grid; grid-template-columns: 44px 1fr; gap: 8px; align-items: start;`;
+
+      const pts = document.createElement('div');
+      pts.textContent = `+${sig.points}`;
+      pts.title = TIER_NAME[sig.tier];
+      pts.style.cssText = `font-size: 12px; font-weight: bold; text-align: center; color: #fff; background: ${TIER_COLOR[sig.tier]}; border-radius: 4px; padding: 2px 0; align-self: center;`;
+      row.appendChild(pts);
+
+      const text = document.createElement('div');
+      text.style.cssText = `min-width: 0; display: flex; flex-direction: column; gap: 1px;`;
+      const label = document.createElement('div');
+      label.textContent = sig.label;
+      label.style.cssText = `font-size: 12px; font-weight: 600; color: #f4ded5;`;
+      text.appendChild(label);
+      if (sig.measured || sig.threshold) {
+        const cmp = document.createElement('div');
+        cmp.style.cssText = `font-size: 11px; color: #c9b48f;`;
+        cmp.textContent = sig.tier === 'context'
+          ? 'combination of signals above'
+          : `${sig.measured || '—'}${sig.threshold ? `  ·  fires at ${sig.threshold}` : ''}`;
+        text.appendChild(cmp);
+      }
+      if (sig.description) {
+        const desc = document.createElement('div');
+        desc.textContent = sig.description;
+        desc.style.cssText = `font-size: 10px; color: #8f8268;`;
+        text.appendChild(desc);
+      }
+      row.appendChild(text);
+      box.appendChild(row);
+    }
+    return box;
   }
 
   private summaryStringArray(summary: Record<string, unknown> | null, key: string): string[] {
