@@ -36,8 +36,12 @@ pickaxeminingset_sourcefiles/
 .claude/
 .clawpatch/
 
-# Backup glbs kept locally
+# Backup glbs kept locally (never ship from client/public — Vite copies it all
+# into dist, bloating the deploy and the auth-gated asset window).
 client/public/Character models/*backup*.glb
+client/public/**/backups/
+client/public/**/*-backup*.glb
+client/public/**/*backups-*/
 
 # Source/import assets that should not ship from client/public
 client/public/assets/forced-textures/

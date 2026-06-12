@@ -11,7 +11,9 @@ import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } fr
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
 import { requestClientIp } from './network/clientIp';
-import { hasForbiddenStaticSourceExtension, requiresAuthenticatedGameStaticAsset } from './security/StaticAssetAccess';
+import { hasForbiddenStaticSourceExtension, requiresAuthenticatedGameStaticAsset, staticGameAssetCacheControl } from './security/StaticAssetAccess';
+import { maybeCompressResponse } from './network/compress';
+import type { Server } from 'bun';
 import { audit } from './Audit';
 import { sanitizeForumUpload } from './forumUploadSecurity';
 import { parseOAuthClients, validateOAuthAuthorizeParams, verifyPkceS256, type OAuthAuthorizeParams, type OAuthAuthorizeRequest } from './oauth';
@@ -1417,6 +1419,10 @@ function getMimeType(path: string): string {
   return MIME_TYPES[ext] || 'application/octet-stream';
 }
 
+function gameStaticAssetCacheControl(decodedPath: string): string {
+  return staticGameAssetCacheControl(decodedPath, isProductionLike());
+}
+
 interface StaticFileCacheEntry {
   mtimeMs: number;
   size: number;
@@ -1482,7 +1488,7 @@ function serveStatic(req: Request, pathname: string, allowIndexFallback = false)
     } else if (decoded.startsWith('/assets/') && (filePath.endsWith('.js') || filePath.endsWith('.css'))) {
       cacheControl = 'public, max-age=31536000, immutable';
     } else if (requiresAuthenticatedGameStaticAsset(decoded)) {
-      cacheControl = 'private, no-cache, must-revalidate';
+      cacheControl = gameStaticAssetCacheControl(decoded);
     }
     const headers: Record<string, string> = {
       'Content-Type': getMimeType(filePath),
@@ -3103,10 +3109,7 @@ type WebsiteDevSocketData = {
 
 type SocketData = GameSocketData | ChatSocketData | WebsiteDevSocketData;
 
-const server = Bun.serve<SocketData>({
-  port: SERVER_PORT,
-
-  async fetch(req, server) {
+async function rawFetch(req: Request, server: Server<SocketData>): Promise<Response | undefined> {
     const url = new URL(req.url);
 
     if (url.pathname === '/favicon.ico' && (req.method === 'GET' || req.method === 'HEAD')) {
@@ -5161,12 +5164,9 @@ const server = Bun.serve<SocketData>({
           // from client/public/assets/) still uses a short cache so swapped
           // assets show up without forcing browser-data clears during dev.
           const isHashedBundle = filePath.endsWith('.js') || filePath.endsWith('.css');
-          const isProtectedAsset = requiresAuthenticatedGameStaticAsset(decodedPath);
           const cacheControl = isHashedBundle
             ? 'public, max-age=31536000, immutable'
-            : isProtectedAsset
-              ? 'private, no-cache, must-revalidate'
-            : 'no-cache, must-revalidate';
+            : gameStaticAssetCacheControl(decodedPath);
           return new Response(content, {
             headers: {
               'Content-Type': getMimeType(filePath),
@@ -5196,7 +5196,7 @@ const server = Bun.serve<SocketData>({
         try {
           const content = readCachedStaticFile(filePath);
           return new Response(content, {
-            headers: { 'Content-Type': getMimeType(filePath), 'Cache-Control': 'private, no-cache, must-revalidate' },
+            headers: { 'Content-Type': getMimeType(filePath), 'Cache-Control': gameStaticAssetCacheControl(decodedPath) },
           });
         } catch { /* try next */ }
       }
@@ -5227,6 +5227,14 @@ const server = Bun.serve<SocketData>({
     if (shouldServeWebsiteNotFound(req, url.pathname)) return serveWebsiteNotFound();
 
     return new Response('Not Found', { status: 404 });
+}
+
+const server = Bun.serve<SocketData>({
+  port: SERVER_PORT,
+
+  async fetch(req, server) {
+    const res = await rawFetch(req, server);
+    return res ? await maybeCompressResponse(req, res) : res;
   },
 
   websocket: {

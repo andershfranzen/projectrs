@@ -32,6 +32,7 @@ type ObjectChunkManagerHarness = {
   objectLoadGeneration: number;
   scene: { isDisposed: boolean };
   loadingObjectChunks: Set<string>;
+  loadingObjectJsonPromises: Map<string, Promise<unknown[] | null>>;
   chunkPlacedNodes: Map<string, TransformNode[]>;
   chunksKnownEmpty: Set<string>;
   placedObjectsByChunk: Map<string, unknown[]>;
@@ -47,6 +48,7 @@ function makeObjectChunkManager(): ObjectChunkManagerHarness {
     objectLoadGeneration: 1,
     scene: { isDisposed: false },
     loadingObjectChunks: new Set<string>(['1,2']),
+    loadingObjectJsonPromises: new Map<string, Promise<unknown[] | null>>(),
     chunkPlacedNodes: new Map<string, TransformNode[]>(),
     chunksKnownEmpty: new Set<string>(),
     placedObjectsByChunk: new Map<string, unknown[]>(),

@@ -21,6 +21,7 @@ import type { UVPoint } from '@projectrs/shared';
 import type { RGB, TorchlightInfluenceGrid, TorchlightPaintTile } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, PlacedObjectInteraction, TexturePlane, WaterFlow, WaterFlowUvTransform, WallShadowRun, MinimapMarker } from '@projectrs/shared';
 import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
+import { mapWithConcurrency } from '../util/concurrency';
 
 const EDITOR_CHUNK_SIZE = 64;
 const CHUNK_RENDER_PADDING_TILES = 8;
@@ -38,6 +39,11 @@ const OBJECT_VISIBILITY_BUCKET_TILES = 4;
 const FLAT_TEXTURE_PICK_CELL_SIZE = 8;
 const FLAT_TEXTURE_PICK_Y_BUCKET_SIZE = SAME_PLANE_PICK_Y_TOLERANCE;
 const HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS = 220;
+// Max placed-object GLB fetches in flight at once. The old loader awaited one
+// GLB at a time, so a high-latency client serialized every fetch into a
+// multi-minute chain. 6 keeps within HTTP/1.1's per-origin cap while letting
+// the browser overlap downloads.
+const OBJECT_GLB_LOAD_CONCURRENCY = 6;
 const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 1.25;
 const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
 const ROOF_REVEAL_CONNECTED_TILE_LIMIT = 2048;
@@ -397,6 +403,9 @@ export class ChunkManager {
   private chunkPlacedEnabled: Map<string, boolean> = new Map();
   /** Chunks currently loading placed objects (prevents double-load) */
   private loadingObjectChunks: Set<string> = new Set();
+  /** In-flight per-chunk object-JSON fetches, so the background asset prefetch
+   *  and the serial instantiation queue never double-fetch the same chunk. */
+  private loadingObjectJsonPromises: Map<string, Promise<PlacedObject[] | null>> = new Map();
   /** FIFO of object chunks waiting for instantiation. Keeps many chunks from
    *  resuming into mesh creation in the same frame after their assets load. */
   private objectChunkQueue: string[] = [];
@@ -1341,6 +1350,14 @@ export class ChunkManager {
         this.queueChunkPlacedObjects(key);
       }
     }
+
+    // Warm JSON + GLB templates for the whole load window in parallel, ahead of
+    // the serial instantiation queue. Visible chunks first so the player's
+    // immediate surroundings download before the prefetch padding ring.
+    const prefetchKeys = [...objectLoad].sort((a, b) =>
+      Number(objectDesired.has(b)) - Number(objectDesired.has(a)),
+    );
+    this.prefetchObjectChunkAssets(prefetchKeys, this.objectLoadGeneration);
 
     changed = this.evictObjectChunkCache(centerChunkX, centerChunkZ, objectLoad) || changed;
 
@@ -4554,6 +4571,90 @@ export class ChunkManager {
     this.queuedObjectChunks.delete(chunkKey);
   }
 
+  /** Fetch a chunk's placed-object JSON, deduping concurrent callers. Returns
+   *  the objects (possibly cached), [] for an empty/absent chunk, or null when
+   *  the load went stale. Populates placedObjectsByChunk / chunksKnownEmpty. */
+  private fetchChunkObjects(chunkKey: string, generation: number): Promise<PlacedObject[] | null> {
+    const cached = this.placedObjectsByChunk.get(chunkKey);
+    if (cached && cached.length > 0) return Promise.resolve(cached);
+    if (this.chunksKnownEmpty.has(chunkKey)) return Promise.resolve([]);
+    const inflight = this.loadingObjectJsonPromises.get(chunkKey);
+    if (inflight) return inflight;
+    const promise = this.fetchChunkObjectsUncached(chunkKey, generation).finally(() => {
+      if (this.loadingObjectJsonPromises.get(chunkKey) === promise) {
+        this.loadingObjectJsonPromises.delete(chunkKey);
+      }
+    });
+    this.loadingObjectJsonPromises.set(chunkKey, promise);
+    return promise;
+  }
+
+  private async fetchChunkObjectsUncached(chunkKey: string, generation: number): Promise<PlacedObject[] | null> {
+    if (this.isObjectLoadStale(generation)) return null;
+    const [cx, cz] = chunkKey.split(',').map(Number);
+    const resource = `${this.mapId}/objects/chunk_${cx}_${cz}.json`;
+    try {
+      const res = await fetchOptionalMapResource(`/maps/${resource}`, resource);
+      if (this.isObjectLoadStale(generation)) return null;
+      if (res.ok) {
+        const fetched: PlacedObject[] = await res.json();
+        if (this.isObjectLoadStale(generation)) return null;
+        if (fetched.length > 0) {
+          this.placedObjectsByChunk.set(chunkKey, fetched);
+          return fetched;
+        }
+        // Server returned an empty array — remember so we don't re-fetch.
+        this.chunksKnownEmpty.add(chunkKey);
+        return [];
+      }
+      if (res.status === 404) {
+        // No objects file exists for this chunk. Cache that fact.
+        this.chunksKnownEmpty.add(chunkKey);
+        return [];
+      }
+      return null;
+    } catch (e) {
+      if (isMapResourceFetchError(e)) throw e;
+      throw mapResourceFetchError(resource, 0);
+    }
+  }
+
+  /** Warm the network ahead of the serial instantiation queue: fetch each
+   *  chunk's object JSON and its GLB templates with bounded concurrency, so
+   *  loadChunkPlacedObjects finds JSON + templates already cached and spends
+   *  its frame budget on mesh instantiation instead of waiting on cold fetches.
+   *
+   *  This is what fixes multi-minute object loads for high-latency clients:
+   *  the previous design downloaded one GLB per chunk per frame, fully serial. */
+  private prefetchObjectChunkAssets(chunkKeys: string[], generation: number): void {
+    const pending = chunkKeys.filter(key =>
+      !this.chunksKnownEmpty.has(key) &&
+      !(this.placedObjectsByChunk.get(key)?.length) &&
+      !this.chunkPlacedNodes.has(key),
+    );
+    if (pending.length === 0) return;
+    void (async () => {
+      try {
+        const lists = await mapWithConcurrency(pending, OBJECT_GLB_LOAD_CONCURRENCY, (key) =>
+          this.fetchChunkObjects(key, generation).catch(() => null),
+        );
+        if (this.isObjectLoadStale(generation)) return;
+        const assetIds = new Set<string>();
+        for (const objects of lists) {
+          if (!objects) continue;
+          for (const obj of objects) {
+            if (!isGroundItemSpawnAssetId(obj.assetId)) assetIds.add(obj.assetId);
+          }
+        }
+        await mapWithConcurrency([...assetIds], OBJECT_GLB_LOAD_CONCURRENCY, (assetId) =>
+          this.loadGLBModel(assetId, generation).catch(() => null),
+        );
+      } catch (e) {
+        if (import.meta.env.DEV) console.warn('[ChunkManager] Object asset prefetch failed:', e);
+      }
+    })();
+  }
+
   /** Load and instantiate placed objects for a single chunk */
   private async loadChunkPlacedObjects(chunkKey: string, generation: number = this.objectLoadGeneration): Promise<void> {
     if (this.isObjectLoadStale(generation)) { this.clearObjectChunkMarkers(chunkKey); return; }
@@ -4574,31 +4675,12 @@ export class ChunkManager {
         return;
       }
       let objects = this.placedObjectsByChunk.get(chunkKey);
-    // If no pre-indexed objects, try fetching per-chunk file from server
+    // If no pre-indexed objects, fetch the per-chunk file (deduped against the
+    // background asset prefetch so the same chunk JSON isn't fetched twice).
     if (!objects || objects.length === 0) {
-      try {
-        const [cx, cz] = chunkKey.split(',').map(Number);
-        const resource = `${this.mapId}/objects/chunk_${cx}_${cz}.json`;
-        const res = await fetchOptionalMapResource(`/maps/${resource}`, resource);
-        if (this.isObjectLoadStale(generation)) { this.clearObjectChunkMarkers(chunkKey); return; }
-        if (res.ok) {
-          const fetched: PlacedObject[] = await res.json();
-          if (this.isObjectLoadStale(generation)) { this.clearObjectChunkMarkers(chunkKey); return; }
-          if (fetched.length > 0) {
-            this.placedObjectsByChunk.set(chunkKey, fetched);
-            objects = fetched;
-          } else {
-            // Server returned an empty array — remember so we don't re-fetch.
-            this.chunksKnownEmpty.add(chunkKey);
-          }
-        } else if (res.status === 404) {
-          // No objects file exists for this chunk. Cache that fact.
-          this.chunksKnownEmpty.add(chunkKey);
-        }
-      } catch (e) {
-        if (isMapResourceFetchError(e)) throw e;
-        throw mapResourceFetchError(`${this.mapId}/objects/chunk_${chunkKey.replace(',', '_')}.json`, 0);
-      }
+      const fetched = await this.fetchChunkObjects(chunkKey, generation);
+      if (this.isObjectLoadStale(generation)) { this.clearObjectChunkMarkers(chunkKey); return; }
+      if (fetched && fetched.length > 0) objects = fetched;
     }
     if (!objects || objects.length === 0) {
       this.chunkPlacedNodes.set(chunkKey, []);
@@ -4657,11 +4739,12 @@ export class ChunkManager {
     for (const obj of renderableObjects) {
       templateAssetIds.add(obj.assetId);
     }
-    for (const assetId of templateAssetIds) {
-      await this.loadGLBModel(assetId, generation);
-      await this.yieldIfFrameBudgetSpent(workSlice);
-      if (abortEarlyObjectLoadIfStopped()) return;
-    }
+    // Fetch this chunk's GLB templates with bounded concurrency rather than
+    // one-at-a-time. loadGLBModel dedupes in-flight loads, so templates the
+    // background prefetch already started are awaited here, not re-fetched.
+    await mapWithConcurrency([...templateAssetIds], OBJECT_GLB_LOAD_CONCURRENCY, (assetId) =>
+      this.loadGLBModel(assetId, generation),
+    );
     if (abortEarlyObjectLoadIfStopped()) return;
     if (!this.shouldLoadObjectChunkNow(chunkKey)) {
       this.disposeChunkPlacedObjects(chunkKey);
@@ -6508,6 +6591,7 @@ export class ChunkManager {
     this.shadowGroundRebuildScheduled = false;
     this.templateBaseMatrices.clear();
     this.loadingObjectChunks.clear();
+    this.loadingObjectJsonPromises.clear();
     this.roofObjectGrid.clear();
     this.roofObjectGridKeysByChunk.clear();
     this.elevatedFloorHeights.clear();
