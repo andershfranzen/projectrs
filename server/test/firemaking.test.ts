@@ -150,7 +150,8 @@ test('matchbox and three logs create a temporary fire with Survival XP', () => {
   const fire = [...world.worldObjects.values()].find((obj: any) => obj.defId === FIRE_OBJECT_DEF_ID);
   expect(fire).toBeTruthy();
   expect(messages).toContain('The fire catches and the logs begin to burn.');
-  expect(player.hasMoveQueue()).toBe(false);
+  expect(player.hasMoveQueue()).toBe(true);
+  expect(player.peekNextMove()).toEqual({ x: 9.5, z: 10.5 });
   expect(world.blockedObjectTiles.size).toBe(0);
 });
 

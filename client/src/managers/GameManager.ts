@@ -63,7 +63,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -95,6 +95,12 @@ const ROOF_HOVER_CLEAR_GRACE_MS = 120;
 const ROOF_HOVER_STICKY_RADIUS_TILES = 1;
 const ROOF_HOVER_WALL_TRIGGER_RADIUS_TILES = 1;
 const ROOF_HOVER_RAY_SEARCH_RADIUS_TILES = 4;
+const WORLD_OBJECT_PICK_HORIZONTAL_MARGIN = 0.18;
+const WORLD_OBJECT_PICK_VERTICAL_MARGIN = 0.04;
+const WORLD_OBJECT_PICK_MIN_HEIGHT = 0.45;
+const WORLD_OBJECT_PICK_MAX_HEIGHT = 8;
+const CROP_PICK_MARGIN = 0.04;
+const CROP_PICK_MIN_SIZE = 0.45;
 
 interface FrameRateSample {
   frames: number;
@@ -151,6 +157,20 @@ function isHarvestObjectDef(def: WorldObjectDef): boolean {
     || def.category === 'stall';
 }
 
+function isBatchedObjectPickKind(kind: unknown): boolean {
+  return kind === 'cropPickProxyBatch'
+    || kind === 'worldObjectPickProxyBatch'
+    || kind === 'worldObjectVisualBatch';
+}
+
+function worldObjectPickProxyHeight(def: WorldObjectDef): number {
+  const authoredHeight = Number.isFinite(def.height) && def.height > 0 ? def.height : 1.2;
+  return Math.max(
+    WORLD_OBJECT_PICK_MIN_HEIGHT,
+    Math.min(authoredHeight + WORLD_OBJECT_PICK_VERTICAL_MARGIN, WORLD_OBJECT_PICK_MAX_HEIGHT),
+  );
+}
+
 function formatPerfTiming(value: number | null | undefined): string {
   return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)}ms` : 'n/a';
 }
@@ -182,6 +202,15 @@ type DoorPickProxyBounds = {
   height: number;
 };
 
+type SerializedPickProxyBounds = {
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+};
+
 type CropPickProxyConfig = {
   width: number;
   depth: number;
@@ -189,9 +218,16 @@ type CropPickProxyConfig = {
   y: number;
 };
 
+type ObjectPickBatchMetadata = {
+  kind: 'cropPickProxyBatch' | 'worldObjectPickProxyBatch';
+  objectEntityIdsByThinInstance: Array<number | null>;
+  activeObjectPickInstanceCount: number;
+};
+
 type CropPickProxyBatch = {
   mesh: Mesh;
   config: CropPickProxyConfig;
+  metadata: ObjectPickBatchMetadata;
   objectEntityIds: Array<number | null>;
   refsByObjectId: Map<number, CropPickProxyRef>;
   freeIndices: number[];
@@ -206,6 +242,7 @@ type CropPickProxyRef = {
 
 type WorldObjectPickProxyBatch = {
   mesh: Mesh;
+  metadata: ObjectPickBatchMetadata;
   objectEntityIds: Array<number | null>;
   refsByObjectId: Map<number, WorldObjectPickProxyRef>;
   freeIndices: number[];
@@ -216,9 +253,20 @@ type WorldObjectPickProxyRef = {
   bounds: DoorPickProxyBounds;
 };
 
-const DEFAULT_CROP_PICK_PROXY: CropPickProxyConfig = { width: 1.2, depth: 1.2, height: 1.2, y: 0.6 };
-const RICE_CROP_PICK_PROXY: CropPickProxyConfig = { width: 0.6, depth: 0.6, height: 0.6, y: 0.3 };
-const POTATO_CROP_PICK_PROXY: CropPickProxyConfig = { width: 0.5, depth: 0.5, height: 0.5, y: 0.25 };
+function setObjectPickBatchId(
+  metadata: ObjectPickBatchMetadata,
+  index: number,
+  objectEntityId: number | null,
+): void {
+  const previous = metadata.objectEntityIdsByThinInstance[index];
+  if (previous === objectEntityId) return;
+
+  if (typeof previous === 'number') metadata.activeObjectPickInstanceCount--;
+  if (typeof objectEntityId === 'number') metadata.activeObjectPickInstanceCount++;
+
+  metadata.objectEntityIdsByThinInstance[index] = objectEntityId;
+  metadata.activeObjectPickInstanceCount = Math.max(0, metadata.activeObjectPickInstanceCount);
+}
 
 type DoorPivotEntry = {
   pivot: TransformNode;
@@ -2775,6 +2823,7 @@ export class GameManager {
       return;
     }
     if (previous) {
+      this.chunkManager.setPlacedObjectVisualPickId(previous, null);
       this.worldObjectIdByNode.delete(previous);
       this.worldObjectPickState.delete(previous);
       this.disposeDoorVisualState(objectEntityId);
@@ -2783,6 +2832,7 @@ export class GameManager {
     }
     const currentEntityId = this.worldObjectIdByNode.get(node);
     if (currentEntityId != null && currentEntityId !== objectEntityId) {
+      this.chunkManager.setPlacedObjectVisualPickId(node, null);
       this.disposeDoorVisualState(currentEntityId);
       this.disposeCropPickProxy(currentEntityId);
       this.disposeWorldObjectPickProxy(currentEntityId);
@@ -2800,6 +2850,7 @@ export class GameManager {
     this.objectModels.deleteActiveModelAnimations(objectEntityId);
     const node = this.worldObjectModels.get(objectEntityId);
     if (node) {
+      this.chunkManager.setPlacedObjectVisualPickId(node, null);
       this.worldObjectIdByNode.delete(node);
       this.worldObjectPickState.delete(node);
       if (!this.chunkManager.isPlacedObjectNode(node) && !node.isDisposed()) {
@@ -2954,8 +3005,13 @@ export class GameManager {
   }
 
   private cropPickProxyConfig(def: WorldObjectDef): CropPickProxyConfig {
-    if (def.id === RICE_PLANT_OBJECT_DEF_ID) return RICE_CROP_PICK_PROXY;
-    return def.id === POTATO_PLANT_OBJECT_DEF_ID ? POTATO_CROP_PICK_PROXY : DEFAULT_CROP_PICK_PROXY;
+    const authoredWidth = Number.isFinite(def.width) && def.width > 0 ? def.width : 0.6;
+    const authoredDepth = Number.isFinite(def.depth) && (def.depth ?? 0) > 0 ? def.depth! : authoredWidth;
+    const authoredHeight = Number.isFinite(def.height) && def.height > 0 ? def.height : 0.6;
+    const width = Math.max(CROP_PICK_MIN_SIZE, authoredWidth + CROP_PICK_MARGIN);
+    const depth = Math.max(CROP_PICK_MIN_SIZE, authoredDepth + CROP_PICK_MARGIN);
+    const height = Math.max(CROP_PICK_MIN_SIZE, authoredHeight + CROP_PICK_MARGIN);
+    return { width, depth, height, y: height / 2 };
   }
 
   private cropPickProxyBatchKey(config: CropPickProxyConfig): string {
@@ -2982,15 +3038,18 @@ export class GameManager {
       mesh.layerMask = 0;
       mesh.doNotSyncBoundingInfo = true;
       mesh.thinInstanceEnablePicking = true;
-      mesh.metadata = {
+      const metadata: ObjectPickBatchMetadata = {
         kind: 'cropPickProxyBatch',
         objectEntityIdsByThinInstance: [],
+        activeObjectPickInstanceCount: 0,
       };
+      mesh.metadata = metadata;
       mesh.freezeWorldMatrix();
       batch = {
         mesh,
         config,
-        objectEntityIds: mesh.metadata.objectEntityIdsByThinInstance,
+        metadata,
+        objectEntityIds: metadata.objectEntityIdsByThinInstance,
         refsByObjectId: new Map(),
         freeIndices: [],
       };
@@ -3021,7 +3080,7 @@ export class GameManager {
     } else {
       batch.mesh.thinInstanceSetMatrixAt(index, matrix);
     }
-    batch.objectEntityIds[index] = depleted ? null : objectEntityId;
+    setObjectPickBatchId(batch.metadata, index, depleted ? null : objectEntityId);
     batch.mesh.thinInstanceBufferUpdated('matrix');
 
     const ref = { batchKey, index, placedNode, config };
@@ -3035,7 +3094,7 @@ export class GameManager {
     if (ref) {
       const batch = this.cropPickProxyBatches.get(ref.batchKey);
       if (batch) {
-        batch.objectEntityIds[ref.index] = null;
+        setObjectPickBatchId(batch.metadata, ref.index, null);
         batch.refsByObjectId.delete(objectEntityId);
         batch.freeIndices.push(ref.index);
         batch.mesh.thinInstanceBufferUpdated('matrix');
@@ -3050,7 +3109,7 @@ export class GameManager {
     if (!ref) return;
     const batch = this.cropPickProxyBatches.get(ref.batchKey);
     if (!batch) return;
-    batch.objectEntityIds[ref.index] = enabled ? objectEntityId : null;
+    setObjectPickBatchId(batch.metadata, ref.index, enabled ? objectEntityId : null);
     if (enabled) batch.mesh.thinInstanceSetMatrixAt(ref.index, this.cropPickProxyMatrix(ref.placedNode, ref.config));
     batch.mesh.thinInstanceBufferUpdated('matrix');
     this.refreshCropPickProxyBatchBounds(batch);
@@ -3062,22 +3121,35 @@ export class GameManager {
     this.cropPickProxyRefs.clear();
   }
 
+  private worldObjectPickProxyBoundsFromMetadata(metadata: unknown): { min: Vector3; max: Vector3 } | null {
+    if (!metadata || typeof metadata !== 'object') return null;
+    const raw = (metadata as { pickProxyBounds?: Partial<SerializedPickProxyBounds> }).pickProxyBounds;
+    if (!raw || typeof raw !== 'object') return null;
+    const values = [raw.minX, raw.minY, raw.minZ, raw.maxX, raw.maxY, raw.maxZ];
+    if (!values.every(value => typeof value === 'number' && Number.isFinite(value))) return null;
+    if (raw.maxX! <= raw.minX! || raw.maxY! <= raw.minY! || raw.maxZ! <= raw.minZ!) return null;
+    return {
+      min: new Vector3(raw.minX!, raw.minY!, raw.minZ!),
+      max: new Vector3(raw.maxX!, raw.maxY!, raw.maxZ!),
+    };
+  }
+
   private fallbackWorldObjectPickProxyBounds(
     data: { x: number; z: number; y?: number; rotY?: number },
     def: WorldObjectDef,
   ): DoorPickProxyBounds {
     const bounds = getObjectFootprintBounds(data.x, data.z, def, data.rotY ?? 0);
-    const margin = 0.16;
     const baseY = Number.isFinite(data.y) ? (data.y ?? 0) : 0;
+    const height = worldObjectPickProxyHeight(def);
     return {
       center: new Vector3(
         bounds.minX + bounds.width / 2,
-        baseY + 1.1,
+        baseY + height / 2,
         bounds.minZ + bounds.depth / 2,
       ),
-      width: Math.max(0.8, bounds.width + margin),
-      depth: Math.max(0.8, bounds.depth + margin),
-      height: 2.2,
+      width: Math.max(0.8, bounds.width + WORLD_OBJECT_PICK_HORIZONTAL_MARGIN),
+      depth: Math.max(0.8, bounds.depth + WORLD_OBJECT_PICK_HORIZONTAL_MARGIN),
+      height,
     };
   }
 
@@ -3087,12 +3159,14 @@ export class GameManager {
     def: WorldObjectDef,
   ): DoorPickProxyBounds {
     const fallback = this.fallbackWorldObjectPickProxyBounds(data, def);
-    model.computeWorldMatrix(true);
-    let bounds: ReturnType<TransformNode['getHierarchyBoundingVectors']>;
-    try {
-      bounds = model.getHierarchyBoundingVectors(true);
-    } catch {
-      return fallback;
+    let bounds = this.worldObjectPickProxyBoundsFromMetadata(model.metadata) as ReturnType<TransformNode['getHierarchyBoundingVectors']> | null;
+    if (!bounds) {
+      model.computeWorldMatrix(true);
+      try {
+        bounds = model.getHierarchyBoundingVectors(true);
+      } catch {
+        return fallback;
+      }
     }
 
     const width = bounds.max.x - bounds.min.x;
@@ -3102,16 +3176,22 @@ export class GameManager {
       return fallback;
     }
 
-    const margin = 0.18;
+    // Tree meshes include broad canopies; use visual bounds only for centering,
+    // not for proxy size, or clicks spill far outside the trunk/footprint.
+    const useAuthoredFootprintSize = def.category === 'tree';
     return {
       center: new Vector3(
         (bounds.min.x + bounds.max.x) / 2,
-        (bounds.min.y + bounds.max.y) / 2,
+        bounds.min.y + fallback.height / 2,
         (bounds.min.z + bounds.max.z) / 2,
       ),
-      width: Math.max(fallback.width, Math.min(width + margin, 6)),
-      depth: Math.max(fallback.depth, Math.min(depth + margin, 6)),
-      height: Math.max(fallback.height, Math.min(height + margin, 8)),
+      width: useAuthoredFootprintSize
+        ? fallback.width
+        : Math.max(fallback.width, Math.min(width + WORLD_OBJECT_PICK_HORIZONTAL_MARGIN, 6)),
+      depth: useAuthoredFootprintSize
+        ? fallback.depth
+        : Math.max(fallback.depth, Math.min(depth + WORLD_OBJECT_PICK_HORIZONTAL_MARGIN, 6)),
+      height: fallback.height,
     };
   }
 
@@ -3132,14 +3212,17 @@ export class GameManager {
       mesh.layerMask = 0;
       mesh.doNotSyncBoundingInfo = true;
       mesh.thinInstanceEnablePicking = true;
-      mesh.metadata = {
+      const metadata: ObjectPickBatchMetadata = {
         kind: 'worldObjectPickProxyBatch',
         objectEntityIdsByThinInstance: [],
+        activeObjectPickInstanceCount: 0,
       };
+      mesh.metadata = metadata;
       mesh.freezeWorldMatrix();
       this.worldObjectPickProxyBatch = {
         mesh,
-        objectEntityIds: mesh.metadata.objectEntityIdsByThinInstance,
+        metadata,
+        objectEntityIds: metadata.objectEntityIdsByThinInstance,
         refsByObjectId: new Map(),
         freeIndices: [],
       };
@@ -3168,7 +3251,7 @@ export class GameManager {
     } else {
       batch.mesh.thinInstanceSetMatrixAt(index, matrix);
     }
-    batch.objectEntityIds[index] = objectEntityId;
+    setObjectPickBatchId(batch.metadata, index, objectEntityId);
     batch.mesh.thinInstanceBufferUpdated('matrix');
 
     const ref = { index, bounds };
@@ -3181,7 +3264,7 @@ export class GameManager {
     const ref = this.worldObjectPickProxyRefs.get(objectEntityId);
     const batch = this.worldObjectPickProxyBatch;
     if (ref && batch) {
-      batch.objectEntityIds[ref.index] = null;
+      setObjectPickBatchId(batch.metadata, ref.index, null);
       batch.refsByObjectId.delete(objectEntityId);
       batch.freeIndices.push(ref.index);
       batch.mesh.thinInstanceBufferUpdated('matrix');
@@ -3194,7 +3277,7 @@ export class GameManager {
     const ref = this.worldObjectPickProxyRefs.get(objectEntityId);
     const batch = this.worldObjectPickProxyBatch;
     if (!ref || !batch) return;
-    batch.objectEntityIds[ref.index] = enabled ? objectEntityId : null;
+    setObjectPickBatchId(batch.metadata, ref.index, enabled ? objectEntityId : null);
     if (enabled) batch.mesh.thinInstanceSetMatrixAt(ref.index, this.worldObjectPickProxyMatrix(ref.bounds));
     batch.mesh.thinInstanceBufferUpdated('matrix');
     this.refreshWorldObjectPickProxyBatchBounds(batch);
@@ -3213,11 +3296,28 @@ export class GameManager {
     interactive: boolean,
     model: TransformNode,
   ): void {
+    if (this.chunkManager.setPlacedObjectVisualPickId(model, interactive ? objectEntityId : null)) {
+      this.disposeWorldObjectPickProxy(objectEntityId);
+      this.setWorldObjectPickTarget(objectEntityId, false, model);
+      return;
+    }
+
+    if (this.hasWorldObjectMeshPickGeometry(model)) {
+      this.disposeWorldObjectPickProxy(objectEntityId);
+      this.setWorldObjectPickTarget(objectEntityId, interactive, model);
+      return;
+    }
+
     this.setWorldObjectPickTarget(objectEntityId, false, model);
     if (interactive && !this.worldObjectPickProxyRefs.has(objectEntityId)) {
       this.createWorldObjectPickProxy(objectEntityId, data, def, model);
     }
     this.setWorldObjectPickProxyEnabled(objectEntityId, interactive);
+  }
+
+  private hasWorldObjectMeshPickGeometry(model: TransformNode): boolean {
+    if (model instanceof Mesh && model.getTotalVertices() > 0) return true;
+    return model.getChildMeshes(false).some(mesh => mesh.getTotalVertices() > 0);
   }
 
   private setCropPickTarget(
@@ -6213,7 +6313,7 @@ export class GameManager {
 
   private findWorldObjectIdFromPick(pickedMesh: TransformNode, thinInstanceIndex: number = -1): number | null {
     if (
-      (pickedMesh.metadata?.kind === 'cropPickProxyBatch' || pickedMesh.metadata?.kind === 'worldObjectPickProxyBatch')
+      isBatchedObjectPickKind(pickedMesh.metadata?.kind)
       && thinInstanceIndex >= 0
       && Array.isArray(pickedMesh.metadata.objectEntityIdsByThinInstance)
     ) {

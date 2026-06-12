@@ -203,6 +203,43 @@ type BatchedPlacedVisualRef = {
   hiddenMatrix: Matrix;
 };
 
+type BatchedPlacedVisualMetadata = {
+  kind?: string;
+  objectEntityIdsByThinInstance?: Array<number | null>;
+  activeObjectPickInstanceCount?: number;
+};
+
+function setBatchedPlacedVisualPickId(
+  metadata: BatchedPlacedVisualMetadata,
+  index: number,
+  objectEntityId: number | null,
+): boolean {
+  const ids = metadata.objectEntityIdsByThinInstance;
+  if (!ids) return false;
+  const previous = ids[index];
+  if (previous === objectEntityId) return false;
+
+  let activeCount = typeof metadata.activeObjectPickInstanceCount === 'number'
+    ? metadata.activeObjectPickInstanceCount
+    : ids.reduce<number>((count, id) => count + (typeof id === 'number' ? 1 : 0), 0);
+  if (typeof previous === 'number') activeCount--;
+  if (typeof objectEntityId === 'number') activeCount++;
+
+  ids[index] = objectEntityId;
+  metadata.activeObjectPickInstanceCount = Math.max(0, activeCount);
+  return true;
+}
+
+function batchedPlacedVisualActivePickCount(metadata: BatchedPlacedVisualMetadata): number {
+  if (typeof metadata.activeObjectPickInstanceCount === 'number') return metadata.activeObjectPickInstanceCount;
+  const ids = metadata.objectEntityIdsByThinInstance;
+  const activeCount = ids
+    ? ids.reduce<number>((count, id) => count + (typeof id === 'number' ? 1 : 0), 0)
+    : 0;
+  metadata.activeObjectPickInstanceCount = activeCount;
+  return activeCount;
+}
+
 type GrassBladeChunkBatch = {
   matrices: Float32Array;
   enabled: boolean;
@@ -263,6 +300,14 @@ interface PlacedObjectNodeMetadata {
   interactions?: PlacedObjectInteraction[];
   isNoRoof?: boolean;
   roofGridKeys?: string[];
+  pickProxyBounds?: {
+    minX: number;
+    minY: number;
+    minZ: number;
+    maxX: number;
+    maxY: number;
+    maxZ: number;
+  };
 }
 
 type RoofObjectGridEntry = { node?: TransformNode; chunkKey?: string; floor: number; y: number };
@@ -3362,6 +3407,21 @@ export class ChunkManager {
     return true;
   }
 
+  setPlacedObjectVisualPickId(node: TransformNode, objectEntityId: number | null): boolean {
+    const refs = this.placedObjectVisualRefs.get(node);
+    if (!refs || refs.length === 0) return false;
+
+    let handled = false;
+    for (const ref of refs) {
+      const metadata = ref.mesh.metadata as BatchedPlacedVisualMetadata | null;
+      if (metadata?.kind !== 'worldObjectVisualBatch' || !Array.isArray(metadata.objectEntityIdsByThinInstance)) continue;
+      handled = true;
+      setBatchedPlacedVisualPickId(metadata, ref.index, objectEntityId);
+      ref.mesh.isPickable = batchedPlacedVisualActivePickCount(metadata) > 0;
+    }
+    return handled;
+  }
+
   /** Check if any placed GLB object exists near a world position */
   hasPlacedObjectNear(x: number, z: number, radius: number): boolean {
     return this.findPlacedObjectNear(x, z, radius) !== null;
@@ -4248,6 +4308,7 @@ export class ChunkManager {
     root.rotationQuaternion = Quaternion.FromEulerAngles(orx, ory, orz);
     const scaleBoost = this.getPlacedObjectScaleBoost(obj.assetId);
     root.scaling = new Vector3(obj.scale.x * scaleBoost, obj.scale.y * scaleBoost, obj.scale.z * scaleBoost);
+    const bounds = this.getPlacedObjectTemplateBounds(obj.assetId, obj);
     root.metadata = {
       ...root.metadata,
       assetId: obj.assetId,
@@ -4259,6 +4320,14 @@ export class ChunkManager {
       interactions: Array.isArray(obj.interactions) && obj.interactions.length > 0 ? obj.interactions : undefined,
       placedName: obj.name,
       isNoRoof: obj.noRoof === true,
+      pickProxyBounds: bounds ? {
+        minX: bounds.min.x,
+        minY: bounds.min.y,
+        minZ: bounds.min.z,
+        maxX: bounds.max.x,
+        maxY: bounds.max.y,
+        maxZ: bounds.max.z,
+      } : undefined,
     } satisfies PlacedObjectNodeMetadata;
     root.setEnabled(false);
     root.freezeWorldMatrix();
@@ -4947,6 +5016,8 @@ export class ChunkManager {
         const mat = src.material;
         if (mat) this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(assetId), true);
         src.isPickable = false;
+        src.thinInstanceEnablePicking = true;
+        const objectEntityIdsByThinInstance: Array<number | null> = [];
 
         for (let i = 0; i < placements.length; i++) {
           const obj = placements[i];
@@ -4957,6 +5028,7 @@ export class ChunkManager {
           baseMatrix.multiplyToRef(_placementMatrix, _tmpMatrix);
           const index = src.thinInstanceAdd(_tmpMatrix, false);
           if (index >= 0) {
+            objectEntityIdsByThinInstance[index] = null;
             const hiddenMatrix = Matrix.Compose(
               TmpVectors.Vector3[2].set(0, 0, 0),
               Quaternion.Identity(),
@@ -4998,7 +5070,14 @@ export class ChunkManager {
         }
         src.doNotSyncBoundingInfo = true;
         src.freezeWorldMatrix();
-        src.metadata = { ...(src.metadata ?? {}), assetId, chunkKey };
+        src.metadata = {
+          ...(src.metadata ?? {}),
+          assetId,
+          chunkKey,
+          kind: 'worldObjectVisualBatch',
+          objectEntityIdsByThinInstance,
+          activeObjectPickInstanceCount: 0,
+        };
         thinSources.push(src);
         await this.yieldIfFrameBudgetSpent(workSlice);
         if (abortPartialLoadIfStopped()) return;

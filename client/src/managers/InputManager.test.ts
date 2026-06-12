@@ -27,6 +27,7 @@ describe('InputManager object picking', () => {
       metadata: {
         kind: 'cropPickProxyBatch',
         objectEntityIdsByThinInstance: [null, 12345],
+        activeObjectPickInstanceCount: 1,
       },
       parent: null,
     };
@@ -45,6 +46,7 @@ describe('InputManager object picking', () => {
       metadata: {
         kind: 'worldObjectPickProxyBatch',
         objectEntityIdsByThinInstance: [23456],
+        activeObjectPickInstanceCount: 1,
       },
       parent: null,
     };
@@ -55,5 +57,24 @@ describe('InputManager object picking', () => {
 
     expect((manager as any).handlePrimaryAction(10, 20, false)).toBe(true);
     expect(clickedIds).toEqual([23456]);
+  });
+
+  test('routes batched world-object visual thin-instance picks to object clicks', () => {
+    const batchMesh = {
+      metadata: {
+        kind: 'worldObjectVisualBatch',
+        objectEntityIdsByThinInstance: [null, 34567],
+        activeObjectPickInstanceCount: 1,
+      },
+      parent: null,
+    };
+    const { manager, clickedIds } = makeInputManagerForObjectPick(batchMesh, 1, (predicate) => {
+      expect(predicate(batchMesh, -1)).toBe(true);
+      expect(predicate(batchMesh, 0)).toBe(false);
+      expect(predicate(batchMesh, 1)).toBe(true);
+    });
+
+    expect((manager as any).handlePrimaryAction(10, 20, false)).toBe(true);
+    expect(clickedIds).toEqual([34567]);
   });
 });

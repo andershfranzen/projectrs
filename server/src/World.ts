@@ -9142,6 +9142,21 @@ export class World {
     return fire;
   }
 
+  private pushPlayerOffFireTile(player: Player, tileX: number, tileZ: number): void {
+    if (Math.floor(player.position.x) !== tileX || Math.floor(player.position.y) !== tileZ) return;
+    const map = this.getPlayerMap(player);
+    const collision = this.playerPathCollision(player, map, player.currentFloor);
+    const directions: ReadonlyArray<readonly [number, number]> = [[-1, 0], [1, 0], [0, 1], [0, -1]];
+    for (const [dx, dz] of directions) {
+      if (!canTravel(collision, tileX, tileZ, dx, dz)) continue;
+      const x = tileX + dx + 0.5;
+      const z = tileZ + dz + 0.5;
+      player.setMoveQueue([{ x, z }]);
+      this.sendToPlayer(player, ServerOpcode.PLAYER_CONTROLLED_MOVE, qPos(x), qPos(z));
+      return;
+    }
+  }
+
   private spawnNpcLoot(npc: Npc, ownerPlayerId: number | null): void {
     const loot = rollLoot(npc, { rareDropTables: this.data.rareDropTableDefs });
     if (loot.length === 0) return;
@@ -10384,6 +10399,7 @@ export class World {
         objectDefId: fire.defId,
       },
     });
+    this.pushPlayerOffFireTile(player, action.tileX, action.tileZ);
     return 'complete';
   }
 

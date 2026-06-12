@@ -339,6 +339,41 @@ describe('placed object thin-instance grouping', () => {
     ]);
     expect(bufferUpdates).toEqual(['matrix', 'matrix']);
   });
+
+  test('assigns object ids to batched placed visual thin instances for picking', () => {
+    const manager = Object.create(ChunkManager.prototype) as any;
+    const node = {} as TransformNode;
+    const ids: Array<number | null> = [null, null, null];
+    const metadata = {
+      kind: 'worldObjectVisualBatch',
+      objectEntityIdsByThinInstance: ids,
+      activeObjectPickInstanceCount: 0,
+    };
+    const mesh = {
+      metadata,
+    } as unknown as Mesh;
+
+    manager.placedObjectVisualRefs = new WeakMap([[node, [{
+      mesh,
+      index: 1,
+      visibleMatrix: Matrix.Identity(),
+      hiddenMatrix: Matrix.Identity(),
+    }]]]);
+
+    expect(manager.setPlacedObjectVisualPickId(node, 12345)).toBe(true);
+    expect(ids).toEqual([null, 12345, null]);
+    expect(metadata.activeObjectPickInstanceCount).toBe(1);
+    expect((mesh as any).isPickable).toBe(true);
+    expect(manager.setPlacedObjectVisualPickId(node, 12345)).toBe(true);
+    expect(ids).toEqual([null, 12345, null]);
+    expect(metadata.activeObjectPickInstanceCount).toBe(1);
+    expect((mesh as any).isPickable).toBe(true);
+    expect(manager.setPlacedObjectVisualPickId(node, null)).toBe(true);
+    expect(ids).toEqual([null, null, null]);
+    expect(metadata.activeObjectPickInstanceCount).toBe(0);
+    expect((mesh as any).isPickable).toBe(false);
+    expect(manager.setPlacedObjectVisualPickId({} as TransformNode, 12345)).toBe(false);
+  });
 });
 
 describe('secured map resource loading', () => {

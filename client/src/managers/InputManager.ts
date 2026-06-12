@@ -11,10 +11,16 @@ export type GroundClickCallback = (worldX: number, worldZ: number) => void;
 export type TeleportClickCallback = (worldX: number, worldZ: number) => void;
 export type ObjectClickCallback = (objectEntityId: number) => void;
 
+function isBatchedObjectPickKind(kind: unknown): boolean {
+  return kind === 'cropPickProxyBatch'
+    || kind === 'worldObjectPickProxyBatch'
+    || kind === 'worldObjectVisualBatch';
+}
+
 function objectIdFromBatchedPickMetadata(metadata: unknown, thinInstanceIndex: number): number | null {
   if (!metadata || typeof metadata !== 'object') return null;
   const record = metadata as { kind?: unknown; objectEntityIdsByThinInstance?: unknown };
-  if (record.kind !== 'cropPickProxyBatch' && record.kind !== 'worldObjectPickProxyBatch') return null;
+  if (!isBatchedObjectPickKind(record.kind)) return null;
   if (!Array.isArray(record.objectEntityIdsByThinInstance)) return null;
   const id = record.objectEntityIdsByThinInstance[thinInstanceIndex];
   return typeof id === 'number' ? id : null;
@@ -22,10 +28,14 @@ function objectIdFromBatchedPickMetadata(metadata: unknown, thinInstanceIndex: n
 
 function hasActiveBatchedPickInstances(metadata: unknown): boolean {
   if (!metadata || typeof metadata !== 'object') return false;
-  const record = metadata as { kind?: unknown; objectEntityIdsByThinInstance?: unknown };
-  return (record.kind === 'cropPickProxyBatch' || record.kind === 'worldObjectPickProxyBatch')
-    && Array.isArray(record.objectEntityIdsByThinInstance)
-    && record.objectEntityIdsByThinInstance.some(id => typeof id === 'number');
+  const record = metadata as {
+    kind?: unknown;
+    objectEntityIdsByThinInstance?: unknown;
+    activeObjectPickInstanceCount?: unknown;
+  };
+  if (!isBatchedObjectPickKind(record.kind) || !Array.isArray(record.objectEntityIdsByThinInstance)) return false;
+  if (typeof record.activeObjectPickInstanceCount === 'number') return record.activeObjectPickInstanceCount > 0;
+  return record.objectEntityIdsByThinInstance.some(id => typeof id === 'number');
 }
 
 /**
@@ -100,12 +110,13 @@ export class InputManager {
         pointerX,
         pointerY,
         (mesh, thinInstanceIndex) => {
+          const batchThinInstanceIndex = typeof thinInstanceIndex === 'number' ? thinInstanceIndex : -1;
           // Only pick meshes that belong to interactive objects
           let node: Node | null = mesh;
           while (node) {
             if (node.metadata?.objectEntityId != null) return true;
-            if (thinInstanceIndex >= 0 && objectIdFromBatchedPickMetadata(node.metadata, thinInstanceIndex) !== null) return true;
-            if (thinInstanceIndex < 0 && hasActiveBatchedPickInstances(node.metadata)) return true;
+            if (batchThinInstanceIndex >= 0 && objectIdFromBatchedPickMetadata(node.metadata, batchThinInstanceIndex) !== null) return true;
+            if (batchThinInstanceIndex < 0 && hasActiveBatchedPickInstances(node.metadata)) return true;
             node = node.parent;
           }
           return false;
