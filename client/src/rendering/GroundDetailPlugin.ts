@@ -49,12 +49,23 @@ float gdNoise(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-float gdCellInterior(vec2 p) {
-  vec2 cell = floor(p);
-  vec2 f = abs(fract(p) - 0.5);
-  float edge = min(f.x, f.y);
-  float width = 0.035 + gdHash(cell) * 0.035;
-  return smoothstep(width, width + 0.045, edge);
+// Distance between the two nearest feature points — small near cell borders,
+// giving "cracked stone" edge lines.
+float gdVoronoiEdge(vec2 p) {
+  vec2 g = floor(p);
+  vec2 f = fract(p);
+  float d1 = 8.0;
+  float d2 = 8.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 o = vec2(float(i), float(j));
+      vec2 r = o + vec2(gdHash(g + o), gdHash(g + o + 19.7)) - f;
+      float d = dot(r, r);
+      if (d < d1) { d2 = d1; d1 = d; }
+      else if (d < d2) { d2 = d; }
+    }
+  }
+  return sqrt(d2) - sqrt(d1);
 }
 
 `;
@@ -82,11 +93,10 @@ const FRAGMENT_MAIN_END = `
       float n = gdNoise(wp * 5.5);
       m = mix(0.95, 1.06, grain) + (n - 0.5) * 0.035;
     } else {
-      // stone: no Voronoi loop; one noise warp, one cell-line pass, one grain hash
-      vec2 sp = wp * 3.1 + vec2((gdNoise(wp * 0.75) - 0.5) * 0.35);
-      float interior = gdCellInterior(sp);
-      float grain = gdHash(floor(wp * 18.0));
-      m = mix(0.82, 1.04, interior) + (grain - 0.5) * 0.04;
+      // stone: cracked cells darken the seams, plus light grain
+      float e = gdVoronoiEdge(wp * 3.2);
+      float grain = gdNoise(wp * 16.0);
+      m = mix(0.80, 1.04, smoothstep(0.0, 0.10, e)) + (grain - 0.5) * 0.05;
     }
     gl_FragColor.rgb *= clamp(m, 0.6, 1.3);
   }
