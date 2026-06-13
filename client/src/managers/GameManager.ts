@@ -59,6 +59,7 @@ import { CharacterCreator } from '../ui/CharacterCreator';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick } from '../ui/popupStyle';
+import { createFrameLimiter, DEFAULT_MAX_RENDER_FPS } from '../util/frameLimiter';
 import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
@@ -764,6 +765,7 @@ export class GameManager {
     this.renderQualityMode = this.detectInitialRenderQualityMode();
     this.baseHardwareScalingLevel = this.hardwareScalingLevelForRenderQualityMode(this.renderQualityMode);
     this.setRenderHardwareScalingLevel(this.baseHardwareScalingLevel, canvas);
+    canvas.dataset.maxRenderFps = String(DEFAULT_MAX_RENDER_FPS);
     canvas.style.imageRendering = 'pixelated';
     this.scene = new Scene(this.engine);
     this.scene.useRightHandedSystem = true; // Match Three.js coordinate system (KC editor)
@@ -1100,8 +1102,10 @@ export class GameManager {
 
     // Game loop
     let lastTime = performance.now();
+    const renderLimiter = createFrameLimiter(DEFAULT_MAX_RENDER_FPS, lastTime);
     this.engine.runRenderLoop(() => {
       const now = performance.now();
+      if (!renderLimiter.shouldRun(now)) return;
 
       // Belt-and-suspenders resize: if the canvas CSS size drifted from the render
       // buffer size (e.g. ResizeObserver was throttled or the container reflowed

@@ -26,6 +26,7 @@ import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { CharacterEntity } from '../rendering/CharacterEntity';
 import { createModalPanel, mountModalInGameFrame } from './ModalPanel';
 import { closeActiveContextMenu } from './popupStyle';
+import { createFrameLimiter, DEFAULT_MAX_RENDER_FPS } from '../util/frameLimiter';
 
 export type CharacterCreatorCallback = (appearance: PlayerAppearance) => void;
 type CharacterCreatorCancelCallback = () => void;
@@ -680,7 +681,11 @@ export class CharacterCreator {
     this.previewLights = { hemi, dir };
 
     this.loadPreviewCharacter(anchor);
-    engine.runRenderLoop(() => scene.render());
+    const renderLimiter = createFrameLimiter(DEFAULT_MAX_RENDER_FPS);
+    engine.runRenderLoop(() => {
+      if (!renderLimiter.shouldRun()) return;
+      scene.render();
+    });
   }
 
   private loadPreviewCharacter(anchor: Vector3): void {
