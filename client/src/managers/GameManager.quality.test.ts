@@ -120,6 +120,32 @@ describe('GameManager render quality command', () => {
     expect(manager.canvasPointFromClient(220, 430)).toEqual({ x: 200, y: 400 });
   });
 
+  test('world overlays project into canvas layout coordinates after low-quality render scaling', () => {
+    const canvas = {
+      clientWidth: 1000,
+      clientHeight: 800,
+    } as HTMLCanvasElement;
+    const manager = Object.create(GameManager.prototype) as any;
+    manager._overlayTransformReady = false;
+    manager._overlayTransform = {};
+    manager._overlayVp = { x: 0, y: 0, width: 0, height: 0 };
+    manager.engine = {
+      getRenderingCanvas: () => canvas,
+      getRenderWidth: () => 500,
+      getRenderHeight: () => 400,
+    };
+    manager.scene = {
+      activeCamera: {
+        getViewMatrix: () => ({ multiplyToRef: () => {} }),
+        getProjectionMatrix: () => ({}),
+      },
+    };
+
+    expect(manager.ensureOverlayTransform()).toBe(true);
+
+    expect(manager._overlayVp).toEqual({ x: 0, y: 0, width: 1000, height: 800 });
+  });
+
   test('sets high quality for the session and clears low quality preference', () => {
     const storage = installLocalStorageStub();
     storage.set('projectrs_low_quality', '1');

@@ -10253,8 +10253,9 @@ export class GameManager {
     const cam = this.scene.activeCamera;
     if (!cam) return false;
     cam.getViewMatrix().multiplyToRef(cam.getProjectionMatrix(), this._overlayTransform);
-    const w = this.engine.getRenderWidth();
-    const h = this.engine.getRenderHeight();
+    const canvas = this.engine.getRenderingCanvas();
+    const w = canvas?.clientWidth && canvas.clientWidth > 0 ? canvas.clientWidth : this.engine.getRenderWidth();
+    const h = canvas?.clientHeight && canvas.clientHeight > 0 ? canvas.clientHeight : this.engine.getRenderHeight();
     this._overlayVp.x = 0; this._overlayVp.y = 0;
     this._overlayVp.width = w; this._overlayVp.height = h;
     this._overlayTransformReady = true;
