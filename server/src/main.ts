@@ -3429,7 +3429,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         const body = await req.json() as { username?: string; password?: string; deviceId?: string; recaptchaToken?: string };
         const device = validateSignupDevice(req, body.deviceId);
         if (!device.ok) return jsonResponse({ ok: false, error: device.error }, 400);
-        const username = (body.username || '').toLowerCase();
+        const username = typeof body.username === 'string' ? body.username : '';
         const key = ip;
         if (!checkRate(signupAttempts, key, SIGNUP_LIMIT, SIGNUP_WINDOW_MS)) {
           return jsonResponse({ ok: false, error: 'Too many signup attempts. Try again later.' }, 429);

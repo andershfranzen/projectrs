@@ -998,6 +998,11 @@ export class GameManager {
           const name = data.name;
           if (typeof entityId !== 'number' || typeof name !== 'string' || name.length === 0) break;
           this.entities.playerNames.set(entityId, name);
+          for (const [knownName, knownEntityId] of this.entities.nameToEntityId) {
+            if (knownEntityId === entityId && knownName !== name.toLowerCase()) {
+              this.entities.nameToEntityId.delete(knownName);
+            }
+          }
           this.entities.nameToEntityId.set(name.toLowerCase(), entityId);
           if (typeof data.isAdmin === 'boolean') {
             this.setRemotePlayerRole(entityId, data.isAdmin, data.isModerator === true);
@@ -1046,6 +1051,13 @@ export class GameManager {
               this.refreshNameplates();
             }
             this.sidePanel?.setSocialPresence(data.accountId, data.username, data.online);
+          }
+          break;
+        case 'account_renamed':
+          if (typeof data.username === 'string' && data.username.length > 0) {
+            this.username = data.username;
+            localStorage.setItem('evilquest_username', data.username);
+            localStorage.setItem('evilquest_saved_username', data.username);
           }
           break;
         case 'system': {

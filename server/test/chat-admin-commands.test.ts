@@ -175,4 +175,35 @@ describe('admin chat teleport commands', () => {
     expect(teleports).toEqual([[admin, 32.5, 32.5, undefined, 0]]);
     expect(messages).toContain('Teleported to the_sultans_mine spawn');
   });
+
+  test('/rename changes an account name through the database and active world state', () => {
+    const admin = makePlayer(1, 'Admin', 'kcmap', 5.5, 6.5);
+    admin.accountId = 1;
+    const target = makePlayer(2, 'Target', 'kcmap', 12.5, 34.5);
+    target.accountId = 2;
+    const renameActiveCalls: any[] = [];
+    const world: any = {
+      players: new Map([[admin.id, admin], [target.id, target]]),
+      renameActiveAccount(accountId: number, username: string) {
+        renameActiveCalls.push({ accountId, username });
+        target.name = username;
+        return true;
+      },
+      db: {
+        getAccountIdByUsername(username: string) {
+          return username.toLowerCase() === 'target' ? 2 : null;
+        },
+        renameAccount(accountId: number, username: string) {
+          return { ok: true, accountId, oldUsername: 'Target', username };
+        },
+      },
+    };
+    const { ws, messages } = makeAdminSocket('Admin');
+
+    handleChatSocketMessage(ws, JSON.stringify({ type: 'local', message: '/rename Target NewName' }), world);
+
+    expect(renameActiveCalls).toEqual([{ accountId: 2, username: 'NewName' }]);
+    expect(target.name).toBe('NewName');
+    expect(messages).toContain('Renamed Target to NewName.');
+  });
 });

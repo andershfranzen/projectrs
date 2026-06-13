@@ -845,6 +845,49 @@ function handleCommand(
       break;
     }
 
+    case '/rename':
+    case '/setname': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const args = command.trim().split(/\s+/);
+      const targetName = args[1];
+      const newName = args[2];
+      if (!targetName || !newName || args.length !== 3) {
+        sendSystem(ws, 'Usage: /rename <player> <newName>');
+        return;
+      }
+      const accountId = world.db.getAccountIdByUsername(targetName);
+      if (accountId == null) {
+        sendSystem(ws, `Account "${targetName}" not found.`);
+        return;
+      }
+      const result = world.db.renameAccount(accountId, newName);
+      if (!result.ok) {
+        sendSystem(ws, result.error);
+        return;
+      }
+      world.renameActiveAccount(result.accountId, result.username);
+      renameChatAccount(result.accountId, result.username);
+      broadcastSocialPresenceForAccount(result.accountId, result.username);
+      recordGameEvent(world, {
+        type: 'account_rename',
+        severity: 'notable',
+        message: `${from} renamed ${result.oldUsername} to ${result.username}`,
+        actorAccountId: ws.data.accountId,
+        actorName: from,
+        targetAccountId: result.accountId,
+        targetName: result.username,
+        details: {
+          oldUsername: result.oldUsername,
+          newUsername: result.username,
+        },
+      });
+      sendSystem(ws, `Renamed ${result.oldUsername} to ${result.username}.`);
+      if (result.accountId !== ws.data.accountId) {
+        sendSystemMessageToUser(result.username, `Your name has been changed to ${result.username}.`);
+      }
+      break;
+    }
+
     case '/ban': {
       if (denyIfNotAdmin(ws, from)) return;
       const targetName = parts[1];
@@ -1063,6 +1106,21 @@ export function sendSystemMessageToUser(username: string, message: string): void
       return;
     }
   }
+}
+
+export function renameChatAccount(accountId: number, username: string): boolean {
+  const sock = chatSocketsByAccountId.get(accountId);
+  if (!sock) return false;
+  const oldLc = sock.data.username.toLowerCase();
+  if (chatSocketsByUsername.get(oldLc) === sock) chatSocketsByUsername.delete(oldLc);
+  sock.data.username = username;
+  chatSocketsByUsername.set(username.toLowerCase(), sock);
+  chatSend(sock, JSON.stringify({ type: 'account_renamed', username }));
+  return true;
+}
+
+export function broadcastSocialPresenceForAccount(accountId: number, username: string): void {
+  sendSocialPresence(accountId, username, chatSocketsByAccountId.has(accountId));
 }
 
 export function setChatAccountModerator(accountId: number, isModerator: boolean): void {

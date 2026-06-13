@@ -574,6 +574,22 @@ export class World {
     return true;
   }
 
+  renameActiveAccount(accountId: number, username: string): boolean {
+    let updated = false;
+    for (const player of this.players.values()) {
+      if (player.accountId !== accountId) continue;
+      player.name = username;
+      const socketData = player.ws.data as { username?: string };
+      if (typeof socketData.username === 'string') socketData.username = username;
+      player.syncDirty = true;
+      if (!player.disconnected && !player.requestIdleLogout) {
+        broadcastPlayerInfo(player.id, player.name, player.isAdmin, player.isModerator);
+      }
+      updated = true;
+    }
+    return updated;
+  }
+
   getOnlinePlayerCount(): number {
     let count = 0;
     for (const [, player] of this.players) {

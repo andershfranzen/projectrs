@@ -2031,6 +2031,25 @@ export class GameDatabase {
     return { ok: true, token: session.token, wsSecret: session.wsSecret, accountId, isAdmin: isAdmin === 1, isModerator: false };
   }
 
+  renameAccount(accountId: number, rawUsername: string): { ok: true; accountId: number; oldUsername: string; username: string } | { ok: false; error: string } {
+    const username = rawUsername.trim();
+    const usernameError = validateUsername(username);
+    if (usernameError) return { ok: false, error: usernameError };
+
+    const current = this.db.query('SELECT id, username FROM accounts WHERE id = ?')
+      .get(accountId) as { id: number; username: string } | null;
+    if (!current) return { ok: false, error: 'Account not found' };
+
+    const existing = this.db.query('SELECT id FROM accounts WHERE username = ?')
+      .get(username) as { id: number } | null;
+    if (existing && existing.id !== accountId) {
+      return { ok: false, error: 'Username already taken' };
+    }
+
+    this.db.query('UPDATE accounts SET username = ? WHERE id = ?').run(username, accountId);
+    return { ok: true, accountId, oldUsername: current.username, username };
+  }
+
   async login(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; wsSecret: string; username: string; accountId: number; isAdmin: boolean; isModerator: boolean } | { ok: false; error: string }> {
     const row = this.db.query('SELECT id, username, password_hash, is_admin, is_moderator FROM accounts WHERE username = ?').get(username) as { id: number; username: string; password_hash: string; is_admin: number; is_moderator: number } | null;
     if (!row) {
