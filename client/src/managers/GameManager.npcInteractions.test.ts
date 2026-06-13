@@ -90,6 +90,16 @@ describe('GameManager NPC interaction classification', () => {
     expect(option?.label).toBe('Attack Mortrek (level-7)');
   });
 
+  test('hover action readout includes total option count', () => {
+    const manager = makeManager(NPC_INTERACTION_HAS_DIALOGUE | NPC_INTERACTION_STARTS_COMBAT);
+    manager.entities.npcCombatTargets.set(1, manager.localPlayerId);
+
+    const readout = manager.defaultHoverActionReadout(manager.getNpcInteractionOptions(1));
+
+    expect(readout?.option.label).toBe('Attack Mortrek (level-7)');
+    expect(readout?.totalOptions).toBe(3);
+  });
+
   test('hover action label falls back to walk-here when the primary path is handled elsewhere', () => {
     const manager = Object.create(GameManager.prototype) as any;
     const option = manager.defaultHoverActionOption([

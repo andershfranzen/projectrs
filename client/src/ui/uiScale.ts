@@ -1,6 +1,6 @@
 import { isDesktopClientSizeSettingAvailable } from './clientSizeMode';
 
-export type UiScaleValue = 1 | 1.25 | 1.5;
+export type UiScaleValue = 0.75 | 1 | 1.25 | 1.5;
 
 export interface UiScaleOption {
   value: UiScaleValue;
@@ -9,6 +9,7 @@ export interface UiScaleOption {
 
 const STORAGE_KEY = 'projectrs_ui_scale';
 export const UI_SCALE_OPTIONS: readonly UiScaleOption[] = [
+  { value: 0.75, label: '75%' },
   { value: 1, label: '100%' },
   { value: 1.25, label: '125%' },
   { value: 1.5, label: '150%' },
@@ -55,7 +56,7 @@ export function applyUiScale(): void {
   root.style.setProperty('--eq-ui-scale', appliedScale.toFixed(2));
   root.style.setProperty('--eq-ui-scale-inverse-percent', `${(100 / appliedScale).toFixed(4)}%`);
   root.dataset.eqUiScale = appliedScale.toFixed(2);
-  root.classList.toggle('eq-ui-scale-active', appliedScale > 1.01);
+  root.classList.toggle('eq-ui-scale-active', Math.abs(appliedScale - 1) > 0.01);
   window.dispatchEvent(new CustomEvent('evilquest:uiscalechange', { detail: { scale: appliedScale } }));
   window.dispatchEvent(new Event('resize'));
   window.dispatchEvent(new Event('evilquest:viewportchange'));

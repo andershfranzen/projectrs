@@ -194,6 +194,11 @@ type InteractionOption = {
   primary?: boolean;
 };
 
+type HoverActionReadout = {
+  option: InteractionOption;
+  totalOptions: number;
+};
+
 type MinimapEntityPoint = { x: number; z: number };
 
 type DoorPickProxyBounds = {
@@ -6901,7 +6906,7 @@ export class GameManager {
       this.updateHoverRoofReveal(e.clientX, e.clientY);
       this._lastRoofHoverRefreshAt = now;
 
-      this.setHoverActionOption(this.defaultHoverActionOption(
+      this.setHoverActionReadout(this.defaultHoverActionReadout(
         this.getWorldInteractionOptionsAt(e.clientX, e.clientY),
       ));
     };
@@ -6927,7 +6932,20 @@ export class GameManager {
     return options.find(option => option.primary !== false) ?? options[0] ?? null;
   }
 
-  private setHoverActionOption(option: InteractionOption | null): void {
+  private defaultHoverActionReadout(options: readonly InteractionOption[]): HoverActionReadout | null {
+    const option = this.defaultHoverActionOption(options);
+    return option ? { option, totalOptions: options.length } : null;
+  }
+
+  private setHoverActionReadout(readout: HoverActionReadout | null): void {
+    this.setHoverActionOption(readout?.option ?? null, readout?.totalOptions ?? 0);
+  }
+
+  private hoverActionCountText(totalOptions: number): string {
+    return totalOptions > 0 ? ` (${totalOptions})` : '';
+  }
+
+  private setHoverActionOption(option: InteractionOption | null, totalOptions: number = 0): void {
     const el = this.hoverActionEl;
     if (!el) return;
     if (!option || !option.label.trim()) {
@@ -6938,7 +6956,8 @@ export class GameManager {
     }
 
     el.replaceChildren();
-    el.dataset.actionLabel = option.label;
+    const countText = this.hoverActionCountText(totalOptions);
+    el.dataset.actionLabel = `${option.label}${countText}`;
     if (option.labelParts?.length) {
       el.style.color = '#ffff00';
       for (const part of option.labelParts) {
@@ -6947,9 +6966,14 @@ export class GameManager {
         if (part.color) span.style.color = part.color;
         el.appendChild(span);
       }
+      if (countText) {
+        const countSpan = document.createElement('span');
+        countSpan.textContent = countText;
+        el.appendChild(countSpan);
+      }
     } else {
       el.style.color = option.labelColor ?? '#ffff00';
-      el.textContent = option.label;
+      el.textContent = `${option.label}${countText}`;
     }
     el.style.display = 'block';
   }
