@@ -213,6 +213,7 @@ export class SidePanel {
   private renderQualityMode: RenderQualityMode = 'auto';
   private renderQualityButtons: Map<RenderQualityMode, HTMLButtonElement> = new Map();
   private renderQualityChangeCallback: ((mode: RenderQualityMode) => void) | null = null;
+  private brandResizeObserver: ResizeObserver | null = null;
 
   constructor(network: NetworkManager, token: string = '') {
     this.network = network;
@@ -229,8 +230,19 @@ export class SidePanel {
     }
 
     this.container = this.buildUI();
+    const panelShell = document.createElement('div');
+    panelShell.id = 'side-panel-shell';
+    panelShell.style.cssText = `
+      width: 100%;
+      flex: 1 1 auto;
+      align-self: stretch;
+      min-height: 0;
+      position: relative;
+      overflow: hidden;
+    `;
+    panelShell.appendChild(this.container);
     const mount = document.getElementById('ui-right-column');
-    (mount ?? document.body).appendChild(this.container);
+    (mount ?? document.body).appendChild(panelShell);
 
     // Class-based stance styling. Inline styles get clobbered by browser
     // extensions (Dark Reader caches CSS-variable shadows of inline styles
@@ -473,7 +485,16 @@ export class SidePanel {
           pointer-events: none;
         }
 
-        #side-panel .side-brand-area {
+        #side-panel .side-brand {
+          opacity: 0;
+          transition: opacity 80ms ease-out;
+        }
+
+        #side-panel .side-brand-area.has-brand-room .side-brand {
+          opacity: 1;
+        }
+
+        #game-frame.mobile-map-open #side-panel-shell {
           display: none !important;
         }
 
@@ -702,13 +723,16 @@ export class SidePanel {
     const panel = document.createElement('div');
     panel.id = 'side-panel';
     panel.style.cssText = `
+      position: absolute;
+      right: 0;
+      bottom: 0;
       width: var(--eq-ui-scale-inverse-percent, 100%);
       height: var(--eq-ui-scale-inverse-percent, 100%);
-      flex: 0 0 var(--eq-ui-scale-inverse-percent, 100%);
-      align-self: flex-end;
+      box-sizing: border-box;
+      flex: none;
       min-height: 0;
       transform: scale(var(--eq-ui-scale, 1));
-      transform-origin: top right;
+      transform-origin: bottom right;
       background: transparent;
       border-top: 2px solid rgba(0,0,0,0.3);
       font-family: Arial, Helvetica, sans-serif; color: #ddd;
@@ -873,10 +897,12 @@ export class SidePanel {
     const brandArea = document.createElement('div');
     brandArea.className = 'side-brand-area';
     brandArea.style.cssText = `
-      flex: 1 1 0;
-      min-height: 44px;
+      flex: 1 1 auto;
+      min-height: 0;
       display: flex; align-items: center; justify-content: center;
-      padding: 2px 8px;
+      overflow: hidden;
+      padding: 0 8px;
+      box-sizing: border-box;
     `;
 
     const brand = document.createElement('div');
@@ -893,6 +919,15 @@ export class SidePanel {
       text-shadow: 2px 2px 0 #160604, 0 0 10px rgba(200, 28, 18, 0.22);
     `;
     brandArea.appendChild(brand);
+    const updateBrandVisibility = () => {
+      brandArea.classList.toggle('has-brand-room', brandArea.getBoundingClientRect().height >= 20);
+    };
+    requestAnimationFrame(updateBrandVisibility);
+    if (typeof ResizeObserver !== 'undefined') {
+      this.brandResizeObserver = new ResizeObserver(updateBrandVisibility);
+      this.brandResizeObserver.observe(brandArea);
+    }
+    window.addEventListener('resize', updateBrandVisibility);
     panel.appendChild(brandArea);
 
     // Top tab row — 5 tabs above content
