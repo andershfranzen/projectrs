@@ -508,7 +508,7 @@ export class GameManager {
   private _visibilityHandler: (() => void) | null = null;
   private _activityHandler: (() => void) | null = null;
   private _cursorTelemetryHandler: ((event: PointerEvent) => void) | null = null;
-  private _npcTooltipHandler: ((event: PointerEvent) => void) | null = null;
+  private _hoverActionHandler: ((event: PointerEvent) => void) | null = null;
   private _roofHoverLeaveHandler: ((event: PointerEvent) => void) | null = null;
   private _tempVec: Vector3 = new Vector3(); // reusable temp vector to avoid per-frame allocations
   private _minimapRemotes: { x: number; z: number }[] = [];
@@ -654,6 +654,7 @@ export class GameManager {
   private sidePanel: SidePanel | null = null;
   private chatPanel: ChatPanel | null = null;
   private minimap: Minimap | null = null;
+  private hoverActionEl: HTMLDivElement | null = null;
   private mobileControlsEl: HTMLDivElement | null = null;
   private mobileStatusEl: HTMLDivElement | null = null;
   private mobileLogoutButton: HTMLButtonElement | null = null;
@@ -887,8 +888,9 @@ export class GameManager {
     canvas.addEventListener('pointercancel', (e) => this.cancelTouchPointer(e), true);
     canvas.addEventListener('lostpointercapture', (e) => this.cancelTouchPointer(e), true);
 
-    // Hover tooltip — shows "Name (level-N)" when the cursor is over an NPC.
-    this.setupNpcTooltip(canvas);
+    // RuneScape-style hover readout — shows the default action in the
+    // upper-left of the game view.
+    this.setupHoverActionReadout(canvas);
 
     // Right-click context menu for NPCs/items
     this.setupNativeContextMenuBlocker();
@@ -6855,92 +6857,101 @@ export class GameManager {
     return def.combatLevel ?? npcCombatLevel(def);
   }
 
-  private setupNpcTooltip(canvas: HTMLCanvasElement): void {
+  private setupHoverActionReadout(canvas: HTMLCanvasElement): void {
+    document.getElementById('hover-action-label')?.remove();
+
     const el = document.createElement('div');
-    el.className = 'npc-tooltip-overlay';
+    el.id = 'hover-action-label';
+    el.setAttribute('aria-hidden', 'true');
     el.style.cssText = [
-      'position: fixed', 'pointer-events: none', 'z-index: 999',
-      'background: #1a1410ee', 'border: 1px solid #5a4a35',
-      'color: #d8372b', 'font: 12px Arial, Helvetica, sans-serif',
-      'padding: 3px 7px', 'display: none', 'white-space: nowrap',
+      'position: absolute',
+      'left: calc(8px * var(--eq-ui-scale, 1))',
+      'top: calc(6px * var(--eq-ui-scale, 1))',
+      'z-index: 35',
+      'display: none',
+      'pointer-events: none',
+      'max-width: calc(100% - var(--right-rail-width, 300px) - 16px)',
+      'overflow: hidden',
+      'text-overflow: ellipsis',
+      'white-space: nowrap',
+      'font: 700 calc(12px * var(--eq-ui-scale, 1)) Arial, Helvetica, sans-serif',
+      'line-height: calc(15px * var(--eq-ui-scale, 1))',
+      'color: #ffff00',
+      'text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000',
     ].join('; ');
-    document.body.appendChild(el);
+    (document.getElementById('game-frame') ?? canvas.parentElement ?? document.body).appendChild(el);
+    this.hoverActionEl = el;
 
     let lastPickAt = 0;
-    this._npcTooltipHandler = (e) => {
+    this._hoverActionHandler = (e) => {
       this._lastRoofHoverClientX = e.clientX;
       this._lastRoofHoverClientY = e.clientY;
-      // Throttle: scene.pick walks every pickable mesh; running it on every
-      // raw pointermove (which can fire 100+ times/sec on a high-Hz mouse)
-      // would chew frame budget. 30ms gap = ~33Hz, smooth enough for a
-      // tooltip and harmless to skip a few frames in between.
-      const now = performance.now();
-      if (now - lastPickAt < 30) {
-        el.style.left = `${e.clientX + 14}px`;
-        el.style.top = `${e.clientY + 14}px`;
+      if (!this.clientPointIsInsideCanvas(canvas, e.clientX, e.clientY) || this.isTouchPointer(e) || !this.inputManager.isEnabled()) {
+        this.setHoverActionOption(null);
         return;
       }
+
+      // Throttle: getWorldInteractionOptionsAt walks pickable meshes and
+      // entity hit proxies; running it on every raw pointermove (which can
+      // fire 100+ times/sec on a high-Hz mouse) would chew frame budget.
+      // 30ms gap = ~33Hz, smooth enough for a hover readout.
+      const now = performance.now();
+      if (now - lastPickAt < 30) return;
       lastPickAt = now;
-      // Same multiPick logic as the click handlers so the tooltip resolves
-      // an NPC or a ground item even when scenery occludes it from the
-      // closest-hit picker.
       this.updateHoverRoofReveal(e.clientX, e.clientY);
       this._lastRoofHoverRefreshAt = now;
-      const playerEntityId = this.pickPlayerAtPoint(this.scene.pointerX, this.scene.pointerY);
-      const { entityId, groundItem } = this.pickAtCursor();
-      let playerLabel: string | null = null;
-      let playerIsAdmin = false;
-      let playerIsModerator = false;
-      if (playerEntityId != null) {
-        const name = this.entities.playerNames.get(playerEntityId) ?? 'Player';
-        const lvl = this.entities.remoteCombatLevels.get(playerEntityId) ?? 0;
-        playerIsAdmin = this.entities.remoteAdminFlags.get(playerEntityId) === true;
-        playerIsModerator = this.entities.remoteModeratorFlags.get(playerEntityId) === true;
-        playerLabel = lvl > 0 ? `${name} (level-${lvl})` : name;
-      }
-      let npcLabel: string | null = null;
-      if (playerLabel == null && entityId != null) {
-        const npcDefId = this.entities.npcDefs.get(entityId);
-        const name = this.npcDisplayName(entityId, npcDefId);
-        if (this.isNonCombatNpc(entityId, npcDefId)) {
-          npcLabel = name;
-        } else {
-          const lvl = this.npcLevelFor(entityId, npcDefId);
-          npcLabel = lvl > 0 ? `${name} (level-${lvl})` : name;
-        }
-      }
-      // Ground items: only when the cursor isn't already over an NPC — NPC
-      // wins, mirroring the click priority. Show the tile pile in display
-      // order, capped so a large drop stack doesn't rebuild a huge tooltip.
-      let itemLines: string[] = [];
-      if (playerLabel == null && npcLabel == null && groundItem) {
-        itemLines = this.groundItemTooltipLines(this.groundItemStackForPick(groundItem).filter(gi => gi.floor === this.currentFloor));
-      }
-      if (playerLabel != null) {
-        el.style.color = this.playerNameColor(playerIsAdmin, playerIsModerator);
-        el.textContent = playerLabel;
-      } else if (npcLabel != null) {
-        el.style.color = '#d8372b';
-        el.textContent = npcLabel;
-      } else if (itemLines.length > 0) {
-        // Escape — item names are project data, but the tooltip writes them
-        // as innerHTML to get one line per stacked item.
-        const esc = (s: string) => s.replace(/[&<>]/g, (c) =>
-          c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;');
-        el.style.color = '#c8b88a';
-        el.innerHTML = itemLines.map(esc).join('<br>');
-      }
-      if (playerLabel != null || npcLabel != null || itemLines.length > 0) {
-        el.style.left = `${e.clientX + 14}px`;
-        el.style.top = `${e.clientY + 14}px`;
-        el.style.display = 'block';
-      } else if (el.style.display !== 'none') {
-        el.style.display = 'none';
-      }
+
+      this.setHoverActionOption(this.defaultHoverActionOption(
+        this.getWorldInteractionOptionsAt(e.clientX, e.clientY),
+      ));
     };
-    this._roofHoverLeaveHandler = () => this.clearHoverRoofPointer();
-    canvas.addEventListener('pointermove', this._npcTooltipHandler);
+    this._roofHoverLeaveHandler = () => {
+      this.clearHoverRoofPointer();
+      this.setHoverActionOption(null);
+    };
+    window.addEventListener('pointermove', this._hoverActionHandler, true);
     canvas.addEventListener('pointerleave', this._roofHoverLeaveHandler);
+  }
+
+  private clientPointIsInsideCanvas(canvas: HTMLCanvasElement, clientX: number, clientY: number): boolean {
+    const rect = canvas.getBoundingClientRect();
+    return clientX >= rect.left
+      && clientX <= rect.right
+      && clientY >= rect.top
+      && clientY <= rect.bottom
+      && rect.width > 0
+      && rect.height > 0;
+  }
+
+  private defaultHoverActionOption(options: readonly InteractionOption[]): InteractionOption | null {
+    return options.find(option => option.primary !== false) ?? options[0] ?? null;
+  }
+
+  private setHoverActionOption(option: InteractionOption | null): void {
+    const el = this.hoverActionEl;
+    if (!el) return;
+    if (!option || !option.label.trim()) {
+      el.style.display = 'none';
+      el.textContent = '';
+      el.removeAttribute('data-action-label');
+      return;
+    }
+
+    el.replaceChildren();
+    el.dataset.actionLabel = option.label;
+    if (option.labelParts?.length) {
+      el.style.color = '#ffff00';
+      for (const part of option.labelParts) {
+        const span = document.createElement('span');
+        span.textContent = part.text;
+        if (part.color) span.style.color = part.color;
+        el.appendChild(span);
+      }
+    } else {
+      el.style.color = option.labelColor ?? '#ffff00';
+      el.textContent = option.label;
+    }
+    el.style.display = 'block';
   }
 
   /** Redirect an NPC/object click to a use-on-target packet if the inventory
@@ -9527,9 +9538,9 @@ export class GameManager {
       window.removeEventListener('pointerdown', this._cursorTelemetryHandler, true);
       this._cursorTelemetryHandler = null;
     }
-    if (this._npcTooltipHandler) {
-      this.engine.getRenderingCanvas()?.removeEventListener('pointermove', this._npcTooltipHandler);
-      this._npcTooltipHandler = null;
+    if (this._hoverActionHandler) {
+      window.removeEventListener('pointermove', this._hoverActionHandler, true);
+      this._hoverActionHandler = null;
     }
     if (this._roofHoverLeaveHandler) {
       this.engine.getRenderingCanvas()?.removeEventListener('pointerleave', this._roofHoverLeaveHandler);
@@ -9570,6 +9581,8 @@ export class GameManager {
     document.querySelectorAll('.entity-health-bar').forEach(el => el.remove());
     document.querySelectorAll('.character-name-overlay').forEach(el => el.remove());
     document.querySelectorAll('.npc-tooltip-overlay').forEach(el => el.remove());
+    this.hoverActionEl?.remove();
+    this.hoverActionEl = null;
   }
 
   private applyCachedNpcRigState(entityId: number, sprite: CharacterEntity | Npc3DEntity): void {

@@ -80,4 +80,22 @@ describe('GameManager NPC interaction classification', () => {
 
     expect(manager.isNonCombatNpc(1, npcDef.id)).toBe(true);
   });
+
+  test('hover action label uses the same primary option as left-click', () => {
+    const manager = makeManager(NPC_INTERACTION_HAS_DIALOGUE | NPC_INTERACTION_STARTS_COMBAT);
+    manager.entities.npcCombatTargets.set(1, manager.localPlayerId);
+
+    const option = manager.defaultHoverActionOption(manager.getNpcInteractionOptions(1));
+
+    expect(option?.label).toBe('Attack Mortrek (level-7)');
+  });
+
+  test('hover action label falls back to walk-here when the primary path is handled elsewhere', () => {
+    const manager = Object.create(GameManager.prototype) as any;
+    const option = manager.defaultHoverActionOption([
+      { label: 'Walk here', primary: false, action: () => {} },
+    ]);
+
+    expect(option?.label).toBe('Walk here');
+  });
 });
