@@ -566,10 +566,6 @@ export class SidePanel {
           }
         }
 
-        html.eq-fixed-client-size #side-panel .side-content-area {
-          flex-basis: 430px !important;
-        }
-
         @media (max-width: 760px), (pointer: coarse) and (max-width: 900px) {
           #game-frame .side-account-actions {
             position: fixed !important;
