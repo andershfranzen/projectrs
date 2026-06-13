@@ -168,6 +168,9 @@ export class SidePanel {
   // Optional trade callback (active when a trade window is open). While set,
   // inventory clicks offer items instead of performing equip/use/drop actions.
   private tradeOfferCallback: ((slot: number, itemId: number, quantity: number) => void) | null = null;
+  // Optional bank callback (active when the bank is open). While set, the real
+  // inventory panel deposits items directly into the open bank.
+  private bankDepositCallback: ((slot: number, itemId: number, quantity: number) => void) | null = null;
   private requestQuantity: QuantityInputRequester | null = null;
   private privateMessageTargetCallback: ((username: string) => void) | null = null;
   private adminItemDeletionEnabled: boolean = false;
@@ -335,6 +338,12 @@ export class SidePanel {
         }
         #side-panel.trade-offer-active .inv-slot[data-filled="1"].hovered {
           background: rgba(154,51,43,0.18);
+        }
+        #side-panel.bank-deposit-active .inv-slot[data-filled="1"] {
+          box-shadow: inset 0 0 5px rgba(255, 200, 80, 0.45);
+        }
+        #side-panel.bank-deposit-active .inv-slot[data-filled="1"].hovered {
+          background: rgba(255, 200, 80, 0.18);
         }
 
         .quest-row {
@@ -2644,7 +2653,7 @@ export class SidePanel {
     }
 
     el.dataset.filled = '1';
-    el.draggable = true;
+    el.draggable = this.bankDepositCallback === null;
     const def = this.itemDefs.get(slot.itemId);
 
     // draggable="false" on the inner img so HTML5 drag fires from the slot div
@@ -2686,7 +2695,7 @@ export class SidePanel {
       overSlot: null,
       longPressTimer: 0,
       contextMenuShown: false,
-      allowDrag: !this.tradeOfferCallback,
+      allowDrag: !this.tradeOfferCallback && !this.bankDepositCallback,
     };
     this.touchInvDrag.longPressTimer = window.setTimeout(() => {
       if (this.touchInvDrag !== null && this.touchInvDrag.pointerId === event.pointerId && !this.touchInvDrag.dragging) {
@@ -2842,6 +2851,14 @@ export class SidePanel {
 
   private onInvSlotClick(index: number, event?: MouseEvent): void {
     const tradeSlot = this.invSlots[index];
+    if (this.bankDepositCallback && tradeSlot) {
+      event?.preventDefault();
+      event?.stopPropagation();
+      if (this.using) this.clearUsingInvItem();
+      this.bankDepositCallback(index, tradeSlot.itemId, 1);
+      return;
+    }
+
     if (event?.shiftKey && tradeSlot && !this.tradeOfferCallback && !this.sellCallback && !this.using) {
       event.preventDefault();
       event.stopPropagation();
@@ -3290,6 +3307,30 @@ export class SidePanel {
     const name = def?.name || 'Item';
     const options: { label: string; action: () => void }[] = [];
 
+    if (this.bankDepositCallback) {
+      options.push({
+        label: `Deposit 1 ${name}`,
+        action: () => this.bankDepositCallback!(index, slot.itemId, 1),
+      });
+      options.push({
+        label: `Deposit 5 ${name}`,
+        action: () => this.bankDepositCallback!(index, slot.itemId, 5),
+      });
+      options.push({
+        label: `Deposit 10 ${name}`,
+        action: () => this.bankDepositCallback!(index, slot.itemId, 10),
+      });
+      options.push({
+        label: `Deposit X ${name}`,
+        action: () => this.promptBankDepositQuantity(index, slot.itemId, name),
+      });
+      options.push({
+        label: `Deposit All ${name}`,
+        action: () => this.bankDepositCallback!(index, slot.itemId, -1),
+      });
+      return options;
+    }
+
     if (this.tradeOfferCallback) {
       options.push({
         label: `Offer ${name}`,
@@ -3375,6 +3416,31 @@ export class SidePanel {
     }
 
     return options;
+  }
+
+  private promptBankDepositQuantity(index: number, itemId: number, name: string): void {
+    if (!this.requestQuantity) return;
+    const max = this.maxDepositableQuantity(index, itemId);
+    if (max <= 0) return;
+    this.requestQuantity({
+      title: 'Deposit X',
+      prompt: `How many ${name} do you want to deposit?`,
+      max,
+      submitLabel: 'Deposit',
+      onSubmit: (quantity) => {
+        const current = this.invSlots[index];
+        if (!this.bankDepositCallback || !current || current.itemId !== itemId) return;
+        this.bankDepositCallback(index, itemId, quantity);
+      },
+    });
+  }
+
+  private maxDepositableQuantity(index: number, itemId: number): number {
+    const clicked = this.invSlots[index];
+    if (!clicked) return 0;
+    const def = this.itemDefs.get(itemId);
+    if (def?.stackable) return clicked.quantity;
+    return this.invSlots.reduce((total, slot) => total + (slot?.itemId === itemId ? 1 : 0), 0);
   }
 
   private promptTradeOfferQuantity(index: number, itemId: number, name: string): void {
@@ -3625,6 +3691,14 @@ export class SidePanel {
     this.tradeOfferCallback = cb;
     this.container.classList.toggle('trade-offer-active', cb !== null);
     if (cb && this.using) this.clearUsingInvItem();
+  }
+
+  /** Set a bank-deposit callback (when bank is open) or null to clear. */
+  setBankDepositCallback(cb: ((slot: number, itemId: number, quantity: number) => void) | null): void {
+    this.bankDepositCallback = cb;
+    this.container.classList.toggle('bank-deposit-active', cb !== null);
+    if (cb && this.using) this.clearUsingInvItem();
+    for (let i = 0; i < this.invSlots.length; i++) this.renderInvSlot(i);
   }
 
   setQuantityInputRequester(cb: QuantityInputRequester | null): void {

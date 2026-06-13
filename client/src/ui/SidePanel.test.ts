@@ -69,9 +69,15 @@ function makeInventoryPanel(): any {
   ]]);
   panel.network = { sendRaw: (packet: Uint8Array) => sent.push(packet) };
   panel.tradeOfferCallback = null;
+  panel.bankDepositCallback = null;
   panel.sellCallback = null;
   panel.adminItemDeletionEnabled = false;
   panel.using = null;
+  panel.container = {
+    classList: {
+      toggle: () => {},
+    },
+  };
   panel.renderInvSlot = () => {};
   panel.showUsingBanner = () => {};
   panel.hideUsingBanner = () => {};
@@ -176,6 +182,64 @@ describe('SidePanel inventory shortcuts', () => {
       opcode: ClientOpcode.PLAYER_DELETE_ITEM,
       values: [3, 101],
     });
+  });
+
+  test('bank deposit mode deposits from the real inventory and blocks shift-drop', () => {
+    const panel = makeInventoryPanel();
+    const deposited: Array<{ slot: number; itemId: number; quantity: number }> = [];
+    panel.setBankDepositCallback((slot: number, itemId: number, quantity: number) => {
+      deposited.push({ slot, itemId, quantity });
+    });
+    let prevented = false;
+    let stopped = false;
+    const event = {
+      shiftKey: true,
+      preventDefault: () => { prevented = true; },
+      stopPropagation: () => { stopped = true; },
+    } as MouseEvent;
+
+    panel.onInvSlotClick(3, event);
+
+    expect(deposited).toEqual([{ slot: 3, itemId: 101, quantity: 1 }]);
+    expect(panel.sent).toHaveLength(0);
+    expect(prevented).toBe(true);
+    expect(stopped).toBe(true);
+  });
+
+  test('bank deposit mode inventory menu exposes deposit quantities only', () => {
+    const panel = makeInventoryPanel();
+    const deposited: Array<{ slot: number; itemId: number; quantity: number }> = [];
+    panel.setBankDepositCallback((slot: number, itemId: number, quantity: number) => {
+      deposited.push({ slot, itemId, quantity });
+    });
+
+    const options = panel.getInvSlotOptions(3);
+
+    expect(options.map((option: { label: string }) => option.label)).toEqual([
+      'Deposit 1 Test Item',
+      'Deposit 5 Test Item',
+      'Deposit 10 Test Item',
+      'Deposit X Test Item',
+      'Deposit All Test Item',
+    ]);
+    options[1].action();
+    options[4].action();
+
+    expect(deposited).toEqual([
+      { slot: 3, itemId: 101, quantity: 5 },
+      { slot: 3, itemId: 101, quantity: -1 },
+    ]);
+  });
+
+  test('opening bank deposit mode clears an armed inventory use action', () => {
+    const panel = makeInventoryPanel();
+
+    panel.setUsingInvItem(3, 101);
+    expect(panel.getUsing()).toEqual({ slot: 3, itemId: 101 });
+
+    panel.setBankDepositCallback(() => {});
+
+    expect(panel.getUsing()).toBeNull();
   });
 
   test('non-admin inventory menu does not expose hard delete', () => {

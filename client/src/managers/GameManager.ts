@@ -63,7 +63,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -4891,7 +4891,6 @@ export class GameManager {
         const itemId = v[i];
         const qty = (v[i + 1] & 0xFFFF) * 0x10000 + (v[i + 2] & 0xFFFF);
         if (this.sidePanel) this.sidePanel.updateInvSlot(slot, itemId, qty);
-        if (this.bankPanel) this.bankPanel.updateInventorySlot(slot, itemId, qty);
         if (this.tradePanel) this.tradePanel.updateInventorySlot(slot, itemId, qty);
         if (this.duelPanel) this.duelPanel.updateInventorySlot(slot, itemId, qty);
       }
@@ -4909,6 +4908,10 @@ export class GameManager {
         const qty = (v[base + 2] & 0xFFFF) * 0x10000 + (v[base + 3] & 0xFFFF);
         filled.push({ slot: v[base], itemId: v[base + 1], quantity: qty });
       }
+      this.sidePanel?.switchTab('inventory');
+      this.sidePanel?.setBankDepositCallback((slot, itemId, quantity) => {
+        this.network.sendRaw(encodeQuantityPacket(ClientOpcode.BANK_DEPOSIT, slot, itemId, quantity));
+      });
       this.bankPanel?.openWithContents(filled);
     });
     this.network.on(ServerOpcode.BANK_UPDATE_SLOT, (_op, v) => {
@@ -4917,6 +4920,7 @@ export class GameManager {
       this.bankPanel?.updateBankSlot(slot, itemId, qty);
     });
     this.network.on(ServerOpcode.BANK_CLOSE, () => {
+      this.sidePanel?.setBankDepositCallback(null);
       this.bankPanel?.hide(/*notifyServer*/ false);
     });
 
