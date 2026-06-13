@@ -15,7 +15,13 @@ import {
   type SpellEffectDef, type SpellSchool,
 } from '@projectrs/shared';
 import { QuestJournalPopup } from './QuestJournalPopup';
-import { createGameDialogModal, mountModalInGameFrame } from './ModalPanel';
+import {
+  createGameDialogModal,
+  DIALOGUE_ACCENT,
+  DIALOGUE_PARCHMENT_BG,
+  DIALOGUE_TEXT_SHADOW,
+  mountModalInGameFrame,
+} from './ModalPanel';
 import type { NetworkManager, SocialClientEntry } from '../managers/NetworkManager';
 import {
   clampElementToRect,
@@ -49,6 +55,23 @@ import {
   UI_SCALE_OPTIONS,
   type UiScaleValue,
 } from './uiScale';
+import {
+  BRIGHTNESS_OPTIONS,
+  getBrightnessLevel,
+  setBrightnessLevel,
+  type BrightnessLevel,
+} from './brightness';
+import {
+  CHAT_COLOR_OPTIONS,
+  CHAT_FONT_SIZE_MAX,
+  CHAT_FONT_SIZE_MIN,
+  DEFAULT_CHAT_COLORS,
+  getChatSettings,
+  normalizeChatColor,
+  setChatFontSize,
+  setChatMessageColor,
+  type ChatMessageColorKey,
+} from './chatSettings';
 
 const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'Ring', 'Hands', 'Feet', 'Cape', 'Ammo'];
 const WATER_CONTAINER_ITEM_IDS: ReadonlySet<number> = new Set(SOFT_CLAY_WATER_CONTAINER_ITEM_IDS);
@@ -65,6 +88,24 @@ const ARROW_SHAFT_RECIPE_BY_LOG_ITEM_ID: ReadonlyMap<number, typeof LOG_CRAFT_AR
 const ARROWHEAD_RECIPE_BY_ITEM_ID: ReadonlyMap<number, typeof ARROWHEAD_FLETCHING_RECIPES[number]> = new Map(
   ARROWHEAD_FLETCHING_RECIPES.map(recipe => [recipe.arrowheadItemId, recipe]),
 );
+const CHAT_COLOR_PICKER_PALETTE: readonly { color: string; label: string }[] = [
+  { color: '#ffffff', label: 'White' },
+  { color: '#f4ded5', label: 'Parchment' },
+  { color: '#d8372b', label: 'Evil Red' },
+  { color: '#ffff00', label: 'Gold' },
+  { color: '#ffb347', label: 'Amber' },
+  { color: '#8cf0ff', label: 'Sky' },
+  { color: '#4fdfff', label: 'Private Blue' },
+  { color: '#4aa3ff', label: 'Royal Blue' },
+  { color: '#8cff8c', label: 'Green' },
+  { color: '#0f0', label: 'Classic Green' },
+  { color: '#d98cff', label: 'Mystic' },
+  { color: '#ff8ccc', label: 'Rose' },
+  { color: '#b8b0a0', label: 'Stone' },
+  { color: '#7fe3a1', label: 'Mint' },
+  { color: '#ff7a59', label: 'Ember' },
+  { color: '#c9a46a', label: 'Bronze' },
+];
 type SocialListTab = 'friends' | 'ignore';
 export type RenderQualityMode = 'auto' | 'high' | 'low';
 const MELEE_STANCE_LABELS: Readonly<Record<MeleeStance, { label: string; desc: string }>> = {
@@ -210,6 +251,14 @@ export class SidePanel {
   private spellTooltip: HoverTooltip | null = null;
   private settingsTooltip: HoverTooltip | null = null;
   private uiScaleButtons: Map<UiScaleValue, HTMLButtonElement> = new Map();
+  private brightnessButtons: Map<BrightnessLevel, HTMLButtonElement> = new Map();
+  private chatColorControlSwatches: Map<ChatMessageColorKey, HTMLSpanElement> = new Map();
+  private chatColorPickerPanel: HTMLDivElement | null = null;
+  private chatColorPickerTitleEl: HTMLSpanElement | null = null;
+  private chatColorPickerCurrentSwatchEl: HTMLDivElement | null = null;
+  private chatColorPickerCurrentLabelEl: HTMLDivElement | null = null;
+  private chatColorPickerButtons: Map<string, HTMLButtonElement> = new Map();
+  private activeChatColorPickerKey: ChatMessageColorKey | null = null;
   private renderQualityMode: RenderQualityMode = 'auto';
   private renderQualityButtons: Map<RenderQualityMode, HTMLButtonElement> = new Map();
   private renderQualityChangeCallback: ((mode: RenderQualityMode) => void) | null = null;
@@ -1535,7 +1584,28 @@ export class SidePanel {
     const view = document.createElement('div');
     view.style.cssText = `${panelFrameCss()} gap: 12px;`;
     this.uiScaleButtons.clear();
+    this.brightnessButtons.clear();
+    this.chatColorControlSwatches.clear();
     this.renderQualityButtons.clear();
+
+    const makeGroup = (title: string, className: string): HTMLDivElement => {
+      const group = document.createElement('div');
+      group.className = className;
+      group.style.cssText = `
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      `;
+      const header = document.createElement('div');
+      header.textContent = title;
+      header.style.cssText = `
+        ${panelHeaderCss('#f4ded5')}
+        border-bottom: 1px solid rgba(91,71,45,0.55);
+        padding-bottom: 3px;
+      `;
+      group.appendChild(header);
+      return group;
+    };
 
     const makeBlock = (title: string, className: string, available: boolean = true): HTMLDivElement => {
       const block = document.createElement('div');
@@ -1605,6 +1675,7 @@ export class SidePanel {
     };
 
     const desktopSettingsAvailable = isDesktopClientSizeSettingAvailable();
+    const graphicsGroup = makeGroup('Graphics', 'settings-group-graphics');
 
     const clientButtons = new Map<ClientSizeMode, HTMLButtonElement>();
     const clientBlock = makeBlock('Client', 'client-size-setting', desktopSettingsAvailable);
@@ -1620,7 +1691,7 @@ export class SidePanel {
       }),
     );
     clientBlock.appendChild(clientRow);
-    view.appendChild(clientBlock);
+    graphicsGroup.appendChild(clientBlock);
 
     const uiScaleBlock = makeBlock('UI Size', 'ui-scale-setting', desktopSettingsAvailable);
     const uiScaleRow = makeRow('UI size', UI_SCALE_OPTIONS.length);
@@ -1634,7 +1705,7 @@ export class SidePanel {
       ));
     }
     uiScaleBlock.appendChild(uiScaleRow);
-    view.appendChild(uiScaleBlock);
+    graphicsGroup.appendChild(uiScaleBlock);
 
     const renderQualityBlock = makeBlock('Render', 'render-quality-setting');
     const renderQualityRow = makeRow('Render quality', 3);
@@ -1653,18 +1724,347 @@ export class SidePanel {
       }),
     );
     renderQualityBlock.appendChild(renderQualityRow);
-    view.appendChild(renderQualityBlock);
+    graphicsGroup.appendChild(renderQualityBlock);
+
+    const brightnessBlock = makeBlock('Brightness', 'brightness-setting');
+    const brightnessRow = makeRow('Brightness level', BRIGHTNESS_OPTIONS.length);
+    for (const option of BRIGHTNESS_OPTIONS) {
+      brightnessRow.appendChild(makeToggleButton(
+        this.brightnessButtons,
+        option.value,
+        option.label,
+        option.description,
+        (level) => setBrightnessLevel(level),
+      ));
+    }
+    brightnessBlock.appendChild(brightnessRow);
+    graphicsGroup.appendChild(brightnessBlock);
 
     const unavailable = document.createElement('div');
     unavailable.className = 'client-size-setting-mobile-note';
     unavailable.textContent = 'Client and UI size options are available on desktop only.';
     unavailable.style.cssText = `${mutedBodyCss()} display: ${desktopSettingsAvailable ? 'none' : 'block'};`;
-    view.appendChild(unavailable);
+    graphicsGroup.appendChild(unavailable);
+
+    view.appendChild(graphicsGroup);
+
+    const chatSettings = getChatSettings();
+    const chatGroup = makeGroup('Chat', 'settings-group-chat');
+
+    const fontBlock = makeBlock('Font Size', 'chat-font-setting');
+    const fontRow = document.createElement('label');
+    fontRow.style.cssText = `
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 42px;
+      gap: 8px;
+      align-items: center;
+      color: #b8b0a0;
+      font: 700 12px Arial, Helvetica, sans-serif;
+      text-shadow: 1px 1px 0 #000;
+    `;
+    const fontRange = document.createElement('input');
+    fontRange.type = 'range';
+    fontRange.min = String(CHAT_FONT_SIZE_MIN);
+    fontRange.max = String(CHAT_FONT_SIZE_MAX);
+    fontRange.step = '1';
+    fontRange.value = String(chatSettings.fontSize);
+    fontRange.title = 'Chat font size';
+    fontRange.setAttribute('aria-label', 'Chat font size');
+    fontRange.style.cssText = `
+      width: 100%;
+      accent-color: #d8372b;
+    `;
+    const fontValue = document.createElement('span');
+    fontValue.textContent = `${chatSettings.fontSize}px`;
+    fontValue.style.cssText = `
+      color: #f4ded5;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    `;
+    fontRange.addEventListener('input', (event) => {
+      event.stopPropagation();
+      const size = setChatFontSize(Number(fontRange.value));
+      fontRange.value = String(size);
+      fontValue.textContent = `${size}px`;
+    });
+    fontRow.append(fontRange, fontValue);
+    fontBlock.appendChild(fontRow);
+    chatGroup.appendChild(fontBlock);
+
+    const colorBlock = makeBlock('Message Colors', 'chat-color-setting');
+    const colorGrid = document.createElement('div');
+    colorGrid.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    `;
+    const makeColorControl = (key: ChatMessageColorKey, label: string): HTMLButtonElement => {
+      const control = document.createElement('button');
+      control.type = 'button';
+      control.style.cssText = `
+        min-width: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 30px;
+        gap: 6px;
+        align-items: center;
+        padding: 5px 6px;
+        border: 1px solid rgba(91,71,45,0.62);
+        border-radius: 2px;
+        background: linear-gradient(180deg, rgba(34,27,20,0.74), rgba(16,12,9,0.86));
+        color: #b8b0a0;
+        font: 700 11px Arial, Helvetica, sans-serif;
+        text-shadow: 1px 1px 0 #000;
+        cursor: pointer;
+      `;
+      const text = document.createElement('span');
+      text.textContent = label;
+      text.style.cssText = `
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      `;
+      const swatch = document.createElement('span');
+      swatch.style.cssText = `
+        width: 30px;
+        height: 24px;
+        display: block;
+        border: 1px solid rgba(255,200,100,0.42);
+        border-radius: 2px;
+        background: ${chatSettings.colors[key]};
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,0.55), 0 1px 0 rgba(0,0,0,0.65);
+      `;
+      control.title = `${label} message color`;
+      control.setAttribute('aria-label', `${label} message color`);
+      control.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.showChatColorPicker(key, label);
+      });
+      control.addEventListener('mouseenter', () => {
+        control.style.borderColor = 'rgba(216,55,43,0.72)';
+      });
+      control.addEventListener('mouseleave', () => {
+        control.style.borderColor = 'rgba(91,71,45,0.62)';
+      });
+      control.append(text, swatch);
+      this.chatColorControlSwatches.set(key, swatch);
+      return control;
+    };
+    for (const option of CHAT_COLOR_OPTIONS) {
+      colorGrid.appendChild(makeColorControl(option.key, option.label));
+    }
+    colorBlock.appendChild(colorGrid);
+    chatGroup.appendChild(colorBlock);
+    view.appendChild(chatGroup);
 
     this.updateSettingsButtonGroup(clientButtons, getClientSizeMode());
     this.updateSettingsButtonGroup(this.uiScaleButtons, getUiScale());
+    this.updateSettingsButtonGroup(this.brightnessButtons, getBrightnessLevel());
     this.updateSettingsButtonGroup(this.renderQualityButtons, this.renderQualityMode);
     return view;
+  }
+
+  private ensureChatColorPickerModal(): void {
+    if (this.chatColorPickerPanel) return;
+
+    const modal = createGameDialogModal({
+      id: 'chat-color-picker-modal',
+      title: 'Message Color',
+      closeLabel: 'X',
+      width: '390px',
+      height: '318px',
+      onClose: () => this.hideChatColorPicker(),
+    });
+    this.chatColorPickerPanel = modal.root;
+    this.chatColorPickerTitleEl = modal.title;
+
+    const body = document.createElement('div');
+    body.style.cssText = `
+      flex: 1 1 auto;
+      min-height: 0;
+      margin-top: 4px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      color: #f0d2bd;
+      text-shadow: ${DIALOGUE_TEXT_SHADOW};
+      border: 1px solid ${DIALOGUE_ACCENT};
+      background: ${DIALOGUE_PARCHMENT_BG};
+      box-shadow:
+        inset 0 1px 0 rgba(255,220,170,0.06),
+        inset 0 0 18px rgba(0,0,0,0.34);
+    `;
+
+    const currentRow = document.createElement('div');
+    currentRow.style.cssText = `
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 9px;
+      align-items: center;
+      min-height: 40px;
+      padding: 6px 8px;
+      border: 1px solid rgba(91,71,45,0.72);
+      background: linear-gradient(180deg, rgba(34,27,20,0.72), rgba(16,12,9,0.86));
+    `;
+    const currentSwatch = document.createElement('div');
+    currentSwatch.style.cssText = `
+      width: 34px;
+      height: 28px;
+      border: 1px solid rgba(255,200,100,0.48);
+      border-radius: 2px;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.58), 0 1px 0 rgba(0,0,0,0.7);
+    `;
+    const currentLabel = document.createElement('div');
+    currentLabel.style.cssText = `
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #f4ded5;
+      font: 700 13px Arial, Helvetica, sans-serif;
+    `;
+    currentRow.append(currentSwatch, currentLabel);
+    body.appendChild(currentRow);
+    this.chatColorPickerCurrentSwatchEl = currentSwatch;
+    this.chatColorPickerCurrentLabelEl = currentLabel;
+
+    const palette = document.createElement('div');
+    palette.style.cssText = `
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    `;
+    for (const option of CHAT_COLOR_PICKER_PALETTE) {
+      const color = normalizeChatColor(option.color);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.title = option.label;
+      button.setAttribute('aria-label', option.label);
+      button.style.cssText = `
+        min-width: 0;
+        min-height: 34px;
+        border: 1px solid rgba(91,71,45,0.78);
+        border-radius: 2px;
+        background:
+          linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.16)),
+          ${color};
+        box-shadow:
+          inset 0 0 0 1px rgba(0,0,0,0.48),
+          0 1px 0 rgba(0,0,0,0.62);
+        cursor: pointer;
+      `;
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.selectChatColor(color);
+      });
+      button.addEventListener('mouseenter', () => {
+        button.style.filter = 'brightness(1.16)';
+      });
+      button.addEventListener('mouseleave', () => {
+        button.style.filter = '';
+      });
+      palette.appendChild(button);
+      this.chatColorPickerButtons.set(color, button);
+    }
+    body.appendChild(palette);
+
+    const footer = document.createElement('div');
+    footer.style.cssText = `
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding-top: 2px;
+    `;
+    const makeFooterButton = (label: string, onClick: () => void): HTMLButtonElement => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.className = 'eq-action-button';
+      button.style.cssText = `
+        min-width: 0;
+        height: 30px;
+        border: 1px solid rgba(143,47,40,0.72);
+        border-radius: 2px;
+        background: linear-gradient(180deg, rgba(48,22,18,0.96), rgba(22,12,10,0.98));
+        color: #f4ded5;
+        font: 700 12px Arial, Helvetica, sans-serif;
+        text-shadow: 1px 1px 0 #000;
+        cursor: pointer;
+      `;
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      });
+      return button;
+    };
+    footer.append(
+      makeFooterButton('Default', () => {
+        if (!this.activeChatColorPickerKey) return;
+        this.selectChatColor(DEFAULT_CHAT_COLORS[this.activeChatColorPickerKey]);
+      }),
+      makeFooterButton('Done', () => this.hideChatColorPicker()),
+    );
+    body.appendChild(footer);
+
+    modal.root.appendChild(body);
+    mountModalInGameFrame(modal.root);
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && this.chatColorPickerPanel?.style.display !== 'none') {
+        this.hideChatColorPicker();
+      }
+    });
+  }
+
+  private showChatColorPicker(key: ChatMessageColorKey, label: string): void {
+    this.ensureChatColorPickerModal();
+    if (!this.chatColorPickerPanel || !this.chatColorPickerTitleEl) return;
+    this.activeChatColorPickerKey = key;
+    this.chatColorPickerTitleEl.textContent = `${label} Messages`;
+    this.updateChatColorPickerState();
+    this.chatColorPickerPanel.style.display = 'flex';
+  }
+
+  private hideChatColorPicker(): void {
+    if (this.chatColorPickerPanel) this.chatColorPickerPanel.style.display = 'none';
+    this.activeChatColorPickerKey = null;
+  }
+
+  private selectChatColor(color: string): void {
+    if (!this.activeChatColorPickerKey) return;
+    const key = this.activeChatColorPickerKey;
+    const next = setChatMessageColor(key, color);
+    const swatch = this.chatColorControlSwatches.get(key);
+    if (swatch) swatch.style.background = next;
+    this.updateChatColorPickerState();
+  }
+
+  private updateChatColorPickerState(): void {
+    const key = this.activeChatColorPickerKey;
+    if (!key) return;
+    const settings = getChatSettings();
+    const activeColor = normalizeChatColor(settings.colors[key], DEFAULT_CHAT_COLORS[key]);
+    if (this.chatColorPickerCurrentSwatchEl) {
+      this.chatColorPickerCurrentSwatchEl.style.background = activeColor;
+    }
+    if (this.chatColorPickerCurrentLabelEl) {
+      const label = CHAT_COLOR_OPTIONS.find((option) => option.key === key)?.label ?? 'Messages';
+      this.chatColorPickerCurrentLabelEl.textContent = `${label}: ${activeColor.toUpperCase()}`;
+    }
+    for (const [color, button] of this.chatColorPickerButtons) {
+      const active = color === activeColor;
+      button.setAttribute('aria-pressed', String(active));
+      button.style.borderColor = active ? 'rgba(255,230,160,0.95)' : 'rgba(91,71,45,0.78)';
+      button.style.boxShadow = active
+        ? 'inset 0 0 0 2px rgba(0,0,0,0.52), 0 0 0 2px rgba(216,55,43,0.82), 0 2px 0 rgba(0,0,0,0.7)'
+        : 'inset 0 0 0 1px rgba(0,0,0,0.48), 0 1px 0 rgba(0,0,0,0.62)';
+    }
   }
 
   private showSettingsTooltip(title: string, body: string, x: number, y: number): void {

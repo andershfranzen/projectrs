@@ -25,6 +25,14 @@
       --eq-page-zoom-ratio: 1;
       --eq-ui-scale: 1;
       --eq-ui-scale-inverse-percent: 100%;
+      --eq-game-brightness: 1;
+      --eq-chat-font-size: 13px;
+      --eq-chat-color-player: #ffffff;
+      --eq-chat-color-npc: #f4ded5;
+      --eq-chat-color-world: #ffff00;
+      --eq-chat-color-private: #4fdfff;
+      --eq-chat-color-game: #d8372b;
+      --eq-chat-color-trade: #ffff00;
     }
     @supports (height: 100dvh) {
       :root {
@@ -110,6 +118,7 @@
       border-right: 4px solid #1a1208;
       border-bottom: 4px solid #1a1208;
       box-shadow: inset 0 0 0 1px rgba(255,200,100,0.15);
+      filter: brightness(var(--eq-game-brightness, 1));
     }
 
     #world-overlay-layer {

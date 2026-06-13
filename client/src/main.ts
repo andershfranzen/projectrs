@@ -7,6 +7,8 @@ import { installGlobalScrollbars } from './ui/globalScrollbars';
 import { preloadAssets } from './managers/AssetPreloader';
 import { startupTrace } from './debug/StartupTrace';
 import { installSafeDynamicTextureUpdate } from './rendering/safeDynamicTexture';
+import { installBrightnessController } from './ui/brightness';
+import { installChatSettingsController } from './ui/chatSettings';
 import { installClientSizeModeController } from './ui/clientSizeMode';
 import {
   decreaseUiScale,
@@ -32,6 +34,8 @@ installGlobalScrollbars();
 installSafeDynamicTextureUpdate();
 installClientSizeModeController();
 installUiScaleController();
+installBrightnessController();
+installChatSettingsController();
 startupTrace.mark('entry');
 
 function migrateSavedAuth(): void {

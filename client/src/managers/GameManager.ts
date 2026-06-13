@@ -1031,8 +1031,7 @@ export class GameManager {
           }
           break;
         case 'system': {
-          const color = data.message.startsWith('Quest complete:') ? '#4aa3ff' : '#ff0';
-          if (this.chatPanel) this.chatPanel.addSystemMessage(data.message, color);
+          if (this.chatPanel) this.chatPanel.addSystemMessage(data.message, null, { colorKey: 'world' });
           break;
         }
       }
@@ -9006,7 +9005,7 @@ export class GameManager {
     }
     if (alert) return;
     const npcName = this.npcDisplayName(npcEntityId, this.entities.npcDefs.get(npcEntityId));
-    this.chatPanel?.addMessage(npcName, message, '#f4ded5');
+    this.chatPanel?.addMessage(npcName, message, '#f4ded5', 'npc');
   }
 
   private hideNpcDialogueBubble(npcEntityId: number): void {
@@ -9020,7 +9019,7 @@ export class GameManager {
     if (this.localPlayer) {
       this.localPlayer.showChatBubble(message, 4500, 'dialogue');
     }
-    this.chatPanel?.addMessage(this.username || 'You', message, this.playerNameColor(this.isAdmin, this.isModerator, '#f4ded5'));
+    this.chatPanel?.addMessage(this.username || 'You', message, this.playerNameColor(this.isAdmin, this.isModerator, '#f4ded5'), 'player');
   }
 
   private hitSplatBasePositionFor(target: Targetable): Vector3 {
