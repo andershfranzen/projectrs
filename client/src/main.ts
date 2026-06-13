@@ -10,6 +10,7 @@ import { installSafeDynamicTextureUpdate } from './rendering/safeDynamicTexture'
 import { installBrightnessController } from './ui/brightness';
 import { installChatSettingsController } from './ui/chatSettings';
 import { installClientSizeModeController } from './ui/clientSizeMode';
+import { installRenderDistanceController } from './ui/renderDistance';
 import {
   decreaseUiScale,
   increaseUiScale,
@@ -36,6 +37,7 @@ installClientSizeModeController();
 installUiScaleController();
 installBrightnessController();
 installChatSettingsController();
+installRenderDistanceController();
 startupTrace.mark('entry');
 
 function migrateSavedAuth(): void {

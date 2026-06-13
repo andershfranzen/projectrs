@@ -42,6 +42,7 @@ import { NetworkManager } from './NetworkManager';
 import { findPath } from '../rendering/Pathfinding';
 import { SidePanel, type RenderQualityMode } from '../ui/SidePanel';
 import { ChatPanel } from '../ui/ChatPanel';
+import { getRenderDistance, renderDistanceOptionFor, type RenderDistanceValue } from '../ui/renderDistance';
 import { GearDebugPanel } from '../ui/GearDebugPanel';
 import { BoneDebugPanel } from '../ui/BoneDebugPanel';
 import { RotateDebugPanel } from '../ui/RotateDebugPanel';
@@ -390,6 +391,7 @@ export class GameManager {
   private renderQualityMode: RenderQualityMode = 'auto';
   private browserZoomWarningLastAt: number = 0;
   private browserZoomWarningHandler: ((event: Event) => void) | null = null;
+  private renderDistanceChangeHandler: ((event: Event) => void) | null = null;
 
   private connectionFrozen: boolean = false;
   private reconnecting: boolean = false;
@@ -814,6 +816,7 @@ export class GameManager {
 
     // Chunk-based terrain
     this.chunkManager = new ChunkManager(this.scene);
+    this.applyRenderDistance(getRenderDistance());
 
     // Destination marker
     this.createDestinationMarker();
@@ -935,6 +938,8 @@ export class GameManager {
     this.browserZoomWarningHandler = (event) => this.handleBrowserZoomWarning(event);
     window.addEventListener('evilquest:browserzoomblocked', this.browserZoomWarningHandler);
     window.addEventListener('evilquest:browserzoomchanged', this.browserZoomWarningHandler);
+    this.renderDistanceChangeHandler = (event) => this.handleRenderDistanceChange(event);
+    window.addEventListener('evilquest:renderdistancechange', this.renderDistanceChangeHandler);
     this.chatPanel.setSendHandler((msg) => {
       if (!this.handleChatCommand(msg)) {
         this.network.sendChat(msg);
@@ -1786,6 +1791,19 @@ export class GameManager {
       ? ` UI size is now ${Math.round(detail.uiScale * 100)}%.`
       : '';
     this.chatPanel?.addSystemMessage(`Browser zoom can blur the game or shrink the interface.${scaleText} Use Settings for UI Size and Render Quality.`);
+  }
+
+  private handleRenderDistanceChange(event: Event): void {
+    const detail = (event as CustomEvent<{ value?: RenderDistanceValue }>).detail;
+    this.applyRenderDistance(detail?.value ?? getRenderDistance());
+  }
+
+  private applyRenderDistance(value: RenderDistanceValue): void {
+    const option = renderDistanceOptionFor(value);
+    this.camera.getCamera().maxZ = option.cameraMaxZ;
+    this.chunkManager.setRenderDistanceChunkRadius(option.chunkRadius);
+    this.chunkManager.forceRefreshPlayerPosition(this.playerX, this.playerZ);
+    this.updateEntityRenderVisibility();
   }
 
   private detectInitialRenderQualityMode(): RenderQualityMode {
@@ -9541,6 +9559,10 @@ export class GameManager {
       window.removeEventListener('evilquest:browserzoomblocked', this.browserZoomWarningHandler);
       window.removeEventListener('evilquest:browserzoomchanged', this.browserZoomWarningHandler);
       this.browserZoomWarningHandler = null;
+    }
+    if (this.renderDistanceChangeHandler) {
+      window.removeEventListener('evilquest:renderdistancechange', this.renderDistanceChangeHandler);
+      this.renderDistanceChangeHandler = null;
     }
     this.clearHiddenCatchupTimer();
     if (this._keydownHandler) { window.removeEventListener('keydown', this._keydownHandler); this._keydownHandler = null; }

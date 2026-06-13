@@ -25,14 +25,11 @@ import { mapWithConcurrency } from '../util/concurrency';
 
 const EDITOR_CHUNK_SIZE = 64;
 const CHUNK_RENDER_PADDING_TILES = 8;
-const CHUNK_RESIDENT_RADIUS = CHUNK_LOAD_RADIUS;
-const CHUNK_CACHE_RADIUS = CHUNK_LOAD_RADIUS + 4;
 const CHUNK_MESH_CACHE_MAX_CHUNKS = 96;
 const VISIBLE_CHUNK_BUILD_INTERVAL_MS = 12;
 const HIDDEN_CHUNK_BUILD_INTERVAL_MS = 180;
 const OBJECT_RENDER_PADDING_TILES = 0;
 const OBJECT_PREFETCH_PADDING_TILES = 8;
-const OBJECT_CHUNK_CACHE_RADIUS = CHUNK_LOAD_RADIUS + 4;
 const OBJECT_CHUNK_CACHE_MAX_CHUNKS = 96;
 const OBJECT_RENDER_HYSTERESIS_TILES = 8;
 const OBJECT_VISIBILITY_BUCKET_TILES = 4;
@@ -409,6 +406,7 @@ export class ChunkManager {
   private queuedGameChunks: Set<string> = new Set();
   private desiredGameChunks: Set<string> = new Set();
   private residentGameChunks: Set<string> = new Set();
+  private renderDistanceChunkRadius = CHUNK_LOAD_RADIUS;
   private desiredObjectChunks: Set<string> = new Set();
   private objectLoadChunks: Set<string> = new Set();
   private chunkCacheTick: number = 0;
@@ -657,8 +655,31 @@ export class ChunkManager {
     }
   }
 
+  setRenderDistanceChunkRadius(radius: number): void {
+    const next = Math.min(CHUNK_LOAD_RADIUS, Math.max(1, Math.round(radius)));
+    if (this.renderDistanceChunkRadius === next) return;
+    this.renderDistanceChunkRadius = next;
+    this.lastChunkX = -999;
+    this.lastChunkZ = -999;
+    this.lastObjectBucketX = -999;
+    this.lastObjectBucketZ = -999;
+    this.lastObjectDistanceBucket = -999;
+  }
+
+  getRenderDistanceChunkRadius(): number {
+    return this.renderDistanceChunkRadius;
+  }
+
+  private getTerrainChunkCacheRadius(): number {
+    return this.renderDistanceChunkRadius + 4;
+  }
+
+  private getObjectChunkCacheRadius(): number {
+    return this.renderDistanceChunkRadius + 4;
+  }
+
   private getVisibilityDistanceTiles(paddingTiles: number): number {
-    const metaFogEnd = this.meta?.fogEnd ?? (CHUNK_LOAD_RADIUS + 1) * CHUNK_SIZE;
+    const metaFogEnd = this.meta?.fogEnd ?? (this.renderDistanceChunkRadius + 1) * CHUNK_SIZE;
     const sceneFogEnd = Number.isFinite(this.scene.fogEnd) && this.scene.fogEnd > 0
       ? this.scene.fogEnd
       : metaFogEnd;
@@ -1352,8 +1373,8 @@ export class ChunkManager {
     const objectLoad = new Set<string>();
     const maxCX = Math.ceil(this.mapWidth / CHUNK_SIZE);
     const maxCZ = Math.ceil(this.mapHeight / CHUNK_SIZE);
-    for (let dx = -CHUNK_LOAD_RADIUS; dx <= CHUNK_LOAD_RADIUS; dx++) {
-      for (let dz = -CHUNK_LOAD_RADIUS; dz <= CHUNK_LOAD_RADIUS; dz++) {
+    for (let dx = -this.renderDistanceChunkRadius; dx <= this.renderDistanceChunkRadius; dx++) {
+      for (let dz = -this.renderDistanceChunkRadius; dz <= this.renderDistanceChunkRadius; dz++) {
         const chunkX = centerChunkX + dx;
         const chunkZ = centerChunkZ + dz;
         if (chunkX < 0 || chunkX >= maxCX || chunkZ < 0 || chunkZ >= maxCZ) continue;
@@ -1443,8 +1464,8 @@ export class ChunkManager {
     const desired = new Set<string>();
     const maxCX = Math.ceil(this.mapWidth / CHUNK_SIZE);
     const maxCZ = Math.ceil(this.mapHeight / CHUNK_SIZE);
-    for (let dx = -CHUNK_RESIDENT_RADIUS; dx <= CHUNK_RESIDENT_RADIUS; dx++) {
-      for (let dz = -CHUNK_RESIDENT_RADIUS; dz <= CHUNK_RESIDENT_RADIUS; dz++) {
+    for (let dx = -this.renderDistanceChunkRadius; dx <= this.renderDistanceChunkRadius; dx++) {
+      for (let dz = -this.renderDistanceChunkRadius; dz <= this.renderDistanceChunkRadius; dz++) {
         const chunkX = cx + dx;
         const chunkZ = cz + dz;
         if (chunkX < 0 || chunkX >= maxCX || chunkZ < 0 || chunkZ >= maxCZ) continue;
@@ -1674,7 +1695,7 @@ export class ChunkManager {
     const evictKeys: string[] = [];
     for (const key of this.chunks.keys()) {
       if (resident.has(key)) continue;
-      if (this.chunkDistanceFromCenter(key, centerChunkX, centerChunkZ) > CHUNK_CACHE_RADIUS) {
+      if (this.chunkDistanceFromCenter(key, centerChunkX, centerChunkZ) > this.getTerrainChunkCacheRadius()) {
         evictKeys.push(key);
       }
     }
@@ -1714,7 +1735,7 @@ export class ChunkManager {
     const evictKeys: string[] = [];
     for (const key of this.chunkPlacedNodes.keys()) {
       if (protectedChunks.has(key) || this.loadingObjectChunks.has(key) || this.queuedObjectChunks.has(key)) continue;
-      if (this.chunkDistanceFromCenter(key, centerChunkX, centerChunkZ) > OBJECT_CHUNK_CACHE_RADIUS) {
+      if (this.chunkDistanceFromCenter(key, centerChunkX, centerChunkZ) > this.getObjectChunkCacheRadius()) {
         evictKeys.push(key);
       }
     }

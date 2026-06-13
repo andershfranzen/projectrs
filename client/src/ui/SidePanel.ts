@@ -56,6 +56,12 @@ import {
   type UiScaleValue,
 } from './uiScale';
 import {
+  getRenderDistance,
+  RENDER_DISTANCE_OPTIONS,
+  setRenderDistance,
+  type RenderDistanceValue,
+} from './renderDistance';
+import {
   BRIGHTNESS_OPTIONS,
   getBrightnessLevel,
   setBrightnessLevel,
@@ -251,6 +257,7 @@ export class SidePanel {
   private spellTooltip: HoverTooltip | null = null;
   private settingsTooltip: HoverTooltip | null = null;
   private uiScaleButtons: Map<UiScaleValue, HTMLButtonElement> = new Map();
+  private renderDistanceButtons: Map<RenderDistanceValue, HTMLButtonElement> = new Map();
   private brightnessButtons: Map<BrightnessLevel, HTMLButtonElement> = new Map();
   private chatColorControlSwatches: Map<ChatMessageColorKey, HTMLSpanElement> = new Map();
   private chatColorPickerPanel: HTMLDivElement | null = null;
@@ -1584,6 +1591,7 @@ export class SidePanel {
     const view = document.createElement('div');
     view.style.cssText = `${panelFrameCss()} gap: 12px;`;
     this.uiScaleButtons.clear();
+    this.renderDistanceButtons.clear();
     this.brightnessButtons.clear();
     this.chatColorControlSwatches.clear();
     this.renderQualityButtons.clear();
@@ -1726,6 +1734,20 @@ export class SidePanel {
     renderQualityBlock.appendChild(renderQualityRow);
     graphicsGroup.appendChild(renderQualityBlock);
 
+    const renderDistanceBlock = makeBlock('Render Distance', 'render-distance-setting');
+    const renderDistanceRow = makeRow('Render distance', RENDER_DISTANCE_OPTIONS.length);
+    for (const option of RENDER_DISTANCE_OPTIONS) {
+      renderDistanceRow.appendChild(makeToggleButton(
+        this.renderDistanceButtons,
+        option.value,
+        option.label,
+        option.description,
+        (distance) => setRenderDistance(distance),
+      ));
+    }
+    renderDistanceBlock.appendChild(renderDistanceRow);
+    graphicsGroup.appendChild(renderDistanceBlock);
+
     const brightnessBlock = makeBlock('Brightness', 'brightness-setting');
     const brightnessRow = makeRow('Brightness level', BRIGHTNESS_OPTIONS.length);
     for (const option of BRIGHTNESS_OPTIONS) {
@@ -1860,6 +1882,7 @@ export class SidePanel {
 
     this.updateSettingsButtonGroup(clientButtons, getClientSizeMode());
     this.updateSettingsButtonGroup(this.uiScaleButtons, getUiScale());
+    this.updateSettingsButtonGroup(this.renderDistanceButtons, getRenderDistance());
     this.updateSettingsButtonGroup(this.brightnessButtons, getBrightnessLevel());
     this.updateSettingsButtonGroup(this.renderQualityButtons, this.renderQualityMode);
     return view;
