@@ -6,7 +6,7 @@ export interface FixedClientSize {
 }
 
 const MODE_KEY = 'projectrs_client_size_mode';
-export const FIXED_CLIENT_SIZE: FixedClientSize = { width: 1100, height: 720 };
+export const FIXED_CLIENT_SIZE: FixedClientSize = { width: 1100, height: 920 };
 const MOBILE_QUERY = '(max-width: 760px), (pointer: coarse) and (max-width: 900px), (max-height: 520px) and (max-width: 900px) and (orientation: landscape)';
 
 let media: MediaQueryList | null = null;
