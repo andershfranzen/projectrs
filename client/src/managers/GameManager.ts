@@ -42,6 +42,8 @@ import { NetworkManager } from './NetworkManager';
 import { findPath } from '../rendering/Pathfinding';
 import { SidePanel, type RenderQualityMode } from '../ui/SidePanel';
 import { ChatPanel } from '../ui/ChatPanel';
+import { isNpcDialogueInChatEnabled } from '../ui/chatSettings';
+import { getGameSettings, type GameSettings, type NameplateMode } from '../ui/gameSettings';
 import { getRenderDistance, renderDistanceOptionFor, type RenderDistanceValue } from '../ui/renderDistance';
 import { GearDebugPanel } from '../ui/GearDebugPanel';
 import { BoneDebugPanel } from '../ui/BoneDebugPanel';
@@ -392,6 +394,9 @@ export class GameManager {
   private browserZoomWarningLastAt: number = 0;
   private browserZoomWarningHandler: ((event: Event) => void) | null = null;
   private renderDistanceChangeHandler: ((event: Event) => void) | null = null;
+  private gameSettingsChangeHandler: ((event: Event) => void) | null = null;
+  private friendAccountIds: Set<number> = new Set();
+  private friendNames: Set<string> = new Set();
 
   private connectionFrozen: boolean = false;
   private reconnecting: boolean = false;
@@ -940,6 +945,8 @@ export class GameManager {
     window.addEventListener('evilquest:browserzoomchanged', this.browserZoomWarningHandler);
     this.renderDistanceChangeHandler = (event) => this.handleRenderDistanceChange(event);
     window.addEventListener('evilquest:renderdistancechange', this.renderDistanceChangeHandler);
+    this.gameSettingsChangeHandler = (event) => this.handleGameSettingsChange(event);
+    window.addEventListener('evilquest:gamesettingschange', this.gameSettingsChangeHandler);
     this.chatPanel.setSendHandler((msg) => {
       if (!this.handleChatCommand(msg)) {
         this.network.sendChat(msg);
@@ -1002,7 +1009,7 @@ export class GameManager {
           // label in place — re-creating the CharacterEntity to swap the
           // label is far too expensive.
           const existing = this.entities.remotePlayers.get(entityId);
-          if (existing) existing.setLabel(name);
+          if (existing) this.applyRemotePlayerNameplate(entityId);
           break;
         }
         case 'local': {
@@ -1027,11 +1034,17 @@ export class GameManager {
           break;
         case 'social_list':
           if (Array.isArray(data.friends) && Array.isArray(data.ignore)) {
+            this.updateFriendNameplateCache(data.friends);
             this.sidePanel?.setSocialLists(data.friends, data.ignore);
+            this.refreshNameplates();
           }
           break;
         case 'social_presence':
           if (typeof data.accountId === 'number' && typeof data.username === 'string' && typeof data.online === 'boolean') {
+            if (this.friendAccountIds.has(data.accountId)) {
+              this.friendNames.add(data.username.toLowerCase());
+              this.refreshNameplates();
+            }
             this.sidePanel?.setSocialPresence(data.accountId, data.username, data.online);
           }
           break;
@@ -1090,6 +1103,7 @@ export class GameManager {
       this.itemDefsCache,
       this.npcDefsCache,
     );
+    this.applyGameSettings(getGameSettings());
     // Dev-only console hook for triage (NPC name overrides, entity sprites).
     // Tree-shaken Babylon imports remove the global namespace, so without
     // this the only way to inspect runtime entity state is to hack imports.
@@ -1798,12 +1812,73 @@ export class GameManager {
     this.applyRenderDistance(detail?.value ?? getRenderDistance());
   }
 
+  private handleGameSettingsChange(event: Event): void {
+    const detail = (event as CustomEvent<Partial<GameSettings>>).detail;
+    this.applyGameSettings({
+      ...getGameSettings(),
+      ...detail,
+    });
+  }
+
   private applyRenderDistance(value: RenderDistanceValue): void {
     const option = renderDistanceOptionFor(value);
     this.camera.getCamera().maxZ = option.cameraMaxZ;
     this.chunkManager.setRenderDistanceChunkRadius(option.chunkRadius);
     this.chunkManager.forceRefreshPlayerPosition(this.playerX, this.playerZ);
     this.updateEntityRenderVisibility();
+  }
+
+  private applyGameSettings(settings: GameSettings): void {
+    if (!this.entities) return;
+    this.entities.setGroundItemLabelMode(settings.groundItemLabels);
+    this.refreshNameplates(settings.nameplates);
+  }
+
+  private updateFriendNameplateCache(friends: unknown[]): void {
+    this.friendAccountIds = new Set<number>();
+    this.friendNames = new Set<string>();
+    for (const entry of friends) {
+      if (!entry || typeof entry !== 'object') continue;
+      const accountId = (entry as { accountId?: unknown }).accountId;
+      const username = (entry as { username?: unknown }).username;
+      if (typeof accountId === 'number') this.friendAccountIds.add(accountId);
+      if (typeof username === 'string' && username.length > 0) this.friendNames.add(username.toLowerCase());
+    }
+  }
+
+  private refreshNameplates(mode: NameplateMode = getGameSettings().nameplates): void {
+    if (!this.entities) return;
+    for (const entityId of this.entities.remotePlayers.keys()) this.applyRemotePlayerNameplate(entityId, mode);
+    for (const entityId of this.entities.npcSprites.keys()) this.applyNpcNameplate(entityId, mode);
+  }
+
+  private shouldShowRemotePlayerNameplate(entityId: number, mode: NameplateMode): boolean {
+    if (mode === 'off') return false;
+    if (mode === 'players' || mode === 'all') return true;
+    const name = this.entities.playerNames.get(entityId);
+    return typeof name === 'string' && this.friendNames.has(name.toLowerCase());
+  }
+
+  private applyRemotePlayerNameplate(entityId: number, mode: NameplateMode = getGameSettings().nameplates): void {
+    const remote = this.entities.remotePlayers.get(entityId);
+    if (!remote) return;
+    const name = this.entities.playerNames.get(entityId) || 'Player';
+    remote.setLabel(this.shouldShowRemotePlayerNameplate(entityId, mode) ? name : '');
+    remote.setLabelColor(this.playerNameColor(
+      this.entities.remoteAdminFlags.get(entityId) === true,
+      this.entities.remoteModeratorFlags.get(entityId) === true,
+    ));
+  }
+
+  private applyNpcNameplate(entityId: number, mode: NameplateMode = getGameSettings().nameplates): void {
+    const npc = this.entities.npcSprites.get(entityId);
+    if (!npc) return;
+    if (mode !== 'all') {
+      npc.setLabel('');
+      return;
+    }
+    npc.setLabel(this.npcDisplayName(entityId, this.entities.npcDefs.get(entityId)));
+    npc.setLabelColor('#f4ded5');
   }
 
   private detectInitialRenderQualityMode(): RenderQualityMode {
@@ -4032,6 +4107,7 @@ export class GameManager {
         const cachedIsModerator = hasRoleFlags ? syncIsModerator : this.entities.remoteModeratorFlags.get(entityId) === true;
         if (hasRoleFlags) this.cacheRemotePlayerRole(entityId, cachedIsAdmin, cachedIsModerator);
         remote.setLabelColor(this.playerNameColor(cachedIsAdmin, cachedIsModerator));
+        this.applyRemotePlayerNameplate(entityId);
         // Apply cached appearance + equipment once the GLB + animations finish
         // loading. Both arrive over the network independently of the entity's
         // local-load timing, so we cache them in the EntityManager and flush
@@ -5326,6 +5402,7 @@ export class GameManager {
         const entityId = values[0];
         if (str.length > 0) this.entities.npcOverrideNames.set(entityId, str);
         else this.entities.npcOverrideNames.delete(entityId);
+        this.applyNpcNameplate(entityId);
       } else if (opcode === ServerOpcode.NPC_ATTACK_ANIM) {
         // [npcEntityId] follows the anim-name string. Consulted first by
         // getPlayerAttackAnimName; empty string clears the override.
@@ -6214,8 +6291,7 @@ export class GameManager {
 
   private setRemotePlayerRole(entityId: number, isAdmin: boolean, isModerator: boolean): void {
     this.cacheRemotePlayerRole(entityId, isAdmin, isModerator);
-    const remote = this.entities.remotePlayers.get(entityId);
-    if (remote) remote.setLabelColor(this.playerNameColor(isAdmin, isModerator));
+    this.applyRemotePlayerNameplate(entityId);
   }
 
   private nameColorForMessage(name: string, isAdmin: boolean, isModerator: boolean, fallback: string = '#fff'): string {
@@ -6269,7 +6345,15 @@ export class GameManager {
 
     const lvl = this.npcLevelFor(entityId, npcDefId);
     const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
-    const attackOption: InteractionOption = { label: `Attack ${name}${labelLevel}`, action: () => this.attackNpc(entityId) };
+    const attackOption: InteractionOption = {
+      label: `Attack ${name}${labelLevel}`,
+      labelParts: [
+        { text: 'Attack ' },
+        { text: name },
+        ...(labelLevel ? [{ text: labelLevel, color: this.combatLevelDifferenceColor(this.localCombatLevel(), lvl) }] : []),
+      ],
+      action: () => this.attackNpc(entityId),
+    };
     if ((flags & NPC_INTERACTION_HAS_DIALOGUE) !== 0) {
       const engaged = this.isLocalNpcCombatTarget(entityId);
       const talkOption: InteractionOption = {
@@ -6550,6 +6634,19 @@ export class GameManager {
       goodmagic: this.sidePanel.getSkillLevel('goodmagic'),
       evilmagic: this.sidePanel.getSkillLevel('evilmagic'),
     });
+  }
+
+  private combatLevelDifferenceColor(playerLevel: number, targetLevel: number): string {
+    const diff = Math.floor(playerLevel) - Math.floor(targetLevel);
+    if (diff < -9) return '#ff0000';
+    if (diff < -6) return '#ff3000';
+    if (diff < -3) return '#ff7000';
+    if (diff < 0) return '#ffb000';
+    if (diff > 9) return '#00ff00';
+    if (diff > 6) return '#40ff00';
+    if (diff > 3) return '#80ff00';
+    if (diff > 0) return '#c0ff00';
+    return '#ffff00';
   }
 
   private worldObjectDisplayName(objectEntityId: number, def: WorldObjectDef): string {
@@ -9021,7 +9118,7 @@ export class GameManager {
     if (npc) {
       npc.showChatBubble(message, alert ? 1800 : 6000, 'dialogue');
     }
-    if (alert) return;
+    if (alert || !isNpcDialogueInChatEnabled()) return;
     const npcName = this.npcDisplayName(npcEntityId, this.entities.npcDefs.get(npcEntityId));
     this.chatPanel?.addMessage(npcName, message, '#f4ded5', 'npc');
   }
@@ -9564,6 +9661,10 @@ export class GameManager {
       window.removeEventListener('evilquest:renderdistancechange', this.renderDistanceChangeHandler);
       this.renderDistanceChangeHandler = null;
     }
+    if (this.gameSettingsChangeHandler) {
+      window.removeEventListener('evilquest:gamesettingschange', this.gameSettingsChangeHandler);
+      this.gameSettingsChangeHandler = null;
+    }
     this.clearHiddenCatchupTimer();
     if (this._keydownHandler) { window.removeEventListener('keydown', this._keydownHandler); this._keydownHandler = null; }
     if (this._keyupHandler) { window.removeEventListener('keyup', this._keyupHandler); this._keyupHandler = null; }
@@ -9668,6 +9769,7 @@ export class GameManager {
     }
     if (created instanceof CharacterEntity || created instanceof Npc3DEntity) {
       this.applyCachedNpcRigState(entityId, created);
+      this.applyNpcNameplate(entityId);
     }
   }
 
@@ -9707,6 +9809,7 @@ export class GameManager {
   }
 
   private updateEntityRenderVisibility(): void {
+    if (!this.entities) return;
     const enableDist = this.getEntityRenderDistanceTiles();
     const disableDist = enableDist + ENTITY_RENDER_HYSTERESIS_TILES;
 
@@ -9855,10 +9958,7 @@ export class GameManager {
     for (const [, sprite] of this.entities.npcSprites) {
       const hasBubble = sprite.hasChatBubble();
       const hasBar = sprite.hasHealthBar();
-      // Npc3DEntity has no getLabelWorldPos — check via the CharacterEntity
-      // sibling type. instanceof on a hot path is fine (V8 inlines the check),
-      // but cache the cast so we don't re-narrow on each subsequent call.
-      const labelHost = sprite instanceof CharacterEntity ? sprite : null;
+      const labelHost = sprite instanceof CharacterEntity || sprite instanceof Npc3DEntity ? sprite : null;
       const hasLabel = labelHost ? labelHost.getLabelWorldPos(wp) !== null : false;
       if (!hasBubble && !hasBar && !hasLabel) continue;
 
@@ -9901,6 +10001,28 @@ export class GameManager {
         }
       }
     }
+
+    this.entities.forEachGroundItemLabel((label) => {
+      wp.set(label.x, label.y, label.z);
+      const dx = wp.x - camPos.x;
+      const dy = wp.y - camPos.y;
+      const dz = wp.z - camPos.z;
+      if (dx * dx + dy * dy + dz * dz > maxDistSq) {
+        label.element.style.left = `${offscreenX}px`;
+        label.element.style.top = `${offscreenY}px`;
+        return;
+      }
+      Vector3.ProjectToRef(wp, identity, transform, vp, screenPos);
+      const fogOpacity = this.overlayFogOpacity(wp, camPos);
+      if (screenPos.z > 0 && screenPos.z < 1 && fogOpacity > 0.01) {
+        label.element.style.left = `${screenPos.x}px`;
+        label.element.style.top = `${screenPos.y}px`;
+        label.element.style.opacity = fogOpacity.toString();
+      } else {
+        label.element.style.left = `${offscreenX}px`;
+        label.element.style.top = `${offscreenY}px`;
+      }
+    });
 
     for (const [, sprite] of this.entities.deathEffectEntities) {
       if (!sprite.hasHealthBar()) continue;

@@ -10,6 +10,7 @@ import { installSafeDynamicTextureUpdate } from './rendering/safeDynamicTexture'
 import { installBrightnessController } from './ui/brightness';
 import { installChatSettingsController } from './ui/chatSettings';
 import { installClientSizeModeController } from './ui/clientSizeMode';
+import { installGameSettingsController } from './ui/gameSettings';
 import { installRenderDistanceController } from './ui/renderDistance';
 import {
   decreaseUiScale,
@@ -37,6 +38,7 @@ installClientSizeModeController();
 installUiScaleController();
 installBrightnessController();
 installChatSettingsController();
+installGameSettingsController();
 installRenderDistanceController();
 startupTrace.mark('entry');
 
@@ -161,6 +163,7 @@ function installMobilePageZoomGuard(): void {
     if (!isGameSurface(event)) return;
     if (shouldLetBrowserRecoverZoom()) return;
     event.preventDefault();
+    if (event.type === 'dblclick') return;
     dispatchBrowserZoomBlocked(event.type === 'dblclick' ? 'dblclick' : 'gesture');
   };
 

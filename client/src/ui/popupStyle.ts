@@ -13,6 +13,7 @@
  *
  * For finer control, spread `popupGeometryCss()` into your existing CSS.
  */
+import { getGameSettings } from './gameSettings';
 
 /** Width/height of the non-canvas UI regions (keep in sync with index.html). */
 export const RIGHT_COLUMN_WIDTH_PX = 300;
@@ -169,6 +170,7 @@ export interface HoverTooltipOpts {
 export class HoverTooltip {
   readonly el: HTMLDivElement;
   private removed = false;
+  private visible = false;
 
   constructor(opts: HoverTooltipOpts) {
     ensureContextMenuGlobalListeners();
@@ -212,10 +214,22 @@ export class HoverTooltip {
       tooltip.appendChild(body);
     }
 
-    document.body.appendChild(tooltip);
     this.el = tooltip;
+    const mode = getGameSettings().tooltips;
+    if (mode === 'off') {
+      this.removed = true;
+      return;
+    }
+
     activeHoverTooltips.add(this);
+    this.show();
     this.move(opts.x, opts.y);
+  }
+
+  private show(): void {
+    if (this.removed || this.visible) return;
+    document.body.appendChild(this.el);
+    this.visible = true;
   }
 
   move(x: number, y: number): void {
@@ -313,6 +327,7 @@ function ensureContextMenuGlobalListeners(): void {
   });
 
   window.addEventListener('blur', closeFloatingUi);
+  window.addEventListener('evilquest:gamesettingschange', closeActiveHoverTooltips);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') closeFloatingUi();
   });
@@ -387,7 +402,7 @@ export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpt
   for (const opt of items) {
     const item = document.createElement('div');
     item.setAttribute('role', 'menuitem');
-    item.style.cssText = `padding: ${opts.itemPadding ?? '4px 12px'}; color: ${opt.labelColor ?? '#d8372b'}; cursor: pointer;`;
+    item.style.cssText = `padding: ${opts.itemPadding ?? '4px 12px'}; color: ${opt.labelColor ?? '#f4ded5'}; cursor: pointer;`;
     if (opt.labelParts?.length) {
       for (const part of opt.labelParts) {
         const span = document.createElement('span');

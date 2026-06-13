@@ -8,6 +8,7 @@ export interface ChatMessageColorOption {
 export interface ChatSettings {
   fontSize: number;
   colors: Record<ChatMessageColorKey, string>;
+  npcDialogueInChat: boolean;
 }
 
 const STORAGE_KEY = 'projectrs_chat_settings_v1';
@@ -50,6 +51,7 @@ function makeDefaultSettings(): ChatSettings {
   return {
     fontSize: CHAT_FONT_SIZE_DEFAULT,
     colors: { ...DEFAULT_CHAT_COLORS },
+    npcDialogueInChat: true,
   };
 }
 
@@ -74,6 +76,10 @@ export function normalizeChatColor(value: unknown, fallback: string = '#ffffff')
   return fallback;
 }
 
+export function normalizeNpcDialogueInChat(value: unknown): boolean {
+  return typeof value === 'boolean' ? value : true;
+}
+
 function readStoredSettings(): ChatSettings {
   const next = makeDefaultSettings();
   try {
@@ -82,6 +88,7 @@ function readStoredSettings(): ChatSettings {
     if (!stored) return next;
     const parsed = JSON.parse(stored) as Partial<ChatSettings>;
     next.fontSize = normalizeChatFontSize(parsed.fontSize);
+    next.npcDialogueInChat = normalizeNpcDialogueInChat(parsed.npcDialogueInChat);
     const colors = parsed.colors;
     if (colors && typeof colors === 'object') {
       for (const [key, value] of Object.entries(colors)) {
@@ -115,6 +122,7 @@ export function getChatSettings(): ChatSettings {
   return {
     fontSize: activeSettings.fontSize,
     colors: { ...activeSettings.colors },
+    npcDialogueInChat: activeSettings.npcDialogueInChat,
   };
 }
 
@@ -134,6 +142,7 @@ export function applyChatSettings(settings: ChatSettings = getChatSettings()): v
       detail: {
         fontSize: normalizeChatFontSize(settings.fontSize),
         colors: { ...settings.colors },
+        npcDialogueInChat: normalizeNpcDialogueInChat(settings.npcDialogueInChat),
       },
     }));
   }
@@ -154,6 +163,18 @@ export function setChatMessageColor(key: ChatMessageColorKey, color: string): st
   saveSettings(activeSettings);
   applyChatSettings(activeSettings);
   return normalized;
+}
+
+export function isNpcDialogueInChatEnabled(): boolean {
+  return getChatSettings().npcDialogueInChat;
+}
+
+export function setNpcDialogueInChatEnabled(enabled: boolean): boolean {
+  activeSettings = getChatSettings();
+  activeSettings.npcDialogueInChat = enabled;
+  saveSettings(activeSettings);
+  applyChatSettings(activeSettings);
+  return activeSettings.npcDialogueInChat;
 }
 
 export function installChatSettingsController(): void {

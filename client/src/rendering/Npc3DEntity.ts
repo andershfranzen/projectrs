@@ -405,6 +405,8 @@ export class Npc3DEntity {
   private yOffset: number = 0.5;
   private chatBubbleEl: HTMLDivElement | null = null;
   private chatBubbleTimer: number | null = null;
+  private labelEl: HTMLDivElement | null = null;
+  private labelColor: string = '#f4ded5';
 
   private _ready = false;
   private _readyPromise: Promise<void>;
@@ -1027,6 +1029,54 @@ export class Npc3DEntity {
 
   hasChatBubble(): boolean { return this.chatBubbleEl !== null; }
 
+  setLabel(text: string): void {
+    if (!text) {
+      if (this.labelEl) {
+        this.labelEl.remove();
+        this.labelEl = null;
+      }
+      return;
+    }
+    if (!this.labelEl) {
+      const el = document.createElement('div');
+      el.className = 'character-name-overlay';
+      el.style.cssText = `
+        position: absolute; pointer-events: none; z-index: 150;
+        font-family: Arial, Helvetica, sans-serif; font-size: 12px;
+        color: ${this.labelColor};
+        white-space: nowrap;
+        transform: translate(-50%, -100%);
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.85);
+        opacity: 0;
+      `;
+      mountWorldOverlayElement(el);
+      this.labelEl = el;
+    } else {
+      this.labelEl.style.color = this.labelColor;
+    }
+    this.labelEl.textContent = text;
+  }
+
+  setLabelColor(color: string): void {
+    this.labelColor = color;
+    if (this.labelEl) this.labelEl.style.color = color;
+  }
+
+  getLabelWorldPos(out?: Vector3): Vector3 | null {
+    if (!this.labelEl) return null;
+    const v = out ?? new Vector3();
+    v.set(this.visualX(), this._position.y + this.yOffset * 2 + 0.95, this.visualZ());
+    return v;
+  }
+
+  updateLabelScreenPos(x: number, y: number, opacity: number = 1): void {
+    if (this.labelEl) {
+      this.labelEl.style.left = `${x}px`;
+      this.labelEl.style.top = `${y}px`;
+      this.labelEl.style.opacity = opacity.toString();
+    }
+  }
+
   // SpriteEntity compat stubs
   setAttackAnimation(_anim: any): void { }
   setWalkAnimation(_anim: any): void { }
@@ -1155,6 +1205,7 @@ export class Npc3DEntity {
     this.disposed = true;
     this.hideChatBubble();
     this.hideHealthBar();
+    this.setLabel('');
     this.stopAnimationFades();
     for (const attachment of this.gearAttachments.values()) attachment.node.dispose();
     this.gearAttachments.clear();

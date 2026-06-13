@@ -62,6 +62,18 @@ import {
   type RenderDistanceValue,
 } from './renderDistance';
 import {
+  getGameSettings,
+  GROUND_ITEM_LABEL_OPTIONS,
+  NAMEPLATE_OPTIONS,
+  TOOLTIP_OPTIONS,
+  setGroundItemLabelMode,
+  setNameplateMode,
+  setTooltipMode,
+  type GroundItemLabelMode,
+  type NameplateMode,
+  type TooltipMode,
+} from './gameSettings';
+import {
   BRIGHTNESS_OPTIONS,
   getBrightnessLevel,
   setBrightnessLevel,
@@ -76,6 +88,7 @@ import {
   normalizeChatColor,
   setChatFontSize,
   setChatMessageColor,
+  setNpcDialogueInChatEnabled,
   type ChatMessageColorKey,
 } from './chatSettings';
 
@@ -258,6 +271,10 @@ export class SidePanel {
   private settingsTooltip: HoverTooltip | null = null;
   private uiScaleButtons: Map<UiScaleValue, HTMLButtonElement> = new Map();
   private renderDistanceButtons: Map<RenderDistanceValue, HTMLButtonElement> = new Map();
+  private groundItemLabelButtons: Map<GroundItemLabelMode, HTMLButtonElement> = new Map();
+  private nameplateButtons: Map<NameplateMode, HTMLButtonElement> = new Map();
+  private tooltipModeButtons: Map<TooltipMode, HTMLButtonElement> = new Map();
+  private npcDialogueChatButtons: Map<'show' | 'hide', HTMLButtonElement> = new Map();
   private brightnessButtons: Map<BrightnessLevel, HTMLButtonElement> = new Map();
   private chatColorControlSwatches: Map<ChatMessageColorKey, HTMLSpanElement> = new Map();
   private chatColorPickerPanel: HTMLDivElement | null = null;
@@ -1592,6 +1609,10 @@ export class SidePanel {
     view.style.cssText = `${panelFrameCss()} gap: 12px;`;
     this.uiScaleButtons.clear();
     this.renderDistanceButtons.clear();
+    this.groundItemLabelButtons.clear();
+    this.nameplateButtons.clear();
+    this.tooltipModeButtons.clear();
+    this.npcDialogueChatButtons.clear();
     this.brightnessButtons.clear();
     this.chatColorControlSwatches.clear();
     this.renderQualityButtons.clear();
@@ -1652,7 +1673,6 @@ export class SidePanel {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = label;
-      button.title = description;
       button.className = 'eq-action-button';
       button.style.cssText = `
         min-width: 0;
@@ -1770,6 +1790,53 @@ export class SidePanel {
 
     view.appendChild(graphicsGroup);
 
+    const gameSettings = getGameSettings();
+    const gameGroup = makeGroup('Game', 'settings-group-game');
+
+    const groundItemLabelsBlock = makeBlock('Ground Item Labels', 'ground-item-labels-setting');
+    const groundItemLabelsRow = makeRow('Ground item labels', GROUND_ITEM_LABEL_OPTIONS.length);
+    for (const option of GROUND_ITEM_LABEL_OPTIONS) {
+      groundItemLabelsRow.appendChild(makeToggleButton(
+        this.groundItemLabelButtons,
+        option.value,
+        option.label,
+        option.description,
+        (mode) => setGroundItemLabelMode(mode),
+      ));
+    }
+    groundItemLabelsBlock.appendChild(groundItemLabelsRow);
+    gameGroup.appendChild(groundItemLabelsBlock);
+
+    const nameplatesBlock = makeBlock('Player/NPC Nameplates', 'nameplates-setting');
+    const nameplatesRow = makeRow('Player and NPC nameplates', NAMEPLATE_OPTIONS.length);
+    for (const option of NAMEPLATE_OPTIONS) {
+      nameplatesRow.appendChild(makeToggleButton(
+        this.nameplateButtons,
+        option.value,
+        option.label,
+        option.description,
+        (mode) => setNameplateMode(mode),
+      ));
+    }
+    nameplatesBlock.appendChild(nameplatesRow);
+    gameGroup.appendChild(nameplatesBlock);
+
+    const tooltipsBlock = makeBlock('Tooltips', 'tooltips-setting');
+    const tooltipsRow = makeRow('Tooltips', TOOLTIP_OPTIONS.length);
+    for (const option of TOOLTIP_OPTIONS) {
+      tooltipsRow.appendChild(makeToggleButton(
+        this.tooltipModeButtons,
+        option.value,
+        option.label,
+        option.description,
+        (mode) => setTooltipMode(mode),
+      ));
+    }
+    tooltipsBlock.appendChild(tooltipsRow);
+    gameGroup.appendChild(tooltipsBlock);
+
+    view.appendChild(gameGroup);
+
     const chatSettings = getChatSettings();
     const chatGroup = makeGroup('Chat', 'settings-group-chat');
 
@@ -1812,6 +1879,19 @@ export class SidePanel {
     fontRow.append(fontRange, fontValue);
     fontBlock.appendChild(fontRow);
     chatGroup.appendChild(fontBlock);
+
+    const npcDialogueBlock = makeBlock('NPC Dialogue in Chat', 'npc-dialogue-chat-setting');
+    const npcDialogueRow = makeRow('NPC dialogue in chat', 2);
+    npcDialogueRow.append(
+      makeToggleButton(this.npcDialogueChatButtons, 'show', 'Show', 'Show NPC dialogue echoes in the chat box.', () => {
+        setNpcDialogueInChatEnabled(true);
+      }),
+      makeToggleButton(this.npcDialogueChatButtons, 'hide', 'Hide', 'Hide NPC dialogue echoes from the chat box.', () => {
+        setNpcDialogueInChatEnabled(false);
+      }),
+    );
+    npcDialogueBlock.appendChild(npcDialogueRow);
+    chatGroup.appendChild(npcDialogueBlock);
 
     const colorBlock = makeBlock('Message Colors', 'chat-color-setting');
     const colorGrid = document.createElement('div');
@@ -1883,6 +1963,10 @@ export class SidePanel {
     this.updateSettingsButtonGroup(clientButtons, getClientSizeMode());
     this.updateSettingsButtonGroup(this.uiScaleButtons, getUiScale());
     this.updateSettingsButtonGroup(this.renderDistanceButtons, getRenderDistance());
+    this.updateSettingsButtonGroup(this.groundItemLabelButtons, gameSettings.groundItemLabels);
+    this.updateSettingsButtonGroup(this.nameplateButtons, gameSettings.nameplates);
+    this.updateSettingsButtonGroup(this.tooltipModeButtons, gameSettings.tooltips);
+    this.updateSettingsButtonGroup(this.npcDialogueChatButtons, chatSettings.npcDialogueInChat ? 'show' : 'hide');
     this.updateSettingsButtonGroup(this.brightnessButtons, getBrightnessLevel());
     this.updateSettingsButtonGroup(this.renderQualityButtons, this.renderQualityMode);
     return view;

@@ -37,6 +37,7 @@ function makeManager(flags: number): any {
   manager.npcDefsCache = new Map([[npcDef.id, npcDef]]);
   manager.npcDisplayName = () => npcDef.name;
   manager.npcLevelFor = () => 7;
+  manager.localCombatLevel = () => 7;
   manager.attackNpc = () => {};
   manager.talkToNpc = () => {};
   manager.examineNpc = () => {};
@@ -73,6 +74,34 @@ describe('GameManager NPC interaction classification', () => {
     ]);
     expect(options[0].primary).toBeUndefined();
     expect(options[1].primary).toBe(false);
+  });
+
+  test('NPC attack level uses RuneScape combat difference colors', () => {
+    const manager = makeManager(NPC_INTERACTION_HAS_DIALOGUE | NPC_INTERACTION_STARTS_COMBAT);
+    manager.entities.npcCombatTargets.set(1, manager.localPlayerId);
+    manager.localCombatLevel = () => 7;
+
+    const option = manager.getNpcInteractionOptions(1)[0];
+
+    expect(option.labelParts).toEqual([
+      { text: 'Attack ' },
+      { text: 'Mortrek' },
+      { text: ' (level-7)', color: '#ffff00' },
+    ]);
+  });
+
+  test('combat level difference color matches classic RuneScape thresholds', () => {
+    const manager = makeManager(0);
+
+    expect(manager.combatLevelDifferenceColor(50, 61)).toBe('#ff0000');
+    expect(manager.combatLevelDifferenceColor(50, 59)).toBe('#ff3000');
+    expect(manager.combatLevelDifferenceColor(50, 56)).toBe('#ff7000');
+    expect(manager.combatLevelDifferenceColor(50, 53)).toBe('#ffb000');
+    expect(manager.combatLevelDifferenceColor(50, 50)).toBe('#ffff00');
+    expect(manager.combatLevelDifferenceColor(50, 47)).toBe('#c0ff00');
+    expect(manager.combatLevelDifferenceColor(50, 44)).toBe('#80ff00');
+    expect(manager.combatLevelDifferenceColor(50, 41)).toBe('#40ff00');
+    expect(manager.combatLevelDifferenceColor(50, 39)).toBe('#00ff00');
   });
 
   test('shop interaction still wins over combat-start dialogue', () => {
