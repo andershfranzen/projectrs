@@ -22,6 +22,30 @@ function makeInputManagerForObjectPick(
 }
 
 describe('InputManager object picking', () => {
+  test('manual client-coordinate clicks stay in canvas CSS coordinates after render scaling', () => {
+    const scene = {
+      activeCamera: {},
+      onPointerObservable: { add: () => {} },
+      getEngine: () => ({
+        getRenderingCanvas: () => ({
+          getBoundingClientRect: () => ({ left: 10, top: 20, width: 1000, height: 800 }),
+        }),
+        getRenderWidth: () => 500,
+        getRenderHeight: () => 400,
+      }),
+    };
+    const manager = new InputManager(scene as any, {} as any);
+    const calls: Array<{ x: number; y: number; shiftKey: boolean }> = [];
+    (manager as any).handlePrimaryAction = (x: number, y: number, shiftKey: boolean) => {
+      calls.push({ x, y, shiftKey });
+      return true;
+    };
+
+    expect(manager.handlePrimaryActionAt(210, 420, true)).toBe(true);
+
+    expect(calls).toEqual([{ x: 200, y: 400, shiftKey: true }]);
+  });
+
   test('routes batched crop proxy thin-instance picks to object clicks', () => {
     const batchMesh = {
       metadata: {

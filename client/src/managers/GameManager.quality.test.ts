@@ -104,6 +104,22 @@ describe('GameManager render quality command', () => {
     expect(qualityLogs).toEqual(['low']);
   });
 
+  test('canvas picking coordinates remain aligned after low-quality render scaling', () => {
+    const canvas = {
+      getBoundingClientRect: () => ({ left: 20, top: 30, width: 1000, height: 800 }),
+    } as HTMLCanvasElement;
+    const manager = Object.create(GameManager.prototype) as any;
+    manager.engine = {
+      isDisposed: false,
+      getRenderingCanvas: () => canvas,
+      getRenderWidth: () => 500,
+      getRenderHeight: () => 400,
+    };
+    manager.scene = { isDisposed: false };
+
+    expect(manager.canvasPointFromClient(220, 430)).toEqual({ x: 200, y: 400 });
+  });
+
   test('sets high quality for the session and clears low quality preference', () => {
     const storage = installLocalStorageStub();
     storage.set('projectrs_low_quality', '1');

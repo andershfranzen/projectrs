@@ -6715,11 +6715,9 @@ export class GameManager {
     const canvas = this.engine.getRenderingCanvas();
     if (!canvas || this.engine.isDisposed || this.scene.isDisposed) return null;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = this.engine.getRenderWidth() / Math.max(1, rect.width);
-    const scaleY = this.engine.getRenderHeight() / Math.max(1, rect.height);
     return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY,
+      x: clientX - rect.left,
+      y: clientY - rect.top,
     };
   }
 
@@ -10689,7 +10687,7 @@ export class GameManager {
 
       if (this.localPlayer) {
         this._tempVec.set(this.localPlayer.position.x, this.localPlayer.position.y, this.localPlayer.position.z);
-        this.camera.followTarget(this._tempVec, dt);
+        this.camera.followTarget(this._tempVec);
       }
     });
     this.profileFrameSlice('roof hover', () => this.refreshHoverRoofForStoredPointer(performance.now()));
