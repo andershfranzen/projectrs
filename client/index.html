@@ -21,6 +21,10 @@
       --eq-viewport-right: 0px;
       --eq-viewport-bottom: 0px;
       --eq-viewport-scale: 1;
+      --eq-device-pixel-ratio: 1;
+      --eq-page-zoom-ratio: 1;
+      --eq-ui-scale: 1;
+      --eq-ui-scale-inverse-percent: 100%;
     }
     @supports (height: 100dvh) {
       :root {
@@ -62,8 +66,10 @@
 
     /* RS-style fixed frame layout */
     #game-frame {
-      --right-rail-width: 300px;
-      --chat-height: 220px;
+      --eq-base-right-rail-width: 300px;
+      --eq-base-chat-height: 220px;
+      --right-rail-width: calc(var(--eq-base-right-rail-width) * var(--eq-ui-scale, 1));
+      --chat-height: calc(var(--eq-base-chat-height) * var(--eq-ui-scale, 1));
       --minimap-size: 260px;
       --side-tab-size: 44px;
       --side-panel-gap: 8px;
@@ -138,6 +144,7 @@
 
     #ui-chat-inner {
       width: 100%; height: 100%;
+      position: relative;
       overflow: hidden;
     }
 
@@ -160,7 +167,7 @@
 
     @media (max-height: 700px), (max-width: 1000px) {
       #game-frame {
-        --chat-height: 160px;
+        --eq-base-chat-height: 160px;
         --minimap-size: 184px;
         --side-tab-size: 36px;
         --side-panel-gap: 6px;
@@ -170,7 +177,7 @@
 
     @media (max-height: 620px) {
       #game-frame {
-        --chat-height: 140px;
+        --eq-base-chat-height: 140px;
         --minimap-size: 164px;
         --side-tab-size: 34px;
         --side-panel-gap: 5px;
@@ -189,8 +196,8 @@
       }
 
       #game-frame {
-        --right-rail-width: 0px;
-        --chat-height: 0px;
+        --eq-base-right-rail-width: 0px;
+        --eq-base-chat-height: 0px;
         --minimap-size: min(40vw, 150px);
         --side-tab-size: 42px;
         --side-panel-gap: 6px;

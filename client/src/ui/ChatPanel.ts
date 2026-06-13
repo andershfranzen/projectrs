@@ -245,11 +245,16 @@ export class ChatPanel {
     const panel = document.createElement('div');
     panel.id = 'chat-panel';
     panel.style.cssText = `
-      width: 100%; height: 100%;
+      width: var(--eq-ui-scale-inverse-percent, 100%);
+      height: var(--eq-ui-scale-inverse-percent, 100%);
+      transform: scale(var(--eq-ui-scale, 1));
+      transform-origin: bottom left;
       background: transparent;
       display: flex; flex-direction: column;
       font-family: Arial, Helvetica, sans-serif; font-size: 12px;
-      position: relative;
+      position: absolute;
+      left: 0;
+      bottom: 0;
     `;
 
     // Tab bar — sits on the stone, no separate background

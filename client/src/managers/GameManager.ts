@@ -40,7 +40,7 @@ import { EntityManager, type GroundItemData } from './EntityManager';
 import { InputManager } from './InputManager';
 import { NetworkManager } from './NetworkManager';
 import { findPath } from '../rendering/Pathfinding';
-import { SidePanel } from '../ui/SidePanel';
+import { SidePanel, type RenderQualityMode } from '../ui/SidePanel';
 import { ChatPanel } from '../ui/ChatPanel';
 import { GearDebugPanel } from '../ui/GearDebugPanel';
 import { BoneDebugPanel } from '../ui/BoneDebugPanel';
@@ -381,6 +381,9 @@ export class GameManager {
   private destroyed: boolean = false;
   private baseHardwareScalingLevel: number;
   private renderHardwareScalingLevel: number = 1;
+  private renderQualityMode: RenderQualityMode = 'auto';
+  private browserZoomWarningLastAt: number = 0;
+  private browserZoomWarningHandler: ((event: Event) => void) | null = null;
 
   private connectionFrozen: boolean = false;
   private reconnecting: boolean = false;
@@ -758,7 +761,8 @@ export class GameManager {
     this.engine = new Engine(canvas, false, { antialias: false, adaptToDeviceRatio: false });
     // RS-style chunky pixels: keep the CSS size stable but allow an explicit
     // low-quality framebuffer for players who need the fill-rate savings.
-    this.baseHardwareScalingLevel = this.detectBaseHardwareScalingLevel();
+    this.renderQualityMode = this.detectInitialRenderQualityMode();
+    this.baseHardwareScalingLevel = this.hardwareScalingLevelForRenderQualityMode(this.renderQualityMode);
     this.setRenderHardwareScalingLevel(this.baseHardwareScalingLevel, canvas);
     canvas.style.imageRendering = 'pixelated';
     this.scene = new Scene(this.engine);
@@ -913,11 +917,15 @@ export class GameManager {
     this.sidePanel.setAdminItemDeletionEnabled(this.isAdmin);
     this.sidePanel.setSpellCastCallback((spellIndex) => this.sidePanel!.setTargetingSpell(spellIndex));
     this.sidePanel.setAutocastChangeCallback((spellIndex) => this.handleAutocastChange(spellIndex));
+    this.sidePanel.setRenderQualityControls(this.renderQualityMode, (mode) => this.setRenderQualityMode(mode, true));
     // Eager-load the spell catalogue so the spellbook tabs render locked
     // icons (and the question marks) immediately — without this, the tabs
     // stay empty until the player happens to fire /spell or /cast.
     void this.ensureSpellsLoaded().then(() => this.sidePanel?.setSpellCatalogue(this.spellsByIndex));
     this.chatPanel = new ChatPanel();
+    this.browserZoomWarningHandler = (event) => this.handleBrowserZoomWarning(event);
+    window.addEventListener('evilquest:browserzoomblocked', this.browserZoomWarningHandler);
+    window.addEventListener('evilquest:browserzoomchanged', this.browserZoomWarningHandler);
     this.chatPanel.setSendHandler((msg) => {
       if (!this.handleChatCommand(msg)) {
         this.network.sendChat(msg);
@@ -1098,10 +1106,9 @@ export class GameManager {
       // Belt-and-suspenders resize: if the canvas CSS size drifted from the render
       // buffer size (e.g. ResizeObserver was throttled or the container reflowed
       // mid-frame), fix it here before rendering.
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
       const scale = Math.max(1, this.renderHardwareScalingLevel);
-      const expectedW = Math.max(1, Math.round((canvas.clientWidth * dpr) / scale));
-      const expectedH = Math.max(1, Math.round((canvas.clientHeight * dpr) / scale));
+      const expectedW = Math.max(1, Math.floor(canvas.clientWidth / scale));
+      const expectedH = Math.max(1, Math.floor(canvas.clientHeight / scale));
       if (canvas.width !== expectedW || canvas.height !== expectedH) {
         this.handleViewportResize();
       }
@@ -1757,19 +1764,40 @@ export class GameManager {
     this.updateResponsiveCameraZoom();
   }
 
-  private detectBaseHardwareScalingLevel(): number {
+  private handleBrowserZoomWarning(event: Event): void {
+    const detail = (event as CustomEvent<{ zoomed?: boolean; uiScale?: number | null }>).detail;
+    if (event.type === 'evilquest:browserzoomchanged' && detail?.zoomed !== true) return;
+
+    const now = performance.now();
+    if (now - this.browserZoomWarningLastAt < 5000) return;
+    this.browserZoomWarningLastAt = now;
+
+    const scaleText = typeof detail?.uiScale === 'number'
+      ? ` UI size is now ${Math.round(detail.uiScale * 100)}%.`
+      : '';
+    this.chatPanel?.addSystemMessage(`Browser zoom can blur the game or shrink the interface.${scaleText} Use Settings for UI Size and Render Quality.`);
+  }
+
+  private detectInitialRenderQualityMode(): RenderQualityMode {
     const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
     const quality = params.get('quality')?.toLowerCase();
-    if (quality === 'high') return 1;
-    if (quality === 'low') return LOW_QUALITY_HARDWARE_SCALE;
+    if (quality === 'high' || quality === 'low' || quality === 'auto') return quality;
 
     try {
-      if (localStorage.getItem(MANUAL_LOW_QUALITY_STORAGE_KEY) === '1') return LOW_QUALITY_HARDWARE_SCALE;
+      if (localStorage.getItem(MANUAL_LOW_QUALITY_STORAGE_KEY) === '1') return 'low';
       localStorage.removeItem(LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY);
     } catch {
       // Storage can be blocked in privacy modes; default to full quality.
     }
-    return 1;
+    return 'auto';
+  }
+
+  private hardwareScalingLevelForRenderQualityMode(mode: RenderQualityMode): number {
+    return mode === 'low' ? LOW_QUALITY_HARDWARE_SCALE : 1;
+  }
+
+  private detectBaseHardwareScalingLevel(): number {
+    return this.hardwareScalingLevelForRenderQualityMode(this.detectInitialRenderQualityMode());
   }
 
   private setRenderHardwareScalingLevel(level: number, canvas?: HTMLCanvasElement): void {
@@ -1797,6 +1825,19 @@ export class GameManager {
     } catch {
       // Storage can be blocked in privacy modes; the current session still changes.
     }
+  }
+
+  private setRenderQualityMode(mode: RenderQualityMode, announce: boolean = true): void {
+    this.renderQualityMode = mode;
+    this.setLowQualityPreference(mode === 'low');
+    const nextScale = this.hardwareScalingLevelForRenderQualityMode(mode);
+    this.baseHardwareScalingLevel = nextScale;
+    this.setRenderHardwareScalingLevel(nextScale);
+    this.sidePanel?.setRenderQualityMode(mode);
+    if (announce) {
+      this.chatPanel?.addSystemMessage(`Render quality set to ${mode} (scale ${this.renderHardwareScalingLevel.toFixed(1)}).`);
+    }
+    this.reportRenderQualityChange(mode);
   }
 
   private reportRenderQualityChange(requestedQuality: string): void {
@@ -1829,22 +1870,7 @@ export class GameManager {
       return;
     }
 
-    let nextScale = 1;
-    if (requestedQuality === 'low') {
-      this.setLowQualityPreference(true);
-      nextScale = LOW_QUALITY_HARDWARE_SCALE;
-    } else if (requestedQuality === 'high') {
-      this.setLowQualityPreference(false);
-      nextScale = 1;
-    } else {
-      this.setLowQualityPreference(false);
-      nextScale = this.detectBaseHardwareScalingLevel();
-    }
-
-    this.baseHardwareScalingLevel = nextScale;
-    this.setRenderHardwareScalingLevel(nextScale);
-    this.chatPanel?.addSystemMessage(`Render quality set to ${requestedQuality} (scale ${this.renderHardwareScalingLevel.toFixed(1)}).`);
-    this.reportRenderQualityChange(requestedQuality);
+    this.setRenderQualityMode(requestedQuality as RenderQualityMode, true);
   }
 
   private setFpsCounterVisible(visible: boolean, announce: boolean = false): void {
@@ -9472,6 +9498,11 @@ export class GameManager {
       window.removeEventListener('resize', this.onWindowResize);
       window.removeEventListener('evilquest:viewportchange', this.onWindowResize);
       this.onWindowResize = null;
+    }
+    if (this.browserZoomWarningHandler) {
+      window.removeEventListener('evilquest:browserzoomblocked', this.browserZoomWarningHandler);
+      window.removeEventListener('evilquest:browserzoomchanged', this.browserZoomWarningHandler);
+      this.browserZoomWarningHandler = null;
     }
     this.clearHiddenCatchupTimer();
     if (this._keydownHandler) { window.removeEventListener('keydown', this._keydownHandler); this._keydownHandler = null; }

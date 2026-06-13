@@ -43,6 +43,12 @@ import {
   setClientSizeMode,
   type ClientSizeMode,
 } from './clientSizeMode';
+import {
+  getUiScale,
+  setUiScale,
+  UI_SCALE_OPTIONS,
+  type UiScaleValue,
+} from './uiScale';
 
 const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'Ring', 'Hands', 'Feet', 'Cape', 'Ammo'];
 const WATER_CONTAINER_ITEM_IDS: ReadonlySet<number> = new Set(SOFT_CLAY_WATER_CONTAINER_ITEM_IDS);
@@ -60,6 +66,7 @@ const ARROWHEAD_RECIPE_BY_ITEM_ID: ReadonlyMap<number, typeof ARROWHEAD_FLETCHIN
   ARROWHEAD_FLETCHING_RECIPES.map(recipe => [recipe.arrowheadItemId, recipe]),
 );
 type SocialListTab = 'friends' | 'ignore';
+export type RenderQualityMode = 'auto' | 'high' | 'low';
 const MELEE_STANCE_LABELS: Readonly<Record<MeleeStance, { label: string; desc: string }>> = {
   accurate: { label: 'Accurate', desc: 'Measured attacks' },
   aggressive: { label: 'Aggressive', desc: 'Heavy attacks' },
@@ -202,6 +209,10 @@ export class SidePanel {
   private targetingBanner: HTMLDivElement | null = null;
   private spellTooltip: HoverTooltip | null = null;
   private settingsTooltip: HoverTooltip | null = null;
+  private uiScaleButtons: Map<UiScaleValue, HTMLButtonElement> = new Map();
+  private renderQualityMode: RenderQualityMode = 'auto';
+  private renderQualityButtons: Map<RenderQualityMode, HTMLButtonElement> = new Map();
+  private renderQualityChangeCallback: ((mode: RenderQualityMode) => void) | null = null;
 
   constructor(network: NetworkManager, token: string = '') {
     this.network = network;
@@ -424,6 +435,8 @@ export class SidePanel {
           gap: 6px;
           margin: 0;
           pointer-events: auto;
+          transform: scale(var(--eq-ui-scale, 1));
+          transform-origin: top right;
         }
 
         #game-frame .side-account-actions .side-action-button {
@@ -460,6 +473,10 @@ export class SidePanel {
           pointer-events: none;
         }
 
+        #side-panel .side-brand-area {
+          display: none !important;
+        }
+
         @media (max-height: 700px), (max-width: 1000px) {
           #side-panel .side-resource-row {
             padding-top: 2px !important;
@@ -480,14 +497,6 @@ export class SidePanel {
             flex-basis: 360px !important;
             max-height: none !important;
             padding: 1px 2px !important;
-          }
-          #side-panel .side-brand-area {
-            min-height: 0 !important;
-            flex: 0 0 auto !important;
-            padding: 0 !important;
-          }
-          #side-panel .side-brand {
-            display: none !important;
           }
           #game-frame .side-account-actions {
             top: 2px !important;
@@ -534,10 +543,6 @@ export class SidePanel {
             padding-top: 6px !important;
             padding-bottom: 6px !important;
           }
-        }
-
-        html.eq-fixed-client-size #side-panel .side-brand-area {
-          display: none !important;
         }
 
         html.eq-fixed-client-size #side-panel .side-content-area {
@@ -609,7 +614,8 @@ export class SidePanel {
           #side-panel .inv-slot[data-filled="1"] {
             touch-action: pan-y;
           }
-          #side-panel .client-size-setting {
+          #side-panel .client-size-setting,
+          #side-panel .ui-scale-setting {
             display: none !important;
           }
           #side-panel .client-size-setting-mobile-note {
@@ -696,7 +702,13 @@ export class SidePanel {
     const panel = document.createElement('div');
     panel.id = 'side-panel';
     panel.style.cssText = `
-      width: 100%; flex: 1; min-height: 0;
+      width: var(--eq-ui-scale-inverse-percent, 100%);
+      height: var(--eq-ui-scale-inverse-percent, 100%);
+      flex: 0 0 var(--eq-ui-scale-inverse-percent, 100%);
+      align-self: flex-end;
+      min-height: 0;
+      transform: scale(var(--eq-ui-scale, 1));
+      transform-origin: top right;
       background: transparent;
       border-top: 2px solid rgba(0,0,0,0.3);
       font-family: Arial, Helvetica, sans-serif; color: #ddd;
@@ -926,10 +938,8 @@ export class SidePanel {
     // Tab contents
     const contentArea = document.createElement('div');
     contentArea.className = 'side-content-area';
-    // flex:1 lets the area shrink at small viewports; max-height caps it at
-    // the inventory grid's natural max (6 rows + chrome) so at
-    // fullscreen the tab body uses the extra vertical room freed by the smaller
-    // minimap without pushing the brand/logout footer off the rail. Other tabs
+    // flex lets the area shrink at small viewports; max-height caps it at the
+    // inventory grid's natural max (6 rows + chrome). Other tabs
     // (skills/equipment/etc.) inherit the same envelope.
     contentArea.style.cssText = `
       padding: 2px 3px; overflow: hidden;
@@ -1465,48 +1475,71 @@ export class SidePanel {
     this.spellTooltip = null;
   }
 
+  setRenderQualityControls(mode: RenderQualityMode, callback: (mode: RenderQualityMode) => void): void {
+    this.renderQualityMode = mode;
+    this.renderQualityChangeCallback = callback;
+    this.updateSettingsButtonGroup(this.renderQualityButtons, mode);
+  }
+
+  setRenderQualityMode(mode: RenderQualityMode): void {
+    this.renderQualityMode = mode;
+    this.updateSettingsButtonGroup(this.renderQualityButtons, mode);
+  }
+
+  private updateSettingsButtonGroup<T extends string | number>(buttons: Map<T, HTMLButtonElement>, activeValue: T): void {
+    for (const [key, button] of buttons) {
+      const active = key === activeValue;
+      setToggleButtonActive(button, active);
+      button.setAttribute('role', 'radio');
+      button.setAttribute('aria-checked', String(active));
+      button.style.color = active ? '#d8372b' : '#b8b0a0';
+      button.style.borderColor = active ? 'rgba(216,55,43,0.72)' : 'rgba(91,71,45,0.72)';
+      button.style.background = active
+        ? 'linear-gradient(180deg, rgba(48,22,18,0.95), rgba(22,12,10,0.96))'
+        : 'linear-gradient(180deg, rgba(34,27,20,0.92), rgba(16,12,9,0.94))';
+    }
+  }
+
   private buildSettingsContent(): HTMLDivElement {
     const view = document.createElement('div');
     view.style.cssText = `${panelFrameCss()} gap: 12px;`;
+    this.uiScaleButtons.clear();
+    this.renderQualityButtons.clear();
 
-    const block = document.createElement('div');
-    block.className = 'client-size-setting';
-    block.style.cssText = `
-      display: ${isDesktopClientSizeSettingAvailable() ? 'flex' : 'none'};
-      flex-direction: column;
-      gap: 8px;
-    `;
-
-    const header = document.createElement('div');
-    header.textContent = 'Client';
-    header.style.cssText = panelHeaderCss('#b8b0a0');
-    block.appendChild(header);
-
-    const row = document.createElement('div');
-    row.setAttribute('role', 'radiogroup');
-    row.setAttribute('aria-label', 'Client size mode');
-    row.style.cssText = `
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 4px;
-    `;
-
-    const buttons = new Map<ClientSizeMode, HTMLButtonElement>();
-    const applyVisualState = (mode: ClientSizeMode) => {
-      for (const [key, button] of buttons) {
-        const active = key === mode;
-        setToggleButtonActive(button, active);
-        button.setAttribute('role', 'radio');
-        button.setAttribute('aria-checked', String(active));
-        button.style.color = active ? '#d8372b' : '#b8b0a0';
-        button.style.borderColor = active ? 'rgba(216,55,43,0.72)' : 'rgba(91,71,45,0.72)';
-        button.style.background = active
-          ? 'linear-gradient(180deg, rgba(48,22,18,0.95), rgba(22,12,10,0.96))'
-          : 'linear-gradient(180deg, rgba(34,27,20,0.92), rgba(16,12,9,0.94))';
-      }
+    const makeBlock = (title: string, className: string, available: boolean = true): HTMLDivElement => {
+      const block = document.createElement('div');
+      block.className = className;
+      block.style.cssText = `
+        display: ${available ? 'flex' : 'none'};
+        flex-direction: column;
+        gap: 8px;
+      `;
+      const header = document.createElement('div');
+      header.textContent = title;
+      header.style.cssText = panelHeaderCss('#b8b0a0');
+      block.appendChild(header);
+      return block;
     };
 
-    const makeModeButton = (mode: ClientSizeMode, label: string, description: string): HTMLButtonElement => {
+    const makeRow = (ariaLabel: string, columns: number): HTMLDivElement => {
+      const row = document.createElement('div');
+      row.setAttribute('role', 'radiogroup');
+      row.setAttribute('aria-label', ariaLabel);
+      row.style.cssText = `
+        display: grid;
+        grid-template-columns: repeat(${columns}, minmax(0, 1fr));
+        gap: 4px;
+      `;
+      return row;
+    };
+
+    const makeToggleButton = <T extends string | number>(
+      buttons: Map<T, HTMLButtonElement>,
+      value: T,
+      label: string,
+      description: string,
+      onSelect: (value: T) => void,
+    ): HTMLButtonElement => {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = label;
@@ -1525,8 +1558,8 @@ export class SidePanel {
       button.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        setClientSizeMode(mode);
-        applyVisualState(getClientSizeMode());
+        onSelect(value);
+        this.updateSettingsButtonGroup(buttons, value);
       });
       button.addEventListener('mouseenter', (event) => {
         this.showSettingsTooltip(label, description, event.clientX, event.clientY);
@@ -1536,24 +1569,70 @@ export class SidePanel {
       });
       button.addEventListener('mouseleave', () => this.hideSettingsTooltip());
       button.addEventListener('blur', () => this.hideSettingsTooltip());
-      buttons.set(mode, button);
+      buttons.set(value, button);
       return button;
     };
 
-    row.append(
-      makeModeButton('fixed', 'Fixed', `Locks the game frame to ${FIXED_CLIENT_SIZE.width}x${FIXED_CLIENT_SIZE.height}.`),
-      makeModeButton('dynamic', 'Dynamic', 'Scales the game frame with the window.'),
+    const desktopSettingsAvailable = isDesktopClientSizeSettingAvailable();
+
+    const clientButtons = new Map<ClientSizeMode, HTMLButtonElement>();
+    const clientBlock = makeBlock('Client', 'client-size-setting', desktopSettingsAvailable);
+    const clientRow = makeRow('Client size mode', 2);
+    clientRow.append(
+      makeToggleButton(clientButtons, 'fixed', 'Fixed', `Locks the game frame to ${FIXED_CLIENT_SIZE.width}x${FIXED_CLIENT_SIZE.height}.`, (mode) => {
+        setClientSizeMode(mode);
+        this.updateSettingsButtonGroup(clientButtons, getClientSizeMode());
+      }),
+      makeToggleButton(clientButtons, 'dynamic', 'Dynamic', 'Scales the game frame with the window.', (mode) => {
+        setClientSizeMode(mode);
+        this.updateSettingsButtonGroup(clientButtons, getClientSizeMode());
+      }),
     );
-    block.appendChild(row);
-    view.appendChild(block);
+    clientBlock.appendChild(clientRow);
+    view.appendChild(clientBlock);
+
+    const uiScaleBlock = makeBlock('UI Size', 'ui-scale-setting', desktopSettingsAvailable);
+    const uiScaleRow = makeRow('UI size', UI_SCALE_OPTIONS.length);
+    for (const option of UI_SCALE_OPTIONS) {
+      uiScaleRow.appendChild(makeToggleButton(
+        this.uiScaleButtons,
+        option.value,
+        option.label,
+        `${option.label} interface scale.`,
+        (scale) => setUiScale(scale),
+      ));
+    }
+    uiScaleBlock.appendChild(uiScaleRow);
+    view.appendChild(uiScaleBlock);
+
+    const renderQualityBlock = makeBlock('Render', 'render-quality-setting');
+    const renderQualityRow = makeRow('Render quality', 3);
+    renderQualityRow.append(
+      makeToggleButton(this.renderQualityButtons, 'auto', 'Auto', 'Default render resolution.', (mode) => {
+        this.renderQualityMode = mode;
+        this.renderQualityChangeCallback?.(mode);
+      }),
+      makeToggleButton(this.renderQualityButtons, 'high', 'High', 'Full render resolution.', (mode) => {
+        this.renderQualityMode = mode;
+        this.renderQualityChangeCallback?.(mode);
+      }),
+      makeToggleButton(this.renderQualityButtons, 'low', 'Low', 'Lower render resolution.', (mode) => {
+        this.renderQualityMode = mode;
+        this.renderQualityChangeCallback?.(mode);
+      }),
+    );
+    renderQualityBlock.appendChild(renderQualityRow);
+    view.appendChild(renderQualityBlock);
 
     const unavailable = document.createElement('div');
     unavailable.className = 'client-size-setting-mobile-note';
-    unavailable.textContent = 'Client size mode is available on desktop only.';
-    unavailable.style.cssText = `${mutedBodyCss()} display: ${isDesktopClientSizeSettingAvailable() ? 'none' : 'block'};`;
+    unavailable.textContent = 'Client and UI size options are available on desktop only.';
+    unavailable.style.cssText = `${mutedBodyCss()} display: ${desktopSettingsAvailable ? 'none' : 'block'};`;
     view.appendChild(unavailable);
 
-    applyVisualState(getClientSizeMode());
+    this.updateSettingsButtonGroup(clientButtons, getClientSizeMode());
+    this.updateSettingsButtonGroup(this.uiScaleButtons, getUiScale());
+    this.updateSettingsButtonGroup(this.renderQualityButtons, this.renderQualityMode);
     return view;
   }
 
