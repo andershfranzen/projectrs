@@ -62,13 +62,16 @@ import {
   type RenderDistanceValue,
 } from './renderDistance';
 import {
+  FRAME_PACE_OPTIONS,
   getGameSettings,
   GROUND_ITEM_LABEL_OPTIONS,
   NAMEPLATE_OPTIONS,
   TOOLTIP_OPTIONS,
+  setFramePaceMode,
   setGroundItemLabelMode,
   setNameplateMode,
   setTooltipMode,
+  type FramePaceMode,
   type GroundItemLabelMode,
   type NameplateMode,
   type TooltipMode,
@@ -285,6 +288,7 @@ export class SidePanel {
   private activeChatColorPickerKey: ChatMessageColorKey | null = null;
   private renderQualityMode: RenderQualityMode = 'auto';
   private renderQualityButtons: Map<RenderQualityMode, HTMLButtonElement> = new Map();
+  private framePaceButtons: Map<FramePaceMode, HTMLButtonElement> = new Map();
   private renderQualityChangeCallback: ((mode: RenderQualityMode) => void) | null = null;
   private brandResizeObserver: ResizeObserver | null = null;
 
@@ -1616,6 +1620,7 @@ export class SidePanel {
     this.brightnessButtons.clear();
     this.chatColorControlSwatches.clear();
     this.renderQualityButtons.clear();
+    this.framePaceButtons.clear();
 
     const makeGroup = (title: string, className: string): HTMLDivElement => {
       const group = document.createElement('div');
@@ -1753,6 +1758,20 @@ export class SidePanel {
     );
     renderQualityBlock.appendChild(renderQualityRow);
     graphicsGroup.appendChild(renderQualityBlock);
+
+    const framePaceBlock = makeBlock('Frame Pace', 'frame-pace-setting');
+    const framePaceRow = makeRow('Frame pace', FRAME_PACE_OPTIONS.length);
+    for (const option of FRAME_PACE_OPTIONS) {
+      framePaceRow.appendChild(makeToggleButton(
+        this.framePaceButtons,
+        option.value,
+        option.label,
+        option.description,
+        (mode) => setFramePaceMode(mode),
+      ));
+    }
+    framePaceBlock.appendChild(framePaceRow);
+    graphicsGroup.appendChild(framePaceBlock);
 
     const renderDistanceBlock = makeBlock('Render Distance', 'render-distance-setting');
     const renderDistanceRow = makeRow('Render distance', RENDER_DISTANCE_OPTIONS.length);
@@ -1966,6 +1985,7 @@ export class SidePanel {
     this.updateSettingsButtonGroup(this.groundItemLabelButtons, gameSettings.groundItemLabels);
     this.updateSettingsButtonGroup(this.nameplateButtons, gameSettings.nameplates);
     this.updateSettingsButtonGroup(this.tooltipModeButtons, gameSettings.tooltips);
+    this.updateSettingsButtonGroup(this.framePaceButtons, gameSettings.framePace);
     this.updateSettingsButtonGroup(this.npcDialogueChatButtons, chatSettings.npcDialogueInChat ? 'show' : 'hide');
     this.updateSettingsButtonGroup(this.brightnessButtons, getBrightnessLevel());
     this.updateSettingsButtonGroup(this.renderQualityButtons, this.renderQualityMode);

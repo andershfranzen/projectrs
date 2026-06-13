@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { formatFramePacingForChat, GameManager, isStableLowFrameCadence } from './GameManager';
+import { formatFramePacingForChat, GameManager, isStableLowFrameCadence, targetRenderFpsForFramePace } from './GameManager';
 
 const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
@@ -76,6 +76,19 @@ function makeQualityManager() {
 }
 
 describe('GameManager render quality command', () => {
+  test('frame pace target picks clean display divisors near 60 FPS', () => {
+    expect(targetRenderFpsForFramePace(60)).toBeNull();
+    expect(targetRenderFpsForFramePace(75)).toBeNull();
+    expect(targetRenderFpsForFramePace(85)).toBeNull();
+    expect(targetRenderFpsForFramePace(89.1)).toBeNull();
+    expect(targetRenderFpsForFramePace(89.5)).toBe(44.75);
+    expect(targetRenderFpsForFramePace(90)).toBe(45);
+    expect(targetRenderFpsForFramePace(120)).toBe(60);
+    expect(targetRenderFpsForFramePace(144)).toBe(48);
+    expect(targetRenderFpsForFramePace(165)).toBe(55);
+    expect(targetRenderFpsForFramePace(240)).toBe(60);
+  });
+
   test('sets low quality immediately and persists it', () => {
     const storage = installLocalStorageStub();
     const { manager, canvas, hardwareScaleCalls, messages, qualityLogs } = makeQualityManager();

@@ -1,11 +1,13 @@
 export type GroundItemLabelMode = 'off' | 'valuable' | 'all';
 export type NameplateMode = 'off' | 'friends' | 'players' | 'all';
 export type TooltipMode = 'off' | 'on';
+export type FramePaceMode = 'smooth' | 'battery';
 
 export interface GameSettings {
   groundItemLabels: GroundItemLabelMode;
   nameplates: NameplateMode;
   tooltips: TooltipMode;
+  framePace: FramePaceMode;
 }
 
 export interface GameSettingsOption<T extends string> {
@@ -34,10 +36,16 @@ export const TOOLTIP_OPTIONS: readonly GameSettingsOption<TooltipMode>[] = [
   { value: 'on', label: 'On', description: 'Show hover tooltips.' },
 ];
 
+export const FRAME_PACE_OPTIONS: readonly GameSettingsOption<FramePaceMode>[] = [
+  { value: 'smooth', label: 'Smooth', description: 'Render every display frame.' },
+  { value: 'battery', label: 'Battery', description: 'Pace rendering to a display-friendly lower cadence while keeping input and camera updates live.' },
+];
+
 const DEFAULT_GAME_SETTINGS: GameSettings = {
   groundItemLabels: 'off',
   nameplates: 'all',
   tooltips: 'on',
+  framePace: 'smooth',
 };
 
 let installed = false;
@@ -61,11 +69,16 @@ export function normalizeTooltipMode(value: unknown): TooltipMode {
     : DEFAULT_GAME_SETTINGS.tooltips;
 }
 
+export function normalizeFramePaceMode(value: unknown): FramePaceMode {
+  return value === 'battery' || value === 'smooth' ? value : DEFAULT_GAME_SETTINGS.framePace;
+}
+
 function normalizeGameSettings(value: Partial<GameSettings> | null | undefined): GameSettings {
   return {
     groundItemLabels: normalizeGroundItemLabelMode(value?.groundItemLabels),
     nameplates: normalizeNameplateMode(value?.nameplates),
     tooltips: normalizeTooltipMode(value?.tooltips),
+    framePace: normalizeFramePaceMode(value?.framePace),
   };
 }
 
@@ -126,6 +139,14 @@ export function setTooltipMode(mode: TooltipMode): TooltipMode {
   saveSettings(activeSettings);
   applyGameSettings(activeSettings);
   return activeSettings.tooltips;
+}
+
+export function setFramePaceMode(mode: FramePaceMode): FramePaceMode {
+  activeSettings = getGameSettings();
+  activeSettings.framePace = normalizeFramePaceMode(mode);
+  saveSettings(activeSettings);
+  applyGameSettings(activeSettings);
+  return activeSettings.framePace;
 }
 
 export function installGameSettingsController(): void {

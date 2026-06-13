@@ -187,6 +187,7 @@ const CLIENT_DIAGNOSTIC_EVENTS: Array<{ value: string; label: string }> = [
   { value: '', label: 'All events' },
   { value: 'client_low_fps_snapshot', label: 'Low FPS' },
   { value: 'client_low_fps_post_scale_snapshot', label: 'Post-scale FPS' },
+  { value: 'client_frame_spike', label: 'Frame spikes' },
   { value: 'client_perf_snapshot', label: 'Perf' },
   { value: 'client_quality_change', label: 'Quality' },
   { value: 'game_connection_lost', label: 'Disconnects' },
@@ -877,6 +878,7 @@ export class AdminPanel {
     const counts = {
       lowFps: 0,
       postScale: 0,
+      frameSpike: 0,
       perf: 0,
       quality: 0,
       software: 0,
@@ -890,6 +892,7 @@ export class AdminPanel {
     for (const entry of this.diagnostics) {
       if (entry.event === 'client_low_fps_snapshot') counts.lowFps++;
       else if (entry.event === 'client_low_fps_post_scale_snapshot') counts.postScale++;
+      else if (entry.event === 'client_frame_spike') counts.frameSpike++;
       else if (entry.event === 'client_perf_snapshot') counts.perf++;
       else if (entry.event === 'client_quality_change') counts.quality++;
       const flags = this.diagnosticFlags(entry);
@@ -909,6 +912,7 @@ export class AdminPanel {
       this.summaryPill(`${this.diagnostics.length} snapshots`, '#6c5c43'),
       this.summaryPill(`${counts.lowFps} low FPS`, counts.lowFps > 0 ? '#8f2f28' : '#4d5d45'),
       this.summaryPill(`${counts.postScale} post-scale`, counts.postScale > 0 ? '#8f6d2d' : '#4d5d45'),
+      this.summaryPill(`${counts.frameSpike} spikes`, counts.frameSpike > 0 ? '#8f2f28' : '#4d5d45'),
       this.summaryPill(`${counts.perf} perf`, '#2f5f8f'),
       this.summaryPill(`${counts.quality} quality`, counts.quality > 0 ? '#2f5f8f' : '#4d5d45'),
       this.summaryPill(`${counts.hardwareLow} hardware low`, counts.hardwareLow > 0 ? '#8f6d2d' : '#4d5d45'),
@@ -2195,6 +2199,7 @@ export class AdminPanel {
     switch (event) {
       case 'client_low_fps_snapshot': return 'Low FPS';
       case 'client_low_fps_post_scale_snapshot': return 'Post-scale FPS';
+      case 'client_frame_spike': return 'Frame spike';
       case 'client_perf_snapshot': return 'Perf';
       case 'client_quality_change': return 'Quality';
       case 'game_connection_lost': return 'Disconnect';
@@ -2207,6 +2212,8 @@ export class AdminPanel {
       ? '#8f2f28'
       : event === 'client_low_fps_post_scale_snapshot'
         ? '#8f6d2d'
+      : event === 'client_frame_spike'
+        ? '#8f2f28'
       : event === 'client_perf_snapshot'
         ? '#2f5f8f'
         : event === 'client_quality_change'

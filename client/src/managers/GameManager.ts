@@ -43,7 +43,7 @@ import { findPath } from '../rendering/Pathfinding';
 import { SidePanel, type RenderQualityMode } from '../ui/SidePanel';
 import { ChatPanel } from '../ui/ChatPanel';
 import { isNpcDialogueInChatEnabled } from '../ui/chatSettings';
-import { getGameSettings, type GameSettings, type NameplateMode } from '../ui/gameSettings';
+import { getGameSettings, type FramePaceMode, type GameSettings, type NameplateMode } from '../ui/gameSettings';
 import { getRenderDistance, renderDistanceOptionFor, type RenderDistanceValue } from '../ui/renderDistance';
 import { GearDebugPanel } from '../ui/GearDebugPanel';
 import { BoneDebugPanel } from '../ui/BoneDebugPanel';
@@ -62,7 +62,6 @@ import { CharacterCreator } from '../ui/CharacterCreator';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick } from '../ui/popupStyle';
-import { createFrameLimiter, DEFAULT_MAX_RENDER_FPS } from '../util/frameLimiter';
 import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
@@ -105,6 +104,51 @@ const WORLD_OBJECT_PICK_MIN_HEIGHT = 0.45;
 const WORLD_OBJECT_PICK_MAX_HEIGHT = 8;
 const CROP_PICK_MARGIN = 0.04;
 const CROP_PICK_MIN_SIZE = 0.45;
+const CLIENT_FRAME_SPIKE_TELEMETRY_ENABLED = true;
+const CLIENT_FRAME_SPIKE_TELEMETRY_MS = 50;
+const CLIENT_FRAME_SPIKE_PROFILER_MS = 32;
+const CLIENT_FRAME_SPIKE_CONSOLE_COOLDOWN_MS = 250;
+const CLIENT_FRAME_SPIKE_SERVER_COOLDOWN_MS = 10_000;
+const CLIENT_FRAME_SPIKE_PROFILER_STORAGE_KEY = 'evilquest_frame_spike_profiler';
+const CLIENT_FRAME_SPIKE_GPU_TIMER_STORAGE_KEY = 'evilquest_frame_spike_gpu_timer';
+const CLIENT_FRAME_SPIKE_PROFILER_QUERY_FLAGS = ['framestats', 'frameprofiler', 'framespikes'] as const;
+const CLIENT_FRAME_SPIKE_GPU_QUERY_FLAGS = ['framestatsgpu', 'framegpu', 'gputimer'] as const;
+const FRAME_PACE_TARGET_FPS = 60;
+const FRAME_PACE_MIN_PACED_FPS = 45;
+const FRAME_PACE_MIN_PACED_FPS_TOLERANCE = 0.25;
+const FRAME_PACE_NATIVE_REFRESH_CUTOFF_FPS = 80;
+const FRAME_PACE_ESTIMATE_SAMPLE_COUNT = 90;
+
+export function targetRenderFpsForFramePace(displayHz: number): number | null {
+  if (!Number.isFinite(displayHz) || displayHz <= FRAME_PACE_NATIVE_REFRESH_CUTOFF_FPS) return null;
+  const divisor = Math.max(1, Math.ceil(displayHz / FRAME_PACE_TARGET_FPS));
+  const pacedHz = displayHz / divisor;
+  if (divisor <= 1 || pacedHz + FRAME_PACE_MIN_PACED_FPS_TOLERANCE < FRAME_PACE_MIN_PACED_FPS) return null;
+  return pacedHz;
+}
+
+function isTruthyDiagnosticValue(value: string | null): boolean {
+  if (value === null || value === '') return true;
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+function isClientDiagnosticFlagEnabled(queryFlags: readonly string[], storageKey?: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    for (const flag of queryFlags) {
+      const value = params.get(flag);
+      if (params.has(flag) && isTruthyDiagnosticValue(value?.toLowerCase() ?? null)) return true;
+    }
+    if (storageKey) {
+      const stored = window.localStorage?.getItem(storageKey);
+      if (stored && isTruthyDiagnosticValue(stored.toLowerCase())) return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
 
 interface FrameRateSample {
   frames: number;
@@ -203,6 +247,14 @@ type HoverActionReadout = {
 };
 
 type MinimapEntityPoint = { x: number; z: number };
+type FrameProfileSlice = { label: string; ms: number };
+type FrameLongTask = { startMs: number; durationMs: number; name: string; attribution: string[] };
+type FrameGpuTimer = {
+  gl: WebGL2RenderingContext;
+  ext: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number };
+  pending: Array<{ query: WebGLQuery; startedAtMs: number }>;
+  lastMs: number | null;
+};
 
 type DoorPickProxyBounds = {
   center: Vector3;
@@ -391,6 +443,13 @@ export class GameManager {
   private baseHardwareScalingLevel: number;
   private renderHardwareScalingLevel: number = 1;
   private renderQualityMode: RenderQualityMode = 'auto';
+  private framePaceMode: FramePaceMode = getGameSettings().framePace;
+  private framePaceSamples: number[] = [];
+  private framePaceEstimatedHz: number | null = null;
+  private framePaceTargetIntervalMs: number | null = null;
+  private lastSceneRenderAtMs: number = 0;
+  private pacedSceneRenderCount: number = 0;
+  private pacedSceneSkippedCount: number = 0;
   private browserZoomWarningLastAt: number = 0;
   private browserZoomWarningHandler: ((event: Event) => void) | null = null;
   private renderDistanceChangeHandler: ((event: Event) => void) | null = null;
@@ -744,6 +803,21 @@ export class GameManager {
   private lowFpsDiagnosticFrames: number = 0;
   private lowFpsDiagnosticSent: boolean = false;
   private lowFpsRendererWarningSent: boolean = false;
+  private readonly frameSpikeProfilerEnabled: boolean = isClientDiagnosticFlagEnabled(
+    CLIENT_FRAME_SPIKE_PROFILER_QUERY_FLAGS,
+    CLIENT_FRAME_SPIKE_PROFILER_STORAGE_KEY,
+  );
+  private readonly frameSpikeGpuTimerEnabled: boolean = this.frameSpikeProfilerEnabled || isClientDiagnosticFlagEnabled(
+    CLIENT_FRAME_SPIKE_GPU_QUERY_FLAGS,
+    CLIENT_FRAME_SPIKE_GPU_TIMER_STORAGE_KEY,
+  );
+  private frameProfileSlices: FrameProfileSlice[] = [];
+  private frameProfileOverlay: HTMLDivElement | null = null;
+  private lastFrameProfileLogAt: number = 0;
+  private lastFrameSpikeTelemetryAt: number = 0;
+  private frameLongTaskObserver: PerformanceObserver | null = null;
+  private recentFrameLongTasks: FrameLongTask[] = [];
+  private frameGpuTimer: FrameGpuTimer | null = null;
   private nativeContextMenuBlocker: ((event: MouseEvent) => void) | null = null;
   private lastWorldContextMenuEventAt: number = 0;
   private lastWorldContextMenuEventX: number = -9999;
@@ -778,7 +852,6 @@ export class GameManager {
     this.renderQualityMode = this.detectInitialRenderQualityMode();
     this.baseHardwareScalingLevel = this.hardwareScalingLevelForRenderQualityMode(this.renderQualityMode);
     this.setRenderHardwareScalingLevel(this.baseHardwareScalingLevel, canvas);
-    canvas.dataset.maxRenderFps = String(DEFAULT_MAX_RENDER_FPS);
     canvas.style.imageRendering = 'pixelated';
     this.scene = new Scene(this.engine);
     this.scene.useRightHandedSystem = true; // Match Three.js coordinate system (KC editor)
@@ -1136,13 +1209,16 @@ export class GameManager {
     // Remove a stale debug overlay from HMR/reconnect. It is opt-in via /fps.
     document.getElementById('fps-counter')?.remove();
     this.fpsLastSampleAt = performance.now();
+    this.setupFrameLongTaskObserver();
+    this.setupFrameGpuTimer();
 
     // Game loop
     let lastTime = performance.now();
-    const renderLimiter = createFrameLimiter(DEFAULT_MAX_RENDER_FPS, lastTime);
+    this.lastSceneRenderAtMs = lastTime;
     this.engine.runRenderLoop(() => {
       const now = performance.now();
-      if (!renderLimiter.shouldRun(now)) return;
+      const frameStart = performance.now();
+      if (this.frameSpikeProfilerEnabled) this.frameProfileSlices.length = 0;
 
       // Belt-and-suspenders resize: if the canvas CSS size drifted from the render
       // buffer size (e.g. ResizeObserver was throttled or the container reflowed
@@ -1154,12 +1230,36 @@ export class GameManager {
         this.handleViewportResize();
       }
 
-      const dt = Math.min((now - lastTime) / 1000, MAX_FRAME_DT_SECONDS);
+      const frameGapMs = now - lastTime;
+      this.updateFramePaceEstimate(frameGapMs);
+      const dt = Math.min(frameGapMs / 1000, MAX_FRAME_DT_SECONDS);
       lastTime = now;
+      const updateStart = performance.now();
       this.update(dt);
-      this.scene.render();
 
-      this.updateFpsCounter(now);
+      const renderDecisionAt = performance.now();
+      const renderGapMs = renderDecisionAt - this.lastSceneRenderAtMs;
+      const renderThisFrame = this.shouldRenderSceneFrame(renderGapMs);
+      if (renderThisFrame) {
+        this.pacedSceneRenderCount++;
+        const renderDt = Math.min(renderGapMs / 1000, MAX_FRAME_DT_SECONDS);
+        this.updateRenderFrameUi(renderDt);
+        const updateMs = performance.now() - updateStart;
+        this.lastSceneRenderAtMs = renderDecisionAt;
+        const renderStart = performance.now();
+        const gpuQuery = this.beginFrameGpuTimer();
+        this.scene.render();
+        this.endFrameGpuTimer(gpuQuery);
+        this.pollFrameGpuTimer();
+        const renderMs = performance.now() - renderStart;
+        if (this.shouldMonitorFrameSpikes()) {
+          this.reportFrameProfile(performance.now() - frameStart, updateMs, renderMs, renderGapMs);
+        }
+        this.updateFpsCounter(now);
+      } else {
+        this.pacedSceneSkippedCount++;
+      }
+
       this.updateLowFpsDiagnostic(now);
     });
 
@@ -1438,6 +1538,7 @@ export class GameManager {
       'framePacing',
       'renderScale',
       'baseRenderScale',
+      'framePace',
       'currentMap',
       'currentFloor',
       'player',
@@ -1741,6 +1842,13 @@ export class GameManager {
       proceduralTerrainDetail: true,
       renderScale: this.renderHardwareScalingLevel,
       baseRenderScale: this.baseHardwareScalingLevel,
+      framePace: {
+        mode: this.framePaceMode,
+        estimatedDisplayHz: this.framePaceEstimatedHz === null ? null : Number(this.framePaceEstimatedHz.toFixed(1)),
+        targetRenderFps: this.framePaceTargetIntervalMs === null ? null : Number((1000 / this.framePaceTargetIntervalMs).toFixed(1)),
+        renderCount: this.pacedSceneRenderCount,
+        skippedRenderCount: this.pacedSceneSkippedCount,
+      },
       currentMap: this.chunkManager.getMapId(),
       currentFloor: this.currentFloor,
       player: {
@@ -1841,9 +1949,48 @@ export class GameManager {
   }
 
   private applyGameSettings(settings: GameSettings): void {
+    if (this.framePaceMode !== settings.framePace) {
+      this.framePaceMode = settings.framePace;
+      this.resetFramePaceScheduler();
+    }
     if (!this.entities) return;
     this.entities.setGroundItemLabelMode(settings.groundItemLabels);
     this.refreshNameplates(settings.nameplates);
+  }
+
+  private resetFramePaceScheduler(): void {
+    this.lastSceneRenderAtMs = performance.now();
+  }
+
+  private updateFramePaceEstimate(frameGapMs: number): void {
+    if (!Number.isFinite(frameGapMs) || frameGapMs < 3 || frameGapMs > 50) return;
+    if (document.visibilityState !== 'visible') return;
+
+    this.framePaceSamples.push(frameGapMs);
+    if (this.framePaceSamples.length > FRAME_PACE_ESTIMATE_SAMPLE_COUNT) this.framePaceSamples.shift();
+    if (this.framePaceSamples.length < FRAME_PACE_ESTIMATE_SAMPLE_COUNT) return;
+
+    const sorted = [...this.framePaceSamples].sort((a, b) => a - b);
+    const medianMs = sorted[Math.floor(sorted.length / 2)];
+    if (!Number.isFinite(medianMs) || medianMs <= 0) return;
+
+    const estimatedHz = 1000 / medianMs;
+    if (!Number.isFinite(estimatedHz) || estimatedHz < 30 || estimatedHz > 360) return;
+    this.framePaceEstimatedHz = estimatedHz;
+    this.framePaceTargetIntervalMs = this.framePaceTargetIntervalForHz(estimatedHz);
+  }
+
+  private framePaceTargetIntervalForHz(displayHz: number): number | null {
+    const pacedHz = targetRenderFpsForFramePace(displayHz);
+    if (pacedHz === null) return null;
+    return 1000 / pacedHz;
+  }
+
+  private shouldRenderSceneFrame(renderGapMs: number): boolean {
+    if (this.framePaceMode !== 'battery') return true;
+    const targetMs = this.framePaceTargetIntervalMs;
+    if (!targetMs) return true;
+    return renderGapMs + 0.25 >= targetMs;
   }
 
   private updateFriendNameplateCache(friends: unknown[]): void {
@@ -2125,11 +2272,249 @@ export class GameManager {
     if (!this.fpsCounterEl) return;
     this.fpsFrameCount++;
     if (now - this.fpsLastSampleAt < 1000) return;
-    const fps = Math.round(this.engine.getFps());
+    const loopFps = Math.round(this.engine.getFps());
+    const renderFps = this.fpsFrameCount;
     const scale = this.renderHardwareScalingLevel.toFixed(1);
-    this.fpsCounterEl.textContent = `${this.fpsFrameCount} FPS (${fps}) | ${this.scene.getActiveMeshes().length} meshes | scale ${scale}`;
+    const pace = this.framePaceMode === 'battery'
+      ? ` | loop ${loopFps}`
+      : '';
+    this.fpsCounterEl.textContent = `${renderFps} FPS${pace} | ${this.scene.getActiveMeshes().length} meshes | scale ${scale}`;
     this.fpsFrameCount = 0;
     this.fpsLastSampleAt = now;
+  }
+
+  private shouldMonitorFrameSpikes(): boolean {
+    return CLIENT_FRAME_SPIKE_TELEMETRY_ENABLED || this.frameSpikeProfilerEnabled;
+  }
+
+  private profileFrameSlice<T>(label: string, work: () => T): T {
+    if (!this.frameSpikeProfilerEnabled) return work();
+    const start = performance.now();
+    const result = work();
+    const ms = performance.now() - start;
+    this.frameProfileSlices.push({ label, ms });
+    return result;
+  }
+
+  private setupFrameLongTaskObserver(): void {
+    if (!this.shouldMonitorFrameSpikes() || typeof PerformanceObserver === 'undefined') return;
+    try {
+      const supported = PerformanceObserver.supportedEntryTypes;
+      if (Array.isArray(supported) && !supported.includes('longtask')) return;
+      const observer = new PerformanceObserver((list) => {
+        const now = performance.now();
+        for (const entry of list.getEntries()) {
+          const e = entry as PerformanceEntry & {
+            attribution?: Array<{
+              name?: string;
+              containerType?: string;
+              containerName?: string;
+              containerSrc?: string;
+            }>;
+          };
+          this.recentFrameLongTasks.push({
+            startMs: Number(e.startTime.toFixed(1)),
+            durationMs: Number(e.duration.toFixed(1)),
+            name: e.name || e.entryType,
+            attribution: (e.attribution ?? []).slice(0, 3).map((attr) =>
+              [attr.name, attr.containerType, attr.containerName, attr.containerSrc].filter(Boolean).join(':'),
+            ),
+          });
+        }
+        const cutoff = now - 5000;
+        this.recentFrameLongTasks = this.recentFrameLongTasks
+          .filter(task => task.startMs + task.durationMs >= cutoff)
+          .slice(-20);
+      });
+      observer.observe({ type: 'longtask', buffered: true } as PerformanceObserverInit);
+      this.frameLongTaskObserver = observer;
+    } catch {
+      // Browser support varies; frame profiling still works without long-task attribution.
+    }
+  }
+
+  private setupFrameGpuTimer(): void {
+    if (!this.frameSpikeGpuTimerEnabled || typeof WebGL2RenderingContext === 'undefined') return;
+    try {
+      const gl = (this.engine as unknown as { _gl?: unknown })._gl;
+      if (!(gl instanceof WebGL2RenderingContext)) return;
+      const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') as
+        | { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number }
+        | null;
+      if (!ext) return;
+      this.frameGpuTimer = { gl, ext, pending: [], lastMs: null };
+    } catch {
+      this.frameGpuTimer = null;
+    }
+  }
+
+  private beginFrameGpuTimer(): WebGLQuery | null {
+    const timer = this.frameGpuTimer;
+    if (!timer || timer.pending.length > 12) return null;
+    try {
+      const query = timer.gl.createQuery();
+      if (!query) return null;
+      timer.gl.beginQuery(timer.ext.TIME_ELAPSED_EXT, query);
+      return query;
+    } catch {
+      this.frameGpuTimer = null;
+      return null;
+    }
+  }
+
+  private endFrameGpuTimer(query: WebGLQuery | null): void {
+    const timer = this.frameGpuTimer;
+    if (!timer || !query) return;
+    try {
+      timer.gl.endQuery(timer.ext.TIME_ELAPSED_EXT);
+      timer.pending.push({ query, startedAtMs: performance.now() });
+    } catch {
+      try { timer.gl.deleteQuery(query); } catch { /* ignore */ }
+      this.frameGpuTimer = null;
+    }
+  }
+
+  private pollFrameGpuTimer(): void {
+    const timer = this.frameGpuTimer;
+    if (!timer) return;
+    try {
+      const disjoint = !!timer.gl.getParameter(timer.ext.GPU_DISJOINT_EXT);
+      while (timer.pending.length > 0) {
+        const next = timer.pending[0];
+        const available = !!timer.gl.getQueryParameter(next.query, timer.gl.QUERY_RESULT_AVAILABLE);
+        const tooOld = performance.now() - next.startedAtMs > 5000;
+        if (!available && !tooOld) break;
+        timer.pending.shift();
+        if (available && !disjoint) {
+          const elapsedNs = Number(timer.gl.getQueryParameter(next.query, timer.gl.QUERY_RESULT));
+          if (Number.isFinite(elapsedNs)) timer.lastMs = elapsedNs / 1_000_000;
+        }
+        timer.gl.deleteQuery(next.query);
+      }
+    } catch {
+      this.frameGpuTimer = null;
+    }
+  }
+
+  private ensureFrameProfileOverlay(): HTMLDivElement {
+    if (this.frameProfileOverlay?.isConnected) return this.frameProfileOverlay;
+    document.getElementById('frame-spike-profiler')?.remove();
+    const el = document.createElement('div');
+    el.id = 'frame-spike-profiler';
+    el.style.cssText = [
+      'position:absolute',
+      'left:10px',
+      'top:10px',
+      'z-index:10000',
+      'pointer-events:none',
+      'white-space:pre',
+      'max-width:min(640px,calc(100vw - 20px))',
+      'padding:7px 9px',
+      'font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace',
+      'color:#f4e7c4',
+      'background:rgba(18,12,7,0.84)',
+      'border:1px solid rgba(255,187,92,0.55)',
+      'box-shadow:0 2px 10px rgba(0,0,0,0.35)',
+    ].join(';');
+    (document.getElementById('game-frame') ?? document.body).appendChild(el);
+    this.frameProfileOverlay = el;
+    return el;
+  }
+
+  private reportFrameProfile(totalMs: number, updateMs: number, renderMs: number, rafGapMs: number): void {
+    const spikeMs = Math.max(totalMs, rafGapMs);
+    const profilerEnabled = this.frameSpikeProfilerEnabled;
+    const thresholdMs = profilerEnabled ? CLIENT_FRAME_SPIKE_PROFILER_MS : CLIENT_FRAME_SPIKE_TELEMETRY_MS;
+    if (spikeMs < thresholdMs) return;
+
+    const baseSlices: FrameProfileSlice[] = [
+      { label: 'update', ms: updateMs },
+      { label: 'scene.render', ms: renderMs },
+      { label: 'outside measured frame', ms: Math.max(0, rafGapMs - totalMs) },
+    ];
+    const slices: FrameProfileSlice[] = [
+      ...(profilerEnabled ? this.frameProfileSlices : []),
+      ...baseSlices,
+    ].sort((a, b) => b.ms - a.ms).slice(0, 8);
+
+    const terrain = this.chunkManager.didLastUpdateChangeTerrain();
+    const objects = this.chunkManager.didLastUpdateChangeObjects();
+    const activeMeshes = this.scene.getActiveMeshes().length;
+    const totalMeshes = this.scene.meshes.length;
+    const gpuFrameMs = this.frameGpuTimer?.lastMs ?? null;
+    const gpuPending = this.frameGpuTimer?.pending.length ?? 0;
+    const frameEndMs = performance.now();
+    const frameWindowStartMs = frameEndMs - rafGapMs - 25;
+    const longTasks = this.recentFrameLongTasks
+      .filter(task => task.startMs + task.durationMs >= frameWindowStartMs && task.startMs <= frameEndMs)
+      .slice(-5);
+    const top = slices.map(slice => `${slice.label} ${slice.ms.toFixed(1)}`).join(' | ');
+    const longTaskText = longTasks.length
+      ? `longTasks ${longTasks.map(task => `${task.durationMs.toFixed(1)}ms`).join(',')}`
+      : 'longTasks none';
+    const text = [
+      `Frame spike ${spikeMs.toFixed(1)}ms  gap ${rafGapMs.toFixed(1)}  total ${totalMs.toFixed(1)}`,
+      `update ${updateMs.toFixed(1)}  render ${renderMs.toFixed(1)}  activeMeshes ${activeMeshes}  meshes ${totalMeshes}`,
+      `gpu ${gpuFrameMs === null ? 'n/a' : gpuFrameMs.toFixed(1)}ms pending ${gpuPending}`,
+      `pos ${this.playerX.toFixed(2)},${this.playerZ.toFixed(2)}  path ${this.pathIndex}/${this.path.length}  terrain ${terrain ? 'Y' : 'n'} objects ${objects ? 'Y' : 'n'}`,
+      longTaskText,
+      top,
+    ].join('\n');
+
+    if (profilerEnabled) {
+      this.ensureFrameProfileOverlay().textContent = text;
+    }
+
+    const now = performance.now();
+    const shouldConsoleLog = profilerEnabled
+      && now - this.lastFrameProfileLogAt >= CLIENT_FRAME_SPIKE_CONSOLE_COOLDOWN_MS;
+    const shouldSendTelemetry = CLIENT_FRAME_SPIKE_TELEMETRY_ENABLED
+      && now - this.lastFrameSpikeTelemetryAt >= CLIENT_FRAME_SPIKE_SERVER_COOLDOWN_MS
+      && this.shouldCapturePerformanceDiagnostic();
+    if (!shouldConsoleLog && !shouldSendTelemetry) return;
+
+    const payload = {
+      totalMs: Number(totalMs.toFixed(2)),
+      rafGapMs: Number(rafGapMs.toFixed(2)),
+      updateMs: Number(updateMs.toFixed(2)),
+      renderMs: Number(renderMs.toFixed(2)),
+      outsideMeasuredFrameMs: Number(Math.max(0, rafGapMs - totalMs).toFixed(2)),
+      activeMeshes,
+      totalMeshes,
+      gpuFrameMs: gpuFrameMs === null ? null : Number(gpuFrameMs.toFixed(2)),
+      gpuPending,
+      framePace: {
+        mode: this.framePaceMode,
+        estimatedDisplayHz: this.framePaceEstimatedHz === null ? null : Number(this.framePaceEstimatedHz.toFixed(1)),
+        targetRenderFps: this.framePaceTargetIntervalMs === null ? null : Number((1000 / this.framePaceTargetIntervalMs).toFixed(1)),
+        renderCount: this.pacedSceneRenderCount,
+        skippedRenderCount: this.pacedSceneSkippedCount,
+      },
+      currentMap: this.chunkManager.getMapId(),
+      currentFloor: this.currentFloor,
+      player: { x: Number(this.playerX.toFixed(2)), z: Number(this.playerZ.toFixed(2)) },
+      path: { index: this.pathIndex, length: this.path.length },
+      chunkChanged: { terrain, objects },
+      longTasks,
+      topSlices: slices.map(slice => ({ label: slice.label, ms: Number(slice.ms.toFixed(2)) })),
+      diagnosticFlags: [
+        'frame-spike',
+        profilerEnabled ? 'frame-spike-profiler' : 'frame-spike-telemetry',
+        this.framePaceMode === 'battery' ? 'frame-pace-battery' : 'frame-pace-smooth',
+        'render-limiter-removed',
+        terrain ? 'terrain-changed' : 'terrain-stable',
+        objects ? 'objects-changed' : 'objects-stable',
+      ],
+    };
+
+    if (shouldConsoleLog) {
+      this.lastFrameProfileLogAt = now;
+      console.warn('[frame-spike]', payload);
+    }
+    if (shouldSendTelemetry) {
+      this.lastFrameSpikeTelemetryAt = now;
+      this.reportClientLog('client_frame_spike', payload);
+    }
   }
 
   private async handlePerfCommand(): Promise<void> {
@@ -2325,6 +2710,9 @@ export class GameManager {
     this.hideReconnectOverlay();
     this.fpsCounterEl?.remove();
     this.fpsCounterEl = null;
+    this.frameLongTaskObserver?.disconnect();
+    this.frameLongTaskObserver = null;
+    this.recentFrameLongTasks = [];
     this.network.close();
     this.onFatalDisconnect?.();
   }
@@ -9650,6 +10038,11 @@ export class GameManager {
     this.hideReconnectOverlay();
     this.fpsCounterEl?.remove();
     this.fpsCounterEl = null;
+    this.frameProfileOverlay?.remove();
+    this.frameProfileOverlay = null;
+    this.frameLongTaskObserver?.disconnect();
+    this.frameLongTaskObserver = null;
+    this.recentFrameLongTasks = [];
     this.network.close();
     if (this.minimap) { this.minimap.dispose(); this.minimap = null; }
     if (this.characterCreator) { this.characterCreator.destroy(); this.characterCreator = null; }
@@ -10228,73 +10621,90 @@ export class GameManager {
     this.checkSelfAuthorityFreshness();
     if (this.connectionFrozen) return;
 
-    this.updateCameraKeys(dt);
+    this.profileFrameSlice('camera/input', () => this.updateCameraKeys(dt));
 
-    this.refreshDuelFacing();
-    if (this.localPlayer) this.localPlayer.updateAnimation(dt);
-    this.updateEntityRenderVisibility();
-    this.entities.updateAnimations(dt);
+    this.profileFrameSlice('local/entity anim', () => {
+      this.refreshDuelFacing();
+      if (this.localPlayer) this.localPlayer.updateAnimation(dt);
+      this.updateEntityRenderVisibility();
+      this.entities.updateAnimations(dt);
+    });
 
     const camPos = this.scene.activeCamera?.position ?? null;
 
-    if (this.chunkManager.updatePlayerPosition(this.playerX, this.playerZ)) {
-      const objectsChanged = this.chunkManager.didLastUpdateChangeObjects();
-      if (objectsChanged) {
-        this.cleanupDisposedWorldObjects();
-        this.linkPlacedObjectsToWorldObjects();
-        this.reapplyWorldObjectVisualStates();
+    this.profileFrameSlice('chunk update', () => {
+      if (this.chunkManager.updatePlayerPosition(this.playerX, this.playerZ)) {
+        const objectsChanged = this.chunkManager.didLastUpdateChangeObjects();
+        if (objectsChanged) {
+          this.cleanupDisposedWorldObjects();
+          this.linkPlacedObjectsToWorldObjects();
+          this.reapplyWorldObjectVisualStates();
+        }
+        // Chunk visibility flips can re-enable placed nodes; re-hide only on
+        // those events instead of walking the hidden roof list every frame.
+        if (objectsChanged || this.chunkManager.didLastUpdateChangeTerrain()) {
+          this.reapplyHiddenRoofStates();
+          this.refreshHoverHiddenRoofs(true);
+        }
       }
-      // Chunk visibility flips can re-enable placed nodes; re-hide only on
-      // those events instead of walking the hidden roof list every frame.
-      if (objectsChanged || this.chunkManager.didLastUpdateChangeTerrain()) {
-        this.reapplyHiddenRoofStates();
-        this.refreshHoverHiddenRoofs(true);
+    });
+    this.profileFrameSlice('chunk animations/fog', () => {
+      this.chunkManager.updateAnimations();
+      this.updateFog(dt);
+    });
+
+    this.profileFrameSlice('local movement', () => {
+      this.expireFinishedSlide();
+      this.updatePlayerFollowPrediction(dt);
+      this.updateCombatFollow(dt);
+      this.updateLocalPlayerMovement(dt, camPos);
+      // If a slide is in flight but there's no active path, updateLocalPlayerMovement
+      // early-returns without touching the render position — drive the decay
+      // ourselves so the visual catches up to the snapped logical position.
+      if (this.slideStartMs !== 0 && this.pathIndex >= this.path.length) {
+        this.renderLocalPlayerWithSlide();
       }
-    }
-    this.chunkManager.updateAnimations();
-    this.updateFog(dt);
+      this.updateLocalCombatWalkGrace();
+    });
 
-    this.expireFinishedSlide();
-    this.updatePlayerFollowPrediction(dt);
-    this.updateCombatFollow(dt);
-    this.updateLocalPlayerMovement(dt, camPos);
-    // If a slide is in flight but there's no active path, updateLocalPlayerMovement
-    // early-returns without touching the render position — drive the decay
-    // ourselves so the visual catches up to the snapped logical position.
-    if (this.slideStartMs !== 0 && this.pathIndex >= this.path.length) {
-      this.renderLocalPlayerWithSlide();
-    }
-    this.updateLocalCombatWalkGrace();
+    this.profileFrameSlice('remote/npc movement', () => {
+      this.entities.interpolateRemotePlayers(
+        dt,
+        camPos,
+        (entityId) => this.remoteAnimationStates.get(entityId)?.kind === PlayerAnimationKind.Skill,
+        (entityId) => this.resolveTargetableIncludingLocal(entityId),
+      );
+      this.refreshDuelFacing();
+      this.maintainNpcMaterialization();
+      this.entities.interpolateNpcs(dt, camPos, this.localPlayerId, this.localPlayer?.position ?? null);
+      // Remote actors get per-frame combat face locks in EntityManager. The
+      // local player owns its own movement prediction, so keep its NPC combat
+      // facing alive here without enabling strafe-lock while pathing.
+      this.refreshLocalCombatFacing();
+    });
 
-    this.entities.interpolateRemotePlayers(
-      dt,
-      camPos,
-      (entityId) => this.remoteAnimationStates.get(entityId)?.kind === PlayerAnimationKind.Skill,
-      (entityId) => this.resolveTargetableIncludingLocal(entityId),
-    );
-    this.refreshDuelFacing();
-    this.maintainNpcMaterialization();
-    this.entities.interpolateNpcs(dt, camPos, this.localPlayerId, this.localPlayer?.position ?? null);
-    // Remote actors get per-frame combat face locks in EntityManager. The
-    // local player owns its own movement prediction, so keep its NPC combat
-    // facing alive here without enabling strafe-lock while pathing.
-    this.refreshLocalCombatFacing();
+    this.profileFrameSlice('indoor/doors/camera', () => {
+      this.updateIndoorDetection();
+      this.updateDoorAnimations(dt);
 
-    this.updateIndoorDetection();
-    this.updateDoorAnimations(dt);
+      if (this.localPlayer) {
+        this._tempVec.set(this.localPlayer.position.x, this.localPlayer.position.y, this.localPlayer.position.z);
+        this.camera.followTarget(this._tempVec, dt);
+      }
+    });
+    this.profileFrameSlice('roof hover', () => this.refreshHoverRoofForStoredPointer(performance.now()));
 
-    if (this.localPlayer) {
-      this._tempVec.set(this.localPlayer.position.x, this.localPlayer.position.y, this.localPlayer.position.z);
-      this.camera.followTarget(this._tempVec);
-    }
-    this.refreshHoverRoofForStoredPointer(performance.now());
+  }
 
-    this._overlayTransformReady = false;
-    this.updateTransientHealthBars();
-    this.updateOverlayPositions();
-    this.updateHitSplats(dt);
-    this.updateXpDrops(dt);
-    this.updateMinimap(dt);
+  private updateRenderFrameUi(dt: number): void {
+    this.profileFrameSlice('html overlays', () => {
+      this._overlayTransformReady = false;
+      this.updateTransientHealthBars();
+      this.updateOverlayPositions();
+      this.updateHitSplats(dt);
+      this.updateXpDrops(dt);
+      this.updateMinimap(dt);
+    });
   }
 
   private updateCameraKeys(dt: number): void {

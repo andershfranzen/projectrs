@@ -1775,6 +1775,41 @@ async function readRecentClientDiagnostics(options: {
 }
 
 function clientLogConsoleSummary(event: string, username: string, payload: unknown): string {
+  if (event === 'client_frame_spike' && isPlainRecord(payload)) {
+    const numberField = (key: string): string => {
+      const value = payload[key];
+      return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(1) : 'n/a';
+    };
+    const player = isPlainRecord(payload.player) ? payload.player : {};
+    const px = typeof player.x === 'number' && Number.isFinite(player.x) ? player.x.toFixed(2) : 'n/a';
+    const pz = typeof player.z === 'number' && Number.isFinite(player.z) ? player.z.toFixed(2) : 'n/a';
+    const map = String(payload.currentMap ?? 'n/a').slice(0, 48);
+    const floor = typeof payload.currentFloor === 'number' && Number.isFinite(payload.currentFloor) ? payload.currentFloor : 'n/a';
+    const topSlices = Array.isArray(payload.topSlices)
+      ? payload.topSlices
+        .slice(0, 4)
+        .map((slice) => isPlainRecord(slice) ? `${String(slice.label ?? '?')}:${typeof slice.ms === 'number' ? slice.ms.toFixed(1) : 'n/a'}` : '')
+        .filter(Boolean)
+        .join(',')
+      : 'n/a';
+    const longTasks = Array.isArray(payload.longTasks)
+      ? payload.longTasks
+        .slice(0, 4)
+        .map((task) => isPlainRecord(task) && typeof task.durationMs === 'number' ? task.durationMs.toFixed(1) : '')
+        .filter(Boolean)
+        .join(',')
+      : '';
+    const longTaskText = longTasks ? ` longTasks=${longTasks}ms` : ' longTasks=none';
+    const gpuText = typeof payload.gpuFrameMs === 'number' && Number.isFinite(payload.gpuFrameMs)
+      ? ` gpu=${payload.gpuFrameMs.toFixed(1)}ms`
+      : ' gpu=n/a';
+    const framePace = isPlainRecord(payload.framePace) ? payload.framePace : {};
+    const paceMode = String(framePace.mode ?? 'n/a').slice(0, 24);
+    const targetRenderFps = typeof framePace.targetRenderFps === 'number' && Number.isFinite(framePace.targetRenderFps)
+      ? framePace.targetRenderFps.toFixed(1)
+      : 'native';
+    return `[client-log] ${event} user=${username} gap=${numberField('rafGapMs')}ms update=${numberField('updateMs')}ms render=${numberField('renderMs')}ms outside=${numberField('outsideMeasuredFrameMs')}ms pace=${paceMode}/${targetRenderFps} map=${map}/f${floor} pos=${px},${pz}${longTaskText}${gpuText} top=${topSlices}`;
+  }
   const fps = measuredFpsFromDiagnosticPayload(payload);
   const fpsText = fps === null ? 'n/a' : (fps >= 100 ? Math.round(fps).toString() : fps.toFixed(1));
   const flags = diagnosticFlagsFromPayload(payload);

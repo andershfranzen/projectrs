@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   GROUND_ITEM_LABEL_OPTIONS,
+  FRAME_PACE_OPTIONS,
   NAMEPLATE_OPTIONS,
   TOOLTIP_OPTIONS,
   normalizeGroundItemLabelMode,
+  normalizeFramePaceMode,
   normalizeNameplateMode,
   normalizeTooltipMode,
+  setFramePaceMode,
   setGroundItemLabelMode,
   setNameplateMode,
   setTooltipMode,
@@ -28,6 +31,7 @@ afterEach(() => {
   setGroundItemLabelMode('off');
   setNameplateMode('all');
   setTooltipMode('on');
+  setFramePaceMode('smooth');
 });
 
 function installStorageAndEvents(): { store: Map<string, string>; events: CustomEvent[] } {
@@ -68,6 +72,7 @@ describe('game settings', () => {
     expect(GROUND_ITEM_LABEL_OPTIONS.map(option => option.value)).toEqual(['off', 'valuable', 'all']);
     expect(NAMEPLATE_OPTIONS.map(option => option.value)).toEqual(['off', 'friends', 'players', 'all']);
     expect(TOOLTIP_OPTIONS.map(option => option.value)).toEqual(['off', 'on']);
+    expect(FRAME_PACE_OPTIONS.map(option => option.value)).toEqual(['smooth', 'battery']);
   });
 
   test('normalizes invalid values to existing defaults', () => {
@@ -83,6 +88,9 @@ describe('game settings', () => {
     expect(normalizeTooltipMode('delayed')).toBe('on');
     expect(normalizeTooltipMode('instant')).toBe('on');
     expect(normalizeTooltipMode('slowly')).toBe('on');
+    expect(normalizeFramePaceMode('battery')).toBe('battery');
+    expect(normalizeFramePaceMode('smooth')).toBe('smooth');
+    expect(normalizeFramePaceMode('locked')).toBe('smooth');
   });
 
   test('persists ground item label mode and broadcasts settings', () => {
@@ -94,6 +102,7 @@ describe('game settings', () => {
       groundItemLabels: 'valuable',
       nameplates: 'all',
       tooltips: 'on',
+      framePace: 'smooth',
     });
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe('evilquest:gamesettingschange');
@@ -101,6 +110,7 @@ describe('game settings', () => {
       groundItemLabels: 'valuable',
       nameplates: 'all',
       tooltips: 'on',
+      framePace: 'smooth',
     });
   });
 
@@ -114,11 +124,13 @@ describe('game settings', () => {
       groundItemLabels: 'all',
       nameplates: 'friends',
       tooltips: 'on',
+      framePace: 'smooth',
     });
     expect(events[0].detail).toEqual({
       groundItemLabels: 'all',
       nameplates: 'friends',
       tooltips: 'on',
+      framePace: 'smooth',
     });
   });
 
@@ -132,11 +144,33 @@ describe('game settings', () => {
       groundItemLabels: 'valuable',
       nameplates: 'players',
       tooltips: 'off',
+      framePace: 'smooth',
     });
     expect(events[0].detail).toEqual({
       groundItemLabels: 'valuable',
       nameplates: 'players',
       tooltips: 'off',
+      framePace: 'smooth',
+    });
+  });
+
+  test('persists frame pace mode and keeps other Game settings', () => {
+    const { store, events } = installStorageAndEvents();
+    store.set('projectrs_game_settings_v1', JSON.stringify({ groundItemLabels: 'valuable', nameplates: 'players', tooltips: 'off' }));
+
+    setFramePaceMode('battery');
+
+    expect(JSON.parse(store.get('projectrs_game_settings_v1') ?? '{}')).toEqual({
+      groundItemLabels: 'valuable',
+      nameplates: 'players',
+      tooltips: 'off',
+      framePace: 'battery',
+    });
+    expect(events[0].detail).toEqual({
+      groundItemLabels: 'valuable',
+      nameplates: 'players',
+      tooltips: 'off',
+      framePace: 'battery',
     });
   });
 });
