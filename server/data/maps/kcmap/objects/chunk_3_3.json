@@ -302,5 +302,62 @@
       "y": 1,
       "z": 1
     }
+  },
+  {
+    "assetId": "FishingSpotBubblesNet",
+    "layerId": "layer_0",
+    "position": {
+      "x": 103.5,
+      "y": -2.48,
+      "z": 98.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "FishingSpotBubblesHarpoon",
+    "layerId": "layer_0",
+    "position": {
+      "x": 103.5,
+      "y": -2.48,
+      "z": 97.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "FishingSpotBubblesRod",
+    "layerId": "layer_0",
+    "position": {
+      "x": 103.5,
+      "y": -2.48,
+      "z": 96.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
   }
 ]

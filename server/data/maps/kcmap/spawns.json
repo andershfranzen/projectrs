@@ -3686,31 +3686,33 @@
         "skinColor": 3,
         "hairStyle": 1
       },
+      "shop": {
+        "name": "Hides Stall Shop",
+        "restockTicks": 200,
+        "items": [
+          {
+            "itemId": 296,
+            "price": 45,
+            "stock": 10
+          },
+          {
+            "itemId": 298,
+            "price": 60,
+            "stock": 8
+          },
+          {
+            "itemId": 297,
+            "price": 75,
+            "stock": 6
+          }
+        ]
+      },
       "customColors": {
         "pantsColor": [
           0.21568627450980393,
           0.1843137254901961,
           0.1843137254901961
         ]
-      }
-    },
-    {
-      "id": 189,
-      "npcId": 114,
-      "x": 241.5,
-      "z": 234.5,
-      "wanderRange": 0,
-      "aggressive": false,
-      "facing": 0,
-      "appearance": {
-        "bodyType": 0,
-        "shirtColor": 6,
-        "pantsColor": 4,
-        "shoesColor": 0,
-        "hairColor": 5,
-        "beltColor": 1,
-        "skinColor": 3,
-        "hairStyle": 1
       }
     },
     {
@@ -3748,6 +3750,32 @@
         "beltColor": 1,
         "skinColor": 0,
         "hairStyle": 10
+      },
+      "shop": {
+        "name": "Food Stall Shop",
+        "restockTicks": 100,
+        "items": [
+          {
+            "itemId": 13,
+            "price": 10,
+            "stock": 10
+          },
+          {
+            "itemId": 238,
+            "price": 6,
+            "stock": 10
+          },
+          {
+            "itemId": 240,
+            "price": 16,
+            "stock": 10
+          },
+          {
+            "itemId": 12,
+            "price": 16,
+            "stock": 4
+          }
+        ]
       },
       "customColors": {
         "shirtColor": [
@@ -3870,6 +3898,45 @@
         "beltColor": 6,
         "skinColor": 0,
         "hairStyle": 7
+      }
+    },
+    {
+      "id": 199,
+      "npcId": 115,
+      "x": 241.75,
+      "z": 234.5,
+      "wanderRange": 0,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 7,
+        "pantsColor": 8,
+        "shoesColor": 0,
+        "hairColor": 5,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "shop": {
+        "name": "Crafting Stall Shop",
+        "restockTicks": 100,
+        "items": [
+          {
+            "itemId": 242,
+            "price": 25,
+            "stock": 10
+          },
+          {
+            "itemId": 243,
+            "price": 40,
+            "stock": 10
+          },
+          {
+            "itemId": 247,
+            "price": 6,
+            "stock": 15
+          }
+        ]
       }
     }
   ],
