@@ -33,6 +33,8 @@ export interface CharacterAnimationDef {
   path: string;
   /** Optional action name inside the GLB when a file contains multiple actions. */
   animName?: string;
+  /** Missing optional files are ignored quietly so content can be staged later. */
+  optional?: boolean;
 }
 
 export const BOW_ATTACK_ANIMATION: CharacterAnimationDef = {
@@ -50,6 +52,9 @@ export const BOW_ATTACK_ANIMATION: CharacterAnimationDef = {
 export const PLAYER_ANIMATIONS: readonly CharacterAnimationDef[] = [
   { name: 'idle',                    path: `${CHARACTER_ANIM_DIR}/idle.glb` },
   { name: 'walk',                    path: `${CHARACTER_ANIM_DIR}/walk.glb` },
+  // Dormant until run mode is enabled. Dropping run.glb at this path is enough
+  // for players and remote humanoids to load it without another code change.
+  { name: 'run',                     path: `${CHARACTER_ANIM_DIR}/run.glb`, animName: 'Armature.001Action', optional: true },
   // 2004scape-style 7-slot movement set. Server emits step direction + face
   // state; CharacterEntity's per-frame strafe picker reads (travelYaw -
   // bodyYaw) and selects walk / walk_b / walk_l / walk_r each frame. Any

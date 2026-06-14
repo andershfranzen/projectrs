@@ -2431,7 +2431,7 @@
     "stackable": false,
     "equippable": false,
     "value": 3,
-    "icon": "Rice_230.png"
+    "model": "/assets/models/RiceRaw.glb"
   },
   {
     "id": 231,
@@ -2441,7 +2441,7 @@
     "equippable": false,
     "healAmount": 2,
     "value": 8,
-    "icon": "Cooked_Rice_231.png"
+    "model": "/assets/models/RiceCooked.glb"
   },
   {
     "id": 232,
@@ -3303,7 +3303,7 @@
     "stackable": false,
     "equippable": false,
     "value": 1,
-    "icon": "Blood-Rune_619.png"
+    "model": "/assets/models/HumanHeart.glb"
   },
   {
     "id": 310,

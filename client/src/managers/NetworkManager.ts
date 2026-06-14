@@ -26,10 +26,12 @@ import {
   parseOpcodeMappingPayload,
   rewriteArrayBufferOpcode,
   rewritePacketOpcode,
+  movementModeIndex,
   type GameCipherKeysV2,
   type GameCryptoChallenge,
   type GameCryptoResponse,
   type OpcodeMappingTables,
+  type MovementMode,
 } from '@projectrs/shared';
 import { ensureDeviceKeyRegistered } from '../deviceKey';
 
@@ -47,6 +49,7 @@ export type ChatMessage =
   | { type: 'system'; message: string }
   | { type: 'social_list'; friends: SocialClientEntry[]; ignore: SocialClientEntry[] }
   | { type: 'social_presence'; accountId: number; username: string; online: boolean }
+  | { type: 'account_renamed'; username: string }
   | { type: 'player_info'; entityId: number; name: string; isAdmin?: boolean; isModerator?: boolean; message: string }
   | { type: string; from?: string; to?: string; message: string; entityId?: number; name?: string; username?: string; accountId?: number; fromAccountId?: number; toAccountId?: number; isAdmin?: boolean; isModerator?: boolean; friends?: SocialClientEntry[]; ignore?: SocialClientEntry[]; online?: boolean };
 export interface SocialClientEntry {
@@ -557,6 +560,21 @@ export class NetworkManager {
       return true;
     } catch {
       this.failGameSocket(this.gameSocket, 4003, 'move send failed');
+      return false;
+    }
+  }
+
+  sendMovementMode(mode: MovementMode): boolean {
+    if (!this.gameSocket) return false;
+    if (!this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
+      this.failGameSocket(this.gameSocket, 4002, 'movement mode send while disconnected');
+      return false;
+    }
+    try {
+      void this.sendFrame(this.gameSocket, encodePacket(ClientOpcode.PLAYER_SET_MOVEMENT_MODE, movementModeIndex(mode)));
+      return true;
+    } catch {
+      this.failGameSocket(this.gameSocket, 4003, 'movement mode send failed');
       return false;
     }
   }

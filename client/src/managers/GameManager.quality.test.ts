@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { formatFramePacingForChat, GameManager, isStableLowFrameCadence } from './GameManager';
+import { formatFramePacingForChat, GameManager, isStableLowFrameCadence, targetRenderFpsForFramePace } from './GameManager';
 
 const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
@@ -76,6 +76,19 @@ function makeQualityManager() {
 }
 
 describe('GameManager render quality command', () => {
+  test('frame pace target picks clean display divisors near 60 FPS', () => {
+    expect(targetRenderFpsForFramePace(60)).toBeNull();
+    expect(targetRenderFpsForFramePace(75)).toBeNull();
+    expect(targetRenderFpsForFramePace(85)).toBeNull();
+    expect(targetRenderFpsForFramePace(89.1)).toBeNull();
+    expect(targetRenderFpsForFramePace(89.5)).toBe(44.75);
+    expect(targetRenderFpsForFramePace(90)).toBe(45);
+    expect(targetRenderFpsForFramePace(120)).toBe(60);
+    expect(targetRenderFpsForFramePace(144)).toBe(48);
+    expect(targetRenderFpsForFramePace(165)).toBe(55);
+    expect(targetRenderFpsForFramePace(240)).toBe(60);
+  });
+
   test('sets low quality immediately and persists it', () => {
     const storage = installLocalStorageStub();
     const { manager, canvas, hardwareScaleCalls, messages, qualityLogs } = makeQualityManager();
@@ -89,6 +102,48 @@ describe('GameManager render quality command', () => {
     expect(canvas.dataset.renderScale).toBe('2.00');
     expect(messages.at(-1)).toBe('Render quality set to low (scale 2.0).');
     expect(qualityLogs).toEqual(['low']);
+  });
+
+  test('canvas picking coordinates remain aligned after low-quality render scaling', () => {
+    const canvas = {
+      getBoundingClientRect: () => ({ left: 20, top: 30, width: 1000, height: 800 }),
+    } as HTMLCanvasElement;
+    const manager = Object.create(GameManager.prototype) as any;
+    manager.engine = {
+      isDisposed: false,
+      getRenderingCanvas: () => canvas,
+      getRenderWidth: () => 500,
+      getRenderHeight: () => 400,
+    };
+    manager.scene = { isDisposed: false };
+
+    expect(manager.canvasPointFromClient(220, 430)).toEqual({ x: 200, y: 400 });
+  });
+
+  test('world overlays project into canvas layout coordinates after low-quality render scaling', () => {
+    const canvas = {
+      clientWidth: 1000,
+      clientHeight: 800,
+    } as HTMLCanvasElement;
+    const manager = Object.create(GameManager.prototype) as any;
+    manager._overlayTransformReady = false;
+    manager._overlayTransform = {};
+    manager._overlayVp = { x: 0, y: 0, width: 0, height: 0 };
+    manager.engine = {
+      getRenderingCanvas: () => canvas,
+      getRenderWidth: () => 500,
+      getRenderHeight: () => 400,
+    };
+    manager.scene = {
+      activeCamera: {
+        getViewMatrix: () => ({ multiplyToRef: () => {} }),
+        getProjectionMatrix: () => ({}),
+      },
+    };
+
+    expect(manager.ensureOverlayTransform()).toBe(true);
+
+    expect(manager._overlayVp).toEqual({ x: 0, y: 0, width: 1000, height: 800 });
   });
 
   test('sets high quality for the session and clears low quality preference', () => {

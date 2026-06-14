@@ -74,6 +74,8 @@ export enum ClientOpcode {
   /** Examine an NPC/mob. Values: [npcEntityId]. Server validates visibility
    *  and current adjacency, then replies over system chat with authored text. */
   PLAYER_EXAMINE_NPC = 48,
+  /** Set movement mode. Values: [modeIdx], modeIdx 0=walk, 1=run. */
+  PLAYER_SET_MOVEMENT_MODE = 49,
   MAP_READY = 50,
   SET_APPEARANCE = 60,
   /** Close the appearance editor without saving changes.
@@ -237,6 +239,19 @@ export enum ServerOpcode {
    *  server-authoritative so the client does not have to infer transition
    *  height from streamed chunk cache. */
   FLOOR_CHANGE = 61,
+  /** Movement mode for a player. Values: [entityId, modeIdx], modeIdx 0=walk,
+   *  1=run. Broadcast on changes and chunk-entry; local self echo lets a
+   *  future toggle reconcile optimistic UI. */
+  PLAYER_MOVEMENT_MODE = 62,
+  /** Authoritative player movement step batch for remote interpolation.
+   *  Values: [entityId, modeIdx, count, x10, z10, floor, y10, ...].
+   *  The server sends the actual unit steps consumed this tick; run ticks may
+   *  contain two steps, including corner turns that should not be rendered as
+   *  a single diagonal shortcut. */
+  PLAYER_MOVE_STEPS = 63,
+  /** Local player's run energy percent. Values: [percent], 0..100.
+   *  Sent on login and whenever the visible percent changes. */
+  PLAYER_RUN_ENERGY = 64,
   /** Open the appearance editor. Values: [canCancel], where canCancel=1 means
    *  this is an in-game edit for a player who already has an appearance. */
   SHOW_CHARACTER_CREATOR = 70,

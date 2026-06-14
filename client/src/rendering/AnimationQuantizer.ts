@@ -10,12 +10,16 @@ export const DEFAULT_QUANTIZE_FRAMES = 8;
  * samples and looks jittery.
  */
 export const ANIM_QUANTIZE_FRAMES: Record<string, number> = {
-  walk: 5, // 5 canonical poses at frames 0, 6, 13, 19, 26
+  // Local movement root position is smooth every frame; keep enough walk samples
+  // that the skeleton does not read as sluggish/choppy at high FPS.
+  walk: 9,
+  run: 9,
 };
 
 export const ANIM_DURATIONS: Record<string, number> = {
   idle: 3.6,
   walk: 1.2,
+  run: 0.6,
   attack: 1.2,
   attack_slash: 1.2,
   attack_punch: 1.2,
@@ -32,7 +36,8 @@ export const ANIM_DURATIONS: Record<string, number> = {
 
 const ANIM_SAMPLE_CURVES: Record<string, number[]> = {
   idle:         [0, 0.14, 0.28, 0.43, 0.57, 0.71, 0.86, 1.0],
-  walk:         [0, 0.231, 0.500, 0.731, 1.0], // exact ratios for our 5 canonical poses
+  walk:         [0, 0.125, 0.250, 0.375, 0.500, 0.625, 0.750, 0.875, 1.0],
+  run:          [0, 0.125, 0.250, 0.375, 0.500, 0.625, 0.750, 0.875, 1.0],
   attack:       [0, 0.10, 0.25, 0.45, 0.60, 0.75, 0.88, 1.0],
   attack_slash: [0, 0.10, 0.25, 0.45, 0.60, 0.75, 0.88, 1.0],
   attack_punch: [0, 0.10, 0.30, 0.50, 0.65, 0.78, 0.90, 1.0],
@@ -125,12 +130,18 @@ const WALK_VARIANTS: Set<string> = new Set(WALK_VARIANT_NAMES);
 export function isWalkVariant(name: string): name is WalkVariantName {
   return WALK_VARIANTS.has(name);
 }
+export const MOVEMENT_ANIMATION_NAMES = [...WALK_VARIANT_NAMES, 'run'] as const;
+export type MovementAnimationName = typeof MOVEMENT_ANIMATION_NAMES[number];
+const MOVEMENT_ANIMS: Set<string> = new Set(MOVEMENT_ANIMATION_NAMES);
+export function isMovementAnimation(name: string): name is MovementAnimationName {
+  return MOVEMENT_ANIMS.has(name);
+}
 function canonName(animName: string): string {
   return WALK_VARIANTS.has(animName) ? 'walk' : animName;
 }
 
 const LOOPING_ANIMS = new Set([
-  'idle', 'walk',
+  'idle', 'walk', 'run',
   'npc_idle', 'npc_walk',
 ]);
 
@@ -142,6 +153,7 @@ const LOOPING_ANIMS = new Set([
  * skilling anims with intro + N swing repeats).
  */
 const SKIP_QUANTIZE: Set<string> = new Set([
+  'run',
   'mine',
 ]);
 

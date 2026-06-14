@@ -84,8 +84,8 @@ export class InputManager {
     if (!canvas) return false;
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return false;
-    const pointerX = (clientX - rect.left) * (this.scene.getEngine().getRenderWidth() / rect.width);
-    const pointerY = (clientY - rect.top) * (this.scene.getEngine().getRenderHeight() / rect.height);
+    const pointerX = clientX - rect.left;
+    const pointerY = clientY - rect.top;
     return this.handlePrimaryAction(pointerX, pointerY, shiftKey);
   }
 

@@ -1,4 +1,5 @@
 import { HEAD_RENDER_MODES, type HeadRenderMode } from '../../../shared/types';
+import { EQUIPMENT_SLOT_NAMES } from '../../../shared/equipment';
 
 export const HEAD_HAIR_MORPH_KEYS = [
   'topFlatten',
@@ -153,7 +154,7 @@ export const EQUIP_SLOT_BONES: Record<string, { boneName: string; localPosition:
   cape:    { boneName: 'mixamorig:Spine1',        localPosition: { x: 0, y: -0.1, z: -0.1 }, localRotation: { x: 0, y: 0, z: 0 }, scale: 1 },
 };
 
-export const EQUIP_SLOT_NAMES = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo'];
+export const EQUIP_SLOT_NAMES = EQUIPMENT_SLOT_NAMES;
 
 export const METAL_TIER_THUMBNAIL_COLOR = {
   bronze: [0.497, 0.309, 0.132],

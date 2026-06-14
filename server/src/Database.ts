@@ -1,9 +1,8 @@
 import { Database as SQLiteDB } from 'bun:sqlite';
 import { createHash, randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
-import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance, QuestState } from '@projectrs/shared';
-import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, STANCE_KEYS, DEFAULT_APPEARANCE, combatLevel, initSkills, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
-import type { EquipSlot } from './entity/Player';
+import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance, QuestState, EquipSlot } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, RUN_ENERGY_MAX, STANCE_KEYS, DEFAULT_APPEARANCE, clampRunEnergy, combatLevel, initSkills, isEquipSlot, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const OAUTH_ACCESS_TOKEN_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
@@ -419,6 +418,7 @@ export interface SavedPlayerState {
   magicStance: MagicStance;
   autocastSpellIndex: number;
   autoRetaliate: boolean;
+  runEnergy: number;
   appearance: PlayerAppearance | null;
   bank: ({ itemId: number; quantity: number } | null)[];
   respawnVersion: number;
@@ -1138,6 +1138,7 @@ export class GameDatabase {
         equipment TEXT DEFAULT '{}',
         stance TEXT DEFAULT 'accurate',
         auto_retaliate INTEGER NOT NULL DEFAULT 0,
+        run_energy INTEGER NOT NULL DEFAULT 10000,
         appearance TEXT DEFAULT NULL,
         renown INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER DEFAULT (unixepoch())
@@ -1207,6 +1208,11 @@ export class GameDatabase {
     // pre-feature behavior for existing accounts.
     try {
       this.db.exec(`ALTER TABLE player_state ADD COLUMN auto_retaliate INTEGER NOT NULL DEFAULT 0`);
+    } catch { /* column already exists */ }
+    // Migration: 2004scape-style run energy. Stored internally as 0..10000
+    // so one visible percent is exactly 100 energy units.
+    try {
+      this.db.exec(`ALTER TABLE player_state ADD COLUMN run_energy INTEGER NOT NULL DEFAULT 10000`);
     } catch { /* column already exists */ }
     this.runOneTimeDataMigrations();
 
@@ -2031,6 +2037,25 @@ export class GameDatabase {
     return { ok: true, token: session.token, wsSecret: session.wsSecret, accountId, isAdmin: isAdmin === 1, isModerator: false };
   }
 
+  renameAccount(accountId: number, rawUsername: string): { ok: true; accountId: number; oldUsername: string; username: string } | { ok: false; error: string } {
+    const username = rawUsername.trim();
+    const usernameError = validateUsername(username);
+    if (usernameError) return { ok: false, error: usernameError };
+
+    const current = this.db.query('SELECT id, username FROM accounts WHERE id = ?')
+      .get(accountId) as { id: number; username: string } | null;
+    if (!current) return { ok: false, error: 'Account not found' };
+
+    const existing = this.db.query('SELECT id FROM accounts WHERE username = ?')
+      .get(username) as { id: number } | null;
+    if (existing && existing.id !== accountId) {
+      return { ok: false, error: 'Username already taken' };
+    }
+
+    this.db.query('UPDATE accounts SET username = ? WHERE id = ?').run(username, accountId);
+    return { ok: true, accountId, oldUsername: current.username, username };
+  }
+
   async login(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; wsSecret: string; username: string; accountId: number; isAdmin: boolean; isModerator: boolean } | { ok: false; error: string }> {
     const row = this.db.query('SELECT id, username, password_hash, is_admin, is_moderator FROM accounts WHERE username = ?').get(username) as { id: number; username: string; password_hash: string; is_admin: number; is_moderator: number } | null;
     if (!row) {
@@ -2361,7 +2386,7 @@ export class GameDatabase {
     this.db.query(`
       UPDATE player_state SET
         x = ?, z = ?, y = ?, floor = ?,
-        map_level = ?,
+        map_level = ?, run_energy = ?,
         skills = ?, inventory = ?, equipment = ?,
         stance = ?, magic_stance = ?, autocast_spell_index = ?, auto_retaliate = ?,
         appearance = COALESCE(?, appearance), bank = ?, quests = ?, renown = ?, updated_at = unixepoch()
@@ -2369,6 +2394,7 @@ export class GameDatabase {
     `).run(
       player.position.x, player.position.y, effectiveY, player.currentFloor,
       player.currentMapLevel,
+      clampRunEnergy(player.runEnergy),
       JSON.stringify(skills),
       JSON.stringify(player.inventory),
       JSON.stringify(equipment),
@@ -2396,7 +2422,7 @@ export class GameDatabase {
   savePlayerPosition(accountId: number, player: Player, effectiveY: number): void {
     this.db.query(`
       UPDATE player_state SET
-        x = ?, z = ?, y = ?, floor = ?, map_level = ?, updated_at = unixepoch()
+        x = ?, z = ?, y = ?, floor = ?, map_level = ?, run_energy = ?, updated_at = unixepoch()
       WHERE account_id = ?
     `).run(
       player.position.x,
@@ -2404,6 +2430,7 @@ export class GameDatabase {
       effectiveY,
       player.currentFloor,
       player.currentMapLevel,
+      clampRunEnergy(player.runEnergy),
       accountId,
     );
   }
@@ -2412,7 +2439,7 @@ export class GameDatabase {
     if (saves.length === 0) return;
     const stmt = this.db.query(`
       UPDATE player_state SET
-        x = ?, z = ?, y = ?, floor = ?, map_level = ?, updated_at = unixepoch()
+        x = ?, z = ?, y = ?, floor = ?, map_level = ?, run_energy = ?, updated_at = unixepoch()
       WHERE account_id = ?
     `);
     const tx = this.db.transaction((rows: Array<{ accountId: number; player: Player; effectiveY: number }>) => {
@@ -2423,6 +2450,7 @@ export class GameDatabase {
           row.effectiveY,
           row.player.currentFloor,
           row.player.currentMapLevel,
+          clampRunEnergy(row.player.runEnergy),
           row.accountId,
         );
       }
@@ -2472,8 +2500,8 @@ export class GameDatabase {
   }
 
   loadPlayerState(accountId: number): SavedPlayerState | null {
-    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, magic_stance, autocast_spell_index, auto_retaliate, appearance, bank, respawn_version, quests, renown FROM player_state WHERE account_id = ?')
-      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; magic_stance: string | null; autocast_spell_index: number | null; auto_retaliate: number | null; appearance: string | null; bank: string | null; respawn_version: number | null; quests: string | null; renown: number | null } | null;
+    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, magic_stance, autocast_spell_index, auto_retaliate, run_energy, appearance, bank, respawn_version, quests, renown FROM player_state WHERE account_id = ?')
+      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; magic_stance: string | null; autocast_spell_index: number | null; auto_retaliate: number | null; run_energy: number | null; appearance: string | null; bank: string | null; respawn_version: number | null; quests: string | null; renown: number | null } | null;
 
     if (!row) return null;
 
@@ -2524,9 +2552,8 @@ export class GameDatabase {
       const saved = JSON.parse(row.equipment) as Record<string, unknown>;
       equipment = new Map();
       equipmentQuantities = new Map();
-      const validSlots: Set<string> = new Set(['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo']);
       for (const [slot, value] of Object.entries(saved)) {
-        if (!validSlots.has(slot)) continue;
+        if (!isEquipSlot(slot)) continue;
         let itemId: unknown = value;
         let quantity: unknown = 1;
         if (value && typeof value === 'object') {
@@ -2536,8 +2563,8 @@ export class GameDatabase {
         }
         if (typeof itemId !== 'number' || !Number.isInteger(itemId) || itemId <= 0) continue;
         if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity <= 0 || quantity > MAX_STACK) continue;
-        equipment.set(slot as EquipSlot, itemId);
-        if (slot === 'ammo' || quantity !== 1) equipmentQuantities.set(slot as EquipSlot, quantity);
+        equipment.set(slot, itemId);
+        if (slot === 'ammo' || quantity !== 1) equipmentQuantities.set(slot, quantity);
       }
     } catch {
       equipment = new Map();
@@ -2615,6 +2642,7 @@ export class GameDatabase {
       magicStance,
       autocastSpellIndex,
       autoRetaliate: row.auto_retaliate === 1,
+      runEnergy: typeof row.run_energy === 'number' ? clampRunEnergy(row.run_energy) : RUN_ENERGY_MAX,
       appearance,
       bank,
       respawnVersion: row.respawn_version ?? 0,

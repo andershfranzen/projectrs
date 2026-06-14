@@ -10,7 +10,9 @@ import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import { getItemLegacyIconUrl } from '../rendering/ItemIcon';
 import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
-import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, normalizeNpcVisualScale, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors, type NpcEquipmentFitOverrides } from '@projectrs/shared';
+import { mountWorldOverlayElement } from '../rendering/worldOverlay';
+import type { GroundItemLabelMode } from '../ui/gameSettings';
+import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, normalizeNpcVisualScale, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementTilesPerSecond, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors, type NpcEquipmentFitOverrides, type MovementMode } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -42,6 +44,23 @@ export interface RemotePlayerTarget {
   prevZ: number;
 }
 
+export interface RemoteMovementStep {
+  x: number;
+  z: number;
+  floor: number;
+  y: number;
+  mode: MovementMode;
+}
+
+export interface GroundItemLabelOverlay {
+  element: HTMLDivElement;
+  x: number;
+  y: number;
+  z: number;
+}
+
+const GROUND_ITEM_VALUABLE_LABEL_THRESHOLD = 100;
+
 export class EntityManager {
   private scene: Scene;
   private getHeight: (x: number, z: number, floor?: number, currentY?: number) => number;
@@ -59,6 +78,9 @@ export class EntityManager {
    *  latest server target. Bridges the ~600 ms gap between server ticks
    *  so the walk animation doesn't briefly drop to idle between steps. */
   readonly remoteWalkUntil: Map<number, number> = new Map();
+  readonly remoteMovementModes: Map<number, MovementMode> = new Map();
+  readonly remoteMovementSegmentSteps: Map<number, number> = new Map();
+  readonly remoteMovementStepQueues: Map<number, RemoteMovementStep[]> = new Map();
   readonly playerNames: Map<number, string> = new Map();
   readonly nameToEntityId: Map<string, number> = new Map();
   readonly remoteAdminFlags: Map<number, boolean> = new Map();
@@ -123,6 +145,8 @@ export class EntityManager {
   private pendingGroundItemTileRefreshes: Set<string> = new Set();
   private groundItemRefreshQueued = false;
   private groundItemIdsByTile: Map<string, Set<number>> = new Map();
+  private groundItemLabelMode: GroundItemLabelMode = 'off';
+  private groundItemLabels: Map<string, GroundItemLabelOverlay> = new Map();
 
   constructor(
     scene: Scene,
@@ -347,6 +371,8 @@ export class EntityManager {
   }
 
   private disposeGroundItemTileRender(tileKey: string): void {
+    this.removeGroundItemTileLabel(tileKey);
+
     const pickProxy = this.groundItemPickProxies.get(tileKey);
     if (pickProxy) {
       pickProxy.dispose();
@@ -398,6 +424,67 @@ export class EntityManager {
     this.groundItemSprites.set(top.id, sprite);
   }
 
+  private groundItemStackValue(stack: GroundItemStackEntry[]): number {
+    let value = 0;
+    for (const item of stack) {
+      value += Math.max(0, item.def.value ?? 0) * Math.max(1, item.quantity);
+    }
+    return value;
+  }
+
+  private groundItemLabelText(stack: GroundItemStackEntry[]): string {
+    const top = stack[0];
+    if (!top) return '';
+    const suffix = top.quantity > 1 ? ` (${top.quantity})` : '';
+    const extra = stack.length > 1 ? ` +${stack.length - 1}` : '';
+    return `${top.def.name}${suffix}${extra}`;
+  }
+
+  private shouldShowGroundItemLabel(stack: GroundItemStackEntry[]): boolean {
+    if (this.groundItemLabelMode === 'off') return false;
+    if (this.groundItemLabelMode === 'all') return true;
+    return this.groundItemStackValue(stack) >= GROUND_ITEM_VALUABLE_LABEL_THRESHOLD;
+  }
+
+  private removeGroundItemTileLabel(tileKey: string): void {
+    const label = this.groundItemLabels.get(tileKey);
+    if (!label) return;
+    label.element.remove();
+    this.groundItemLabels.delete(tileKey);
+  }
+
+  private updateGroundItemTileLabel(tileKey: string, stack: GroundItemStackEntry[], y: number): void {
+    const top = stack[0];
+    if (!top || !this.shouldShowGroundItemLabel(stack)) {
+      this.removeGroundItemTileLabel(tileKey);
+      return;
+    }
+
+    let label = this.groundItemLabels.get(tileKey);
+    if (!label) {
+      const el = document.createElement('div');
+      el.className = 'ground-item-name-overlay';
+      el.style.cssText = `
+        position: absolute; pointer-events: none; z-index: 145;
+        font-family: Arial, Helvetica, sans-serif; font-size: 11px;
+        color: #ffd75a;
+        white-space: nowrap;
+        transform: translate(-50%, -100%);
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.9), -1px -1px 2px rgba(0,0,0,0.65);
+        opacity: 0;
+      `;
+      mountWorldOverlayElement(el);
+      label = { element: el, x: top.x, y: y + 0.45, z: top.z };
+      this.groundItemLabels.set(tileKey, label);
+    }
+
+    label.element.textContent = this.groundItemLabelText(stack);
+    label.element.style.color = this.groundItemLabelMode === 'valuable' ? '#66ff66' : '#ffd75a';
+    label.x = top.x;
+    label.y = y + 0.45;
+    label.z = top.z;
+  }
+
   private refreshGroundItemTile(tileKey: string): void {
     const version = (this.groundItemTileVersions.get(tileKey) ?? 0) + 1;
     this.groundItemTileVersions.set(tileKey, version);
@@ -408,6 +495,7 @@ export class EntityManager {
     if (!top) return;
 
     const y = top.y ?? this.getHeight(top.x, top.z, top.floor, 0);
+    this.updateGroundItemTileLabel(tileKey, stack, y);
     this.createGroundItemTilePickProxy(tileKey, top, y);
     GroundItemEntity.create(this.scene, tileKey, stack, y).then((entity) => {
       if ((this.groundItemTileVersions.get(tileKey) ?? 0) !== version) {
@@ -446,6 +534,27 @@ export class EntityManager {
     }
     if (!previousTileKey || previousTileKey !== nextTileKey) this.addGroundItemToTileIndex(groundItemId, nextTileKey);
     this.queueGroundItemTileRefresh(nextTileKey);
+  }
+
+  setGroundItemLabelMode(mode: GroundItemLabelMode): void {
+    if (this.groundItemLabelMode === mode) return;
+    this.groundItemLabelMode = mode;
+    for (const tileKey of this.groundItemIdsByTile.keys()) {
+      const stack = this.collectGroundItemTileStack(tileKey);
+      const top = stack[0];
+      if (!top) {
+        this.removeGroundItemTileLabel(tileKey);
+        continue;
+      }
+      this.updateGroundItemTileLabel(tileKey, stack, top.y ?? this.getHeight(top.x, top.z, top.floor, 0));
+    }
+    if (mode === 'off') {
+      for (const tileKey of [...this.groundItemLabels.keys()]) this.removeGroundItemTileLabel(tileKey);
+    }
+  }
+
+  forEachGroundItemLabel(callback: (label: GroundItemLabelOverlay) => void): void {
+    for (const label of this.groundItemLabels.values()) callback(label);
   }
 
   // --- Target lookup ---
@@ -529,6 +638,9 @@ export class EntityManager {
       this.remotePlayers.delete(entityId);
       this.remoteTargets.delete(entityId);
       this.remoteWalkUntil.delete(entityId);
+      this.remoteMovementModes.delete(entityId);
+      this.remoteMovementSegmentSteps.delete(entityId);
+      this.remoteMovementStepQueues.delete(entityId);
       this.remoteCombatTargets.delete(entityId);
       this.playDeathPortalAndDispose(entityId, character);
       return true;
@@ -562,6 +674,9 @@ export class EntityManager {
       this.remotePlayers.delete(entityId);
       this.remoteTargets.delete(entityId);
       this.remoteWalkUntil.delete(entityId);
+      this.remoteMovementModes.delete(entityId);
+      this.remoteMovementSegmentSteps.delete(entityId);
+      this.remoteMovementStepQueues.delete(entityId);
     }
     if (forgetCachedState) {
       this.remoteAppearances.delete(entityId);
@@ -673,20 +788,32 @@ export class EntityManager {
   ): void {
     const now = performance.now();
     for (const [entityId, sprite] of this.remotePlayers) {
-      const target = this.remoteTargets.get(entityId);
+      const stepQueue = this.remoteMovementStepQueues.get(entityId);
+      const queuedStep = stepQueue?.[0];
+      const finalTarget = this.remoteTargets.get(entityId);
+      const target = queuedStep ?? finalTarget;
       if (!target) continue;
       if (!sprite.isRenderEnabled()) {
         if (sprite.isWalking()) sprite.stopWalking();
-        sprite.setPositionXYZ(target.x, target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y), target.z);
+        sprite.setMovementMode(this.remoteMovementModes.get(entityId) ?? 'walk');
+        this.remoteMovementSegmentSteps.delete(entityId);
+        this.remoteMovementStepQueues.delete(entityId);
+        const snapTarget = finalTarget ?? target;
+        sprite.setPositionXYZ(snapTarget.x, snapTarget.y ?? this.getHeight(snapTarget.x, snapTarget.z, snapTarget.floor, sprite.position.y), snapTarget.z);
         continue;
       }
+      const movementMode = queuedStep?.mode ?? this.remoteMovementModes.get(entityId) ?? 'walk';
       const c = sprite.position;
       const dx = target.x - c.x;
       const dz = target.z - c.z;
       const dist = Math.hypot(dx, dz);
       if (isRemoteSkilling(entityId)) {
-        if (dist > 0.05) {
-          sprite.setPositionXYZ(target.x, target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y), target.z);
+        this.remoteMovementStepQueues.delete(entityId);
+        this.remoteMovementSegmentSteps.delete(entityId);
+        const snapTarget = finalTarget ?? target;
+        const snapDist = Math.hypot(snapTarget.x - c.x, snapTarget.z - c.z);
+        if (snapDist > 0.05) {
+          sprite.setPositionXYZ(snapTarget.x, snapTarget.y ?? this.getHeight(snapTarget.x, snapTarget.z, snapTarget.floor, sprite.position.y), snapTarget.z);
         }
         continue;
       }
@@ -696,6 +823,10 @@ export class EntityManager {
       const combatTarget = this.remoteCombatTargets.get(entityId);
       const combatTargetSprite = combatTarget !== undefined ? resolveCombatTarget(combatTarget) : null;
       if (dist > 0.05) {
+        const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
+        const segmentSteps = queuedStep ? 1 : Math.max(this.remoteMovementSegmentSteps.get(entityId) ?? tileSteps, tileSteps);
+        const effectiveMode = queuedStep ? queuedStep.mode : effectiveMovementModeForPath(movementMode, segmentSteps, tileSteps);
+        sprite.setMovementMode(effectiveMode);
         if (!sprite.isWalking()) sprite.startWalking();
         if (camPos) sprite.updateMovementDirection(dx, dz, camPos);
         if (combatTargetSprite) {
@@ -703,14 +834,33 @@ export class EntityManager {
         }
         // Chebyshev-paced interpolation matches the server's 1 tile/tick
         // regardless of direction.
-        const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
-        const stepRatio = Math.min(1.67 * dt / Math.max(tileSteps, 0.001), 1);
-        const nx = c.x + dx * stepRatio;
-        const nz = c.z + dz * stepRatio;
-        sprite.setPositionXYZ(nx, this.getHeight(nx, nz, target.floor, sprite.position.y), nz);
+        const speed = queuedStep
+          ? movementTilesPerSecond(queuedStep.mode)
+          : effectiveMovementTilesPerSecondForPath(movementMode, segmentSteps, tileSteps);
+        const stepRatio = Math.min(speed * dt / Math.max(tileSteps, 0.001), 1);
+        const reached = stepRatio >= 1;
+        const nx = reached ? target.x : c.x + dx * stepRatio;
+        const nz = reached ? target.z : c.z + dz * stepRatio;
+        const ny = reached && queuedStep
+          ? queuedStep.y
+          : this.getHeight(nx, nz, target.floor, sprite.position.y);
+        sprite.setPositionXYZ(nx, ny, nz);
+        if (reached && queuedStep && stepQueue) {
+          stepQueue.shift();
+          if (stepQueue.length === 0) this.remoteMovementStepQueues.delete(entityId);
+        }
+      } else if (queuedStep && stepQueue) {
+        sprite.setMovementMode(queuedStep.mode);
+        sprite.setPositionXYZ(queuedStep.x, queuedStep.y, queuedStep.z);
+        stepQueue.shift();
+        if (stepQueue.length === 0) this.remoteMovementStepQueues.delete(entityId);
+        if (!sprite.isWalking()) sprite.startWalking();
       } else if (serverWalking) {
         if (!sprite.isWalking()) sprite.startWalking();
       } else {
+        sprite.setMovementMode(movementMode);
+        this.remoteMovementSegmentSteps.delete(entityId);
+        this.remoteMovementStepQueues.delete(entityId);
         if (sprite.isWalking()) sprite.stopWalking();
         if (combatTargetSprite) {
           this.applyCombatFaceLockToTarget(sprite, combatTargetSprite, camPos);
@@ -845,6 +995,16 @@ export class EntityManager {
         positionGroundItemPickProxy(proxy, top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
       }
     }
+    for (const [tileKey, label] of this.groundItemLabels) {
+      const top = this.collectGroundItemTileStack(tileKey)[0];
+      if (!top) {
+        this.removeGroundItemTileLabel(tileKey);
+        continue;
+      }
+      label.x = top.x;
+      label.y = (top.y ?? this.getHeight(top.x, top.z, top.floor, 0)) + 0.45;
+      label.z = top.z;
+    }
     // Local player intentionally NOT repositioned here. Its Y came from
     // LOGIN_OK (server-authoritative) and getHeight() without currentY
     // gates roof reveal off and drops elevated-tile spawns to terrain (0).
@@ -873,6 +1033,9 @@ export class EntityManager {
     this.activeDeathEffectEntityIds.clear();
     this.remoteTargets.clear();
     this.remoteWalkUntil.clear();
+    this.remoteMovementModes.clear();
+    this.remoteMovementSegmentSteps.clear();
+    this.remoteMovementStepQueues.clear();
     this.remoteAppearances.clear();
     this.remoteEquipment.clear();
     this.remoteStances.clear();
@@ -904,6 +1067,8 @@ export class EntityManager {
     this.groundItemModels.clear();
     for (const [, proxy] of this.groundItemPickProxies) proxy.dispose();
     this.groundItemPickProxies.clear();
+    for (const [, label] of this.groundItemLabels) label.element.remove();
+    this.groundItemLabels.clear();
     this.groundItemTileVersions.clear();
     this.pendingGroundItemTileRefreshes.clear();
     this.groundItemRefreshQueued = false;

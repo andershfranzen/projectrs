@@ -2,7 +2,6 @@ import {
   createTextTabButton,
   installUiChromeStyles,
   setToggleButtonActive,
-  UI_RED,
 } from './uiChrome';
 import {
   ensureChatEmotesLoaded,
@@ -12,12 +11,21 @@ import {
   renderChatText,
   type ChatEmoteChoice,
 } from '../rendering/chatEmotes';
+import {
+  chatColorCssVar,
+  type ChatMessageColorKey,
+} from './chatSettings';
 
 export type ChatSendCallback = (message: string) => void;
 export type ChatPrivateSendCallback = (to: string, message: string) => void;
 
 type ChatTab = 'all' | 'game' | 'public' | 'private';
 type ChatMessageType = 'game' | 'public' | 'private';
+type ChatSpeechSource = 'player' | 'npc';
+type ChatSystemMessageOptions = {
+  foldConsecutive?: boolean;
+  colorKey?: Extract<ChatMessageColorKey, 'game' | 'world' | 'trade'>;
+};
 type ChatMessageEntry = {
   el: HTMLDivElement;
   type: ChatMessageType;
@@ -29,7 +37,6 @@ type ChatMessageEntry = {
 const MAX_CHAT_MESSAGES = 300;
 const CHAT_PLACEHOLDER_STYLE_ID = 'evilquest-chat-placeholder-style';
 const MOBILE_CHAT_HINT_QUERY = '(max-width: 760px), (pointer: coarse) and (max-width: 900px), (max-height: 520px) and (max-width: 900px) and (orientation: landscape)';
-const PRIVATE_CHAT_COLOR = '#4fdfff';
 const CHAT_BOTTOM_STICKY_THRESHOLD = 12;
 
 export class ChatPanel {
@@ -124,6 +131,15 @@ export class ChatPanel {
     style.id = CHAT_PLACEHOLDER_STYLE_ID;
     style.textContent = `
       #chat-input::placeholder { color: rgba(216,55,43,0.8); text-shadow: 1px 1px 0 #000; }
+      .eq-chat-speaker {
+        font-weight: bold;
+      }
+      .eq-chat-text--player {
+        color: var(--eq-chat-color-player, #ffffff);
+      }
+      .eq-chat-text--npc {
+        color: var(--eq-chat-color-npc, #f4ded5);
+      }
       #chat-log img.chat-inline-emote {
         width: 20px;
         height: 20px;
@@ -245,11 +261,16 @@ export class ChatPanel {
     const panel = document.createElement('div');
     panel.id = 'chat-panel';
     panel.style.cssText = `
-      width: 100%; height: 100%;
+      width: var(--eq-ui-scale-inverse-percent, 100%);
+      height: var(--eq-ui-scale-inverse-percent, 100%);
+      transform: scale(var(--eq-ui-scale, 1));
+      transform-origin: bottom left;
       background: transparent;
       display: flex; flex-direction: column;
-      font-family: Arial, Helvetica, sans-serif; font-size: 12px;
-      position: relative;
+      font-family: Arial, Helvetica, sans-serif; font-size: var(--eq-chat-font-size, 13px);
+      position: absolute;
+      left: 0;
+      bottom: 0;
     `;
 
     // Tab bar — sits on the stone, no separate background
@@ -287,8 +308,8 @@ export class ChatPanel {
     log.id = 'chat-log';
     log.style.cssText = `
       flex: 1; overflow-y: auto; padding: 6px 10px;
-      color: #d8372b; line-height: 1.6;
-      font-size: 13px; font-weight: bold;
+      color: var(--eq-chat-color-game, #d8372b); line-height: 1.6;
+      font-size: var(--eq-chat-font-size, 13px); font-weight: bold;
       text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
       background:
         linear-gradient(rgba(38, 26, 18, 0.18), rgba(38, 26, 18, 0.18)),
@@ -322,10 +343,12 @@ export class ChatPanel {
       white-space:nowrap;
       background:rgba(0,40,52,0.72);
       border:1px solid rgba(79,223,255,0.45);
-      color:${PRIVATE_CHAT_COLOR};
+      color:${chatColorCssVar('private')};
       border-radius:2px;
       padding:5px 7px;
-      font:700 12px Arial, Helvetica, sans-serif;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: max(11px, calc(var(--eq-chat-font-size, 13px) - 1px));
+      font-weight: 700;
       text-shadow:1px 1px 0 #000;
       cursor:pointer;
     `;
@@ -370,8 +393,8 @@ export class ChatPanel {
     input.maxLength = 200;
     input.style.cssText = `
       flex: 1; background: rgba(0,0,0,0.5);
-      border: 1px solid rgba(255,200,100,0.2); color: #d8372b;
-      font-family: Arial, Helvetica, sans-serif; font-size: 13px;
+      border: 1px solid rgba(255,200,100,0.2); color: var(--eq-chat-color-game, #d8372b);
+      font-family: Arial, Helvetica, sans-serif; font-size: var(--eq-chat-font-size, 13px);
       font-weight: bold;
       padding: 5px 8px; outline: none;
       border-radius: 2px;
@@ -545,15 +568,18 @@ export class ChatPanel {
     return !!this.emoteMenu && this.emoteMenu.style.display !== 'none' && this.emoteChoices.length > 0;
   }
 
-  addMessage(from: string, message: string, color: string = '#fff'): void {
+  addMessage(from: string, message: string, color: string = '#fff', source: ChatSpeechSource = 'player'): void {
     const el = document.createElement('div');
-    el.innerHTML = `<span style="color: ${color}; font-weight: bold;">${escapeHtml(from)}:</span> <span style="color: #fff;">${renderChatText(message)}</span>`;
+    const colorKey: ChatMessageColorKey = source === 'npc' ? 'npc' : 'player';
+    const speakerColor = color || chatColorCssVar(colorKey);
+    el.className = `eq-chat-message eq-chat-message--${source}`;
+    el.innerHTML = `<span class="eq-chat-speaker" style="color: ${speakerColor};">${escapeHtml(from)}:</span> <span class="eq-chat-text--${colorKey}">${renderChatText(message)}</span>`;
     this.appendMessage(el, 'public');
   }
 
   addPrivateMessage(label: string, message: string, replyTarget: string | null = null): void {
     const el = document.createElement('div');
-    el.style.color = PRIVATE_CHAT_COLOR;
+    el.style.color = chatColorCssVar('private');
     el.innerHTML = `<span style="font-weight: bold;">${escapeHtml(label)}:</span> ${renderChatText(message)}`;
     if (replyTarget) {
       el.title = `Send private message to ${replyTarget}`;
@@ -567,8 +593,9 @@ export class ChatPanel {
     this.appendMessage(el, 'private');
   }
 
-  addSystemMessage(message: string, color: string = UI_RED, opts: { foldConsecutive?: boolean } = {}): void {
-    const repeatKey = opts.foldConsecutive ? `${color}\0${message}` : undefined;
+  addSystemMessage(message: string, color: string | null = null, opts: ChatSystemMessageOptions = {}): void {
+    const textColor = color ?? chatColorCssVar(opts.colorKey ?? 'game');
+    const repeatKey = opts.foldConsecutive ? `${textColor}\0${message}` : undefined;
     if (repeatKey) {
       const last = this.messages[this.messages.length - 1];
       if (last?.repeatKey === repeatKey && last.setRepeatCount) {
@@ -582,7 +609,7 @@ export class ChatPanel {
 
     const el = document.createElement('div');
     const text = document.createElement('span');
-    text.style.color = color;
+    text.style.color = textColor;
     text.textContent = message;
     el.appendChild(text);
     this.appendMessage(el, 'game', repeatKey ? {
@@ -598,7 +625,7 @@ export class ChatPanel {
     const el = document.createElement('div');
     const label = document.createElement('span');
     label.textContent = `${from} sent you a trade request. `;
-    label.style.color = UI_RED;
+    label.style.color = chatColorCssVar('trade');
     el.appendChild(label);
 
     const accept = this.makeInlineAction('Accept', () => {
@@ -610,7 +637,7 @@ export class ChatPanel {
 
     const divider = document.createElement('span');
     divider.textContent = ' or ';
-    divider.style.color = UI_RED;
+    divider.style.color = chatColorCssVar('trade');
     el.appendChild(divider);
 
     el.appendChild(this.makeInlineAction('trade them back', onTradeBack));
@@ -621,7 +648,7 @@ export class ChatPanel {
     const el = document.createElement('div');
     const label = document.createElement('span');
     label.textContent = `${from} sent you a duel request. `;
-    label.style.color = UI_RED;
+    label.style.color = chatColorCssVar('trade');
     el.appendChild(label);
 
     const accept = this.makeInlineAction('Accept', () => {
@@ -633,7 +660,7 @@ export class ChatPanel {
 
     const divider = document.createElement('span');
     divider.textContent = ' or ';
-    divider.style.color = UI_RED;
+    divider.style.color = chatColorCssVar('trade');
     el.appendChild(divider);
 
     el.appendChild(this.makeInlineAction('duel them back', onDuelBack));

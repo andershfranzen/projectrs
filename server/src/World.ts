@@ -1,10 +1,10 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, EQUIPMENT_SLOT_NAMES, occupiedEquipmentSlotsForDef, equipmentSlotSetsConflict, movementModeFromIndex, movementModeIndex, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe, type EquipSlot, type InventorySlot } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
 import { addXp, levelFromXp, MAX_SKILL_LEVEL, MAX_SKILL_XP, statRandom, spellSchoolSkill, xpForLevel } from '@projectrs/shared';
 import { GameMap } from './GameMap';
-import { Player, type EquipSlot, type PlayerAmmo } from './entity/Player';
+import { Player, type PlayerAmmo } from './entity/Player';
 import { Npc, type NpcOptions } from './entity/Npc';
 import { WorldObject, releaseObjectEntityId } from './entity/WorldObject';
 import { DataLoader } from './data/DataLoader';
@@ -47,6 +47,52 @@ const STALL_SPOT_WARNING = 'Hey! Get your hands off there!';
 const STALL_MERCHANT_GUARD_CALL = 'Guards guards!';
 const STALL_MERCHANT_BLOCK_MESSAGE = 'The merchant is watching you too closely.';
 type ItemQuantity = { itemId: number; quantity: number };
+type EquipmentConflict = ItemQuantity & { slot: EquipSlot };
+
+function cloneInventorySlots(inventory: readonly (InventorySlot | null)[]): (InventorySlot | null)[] {
+  return inventory.map(slot => slot ? { itemId: slot.itemId, quantity: slot.quantity } : null);
+}
+
+function inventorySnapshotCanFitItems(
+  inventory: readonly (InventorySlot | null)[],
+  itemDefs: Map<number, ItemDef>,
+  items: readonly ItemQuantity[],
+): boolean {
+  const slots = cloneInventorySlots(inventory);
+
+  for (const item of items) {
+    const quantity = Math.floor(item.quantity);
+    if (!Number.isInteger(item.itemId) || item.itemId <= 0 || quantity <= 0 || quantity > MAX_STACK) return false;
+    const def = itemDefs.get(item.itemId);
+    if (def?.stackable === true) {
+      const existing = slots.find(slot => slot?.itemId === item.itemId);
+      if (existing) {
+        const headroom = MAX_STACK - existing.quantity;
+        if (headroom < quantity) return false;
+        existing.quantity += quantity;
+        continue;
+      }
+      const empty = slots.findIndex(slot => slot === null);
+      if (empty < 0) return false;
+      slots[empty] = { itemId: item.itemId, quantity };
+      continue;
+    }
+
+    for (let i = 0; i < quantity; i++) {
+      const empty = slots.findIndex(slot => slot === null);
+      if (empty < 0) return false;
+      slots[empty] = { itemId: item.itemId, quantity: 1 };
+    }
+  }
+
+  return true;
+}
+
+function occupiedSlotsForEquippedItem(def: ItemDef | undefined, fallbackSlot: EquipSlot): EquipSlot[] {
+  const slots = occupiedEquipmentSlotsForDef(def);
+  return slots.length > 0 ? slots : [fallbackSlot];
+}
+
 type BankInventoryItemsForCoinsAction = Extract<import('@projectrs/shared').DialogueAction, { type: 'bankInventoryItemsForCoins' }>;
 type PlayerMovementLayerState = { floor: number; y: number; lastFloorChangeTile: number };
 type SultansMineDoorTransit = { doorId: number; finalX: number; finalZ: number; expiresTick: number; moved: boolean };
@@ -310,9 +356,6 @@ const LOW_VALUE_NPC_DROP_LOG_SUPPRESSION_ITEM_IDS = new Set([
   301, // Human Skin
 ]);
 
-/** Canonical ordering of equipment slots used for binary opcode encoding.
- *  Must stay in sync with the client-side decoder in GameManager. */
-const EQUIPMENT_SLOT_NAMES: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo'];
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 
 export interface GroundItem {
@@ -378,6 +421,18 @@ type SyncPacket = {
   data: Uint8Array;
   opcode?: ServerOpcode;
   values?: number[];
+};
+
+type PlayerMovementStep = {
+  x: number;
+  z: number;
+  floor: number;
+  y: number;
+};
+
+type PlayerMovementStepBatch = {
+  modeIndex: number;
+  steps: PlayerMovementStep[];
 };
 
 type QueuedPositionCheckpoint = {
@@ -572,6 +627,22 @@ export class World {
     player.syncDirty = true;
     broadcastPlayerInfo(player.id, player.name, player.isAdmin, player.isModerator);
     return true;
+  }
+
+  renameActiveAccount(accountId: number, username: string): boolean {
+    let updated = false;
+    for (const player of this.players.values()) {
+      if (player.accountId !== accountId) continue;
+      player.name = username;
+      const socketData = player.ws.data as { username?: string };
+      if (typeof socketData.username === 'string') socketData.username = username;
+      player.syncDirty = true;
+      if (!player.disconnected && !player.requestIdleLogout) {
+        broadcastPlayerInfo(player.id, player.name, player.isAdmin, player.isModerator);
+      }
+      updated = true;
+    }
+    return updated;
   }
 
   getOnlinePlayerCount(): number {
@@ -2479,16 +2550,20 @@ export class World {
     // correct Y. Covers both fresh login and grace-period reconnect — both
     // routes call sendLoginBootstrap.
     player.effectiveY = spawnY;
-    // LOGIN_OK layout: [playerId, x*10, z*10, spawnY*10, protocolVersion].
+    // LOGIN_OK layout: [playerId, x*10, z*10, spawnY*10, protocolVersion, movementModeIdx].
     // Version added at the end so older client builds (which read only the
     // first 4 values) still parse without error — they just don't see the
     // mismatch warning. New clients read v[4] and disconnect on mismatch.
+    // Movement mode is included so a reconnect/login cannot keep a stale
+    // client-side run toggle when the server's authoritative player is walk.
     this.sendToPlayer(player, ServerOpcode.LOGIN_OK, player.id,
       qPos(player.position.x),
       qPos(player.position.y),
       qPos(spawnY),
       PROTOCOL_VERSION,
+      movementModeIndex(player.movementMode),
     );
+    this.sendRunEnergy(player);
 
     if (player.isAdmin) this.sendToPlayer(player, ServerOpcode.ADMIN_FLAGS, 1);
 
@@ -2527,6 +2602,21 @@ export class World {
 
   private sendAutoRetaliateState(player: Player): void {
     this.sendToPlayer(player, ServerOpcode.PLAYER_AUTO_RETALIATE, player.autoRetaliate ? 1 : 0);
+  }
+
+  private sendRunEnergy(player: Player): void {
+    const percent = player.runEnergyPercent();
+    player.lastRunEnergyPercent = percent;
+    this.sendToPlayer(player, ServerOpcode.PLAYER_RUN_ENERGY, percent);
+  }
+
+  private updatePlayerRunEnergy(player: Player, movedStepCount: number): void {
+    const result = player.updateRunEnergy(movedStepCount);
+    if (result.percentChanged || player.lastRunEnergyPercent < 0) this.sendRunEnergy(player);
+    if (result.modeChanged) {
+      this.sendMovementMode(player, player);
+      this.broadcastMovementMode(player);
+    }
   }
 
   private magicDebug(player: Player | undefined, event: string, details: Record<string, unknown> = {}): void {
@@ -3874,8 +3964,8 @@ export class World {
     // tiles and validate every intermediate tile, otherwise a crafted packet
     // with two walkable endpoints separated by a wall would walk through it
     // (isWallBlocked only handles dx,dz ∈ {-1,0,1}). The unit-tile expansion
-    // also becomes the moveQueue so processMovement consumes one tile/tick,
-    // which matches the client's 1.67 t/s visual interpolation exactly.
+    // also becomes the moveQueue so processMovement consumes unit-tile credits;
+    // walk grants one credit/tick and run grants two.
     // Per-segment cap: legitimate compressed corners can be far apart on a
     // long straight, but never longer than the map's diagonal. 256 covers
     // any practical map while bounding worst-case work per packet.
@@ -3889,6 +3979,7 @@ export class World {
     // the two views half a tile apart, and on the next walk the server's
     // delta calc (floor(step.x) - floor(prevX)) starts from the wrong tile,
     // which can compound into multi-tile drift.
+    const requestedDestination = path[path.length - 1] ?? null;
     const validated = expandAndValidateWaypointPath({
       startX: player.position.x,
       startZ: player.position.y,
@@ -3914,12 +4005,26 @@ export class World {
         state,
       ),
     });
-    player.setMoveQueue(validated.path);
+    let queuedPath = validated.path;
+    let recoveredWithAuthoritativePath = false;
+    if (validated.truncated && requestedDestination) {
+      const fallbackPath = this.findPlayerPathToTile(
+        player,
+        Math.floor(requestedDestination.x),
+        Math.floor(requestedDestination.z),
+      );
+      if (fallbackPath.length > 0 && fallbackPath.length <= MAX_REQUESTED_TILES) {
+        queuedPath = fallbackPath;
+        recoveredWithAuthoritativePath = true;
+      }
+    }
+
+    player.setMoveQueue(queuedPath);
     // If we actually dropped tiles vs. what the client asked for, notify it
     // so it can trim its local walk to match. Skip when nothing was
     // requested (zero-distance / empty input) or when the validation
     // produced exactly what was asked. Fire-and-forget — no server state.
-    if (validated.truncated && validated.path.length < validated.requestedTileCount && validated.requestedTileCount > 0) {
+    if (!recoveredWithAuthoritativePath && validated.truncated && validated.path.length < validated.requestedTileCount && validated.requestedTileCount > 0) {
       const last = validated.path.length > 0 ? validated.path[validated.path.length - 1] : { x: player.position.x, z: player.position.y };
       player.botStats?.recordPathTruncation();
       this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(last.x), qPos(last.z));
@@ -6004,7 +6109,6 @@ export class World {
       toolItemId = bestTool.id;
       toolBonus = bestTool.toolBonus ?? 0;
     }
-
     // Better pickaxes shorten the mining cycle. Other harvestables still use
     // the raw tool bonus to shorten the cycle.
     let cycleTime: number;
@@ -6254,7 +6358,7 @@ export class World {
     const itemDef = this.data.getItem(slot.itemId);
     if (!itemDef || !itemDef.equippable || !itemDef.equipSlot) return;
 
-    const equipSlot = itemDef.equipSlot as EquipSlot;
+    const equipSlot = itemDef.equipSlot;
     const requiredLevel = itemDef.levelRequired ?? 1;
     const requiredSkill = itemDef.equipSkill ?? (equipSlot === 'weapon' ? 'weaponry' : equipSlot === 'ammo' ? undefined : 'defence');
     if (requiredSkill && requiredLevel > 1 && (player.skills[requiredSkill]?.level ?? 1) < requiredLevel) {
@@ -6302,37 +6406,34 @@ export class World {
       return;
     }
 
-    // Pre-flight: figure out if any side-unequips (2H↔shield) will displace
-    // an item into the inventory, and reject the swap if there's no room.
-    // Without this check, the displaced item silently vanishes — leaving both
-    // pieces equipped (e.g. 2H weapon + shield).
-    let sideUnequipId: number | undefined;
-    if (equipSlot === 'weapon' && itemDef.twoHanded) {
-      sideUnequipId = player.equipment.get('shield');
-    } else if (equipSlot === 'shield') {
-      const weaponId = player.equipment.get('weapon');
-      if (weaponId !== undefined) {
-        const weaponDef = this.data.getItem(weaponId);
-        if (weaponDef?.twoHanded) sideUnequipId = weaponId;
-      }
+    const incomingOccupiedSlots = occupiedEquipmentSlotsForDef(itemDef);
+    const conflicts: EquipmentConflict[] = [];
+    for (const [wornSlot, wornItemId] of player.equipment) {
+      if (wornSlot === equipSlot) continue;
+      const wornDef = this.data.getItem(wornItemId);
+      const wornOccupiedSlots = occupiedSlotsForEquippedItem(wornDef, wornSlot);
+      if (!equipmentSlotSetsConflict(incomingOccupiedSlots, wornOccupiedSlots)) continue;
+      conflicts.push({
+        slot: wornSlot,
+        itemId: wornItemId,
+        quantity: player.getEquipmentQuantity(wornSlot),
+      });
     }
 
-    if (sideUnequipId !== undefined) {
-      // After the source-slot swap, the source slot is filled iff there's a
-      // current equipped item to displace into it. So free slots available for
-      // the side-unequip are: current free slots, plus 1 if source becomes empty.
-      let freeSlots = 0;
-      for (const s of player.inventory) if (s === null) freeSlots++;
-      const freeAfterSwap = freeSlots + (currentEquipped === undefined ? 1 : 0);
-      if (freeAfterSwap < 1) {
-        // Not enough room — refuse the equip entirely. Better than leaving
-        // the player in an invalid two-mainhand state.
+    if (conflicts.length > 0) {
+      const inventoryAfterSourceSwap = cloneInventorySlots(player.inventory);
+      inventoryAfterSourceSwap[slotIndex] = currentEquipped !== undefined
+        ? { itemId: currentEquipped, quantity: player.getEquipmentQuantity(equipSlot) }
+        : null;
+      if (!inventorySnapshotCanFitItems(inventoryAfterSourceSwap, this.data.itemDefs, conflicts)) {
         this.sendChatSystem(player, 'You need a free inventory slot to do that.');
         return;
       }
     }
 
     const weaponBefore = player.equipment.get('weapon');
+    const originalSourceSlot = slot ? { itemId: slot.itemId, quantity: slot.quantity } : null;
+    const originalEquippedQuantity = currentEquipped !== undefined ? player.getEquipmentQuantity(equipSlot) : 0;
     this.interruptPlayerAction(playerId, player);
 
     // Source slot: receives displaced equipment if any, else cleared.
@@ -6344,13 +6445,25 @@ export class World {
 
     player.setEquipment(equipSlot, slot.itemId);
 
-    if (sideUnequipId !== undefined) {
-      // Pre-flight guarantees this fits, but use the transaction return to
-      // catch any future drift in canFit logic.
-      const addResult = player.addItem(sideUnequipId, 1, this.data.itemDefs);
-      if (addResult.completed > 0) {
-        player.deleteEquipment(equipSlot === 'weapon' ? 'shield' : 'weapon');
+    const conflictAdds: ReturnType<Player['addItem']>[] = [];
+    for (const conflict of conflicts) {
+      const addResult = player.addItem(conflict.itemId, conflict.quantity, this.data.itemDefs);
+      if (addResult.completed !== conflict.quantity) {
+        player.revertAdd(addResult);
+        for (let i = conflictAdds.length - 1; i >= 0; i--) player.revertAdd(conflictAdds[i]);
+        player.inventory[slotIndex] = originalSourceSlot;
+        if (currentEquipped !== undefined) {
+          player.setEquipment(equipSlot, currentEquipped, originalEquippedQuantity);
+        } else {
+          player.deleteEquipment(equipSlot);
+        }
+        this.sendChatSystem(player, 'You need a free inventory slot to do that.');
+        return;
       }
+      conflictAdds.push(addResult);
+    }
+    for (const conflict of conflicts) {
+      player.deleteEquipment(conflict.slot);
     }
 
     const weaponChanged = weaponBefore !== player.equipment.get('weapon');
@@ -7027,6 +7140,27 @@ export class World {
     this.persistMagicCombatState(player);
     player.setDelay(this.currentTick, 1);
     this.sendMagicState(player);
+  }
+
+  handlePlayerSetMovementMode(playerId: number, modeIndex: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    const mode = movementModeFromIndex(modeIndex);
+    if (mode === 'run' && !player.canRun()) {
+      const previousMode = player.movementMode;
+      player.setMovementMode('walk');
+      this.sendMovementMode(player, player);
+      this.sendRunEnergy(player);
+      if (player.movementMode !== previousMode) this.broadcastMovementMode(player);
+      return;
+    }
+    if (player.movementMode === mode) {
+      this.sendMovementMode(player, player);
+      return;
+    }
+    player.setMovementMode(mode);
+    this.sendMovementMode(player, player);
+    this.broadcastMovementMode(player);
   }
 
   handlePlayerSetAutocast(playerId: number, spellIndex: number): void {
@@ -9317,11 +9451,14 @@ export class World {
   }
 
   private tickPlayerMovement(): void {
+    const movementStepBatches = this._playerMovementStepBatches ?? (this._playerMovementStepBatches = new Map());
+    movementStepBatches.clear();
     for (const [playerId, player] of this.players) {
       if (this.activeDuels?.has(playerId)) {
         player.clearMoveQueue();
         player.followTargetPlayerId = -1;
         this.updateEntityChunk(player);
+        this.updatePlayerRunEnergy(player, 0);
         continue;
       }
       if (player.followTargetPlayerId >= 0) {
@@ -9334,7 +9471,12 @@ export class World {
         }
       }
 
-      if (player.hasMoveQueue()) player.movementCredit += 1;
+      let movedSteps: PlayerMovementStep[] | null = null;
+      const tickMovementModeIndex = player.hasMoveQueue()
+        ? movementModeIndex(player.effectiveMovementModePerTick())
+        : movementModeIndex(player.movementMode);
+
+      if (player.hasMoveQueue()) player.movementCredit += player.movementCreditPerTick();
 
       while (player.hasMoveQueue() && player.movementCredit >= 1) {
         const next = player.peekNextMove();
@@ -9393,8 +9535,21 @@ export class World {
             lastFloorChangeTile: player.lastFloorChangeTile,
           },
         ));
+        (movedSteps ??= []).push({
+          x: player.position.x,
+          z: player.position.y,
+          floor: player.currentFloor,
+          y: player.effectiveY,
+        });
         this.repairOrCompleteSultansMineDoorTransit(player);
       }
+      if (movedSteps?.length) {
+        movementStepBatches.set(player.id, {
+          modeIndex: tickMovementModeIndex,
+          steps: movedSteps,
+        });
+      }
+      this.updatePlayerRunEnergy(player, movedSteps?.length ?? 0);
       this.repairOrCompleteSultansMineDoorTransit(player);
       this.updateEntityChunk(player);
 
@@ -11304,15 +11459,17 @@ export class World {
     }
   }
 
-  private readonly _dirtyPlayerPackets: Map<number, Uint8Array> = new Map();
-  private readonly _dirtyNpcPackets: Map<number, Uint8Array> = new Map();
+  private _dirtyPlayerPackets: Map<number, Uint8Array> = new Map();
+  private _dirtyNpcPackets: Map<number, Uint8Array> = new Map();
+  private _playerMovementStepBatches: Map<number, PlayerMovementStepBatch> = new Map();
+  private _movementStepPackets: Map<number, Uint8Array> = new Map();
 
   // Above this much already-buffered outbound data, a client isn't draining;
   // we skip its droppable sync this tick instead of growing Bun's buffer
   // unbounded. At 4x we give up on the socket and close it.
   private static readonly MAX_WS_BACKPRESSURE_BYTES = 1 << 20; // 1 MiB
   // Reused per-flush so batching one viewer doesn't allocate a fresh array each tick.
-  private readonly _batchScratch: Uint8Array[] = [];
+  private _batchScratch: Uint8Array[] = [];
 
   private queueSyncPacket(out: SyncPacket[], opcode: ServerOpcode, ...values: number[]): void {
     out.push({ opcode, values, data: encodePacket(opcode, ...values) });
@@ -11344,7 +11501,7 @@ export class World {
     }
     try {
       if (packets.length > 1 && this.canBatchSyncPackets(player)) {
-        const scratch = this._batchScratch;
+        const scratch = this._batchScratch ?? (this._batchScratch = []);
         scratch.length = 0;
         for (const packet of packets) scratch.push(packet.data);
         player.ws.sendBinary(encodePacketBatch(ServerOpcode.PACKET_BATCH, scratch));
@@ -11362,10 +11519,13 @@ export class World {
   }
 
   private broadcastSync(): void {
-    const dirtyPlayerPackets = this._dirtyPlayerPackets;
-    const dirtyNpcPackets = this._dirtyNpcPackets;
+    const dirtyPlayerPackets = this._dirtyPlayerPackets ?? (this._dirtyPlayerPackets = new Map());
+    const dirtyNpcPackets = this._dirtyNpcPackets ?? (this._dirtyNpcPackets = new Map());
+    const movementStepBatches = this._playerMovementStepBatches ?? (this._playerMovementStepBatches = new Map());
+    const movementStepPackets = this._movementStepPackets ?? (this._movementStepPackets = new Map());
     dirtyPlayerPackets.clear();
     dirtyNpcPackets.clear();
+    movementStepPackets.clear();
 
     // Phase 1: Dirty-check and pre-build packets for changed entities
     for (const [, player] of this.players) {
@@ -11411,6 +11571,9 @@ export class World {
           encodeNpcVisualScale(npc.visualScale),
         ));
       }
+    }
+    for (const [playerId, batch] of movementStepBatches) {
+      movementStepPackets.set(playerId, this.encodePlayerMoveSteps(playerId, batch));
     }
 
     // Phase 2: Viewer-first iteration — all sends to each viewer are consecutive
@@ -11491,8 +11654,18 @@ export class World {
         nextVisible.forEach((eid) => {
           const wasVisible = previousVisible.has(eid);
           if (wasVisible) {
+            let queuedPlayerPacket = false;
             const pkt = dirtyPlayerPackets.get(eid);
-            if (pkt) { this.queueEncodedSyncPacket(syncPackets, pkt); return; }
+            if (pkt) {
+              this.queueEncodedSyncPacket(syncPackets, pkt);
+              queuedPlayerPacket = true;
+            }
+            const movementPkt = movementStepPackets.get(eid);
+            if (movementPkt) {
+              this.queueEncodedSyncPacket(syncPackets, movementPkt);
+              queuedPlayerPacket = true;
+            }
+            if (queuedPlayerPacket) return;
             const npkt = dirtyNpcPackets.get(eid);
             if (npkt) { this.queueEncodedSyncPacket(syncPackets, npkt); return; }
             return;
@@ -11536,6 +11709,7 @@ export class World {
     // Phase 3: Clear dirty flags
     for (const [, player] of this.players) player.syncDirty = false;
     for (const [, npc] of this.npcs) npc.syncDirty = false;
+    this._playerMovementStepBatches.clear();
   }
 
   private broadcastCombatHit(attackerId: number, targetId: number, damage: number, targetHp: number, targetMaxHp: number, mapLevel: string, floor: number, worldX: number, worldZ: number): void {
@@ -11631,6 +11805,7 @@ export class World {
     this.queueEncodedSyncPacket(out, this.encodePlayerUpdate(subject));
     this.queueEncodedSyncPacket(out, this.encodeRemoteEquipment(subject));
     this.queueEncodedSyncPacket(out, this.encodeRemoteStance(subject));
+    this.queueEncodedSyncPacket(out, this.encodeMovementMode(subject));
     this.queueEncodedSyncPacket(out, this.encodePlayerAnimation(subject));
   }
 
@@ -11643,6 +11818,7 @@ export class World {
     // until the next start/stop event.
     this.sendRemoteEquipment(viewer, subject);
     this.sendRemoteStance(viewer, subject);
+    this.sendMovementMode(viewer, subject);
     this.sendRemoteAnimation(viewer, subject);
   }
 
@@ -12000,6 +12176,43 @@ export class World {
     const cm = this.chunkManagers.get(subject.currentMapLevel);
     if (!cm) return;
     const packet = this.encodeRemoteStance(subject);
+    cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
+      if (pid === subject.id) return;
+      const viewer = this.players.get(pid);
+      if (!viewer || viewer.disconnected || viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
+      try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
+    });
+  }
+
+  /** Build PLAYER_MOVEMENT_MODE packet. Layout: [entityId, modeIdx] where
+   *  modeIdx is 0=walk, 1=run. */
+  private encodeMovementMode(subject: Player): Uint8Array {
+    return encodePacket(ServerOpcode.PLAYER_MOVEMENT_MODE, subject.id, movementModeIndex(subject.movementMode));
+  }
+
+  /** Build PLAYER_MOVE_STEPS packet.
+   *  Layout: [entityId, modeIdx, count, x10, z10, floor, y10, ...]. */
+  private encodePlayerMoveSteps(entityId: number, batch: PlayerMovementStepBatch): Uint8Array {
+    const values: number[] = [entityId, batch.modeIndex, batch.steps.length];
+    for (const step of batch.steps) {
+      values.push(qPos(step.x), qPos(step.z), step.floor, qPos(step.y));
+    }
+    return encodePacket(ServerOpcode.PLAYER_MOVE_STEPS, ...values);
+  }
+
+  /** Send one subject player's movement mode to one viewer. */
+  private sendMovementMode(viewer: Player, subject: Player): void {
+    if (viewer.disconnected) return;
+    if (viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
+    try { viewer.ws.sendBinary(this.encodeMovementMode(subject)); } catch { /* connection closed */ }
+  }
+
+  /** Broadcast a subject player's movement mode to nearby viewers. Called
+   *  when run/walk changes; position sync remains lean. */
+  private broadcastMovementMode(subject: Player): void {
+    const cm = this.chunkManagers.get(subject.currentMapLevel);
+    if (!cm) return;
+    const packet = this.encodeMovementMode(subject);
     cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
       if (pid === subject.id) return;
       const viewer = this.players.get(pid);

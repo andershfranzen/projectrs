@@ -7,7 +7,18 @@ import { installGlobalScrollbars } from './ui/globalScrollbars';
 import { preloadAssets } from './managers/AssetPreloader';
 import { startupTrace } from './debug/StartupTrace';
 import { installSafeDynamicTextureUpdate } from './rendering/safeDynamicTexture';
+import { installBrightnessController } from './ui/brightness';
+import { installChatSettingsController } from './ui/chatSettings';
 import { installClientSizeModeController } from './ui/clientSizeMode';
+import { installGameSettingsController } from './ui/gameSettings';
+import { installRenderDistanceController } from './ui/renderDistance';
+import {
+  decreaseUiScale,
+  increaseUiScale,
+  installUiScaleController,
+  resetUiScale,
+  type UiScaleValue,
+} from './ui/uiScale';
 import type { GameManager as GameManagerType } from './managers/GameManager';
 
 const WEBGL_STARTUP_ERROR_PREFIX = 'USER_VISIBLE:';
@@ -19,9 +30,16 @@ const LEGACY_AUTH_USERNAME_KEY = 'projectrs_username';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const gameFrame = document.getElementById('game-frame') as HTMLDivElement;
+const PAGE_ZOOM_DPR_EPSILON = 0.04;
+const initialDevicePixelRatio = getCurrentDevicePixelRatio();
 installGlobalScrollbars();
 installSafeDynamicTextureUpdate();
 installClientSizeModeController();
+installUiScaleController();
+installBrightnessController();
+installChatSettingsController();
+installGameSettingsController();
+installRenderDistanceController();
 startupTrace.mark('entry');
 
 function migrateSavedAuth(): void {
@@ -46,14 +64,28 @@ function clearSavedAuth(): void {
   localStorage.removeItem(LEGACY_AUTH_USERNAME_KEY);
 }
 
+function getCurrentDevicePixelRatio(): number {
+  const dpr = window.devicePixelRatio || 1;
+  return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+}
+
 function getBrowserPageScale(): number {
   const scale = window.visualViewport?.scale ?? 1;
   return Number.isFinite(scale) && scale > 0 ? scale : 1;
 }
 
+function getBrowserPageZoomRatio(): number {
+  return getCurrentDevicePixelRatio() / Math.max(0.001, initialDevicePixelRatio);
+}
+
+function isBrowserPageZoomed(): boolean {
+  return getBrowserPageScale() > 1.01 || Math.abs(getBrowserPageZoomRatio() - 1) > PAGE_ZOOM_DPR_EPSILON;
+}
+
 function installMobileViewportVars(): void {
   const root = document.documentElement;
   let framePending = false;
+  let pageZoomed = false;
 
   const apply = () => {
     framePending = false;
@@ -67,6 +99,9 @@ function installMobileViewportVars(): void {
     const right = Math.max(0, layoutWidth - left - width);
     const bottom = Math.max(0, layoutHeight - top - height);
     const scale = getBrowserPageScale();
+    const dpr = getCurrentDevicePixelRatio();
+    const pageZoomRatio = getBrowserPageZoomRatio();
+    const nextPageZoomed = isBrowserPageZoomed();
 
     root.style.setProperty('--eq-viewport-width', `${Math.round(width)}px`);
     root.style.setProperty('--eq-viewport-height', `${Math.round(height)}px`);
@@ -75,7 +110,15 @@ function installMobileViewportVars(): void {
     root.style.setProperty('--eq-viewport-right', `${Math.round(right)}px`);
     root.style.setProperty('--eq-viewport-bottom', `${Math.round(bottom)}px`);
     root.style.setProperty('--eq-viewport-scale', `${scale.toFixed(3)}`);
-    root.classList.toggle('eq-browser-page-zoomed', scale > 1.01);
+    root.style.setProperty('--eq-device-pixel-ratio', dpr.toFixed(3));
+    root.style.setProperty('--eq-page-zoom-ratio', pageZoomRatio.toFixed(3));
+    root.classList.toggle('eq-browser-page-zoomed', nextPageZoomed);
+    if (nextPageZoomed !== pageZoomed) {
+      pageZoomed = nextPageZoomed;
+      window.dispatchEvent(new CustomEvent('evilquest:browserzoomchanged', {
+        detail: { zoomed: nextPageZoomed, pageZoomRatio, viewportScale: scale },
+      }));
+    }
     window.dispatchEvent(new Event('evilquest:viewportchange'));
   };
 
@@ -93,6 +136,8 @@ function installMobileViewportVars(): void {
 }
 
 function installMobilePageZoomGuard(): void {
+  let lastWheelUiScaleAt = 0;
+
   const isGameSurface = (event: Event): boolean => {
     const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
     if (path.some((target) => (
@@ -106,13 +151,55 @@ function installMobilePageZoomGuard(): void {
     return getComputedStyle(gameFrame).display !== 'none';
   };
 
-  const shouldLetBrowserRecoverZoom = (): boolean => getBrowserPageScale() > 1.01;
+  const shouldLetBrowserRecoverZoom = (): boolean => isBrowserPageZoomed();
+
+  const dispatchBrowserZoomBlocked = (input: 'gesture' | 'dblclick' | 'keyboard' | 'wheel', scale?: UiScaleValue) => {
+    window.dispatchEvent(new CustomEvent('evilquest:browserzoomblocked', {
+      detail: { input, uiScale: scale ?? null },
+    }));
+  };
 
   const preventNativeScaleAtNormalZoom = (event: Event) => {
     if (!isGameSurface(event)) return;
     if (shouldLetBrowserRecoverZoom()) return;
     event.preventDefault();
+    if (event.type === 'dblclick') return;
+    dispatchBrowserZoomBlocked(event.type === 'dblclick' ? 'dblclick' : 'gesture');
   };
+
+  const isBrowserZoomKey = (event: KeyboardEvent): boolean => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey) return false;
+    const key = event.key.toLowerCase();
+    return key === '+' || key === '=' || key === '-' || key === '_' || key === '0';
+  };
+
+  document.addEventListener('keydown', (event) => {
+    if (!isBrowserZoomKey(event) || !isGameSurface(event)) return;
+    if (shouldLetBrowserRecoverZoom()) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    let scale: UiScaleValue;
+    const key = event.key.toLowerCase();
+    if (key === '+' || key === '=') scale = increaseUiScale();
+    else if (key === '-' || key === '_') scale = decreaseUiScale();
+    else scale = resetUiScale();
+    dispatchBrowserZoomBlocked('keyboard', scale);
+  }, { capture: true });
+
+  document.addEventListener('wheel', (event) => {
+    if (!(event.ctrlKey || event.metaKey) || !isGameSurface(event)) return;
+    if (shouldLetBrowserRecoverZoom()) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const now = performance.now();
+    if (now - lastWheelUiScaleAt < 220) return;
+    lastWheelUiScaleAt = now;
+    const scale = event.deltaY < 0 ? increaseUiScale() : decreaseUiScale();
+    dispatchBrowserZoomBlocked('wheel', scale);
+  }, { passive: false, capture: true });
 
   document.addEventListener('gesturestart', preventNativeScaleAtNormalZoom, { passive: false });
   document.addEventListener('gesturechange', preventNativeScaleAtNormalZoom, { passive: false });

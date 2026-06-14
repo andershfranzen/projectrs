@@ -680,7 +680,9 @@ export class CharacterCreator {
     this.previewLights = { hemi, dir };
 
     this.loadPreviewCharacter(anchor);
-    engine.runRenderLoop(() => scene.render());
+    engine.runRenderLoop(() => {
+      scene.render();
+    });
   }
 
   private loadPreviewCharacter(anchor: Vector3): void {

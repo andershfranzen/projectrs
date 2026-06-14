@@ -9,13 +9,19 @@ import {
   QUEST_STAGE_COMPLETED,
   isAutocastableSpell, spellReagentSummary, spellSchoolSkill,
   zeroBonuses, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, combatLevelFromLevels,
-  isNotedItem,
+  isNotedItem, EQUIPMENT_SLOT_LABELS, EQUIPMENT_SLOT_NAMES,
   type SkillId, type MeleeStance, type MagicStance, type ItemDef, type QuestDef, type QuestState,
-  type CombatBonuses,
+  type CombatBonuses, type MovementMode,
   type SpellEffectDef, type SpellSchool,
 } from '@projectrs/shared';
 import { QuestJournalPopup } from './QuestJournalPopup';
-import { createGameDialogModal, mountModalInGameFrame } from './ModalPanel';
+import {
+  createGameDialogModal,
+  DIALOGUE_ACCENT,
+  DIALOGUE_PARCHMENT_BG,
+  DIALOGUE_TEXT_SHADOW,
+  mountModalInGameFrame,
+} from './ModalPanel';
 import type { NetworkManager, SocialClientEntry } from '../managers/NetworkManager';
 import {
   clampElementToRect,
@@ -43,8 +49,53 @@ import {
   setClientSizeMode,
   type ClientSizeMode,
 } from './clientSizeMode';
+import {
+  getUiScale,
+  setUiScale,
+  UI_SCALE_OPTIONS,
+  type UiScaleValue,
+} from './uiScale';
+import {
+  getRenderDistance,
+  RENDER_DISTANCE_OPTIONS,
+  setRenderDistance,
+  type RenderDistanceValue,
+} from './renderDistance';
+import {
+  FRAME_PACE_OPTIONS,
+  getGameSettings,
+  GROUND_ITEM_LABEL_OPTIONS,
+  NAMEPLATE_OPTIONS,
+  TOOLTIP_OPTIONS,
+  setFramePaceMode,
+  setGroundItemLabelMode,
+  setNameplateMode,
+  setTooltipMode,
+  type FramePaceMode,
+  type GroundItemLabelMode,
+  type NameplateMode,
+  type TooltipMode,
+} from './gameSettings';
+import {
+  BRIGHTNESS_OPTIONS,
+  getBrightnessLevel,
+  setBrightnessLevel,
+  type BrightnessLevel,
+} from './brightness';
+import {
+  CHAT_COLOR_OPTIONS,
+  CHAT_FONT_SIZE_MAX,
+  CHAT_FONT_SIZE_MIN,
+  DEFAULT_CHAT_COLORS,
+  getChatSettings,
+  normalizeChatColor,
+  setChatFontSize,
+  setChatMessageColor,
+  setNpcDialogueInChatEnabled,
+  type ChatMessageColorKey,
+} from './chatSettings';
 
-const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'Ring', 'Hands', 'Feet', 'Cape', 'Ammo'];
+const EQUIP_SLOT_NAMES = EQUIPMENT_SLOT_NAMES.map(slot => EQUIPMENT_SLOT_LABELS[slot]);
 const WATER_CONTAINER_ITEM_IDS: ReadonlySet<number> = new Set(SOFT_CLAY_WATER_CONTAINER_ITEM_IDS);
 const LOG_CRAFT_BUCKET_RECIPE_INDEX = 0;
 const LOG_CRAFT_SHORTBOW_RECIPE_INDEX = 1;
@@ -59,7 +110,26 @@ const ARROW_SHAFT_RECIPE_BY_LOG_ITEM_ID: ReadonlyMap<number, typeof LOG_CRAFT_AR
 const ARROWHEAD_RECIPE_BY_ITEM_ID: ReadonlyMap<number, typeof ARROWHEAD_FLETCHING_RECIPES[number]> = new Map(
   ARROWHEAD_FLETCHING_RECIPES.map(recipe => [recipe.arrowheadItemId, recipe]),
 );
+const CHAT_COLOR_PICKER_PALETTE: readonly { color: string; label: string }[] = [
+  { color: '#ffffff', label: 'White' },
+  { color: '#f4ded5', label: 'Parchment' },
+  { color: '#d8372b', label: 'Evil Red' },
+  { color: '#ffff00', label: 'Gold' },
+  { color: '#ffb347', label: 'Amber' },
+  { color: '#8cf0ff', label: 'Sky' },
+  { color: '#4fdfff', label: 'Private Blue' },
+  { color: '#4aa3ff', label: 'Royal Blue' },
+  { color: '#8cff8c', label: 'Green' },
+  { color: '#0f0', label: 'Classic Green' },
+  { color: '#d98cff', label: 'Mystic' },
+  { color: '#ff8ccc', label: 'Rose' },
+  { color: '#b8b0a0', label: 'Stone' },
+  { color: '#7fe3a1', label: 'Mint' },
+  { color: '#ff7a59', label: 'Ember' },
+  { color: '#c9a46a', label: 'Bronze' },
+];
 type SocialListTab = 'friends' | 'ignore';
+export type RenderQualityMode = 'auto' | 'high' | 'low';
 const MELEE_STANCE_LABELS: Readonly<Record<MeleeStance, { label: string; desc: string }>> = {
   accurate: { label: 'Accurate', desc: 'Measured attacks' },
   aggressive: { label: 'Aggressive', desc: 'Heavy attacks' },
@@ -168,6 +238,9 @@ export class SidePanel {
   // Optional trade callback (active when a trade window is open). While set,
   // inventory clicks offer items instead of performing equip/use/drop actions.
   private tradeOfferCallback: ((slot: number, itemId: number, quantity: number) => void) | null = null;
+  // Optional bank callback (active when the bank is open). While set, the real
+  // inventory panel deposits items directly into the open bank.
+  private bankDepositCallback: ((slot: number, itemId: number, quantity: number) => void) | null = null;
   private requestQuantity: QuantityInputRequester | null = null;
   private privateMessageTargetCallback: ((username: string) => void) | null = null;
   private adminItemDeletionEnabled: boolean = false;
@@ -199,6 +272,31 @@ export class SidePanel {
   private targetingBanner: HTMLDivElement | null = null;
   private spellTooltip: HoverTooltip | null = null;
   private settingsTooltip: HoverTooltip | null = null;
+  private uiScaleButtons: Map<UiScaleValue, HTMLButtonElement> = new Map();
+  private renderDistanceButtons: Map<RenderDistanceValue, HTMLButtonElement> = new Map();
+  private groundItemLabelButtons: Map<GroundItemLabelMode, HTMLButtonElement> = new Map();
+  private nameplateButtons: Map<NameplateMode, HTMLButtonElement> = new Map();
+  private tooltipModeButtons: Map<TooltipMode, HTMLButtonElement> = new Map();
+  private npcDialogueChatButtons: Map<'show' | 'hide', HTMLButtonElement> = new Map();
+  private brightnessButtons: Map<BrightnessLevel, HTMLButtonElement> = new Map();
+  private movementModeButtons: Map<MovementMode, HTMLButtonElement> = new Map();
+  private chatColorControlSwatches: Map<ChatMessageColorKey, HTMLSpanElement> = new Map();
+  private chatColorPickerPanel: HTMLDivElement | null = null;
+  private chatColorPickerTitleEl: HTMLSpanElement | null = null;
+  private chatColorPickerCurrentSwatchEl: HTMLDivElement | null = null;
+  private chatColorPickerCurrentLabelEl: HTMLDivElement | null = null;
+  private chatColorPickerButtons: Map<string, HTMLButtonElement> = new Map();
+  private activeChatColorPickerKey: ChatMessageColorKey | null = null;
+  private renderQualityMode: RenderQualityMode = 'auto';
+  private renderQualityButtons: Map<RenderQualityMode, HTMLButtonElement> = new Map();
+  private framePaceButtons: Map<FramePaceMode, HTMLButtonElement> = new Map();
+  private renderQualityChangeCallback: ((mode: RenderQualityMode) => void) | null = null;
+  private movementMode: MovementMode = 'walk';
+  private movementModeChangeCallback: ((mode: MovementMode) => boolean) | null = null;
+  private runEnergyPercent: number = 100;
+  private runEnergyFillEl: HTMLDivElement | null = null;
+  private runEnergyTextEl: HTMLSpanElement | null = null;
+  private brandResizeObserver: ResizeObserver | null = null;
 
   constructor(network: NetworkManager, token: string = '') {
     this.network = network;
@@ -215,8 +313,19 @@ export class SidePanel {
     }
 
     this.container = this.buildUI();
+    const panelShell = document.createElement('div');
+    panelShell.id = 'side-panel-shell';
+    panelShell.style.cssText = `
+      width: 100%;
+      flex: 1 1 auto;
+      align-self: stretch;
+      min-height: 0;
+      position: relative;
+      overflow: hidden;
+    `;
+    panelShell.appendChild(this.container);
     const mount = document.getElementById('ui-right-column');
-    (mount ?? document.body).appendChild(this.container);
+    (mount ?? document.body).appendChild(panelShell);
 
     // Class-based stance styling. Inline styles get clobbered by browser
     // extensions (Dark Reader caches CSS-variable shadows of inline styles
@@ -336,6 +445,12 @@ export class SidePanel {
         #side-panel.trade-offer-active .inv-slot[data-filled="1"].hovered {
           background: rgba(154,51,43,0.18);
         }
+        #side-panel.bank-deposit-active .inv-slot[data-filled="1"] {
+          box-shadow: inset 0 0 5px rgba(255, 200, 80, 0.45);
+        }
+        #side-panel.bank-deposit-active .inv-slot[data-filled="1"].hovered {
+          background: rgba(255, 200, 80, 0.18);
+        }
 
         .quest-row {
           appearance: none;
@@ -415,6 +530,8 @@ export class SidePanel {
           gap: 6px;
           margin: 0;
           pointer-events: auto;
+          transform: scale(var(--eq-ui-scale, 1));
+          transform-origin: top right;
         }
 
         #game-frame .side-account-actions .side-action-button {
@@ -451,6 +568,19 @@ export class SidePanel {
           pointer-events: none;
         }
 
+        #side-panel .side-brand {
+          opacity: 0;
+          transition: opacity 80ms ease-out;
+        }
+
+        #side-panel .side-brand-area.has-brand-room .side-brand {
+          opacity: 1;
+        }
+
+        #game-frame.mobile-map-open #side-panel-shell {
+          display: none !important;
+        }
+
         @media (max-height: 700px), (max-width: 1000px) {
           #side-panel .side-resource-row {
             padding-top: 2px !important;
@@ -471,14 +601,6 @@ export class SidePanel {
             flex-basis: 360px !important;
             max-height: none !important;
             padding: 1px 2px !important;
-          }
-          #side-panel .side-brand-area {
-            min-height: 0 !important;
-            flex: 0 0 auto !important;
-            padding: 0 !important;
-          }
-          #side-panel .side-brand {
-            display: none !important;
           }
           #game-frame .side-account-actions {
             top: 2px !important;
@@ -525,14 +647,6 @@ export class SidePanel {
             padding-top: 6px !important;
             padding-bottom: 6px !important;
           }
-        }
-
-        html.eq-fixed-client-size #side-panel .side-brand-area {
-          display: none !important;
-        }
-
-        html.eq-fixed-client-size #side-panel .side-content-area {
-          flex-basis: 430px !important;
         }
 
         @media (max-width: 760px), (pointer: coarse) and (max-width: 900px) {
@@ -600,7 +714,8 @@ export class SidePanel {
           #side-panel .inv-slot[data-filled="1"] {
             touch-action: pan-y;
           }
-          #side-panel .client-size-setting {
+          #side-panel .client-size-setting,
+          #side-panel .ui-scale-setting {
             display: none !important;
           }
           #side-panel .client-size-setting-mobile-note {
@@ -687,7 +802,16 @@ export class SidePanel {
     const panel = document.createElement('div');
     panel.id = 'side-panel';
     panel.style.cssText = `
-      width: 100%; flex: 1; min-height: 0;
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      width: var(--eq-ui-scale-inverse-percent, 100%);
+      height: var(--eq-ui-scale-inverse-percent, 100%);
+      box-sizing: border-box;
+      flex: none;
+      min-height: 0;
+      transform: scale(var(--eq-ui-scale, 1));
+      transform-origin: bottom right;
       background: transparent;
       border-top: 2px solid rgba(0,0,0,0.3);
       font-family: Arial, Helvetica, sans-serif; color: #ddd;
@@ -852,10 +976,12 @@ export class SidePanel {
     const brandArea = document.createElement('div');
     brandArea.className = 'side-brand-area';
     brandArea.style.cssText = `
-      flex: 1 1 0;
-      min-height: 44px;
+      flex: 1 1 auto;
+      min-height: 0;
       display: flex; align-items: center; justify-content: center;
-      padding: 2px 8px;
+      overflow: hidden;
+      padding: 0 8px;
+      box-sizing: border-box;
     `;
 
     const brand = document.createElement('div');
@@ -872,6 +998,15 @@ export class SidePanel {
       text-shadow: 2px 2px 0 #160604, 0 0 10px rgba(200, 28, 18, 0.22);
     `;
     brandArea.appendChild(brand);
+    const updateBrandVisibility = () => {
+      brandArea.classList.toggle('has-brand-room', brandArea.getBoundingClientRect().height >= 20);
+    };
+    requestAnimationFrame(updateBrandVisibility);
+    if (typeof ResizeObserver !== 'undefined') {
+      this.brandResizeObserver = new ResizeObserver(updateBrandVisibility);
+      this.brandResizeObserver.observe(brandArea);
+    }
+    window.addEventListener('resize', updateBrandVisibility);
     panel.appendChild(brandArea);
 
     // Top tab row — 5 tabs above content
@@ -917,10 +1052,8 @@ export class SidePanel {
     // Tab contents
     const contentArea = document.createElement('div');
     contentArea.className = 'side-content-area';
-    // flex:1 lets the area shrink at small viewports; max-height caps it at
-    // the inventory grid's natural max (6 rows + chrome) so at
-    // fullscreen the tab body uses the extra vertical room freed by the smaller
-    // minimap without pushing the brand/logout footer off the rail. Other tabs
+    // flex lets the area shrink at small viewports; max-height caps it at the
+    // inventory grid's natural max (6 rows + chrome). Other tabs
     // (skills/equipment/etc.) inherit the same envelope.
     contentArea.style.cssText = `
       padding: 2px 3px; overflow: hidden;
@@ -1456,52 +1589,140 @@ export class SidePanel {
     this.spellTooltip = null;
   }
 
+  setRenderQualityControls(mode: RenderQualityMode, callback: (mode: RenderQualityMode) => void): void {
+    this.renderQualityMode = mode;
+    this.renderQualityChangeCallback = callback;
+    this.updateSettingsButtonGroup(this.renderQualityButtons, mode);
+  }
+
+  setRenderQualityMode(mode: RenderQualityMode): void {
+    this.renderQualityMode = mode;
+    this.updateSettingsButtonGroup(this.renderQualityButtons, mode);
+  }
+
+  setMovementModeControls(mode: MovementMode, callback: (mode: MovementMode) => boolean): void {
+    this.movementMode = mode;
+    this.movementModeChangeCallback = callback;
+    this.updateSettingsButtonGroup(this.movementModeButtons, mode);
+    this.refreshRunEnergyUi();
+  }
+
+  applyMovementModeFromServer(mode: MovementMode): void {
+    this.movementMode = mode;
+    this.updateSettingsButtonGroup(this.movementModeButtons, mode);
+    this.refreshRunEnergyUi();
+  }
+
+  setRunEnergy(percent: number): void {
+    const value = Number.isFinite(percent) ? Math.trunc(percent) : 100;
+    this.runEnergyPercent = Math.max(0, Math.min(100, value));
+    this.refreshRunEnergyUi();
+  }
+
+  private updateSettingsButtonGroup<T extends string | number>(buttons: Map<T, HTMLButtonElement>, activeValue: T): void {
+    for (const [key, button] of buttons) {
+      const active = key === activeValue;
+      setToggleButtonActive(button, active);
+      button.setAttribute('role', 'radio');
+      button.setAttribute('aria-checked', String(active));
+      button.style.color = active ? '#d8372b' : '#b8b0a0';
+      button.style.borderColor = active ? 'rgba(216,55,43,0.72)' : 'rgba(91,71,45,0.72)';
+      button.style.background = active
+        ? 'linear-gradient(180deg, rgba(48,22,18,0.95), rgba(22,12,10,0.96))'
+        : 'linear-gradient(180deg, rgba(34,27,20,0.92), rgba(16,12,9,0.94))';
+    }
+  }
+
+  private refreshRunEnergyUi(): void {
+    if (this.runEnergyTextEl) this.runEnergyTextEl.textContent = `${this.runEnergyPercent}%`;
+    if (this.runEnergyFillEl) {
+      this.runEnergyFillEl.style.width = `${this.runEnergyPercent}%`;
+      this.runEnergyFillEl.style.background = this.runEnergyPercent <= 10
+        ? 'linear-gradient(90deg, #8f3028, #d05b45)'
+        : this.runEnergyPercent <= 35
+          ? 'linear-gradient(90deg, #9a6b22, #d6ad45)'
+          : 'linear-gradient(90deg, #3e7a42, #7dbb5a)';
+    }
+    const runButton = this.movementModeButtons.get('run');
+    if (!runButton) return;
+    const disabled = this.runEnergyPercent < 1 && this.movementMode !== 'run';
+    runButton.disabled = disabled;
+    runButton.setAttribute('aria-disabled', String(disabled));
+    runButton.style.opacity = disabled ? '0.55' : '1';
+    runButton.style.cursor = disabled ? 'not-allowed' : 'pointer';
+  }
+
   private buildSettingsContent(): HTMLDivElement {
     const view = document.createElement('div');
     view.style.cssText = `${panelFrameCss()} gap: 12px;`;
+    this.uiScaleButtons.clear();
+    this.renderDistanceButtons.clear();
+    this.groundItemLabelButtons.clear();
+    this.nameplateButtons.clear();
+    this.tooltipModeButtons.clear();
+    this.npcDialogueChatButtons.clear();
+    this.brightnessButtons.clear();
+    this.movementModeButtons.clear();
+    this.chatColorControlSwatches.clear();
+    this.renderQualityButtons.clear();
+    this.framePaceButtons.clear();
 
-    const block = document.createElement('div');
-    block.className = 'client-size-setting';
-    block.style.cssText = `
-      display: ${isDesktopClientSizeSettingAvailable() ? 'flex' : 'none'};
-      flex-direction: column;
-      gap: 8px;
-    `;
-
-    const header = document.createElement('div');
-    header.textContent = 'Client';
-    header.style.cssText = panelHeaderCss('#b8b0a0');
-    block.appendChild(header);
-
-    const row = document.createElement('div');
-    row.setAttribute('role', 'radiogroup');
-    row.setAttribute('aria-label', 'Client size mode');
-    row.style.cssText = `
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 4px;
-    `;
-
-    const buttons = new Map<ClientSizeMode, HTMLButtonElement>();
-    const applyVisualState = (mode: ClientSizeMode) => {
-      for (const [key, button] of buttons) {
-        const active = key === mode;
-        setToggleButtonActive(button, active);
-        button.setAttribute('role', 'radio');
-        button.setAttribute('aria-checked', String(active));
-        button.style.color = active ? '#d8372b' : '#b8b0a0';
-        button.style.borderColor = active ? 'rgba(216,55,43,0.72)' : 'rgba(91,71,45,0.72)';
-        button.style.background = active
-          ? 'linear-gradient(180deg, rgba(48,22,18,0.95), rgba(22,12,10,0.96))'
-          : 'linear-gradient(180deg, rgba(34,27,20,0.92), rgba(16,12,9,0.94))';
-      }
+    const makeGroup = (title: string, className: string): HTMLDivElement => {
+      const group = document.createElement('div');
+      group.className = className;
+      group.style.cssText = `
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      `;
+      const header = document.createElement('div');
+      header.textContent = title;
+      header.style.cssText = `
+        ${panelHeaderCss('#f4ded5')}
+        border-bottom: 1px solid rgba(91,71,45,0.55);
+        padding-bottom: 3px;
+      `;
+      group.appendChild(header);
+      return group;
     };
 
-    const makeModeButton = (mode: ClientSizeMode, label: string, description: string): HTMLButtonElement => {
+    const makeBlock = (title: string, className: string, available: boolean = true): HTMLDivElement => {
+      const block = document.createElement('div');
+      block.className = className;
+      block.style.cssText = `
+        display: ${available ? 'flex' : 'none'};
+        flex-direction: column;
+        gap: 8px;
+      `;
+      const header = document.createElement('div');
+      header.textContent = title;
+      header.style.cssText = panelHeaderCss('#b8b0a0');
+      block.appendChild(header);
+      return block;
+    };
+
+    const makeRow = (ariaLabel: string, columns: number): HTMLDivElement => {
+      const row = document.createElement('div');
+      row.setAttribute('role', 'radiogroup');
+      row.setAttribute('aria-label', ariaLabel);
+      row.style.cssText = `
+        display: grid;
+        grid-template-columns: repeat(${columns}, minmax(0, 1fr));
+        gap: 4px;
+      `;
+      return row;
+    };
+
+    const makeToggleButton = <T extends string | number>(
+      buttons: Map<T, HTMLButtonElement>,
+      value: T,
+      label: string,
+      description: string,
+      onSelect: (value: T) => unknown,
+    ): HTMLButtonElement => {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = label;
-      button.title = description;
       button.className = 'eq-action-button';
       button.style.cssText = `
         min-width: 0;
@@ -1516,8 +1737,8 @@ export class SidePanel {
       button.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        setClientSizeMode(mode);
-        applyVisualState(getClientSizeMode());
+        const accepted = onSelect(value);
+        if (accepted !== false) this.updateSettingsButtonGroup(buttons, value);
       });
       button.addEventListener('mouseenter', (event) => {
         this.showSettingsTooltip(label, description, event.clientX, event.clientY);
@@ -1527,25 +1748,548 @@ export class SidePanel {
       });
       button.addEventListener('mouseleave', () => this.hideSettingsTooltip());
       button.addEventListener('blur', () => this.hideSettingsTooltip());
-      buttons.set(mode, button);
+      buttons.set(value, button);
       return button;
     };
 
-    row.append(
-      makeModeButton('fixed', 'Fixed', `Locks the game frame to ${FIXED_CLIENT_SIZE.width}x${FIXED_CLIENT_SIZE.height}.`),
-      makeModeButton('dynamic', 'Dynamic', 'Scales the game frame with the window.'),
+    const desktopSettingsAvailable = isDesktopClientSizeSettingAvailable();
+    const graphicsGroup = makeGroup('Graphics', 'settings-group-graphics');
+
+    const clientButtons = new Map<ClientSizeMode, HTMLButtonElement>();
+    const clientBlock = makeBlock('Client', 'client-size-setting', desktopSettingsAvailable);
+    const clientRow = makeRow('Client size mode', 2);
+    clientRow.append(
+      makeToggleButton(clientButtons, 'fixed', 'Fixed', `Locks the game frame to ${FIXED_CLIENT_SIZE.width}x${FIXED_CLIENT_SIZE.height}.`, (mode) => {
+        setClientSizeMode(mode);
+        this.updateSettingsButtonGroup(clientButtons, getClientSizeMode());
+      }),
+      makeToggleButton(clientButtons, 'dynamic', 'Dynamic', 'Scales the game frame with the window.', (mode) => {
+        setClientSizeMode(mode);
+        this.updateSettingsButtonGroup(clientButtons, getClientSizeMode());
+      }),
     );
-    block.appendChild(row);
-    view.appendChild(block);
+    clientBlock.appendChild(clientRow);
+    graphicsGroup.appendChild(clientBlock);
+
+    const uiScaleBlock = makeBlock('UI Size', 'ui-scale-setting', desktopSettingsAvailable);
+    const uiScaleRow = makeRow('UI size', UI_SCALE_OPTIONS.length);
+    for (const option of UI_SCALE_OPTIONS) {
+      uiScaleRow.appendChild(makeToggleButton(
+        this.uiScaleButtons,
+        option.value,
+        option.label,
+        `${option.label} interface scale.`,
+        (scale) => setUiScale(scale),
+      ));
+    }
+    uiScaleBlock.appendChild(uiScaleRow);
+    graphicsGroup.appendChild(uiScaleBlock);
+
+    const renderQualityBlock = makeBlock('Render', 'render-quality-setting');
+    const renderQualityRow = makeRow('Render quality', 3);
+    renderQualityRow.append(
+      makeToggleButton(this.renderQualityButtons, 'auto', 'Auto', 'Default render resolution.', (mode) => {
+        this.renderQualityMode = mode;
+        this.renderQualityChangeCallback?.(mode);
+      }),
+      makeToggleButton(this.renderQualityButtons, 'high', 'High', 'Full render resolution.', (mode) => {
+        this.renderQualityMode = mode;
+        this.renderQualityChangeCallback?.(mode);
+      }),
+      makeToggleButton(this.renderQualityButtons, 'low', 'Low', 'Lower render resolution.', (mode) => {
+        this.renderQualityMode = mode;
+        this.renderQualityChangeCallback?.(mode);
+      }),
+    );
+    renderQualityBlock.appendChild(renderQualityRow);
+    graphicsGroup.appendChild(renderQualityBlock);
+
+    const framePaceBlock = makeBlock('Frame Pace', 'frame-pace-setting');
+    const framePaceRow = makeRow('Frame pace', FRAME_PACE_OPTIONS.length);
+    for (const option of FRAME_PACE_OPTIONS) {
+      framePaceRow.appendChild(makeToggleButton(
+        this.framePaceButtons,
+        option.value,
+        option.label,
+        option.description,
+        (mode) => setFramePaceMode(mode),
+      ));
+    }
+    framePaceBlock.appendChild(framePaceRow);
+    graphicsGroup.appendChild(framePaceBlock);
+
+    const renderDistanceBlock = makeBlock('Render Distance', 'render-distance-setting');
+    const renderDistanceRow = makeRow('Render distance', RENDER_DISTANCE_OPTIONS.length);
+    for (const option of RENDER_DISTANCE_OPTIONS) {
+      renderDistanceRow.appendChild(makeToggleButton(
+        this.renderDistanceButtons,
+        option.value,
+        option.label,
+        option.description,
+        (distance) => setRenderDistance(distance),
+      ));
+    }
+    renderDistanceBlock.appendChild(renderDistanceRow);
+    graphicsGroup.appendChild(renderDistanceBlock);
+
+    const brightnessBlock = makeBlock('Brightness', 'brightness-setting');
+    const brightnessRow = makeRow('Brightness level', BRIGHTNESS_OPTIONS.length);
+    for (const option of BRIGHTNESS_OPTIONS) {
+      brightnessRow.appendChild(makeToggleButton(
+        this.brightnessButtons,
+        option.value,
+        option.label,
+        option.description,
+        (level) => setBrightnessLevel(level),
+      ));
+    }
+    brightnessBlock.appendChild(brightnessRow);
+    graphicsGroup.appendChild(brightnessBlock);
 
     const unavailable = document.createElement('div');
     unavailable.className = 'client-size-setting-mobile-note';
-    unavailable.textContent = 'Client size mode is available on desktop only.';
-    unavailable.style.cssText = `${mutedBodyCss()} display: ${isDesktopClientSizeSettingAvailable() ? 'none' : 'block'};`;
-    view.appendChild(unavailable);
+    unavailable.textContent = 'Client and UI size options are available on desktop only.';
+    unavailable.style.cssText = `${mutedBodyCss()} display: ${desktopSettingsAvailable ? 'none' : 'block'};`;
+    graphicsGroup.appendChild(unavailable);
 
-    applyVisualState(getClientSizeMode());
+    view.appendChild(graphicsGroup);
+
+    const gameSettings = getGameSettings();
+    const gameGroup = makeGroup('Game', 'settings-group-game');
+
+    const movementModeBlock = makeBlock('Movement Mode', 'movement-mode-setting');
+    const movementModeRow = makeRow('Movement mode', 2);
+    movementModeRow.append(
+      makeToggleButton(this.movementModeButtons, 'walk', 'Walk', 'Move one tile per server tick.', (mode) => {
+        if (this.movementMode === mode) return true;
+        const accepted = this.movementModeChangeCallback?.(mode) ?? false;
+        if (accepted) this.movementMode = mode;
+        return accepted;
+      }),
+      makeToggleButton(this.movementModeButtons, 'run', 'Run', 'Move two tiles per server tick and use the run animation.', (mode) => {
+        if (this.movementMode === mode) return true;
+        const accepted = this.movementModeChangeCallback?.(mode) ?? false;
+        if (accepted) this.movementMode = mode;
+        return accepted;
+      }),
+    );
+    movementModeBlock.appendChild(movementModeRow);
+    const runEnergyRow = document.createElement('div');
+    runEnergyRow.style.cssText = `
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) 38px;
+      align-items: center;
+      gap: 6px;
+      color: #b8b0a0;
+      font: 700 11px Arial, Helvetica, sans-serif;
+      text-shadow: 1px 1px 0 #000;
+    `;
+    const runEnergyLabel = document.createElement('span');
+    runEnergyLabel.textContent = 'Energy';
+    const runEnergyTrack = document.createElement('div');
+    runEnergyTrack.style.cssText = `
+      height: 7px;
+      min-width: 0;
+      border: 1px solid rgba(91,71,45,0.78);
+      background: rgba(10,8,6,0.82);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.75);
+      overflow: hidden;
+    `;
+    this.runEnergyFillEl = document.createElement('div');
+    this.runEnergyFillEl.style.cssText = `
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, #3e7a42, #7dbb5a);
+    `;
+    runEnergyTrack.appendChild(this.runEnergyFillEl);
+    this.runEnergyTextEl = document.createElement('span');
+    this.runEnergyTextEl.style.cssText = 'text-align: right; color: #f4ded5;';
+    runEnergyRow.append(runEnergyLabel, runEnergyTrack, this.runEnergyTextEl);
+    movementModeBlock.appendChild(runEnergyRow);
+    gameGroup.appendChild(movementModeBlock);
+
+    const groundItemLabelsBlock = makeBlock('Ground Item Labels', 'ground-item-labels-setting');
+    const groundItemLabelsRow = makeRow('Ground item labels', GROUND_ITEM_LABEL_OPTIONS.length);
+    for (const option of GROUND_ITEM_LABEL_OPTIONS) {
+      groundItemLabelsRow.appendChild(makeToggleButton(
+        this.groundItemLabelButtons,
+        option.value,
+        option.label,
+        option.description,
+        (mode) => setGroundItemLabelMode(mode),
+      ));
+    }
+    groundItemLabelsBlock.appendChild(groundItemLabelsRow);
+    gameGroup.appendChild(groundItemLabelsBlock);
+
+    const nameplatesBlock = makeBlock('Player/NPC Nameplates', 'nameplates-setting');
+    const nameplatesRow = makeRow('Player and NPC nameplates', NAMEPLATE_OPTIONS.length);
+    for (const option of NAMEPLATE_OPTIONS) {
+      nameplatesRow.appendChild(makeToggleButton(
+        this.nameplateButtons,
+        option.value,
+        option.label,
+        option.description,
+        (mode) => setNameplateMode(mode),
+      ));
+    }
+    nameplatesBlock.appendChild(nameplatesRow);
+    gameGroup.appendChild(nameplatesBlock);
+
+    const tooltipsBlock = makeBlock('Tooltips', 'tooltips-setting');
+    const tooltipsRow = makeRow('Tooltips', TOOLTIP_OPTIONS.length);
+    for (const option of TOOLTIP_OPTIONS) {
+      tooltipsRow.appendChild(makeToggleButton(
+        this.tooltipModeButtons,
+        option.value,
+        option.label,
+        option.description,
+        (mode) => setTooltipMode(mode),
+      ));
+    }
+    tooltipsBlock.appendChild(tooltipsRow);
+    gameGroup.appendChild(tooltipsBlock);
+
+    view.appendChild(gameGroup);
+
+    const chatSettings = getChatSettings();
+    const chatGroup = makeGroup('Chat', 'settings-group-chat');
+
+    const fontBlock = makeBlock('Font Size', 'chat-font-setting');
+    const fontRow = document.createElement('label');
+    fontRow.style.cssText = `
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 42px;
+      gap: 8px;
+      align-items: center;
+      color: #b8b0a0;
+      font: 700 12px Arial, Helvetica, sans-serif;
+      text-shadow: 1px 1px 0 #000;
+    `;
+    const fontRange = document.createElement('input');
+    fontRange.type = 'range';
+    fontRange.min = String(CHAT_FONT_SIZE_MIN);
+    fontRange.max = String(CHAT_FONT_SIZE_MAX);
+    fontRange.step = '1';
+    fontRange.value = String(chatSettings.fontSize);
+    fontRange.title = 'Chat font size';
+    fontRange.setAttribute('aria-label', 'Chat font size');
+    fontRange.style.cssText = `
+      width: 100%;
+      accent-color: #d8372b;
+    `;
+    const fontValue = document.createElement('span');
+    fontValue.textContent = `${chatSettings.fontSize}px`;
+    fontValue.style.cssText = `
+      color: #f4ded5;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    `;
+    fontRange.addEventListener('input', (event) => {
+      event.stopPropagation();
+      const size = setChatFontSize(Number(fontRange.value));
+      fontRange.value = String(size);
+      fontValue.textContent = `${size}px`;
+    });
+    fontRow.append(fontRange, fontValue);
+    fontBlock.appendChild(fontRow);
+    chatGroup.appendChild(fontBlock);
+
+    const npcDialogueBlock = makeBlock('NPC Dialogue in Chat', 'npc-dialogue-chat-setting');
+    const npcDialogueRow = makeRow('NPC dialogue in chat', 2);
+    npcDialogueRow.append(
+      makeToggleButton(this.npcDialogueChatButtons, 'show', 'Show', 'Show NPC dialogue echoes in the chat box.', () => {
+        setNpcDialogueInChatEnabled(true);
+      }),
+      makeToggleButton(this.npcDialogueChatButtons, 'hide', 'Hide', 'Hide NPC dialogue echoes from the chat box.', () => {
+        setNpcDialogueInChatEnabled(false);
+      }),
+    );
+    npcDialogueBlock.appendChild(npcDialogueRow);
+    chatGroup.appendChild(npcDialogueBlock);
+
+    const colorBlock = makeBlock('Message Colors', 'chat-color-setting');
+    const colorGrid = document.createElement('div');
+    colorGrid.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    `;
+    const makeColorControl = (key: ChatMessageColorKey, label: string): HTMLButtonElement => {
+      const control = document.createElement('button');
+      control.type = 'button';
+      control.style.cssText = `
+        min-width: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 30px;
+        gap: 6px;
+        align-items: center;
+        padding: 5px 6px;
+        border: 1px solid rgba(91,71,45,0.62);
+        border-radius: 2px;
+        background: linear-gradient(180deg, rgba(34,27,20,0.74), rgba(16,12,9,0.86));
+        color: #b8b0a0;
+        font: 700 11px Arial, Helvetica, sans-serif;
+        text-shadow: 1px 1px 0 #000;
+        cursor: pointer;
+      `;
+      const text = document.createElement('span');
+      text.textContent = label;
+      text.style.cssText = `
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      `;
+      const swatch = document.createElement('span');
+      swatch.style.cssText = `
+        width: 30px;
+        height: 24px;
+        display: block;
+        border: 1px solid rgba(255,200,100,0.42);
+        border-radius: 2px;
+        background: ${chatSettings.colors[key]};
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,0.55), 0 1px 0 rgba(0,0,0,0.65);
+      `;
+      control.title = `${label} message color`;
+      control.setAttribute('aria-label', `${label} message color`);
+      control.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.showChatColorPicker(key, label);
+      });
+      control.addEventListener('mouseenter', () => {
+        control.style.borderColor = 'rgba(216,55,43,0.72)';
+      });
+      control.addEventListener('mouseleave', () => {
+        control.style.borderColor = 'rgba(91,71,45,0.62)';
+      });
+      control.append(text, swatch);
+      this.chatColorControlSwatches.set(key, swatch);
+      return control;
+    };
+    for (const option of CHAT_COLOR_OPTIONS) {
+      colorGrid.appendChild(makeColorControl(option.key, option.label));
+    }
+    colorBlock.appendChild(colorGrid);
+    chatGroup.appendChild(colorBlock);
+    view.appendChild(chatGroup);
+
+    this.updateSettingsButtonGroup(clientButtons, getClientSizeMode());
+    this.updateSettingsButtonGroup(this.uiScaleButtons, getUiScale());
+    this.updateSettingsButtonGroup(this.renderDistanceButtons, getRenderDistance());
+    this.updateSettingsButtonGroup(this.groundItemLabelButtons, gameSettings.groundItemLabels);
+    this.updateSettingsButtonGroup(this.nameplateButtons, gameSettings.nameplates);
+    this.updateSettingsButtonGroup(this.tooltipModeButtons, gameSettings.tooltips);
+    this.updateSettingsButtonGroup(this.framePaceButtons, gameSettings.framePace);
+    this.updateSettingsButtonGroup(this.movementModeButtons, this.movementMode);
+    this.refreshRunEnergyUi();
+    this.updateSettingsButtonGroup(this.npcDialogueChatButtons, chatSettings.npcDialogueInChat ? 'show' : 'hide');
+    this.updateSettingsButtonGroup(this.brightnessButtons, getBrightnessLevel());
+    this.updateSettingsButtonGroup(this.renderQualityButtons, this.renderQualityMode);
     return view;
+  }
+
+  private ensureChatColorPickerModal(): void {
+    if (this.chatColorPickerPanel) return;
+
+    const modal = createGameDialogModal({
+      id: 'chat-color-picker-modal',
+      title: 'Message Color',
+      closeLabel: 'X',
+      width: '390px',
+      height: '318px',
+      onClose: () => this.hideChatColorPicker(),
+    });
+    this.chatColorPickerPanel = modal.root;
+    this.chatColorPickerTitleEl = modal.title;
+
+    const body = document.createElement('div');
+    body.style.cssText = `
+      flex: 1 1 auto;
+      min-height: 0;
+      margin-top: 4px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      color: #f0d2bd;
+      text-shadow: ${DIALOGUE_TEXT_SHADOW};
+      border: 1px solid ${DIALOGUE_ACCENT};
+      background: ${DIALOGUE_PARCHMENT_BG};
+      box-shadow:
+        inset 0 1px 0 rgba(255,220,170,0.06),
+        inset 0 0 18px rgba(0,0,0,0.34);
+    `;
+
+    const currentRow = document.createElement('div');
+    currentRow.style.cssText = `
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 9px;
+      align-items: center;
+      min-height: 40px;
+      padding: 6px 8px;
+      border: 1px solid rgba(91,71,45,0.72);
+      background: linear-gradient(180deg, rgba(34,27,20,0.72), rgba(16,12,9,0.86));
+    `;
+    const currentSwatch = document.createElement('div');
+    currentSwatch.style.cssText = `
+      width: 34px;
+      height: 28px;
+      border: 1px solid rgba(255,200,100,0.48);
+      border-radius: 2px;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.58), 0 1px 0 rgba(0,0,0,0.7);
+    `;
+    const currentLabel = document.createElement('div');
+    currentLabel.style.cssText = `
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #f4ded5;
+      font: 700 13px Arial, Helvetica, sans-serif;
+    `;
+    currentRow.append(currentSwatch, currentLabel);
+    body.appendChild(currentRow);
+    this.chatColorPickerCurrentSwatchEl = currentSwatch;
+    this.chatColorPickerCurrentLabelEl = currentLabel;
+
+    const palette = document.createElement('div');
+    palette.style.cssText = `
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    `;
+    for (const option of CHAT_COLOR_PICKER_PALETTE) {
+      const color = normalizeChatColor(option.color);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.title = option.label;
+      button.setAttribute('aria-label', option.label);
+      button.style.cssText = `
+        min-width: 0;
+        min-height: 34px;
+        border: 1px solid rgba(91,71,45,0.78);
+        border-radius: 2px;
+        background:
+          linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.16)),
+          ${color};
+        box-shadow:
+          inset 0 0 0 1px rgba(0,0,0,0.48),
+          0 1px 0 rgba(0,0,0,0.62);
+        cursor: pointer;
+      `;
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.selectChatColor(color);
+      });
+      button.addEventListener('mouseenter', () => {
+        button.style.filter = 'brightness(1.16)';
+      });
+      button.addEventListener('mouseleave', () => {
+        button.style.filter = '';
+      });
+      palette.appendChild(button);
+      this.chatColorPickerButtons.set(color, button);
+    }
+    body.appendChild(palette);
+
+    const footer = document.createElement('div');
+    footer.style.cssText = `
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding-top: 2px;
+    `;
+    const makeFooterButton = (label: string, onClick: () => void): HTMLButtonElement => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.className = 'eq-action-button';
+      button.style.cssText = `
+        min-width: 0;
+        height: 30px;
+        border: 1px solid rgba(143,47,40,0.72);
+        border-radius: 2px;
+        background: linear-gradient(180deg, rgba(48,22,18,0.96), rgba(22,12,10,0.98));
+        color: #f4ded5;
+        font: 700 12px Arial, Helvetica, sans-serif;
+        text-shadow: 1px 1px 0 #000;
+        cursor: pointer;
+      `;
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      });
+      return button;
+    };
+    footer.append(
+      makeFooterButton('Default', () => {
+        if (!this.activeChatColorPickerKey) return;
+        this.selectChatColor(DEFAULT_CHAT_COLORS[this.activeChatColorPickerKey]);
+      }),
+      makeFooterButton('Done', () => this.hideChatColorPicker()),
+    );
+    body.appendChild(footer);
+
+    modal.root.appendChild(body);
+    mountModalInGameFrame(modal.root);
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && this.chatColorPickerPanel?.style.display !== 'none') {
+        this.hideChatColorPicker();
+      }
+    });
+  }
+
+  private showChatColorPicker(key: ChatMessageColorKey, label: string): void {
+    this.ensureChatColorPickerModal();
+    if (!this.chatColorPickerPanel || !this.chatColorPickerTitleEl) return;
+    this.activeChatColorPickerKey = key;
+    this.chatColorPickerTitleEl.textContent = `${label} Messages`;
+    this.updateChatColorPickerState();
+    this.chatColorPickerPanel.style.display = 'flex';
+  }
+
+  private hideChatColorPicker(): void {
+    if (this.chatColorPickerPanel) this.chatColorPickerPanel.style.display = 'none';
+    this.activeChatColorPickerKey = null;
+  }
+
+  private selectChatColor(color: string): void {
+    if (!this.activeChatColorPickerKey) return;
+    const key = this.activeChatColorPickerKey;
+    const next = setChatMessageColor(key, color);
+    const swatch = this.chatColorControlSwatches.get(key);
+    if (swatch) swatch.style.background = next;
+    this.updateChatColorPickerState();
+  }
+
+  private updateChatColorPickerState(): void {
+    const key = this.activeChatColorPickerKey;
+    if (!key) return;
+    const settings = getChatSettings();
+    const activeColor = normalizeChatColor(settings.colors[key], DEFAULT_CHAT_COLORS[key]);
+    if (this.chatColorPickerCurrentSwatchEl) {
+      this.chatColorPickerCurrentSwatchEl.style.background = activeColor;
+    }
+    if (this.chatColorPickerCurrentLabelEl) {
+      const label = CHAT_COLOR_OPTIONS.find((option) => option.key === key)?.label ?? 'Messages';
+      this.chatColorPickerCurrentLabelEl.textContent = `${label}: ${activeColor.toUpperCase()}`;
+    }
+    for (const [color, button] of this.chatColorPickerButtons) {
+      const active = color === activeColor;
+      button.setAttribute('aria-pressed', String(active));
+      button.style.borderColor = active ? 'rgba(255,230,160,0.95)' : 'rgba(91,71,45,0.78)';
+      button.style.boxShadow = active
+        ? 'inset 0 0 0 2px rgba(0,0,0,0.52), 0 0 0 2px rgba(216,55,43,0.82), 0 2px 0 rgba(0,0,0,0.7)'
+        : 'inset 0 0 0 1px rgba(0,0,0,0.48), 0 1px 0 rgba(0,0,0,0.62)';
+    }
   }
 
   private showSettingsTooltip(title: string, body: string, x: number, y: number): void {
@@ -2644,7 +3388,7 @@ export class SidePanel {
     }
 
     el.dataset.filled = '1';
-    el.draggable = true;
+    el.draggable = this.bankDepositCallback === null;
     const def = this.itemDefs.get(slot.itemId);
 
     // draggable="false" on the inner img so HTML5 drag fires from the slot div
@@ -2686,7 +3430,7 @@ export class SidePanel {
       overSlot: null,
       longPressTimer: 0,
       contextMenuShown: false,
-      allowDrag: !this.tradeOfferCallback,
+      allowDrag: !this.tradeOfferCallback && !this.bankDepositCallback,
     };
     this.touchInvDrag.longPressTimer = window.setTimeout(() => {
       if (this.touchInvDrag !== null && this.touchInvDrag.pointerId === event.pointerId && !this.touchInvDrag.dragging) {
@@ -2842,6 +3586,14 @@ export class SidePanel {
 
   private onInvSlotClick(index: number, event?: MouseEvent): void {
     const tradeSlot = this.invSlots[index];
+    if (this.bankDepositCallback && tradeSlot) {
+      event?.preventDefault();
+      event?.stopPropagation();
+      if (this.using) this.clearUsingInvItem();
+      this.bankDepositCallback(index, tradeSlot.itemId, 1);
+      return;
+    }
+
     if (event?.shiftKey && tradeSlot && !this.tradeOfferCallback && !this.sellCallback && !this.using) {
       event.preventDefault();
       event.stopPropagation();
@@ -3290,6 +4042,30 @@ export class SidePanel {
     const name = def?.name || 'Item';
     const options: { label: string; action: () => void }[] = [];
 
+    if (this.bankDepositCallback) {
+      options.push({
+        label: `Deposit 1 ${name}`,
+        action: () => this.bankDepositCallback!(index, slot.itemId, 1),
+      });
+      options.push({
+        label: `Deposit 5 ${name}`,
+        action: () => this.bankDepositCallback!(index, slot.itemId, 5),
+      });
+      options.push({
+        label: `Deposit 10 ${name}`,
+        action: () => this.bankDepositCallback!(index, slot.itemId, 10),
+      });
+      options.push({
+        label: `Deposit X ${name}`,
+        action: () => this.promptBankDepositQuantity(index, slot.itemId, name),
+      });
+      options.push({
+        label: `Deposit All ${name}`,
+        action: () => this.bankDepositCallback!(index, slot.itemId, -1),
+      });
+      return options;
+    }
+
     if (this.tradeOfferCallback) {
       options.push({
         label: `Offer ${name}`,
@@ -3375,6 +4151,31 @@ export class SidePanel {
     }
 
     return options;
+  }
+
+  private promptBankDepositQuantity(index: number, itemId: number, name: string): void {
+    if (!this.requestQuantity) return;
+    const max = this.maxDepositableQuantity(index, itemId);
+    if (max <= 0) return;
+    this.requestQuantity({
+      title: 'Deposit X',
+      prompt: `How many ${name} do you want to deposit?`,
+      max,
+      submitLabel: 'Deposit',
+      onSubmit: (quantity) => {
+        const current = this.invSlots[index];
+        if (!this.bankDepositCallback || !current || current.itemId !== itemId) return;
+        this.bankDepositCallback(index, itemId, quantity);
+      },
+    });
+  }
+
+  private maxDepositableQuantity(index: number, itemId: number): number {
+    const clicked = this.invSlots[index];
+    if (!clicked) return 0;
+    const def = this.itemDefs.get(itemId);
+    if (def?.stackable) return clicked.quantity;
+    return this.invSlots.reduce((total, slot) => total + (slot?.itemId === itemId ? 1 : 0), 0);
   }
 
   private promptTradeOfferQuantity(index: number, itemId: number, name: string): void {
@@ -3625,6 +4426,14 @@ export class SidePanel {
     this.tradeOfferCallback = cb;
     this.container.classList.toggle('trade-offer-active', cb !== null);
     if (cb && this.using) this.clearUsingInvItem();
+  }
+
+  /** Set a bank-deposit callback (when bank is open) or null to clear. */
+  setBankDepositCallback(cb: ((slot: number, itemId: number, quantity: number) => void) | null): void {
+    this.bankDepositCallback = cb;
+    this.container.classList.toggle('bank-deposit-active', cb !== null);
+    if (cb && this.using) this.clearUsingInvItem();
+    for (let i = 0; i < this.invSlots.length; i++) this.renderInvSlot(i);
   }
 
   setQuantityInputRequester(cb: QuantityInputRequester | null): void {

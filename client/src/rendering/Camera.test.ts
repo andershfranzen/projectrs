@@ -53,6 +53,58 @@ describe('GameCamera locked zoom', () => {
     engine.dispose();
   });
 
+  test('smooths the locked follow target instead of pinning directly to the player', () => {
+    const engine = new NullEngine();
+    const scene = new Scene(engine);
+    const gameCamera = new GameCamera(scene, createTestCanvas());
+    const camera = gameCamera.getCamera();
+
+    const initial = gameCamera.followTarget(new Vector3(0, 0, 0), 0.02);
+    const result = gameCamera.followTarget(new Vector3(1, 0, 0), 0.02);
+
+    expect(initial.reason).toBe('initial');
+    expect(result.snapped).toBe(false);
+    expect(camera.target.x).toBeCloseTo(1 / 16, 5);
+    expect(camera.target.z).toBeCloseTo(0, 5);
+
+    scene.dispose();
+    engine.dispose();
+  });
+
+  test('snaps the locked follow target on large position corrections', () => {
+    const engine = new NullEngine();
+    const scene = new Scene(engine);
+    const gameCamera = new GameCamera(scene, createTestCanvas());
+    const camera = gameCamera.getCamera();
+
+    gameCamera.followTarget(new Vector3(0, 0, 0), 0.02);
+    const result = gameCamera.followTarget(new Vector3(5, 0, 0), 0.02);
+
+    expect(result.reason).toBe('large-delta');
+    expect(camera.target.x).toBeCloseTo(5, 5);
+    expect(camera.target.z).toBeCloseTo(0, 5);
+
+    scene.dispose();
+    engine.dispose();
+  });
+
+  test('snaps the locked follow target when smoothing is disabled', () => {
+    const engine = new NullEngine();
+    const scene = new Scene(engine);
+    const gameCamera = new GameCamera(scene, createTestCanvas());
+    const camera = gameCamera.getCamera();
+
+    gameCamera.followTarget(new Vector3(0, 0, 0), 0.02);
+    const result = gameCamera.followTarget(new Vector3(1, 0, 0), 0.02, false);
+
+    expect(result.reason).toBe('smoothing-disabled');
+    expect(camera.target.x).toBeCloseTo(1, 5);
+    expect(camera.target.z).toBeCloseTo(0, 5);
+
+    scene.dispose();
+    engine.dispose();
+  });
+
   test('removes its wheel listener on dispose', () => {
     const engine = new NullEngine();
     const scene = new Scene(engine);

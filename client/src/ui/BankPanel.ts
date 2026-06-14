@@ -1,4 +1,4 @@
-import { ClientOpcode, encodePacket, encodeQuantityPacket, BANK_SIZE, INVENTORY_SIZE, type ItemDef } from '@projectrs/shared';
+import { ClientOpcode, encodePacket, encodeQuantityPacket, BANK_SIZE, type ItemDef } from '@projectrs/shared';
 import type { NetworkManager } from '../managers/NetworkManager';
 import { createModalPanel } from './ModalPanel';
 import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick } from './popupStyle';
@@ -6,20 +6,16 @@ import { renderItemSlot } from '../rendering/ItemIcon';
 import type { QuantityInputRequester } from './QuantityInputPanel';
 
 interface BankSlotData { itemId: number; quantity: number }
-type BankDragSource = 'bank' | 'inventory';
-type BankDropTarget = 'bank' | 'inventory';
 type QuantityMenuOption = { label: string; n?: number; action?: () => void };
 
 interface BankTouchDragState {
   pointerId: number;
-  source: BankDragSource;
   slot: number;
   itemId: number;
   startX: number;
   startY: number;
   dragging: boolean;
   ghost: HTMLDivElement | null;
-  dropTarget: BankDropTarget | null;
   dropSlot: number | null;
   sourceEl: HTMLDivElement;
   longPressTimer: number;
@@ -34,24 +30,19 @@ const TOUCH_DRAG_START_PX = 7;
 const TOUCH_CONTEXT_MENU_LONG_PRESS_MS = 450;
 const BANK_SLOT_DRAG_MIME = 'application/x-evilquest-bank-slot';
 
-/** Bank UI — opens inside the playable game frame with the bank grid on the left and a
- *  mirror of the player's inventory on the right.
+/** Bank UI — opens inside the playable game frame with the bank grid.
  *  - Click a bank slot → withdraw 1
  *  - Right-click a bank slot → 5 / 10 / All
- *  - Click an inventory slot → deposit 1
- *  - Right-click an inventory slot → 5 / 10 / All
+ *  - Deposit from the normal inventory panel while the bank is open
  *  All operations are server-authoritative; this panel only renders state
- *  pushed by BANK_OPEN / BANK_UPDATE_SLOT and the existing inventory packets.
+ *  pushed by BANK_OPEN / BANK_UPDATE_SLOT.
  *  The close button (or Escape) sends BANK_CLOSE; the server is also free to send
  *  a server-driven BANK_CLOSE when the player walks/attacks/etc. */
 export class BankPanel {
   private container: HTMLDivElement;
   private bankGridEl: HTMLDivElement;
-  private invGridEl: HTMLDivElement;
   private bankSlots: (BankSlotData | null)[] = new Array(BANK_SIZE).fill(null);
   private bankSlotElements: HTMLDivElement[] = [];
-  private invSlots: (BankSlotData | null)[] = new Array(INVENTORY_SIZE).fill(null);
-  private invSlotElements: HTMLDivElement[] = [];
   private network: NetworkManager;
   private itemDefs: Map<number, ItemDef> = new Map();
   private visible: boolean = false;
@@ -69,7 +60,6 @@ export class BankPanel {
     const built = this.buildUI();
     this.container = built.root;
     this.bankGridEl = built.bankGrid;
-    this.invGridEl = built.invGrid;
     (document.getElementById('game-frame') ?? document.body).appendChild(this.container);
 
     // Escape closes the bank.
@@ -85,7 +75,6 @@ export class BankPanel {
   setItemDefs(defs: Map<number, ItemDef>): void {
     this.itemDefs = defs;
     for (let i = 0; i < this.bankSlots.length; i++) this.renderBankSlot(i);
-    for (let i = 0; i < this.invSlots.length; i++) this.renderInvSlot(i);
   }
 
   /** Called when BANK_OPEN arrives — also triggers showing the panel. */
@@ -106,13 +95,6 @@ export class BankPanel {
     this.renderBankSlot(slot);
   }
 
-  /** Mirror inventory state from the side panel. */
-  updateInventorySlot(slot: number, itemId: number, quantity: number): void {
-    if (slot < 0 || slot >= this.invSlots.length) return;
-    this.invSlots[slot] = itemId === 0 ? null : { itemId, quantity };
-    this.renderInvSlot(slot);
-  }
-
   show(): void {
     closeActiveContextMenu();
     this.visible = true;
@@ -130,13 +112,13 @@ export class BankPanel {
     this.adminItemDeletionEnabled = enabled;
   }
 
-  private buildUI(): { root: HTMLDivElement; bankGrid: HTMLDivElement; invGrid: HTMLDivElement } {
+  private buildUI(): { root: HTMLDivElement; bankGrid: HTMLDivElement } {
     const { root } = createModalPanel({
       id: 'bank-panel',
       title: 'Bank of EvilQuest',
       geometry: {
         kind: 'game-canvas',
-        width: 'min(690px, calc(100% - var(--right-rail-width, 300px) - 18px))',
+        width: 'min(520px, calc(100% - var(--right-rail-width, 300px) - 18px))',
         maxHeight: 'calc(100% - var(--chat-height, 220px) - 18px)',
       },
       chrome: 'dialogue',
@@ -144,10 +126,10 @@ export class BankPanel {
       onClose: () => this.hide(true),
     });
 
-    // Body — two columns
+    // Body — bank contents only; deposits use the real inventory panel.
     const body = document.createElement('div');
     body.className = 'bank-panel-body';
-    body.style.cssText = `display: flex; gap: 10px; padding: 9px 10px 6px; flex: 1; min-height: 0; overflow: hidden;`;
+    body.style.cssText = `display: flex; padding: 9px 10px 6px; flex: 1; min-height: 0; overflow: hidden;`;
 
     // Bank column
     const bankCol = document.createElement('div');
@@ -172,7 +154,7 @@ export class BankPanel {
     for (let i = 0; i < BANK_SIZE; i++) {
       const slot = this.makeSlot();
       slot.dataset.bankSlot = String(i);
-      this.installTouchDrag(slot, 'bank', i);
+      this.installTouchDrag(slot, i);
       this.installBankSlotDrag(slot, i);
       slot.addEventListener('click', (e) => {
         if (this.shouldSuppressClick()) {
@@ -189,38 +171,6 @@ export class BankPanel {
     bankCol.appendChild(bankGrid);
     body.appendChild(bankCol);
 
-    // Inventory column
-    const invCol = document.createElement('div');
-    invCol.className = 'bank-panel-inv-col';
-    invCol.style.cssText = `flex: 1 1 0; display: flex; flex-direction: column; min-width: 0;`;
-    const invLabel = document.createElement('div');
-    invLabel.className = 'bank-panel-label';
-    invLabel.textContent = 'Inventory';
-    invLabel.style.cssText = this.labelCss();
-    invCol.appendChild(invLabel);
-
-    const invGrid = document.createElement('div');
-    invGrid.className = 'bank-panel-inv-grid';
-    invGrid.style.cssText = this.inventoryGridCss(5, false);
-    this.addInventoryStitch(invGrid);
-    for (let i = 0; i < INVENTORY_SIZE; i++) {
-      const slot = this.makeSlot();
-      this.installTouchDrag(slot, 'inventory', i);
-      slot.addEventListener('click', (e) => {
-        if (this.shouldSuppressClick()) {
-          e.preventDefault();
-          e.stopPropagation();
-          return;
-        }
-        this.onInvClick(i);
-      });
-      slot.addEventListener('contextmenu', (e) => { e.preventDefault(); this.onInvRightClick(i, e); });
-      invGrid.appendChild(slot);
-      this.invSlotElements.push(slot);
-    }
-    invCol.appendChild(invGrid);
-    body.appendChild(invCol);
-
     root.appendChild(body);
 
     const footer = document.createElement('div');
@@ -228,7 +178,7 @@ export class BankPanel {
     footer.style.cssText = `display: flex; align-items: center; gap: 8px; padding: 0 10px 8px;`;
     const hint = document.createElement('div');
     hint.className = 'bank-panel-hint';
-    hint.textContent = 'Left-click = 1 · Right-click = 5/10/X/All';
+    hint.textContent = 'Left-click bank = withdraw 1 · Right-click bank = 5/10/X/All · Deposit from Inventory';
     hint.style.cssText = `flex: 1; min-width: 0; font-size: 11px; color: #f4ded5; opacity: 0.82; text-shadow: ${BANK_TEXT_SHADOW};`;
     footer.appendChild(hint);
     const closeBtn = document.createElement('button');
@@ -239,7 +189,7 @@ export class BankPanel {
     footer.appendChild(closeBtn);
     root.appendChild(footer);
 
-    return { root, bankGrid, invGrid };
+    return { root, bankGrid };
   }
 
   private inventoryGridCss(cols: number, scroll: boolean): string {
@@ -314,13 +264,6 @@ export class BankPanel {
       return;
     }
     el.draggable = true;
-    this.setSlotInner(el, s.itemId, s.quantity);
-  }
-  private renderInvSlot(i: number): void {
-    const el = this.invSlotElements[i];
-    if (!el) return;
-    const s = this.invSlots[i];
-    if (!s) { el.innerHTML = ''; return; }
     this.setSlotInner(el, s.itemId, s.quantity);
   }
 
@@ -416,28 +359,26 @@ export class BankPanel {
     return performance.now() < this.suppressClickUntil;
   }
 
-  private installTouchDrag(slot: HTMLDivElement, source: BankDragSource, index: number): void {
-    slot.addEventListener('pointerdown', (event) => this.beginTouchDrag(event, source, index, slot));
+  private installTouchDrag(slot: HTMLDivElement, index: number): void {
+    slot.addEventListener('pointerdown', (event) => this.beginTouchDrag(event, index, slot));
     slot.addEventListener('pointermove', (event) => this.moveTouchDrag(event));
     slot.addEventListener('pointerup', (event) => this.finishTouchDrag(event));
     slot.addEventListener('pointercancel', (event) => this.cancelTouchDrag(event));
     slot.addEventListener('lostpointercapture', (event) => this.cancelTouchDrag(event));
   }
 
-  private beginTouchDrag(event: PointerEvent, source: BankDragSource, slot: number, sourceEl: HTMLDivElement): void {
+  private beginTouchDrag(event: PointerEvent, slot: number, sourceEl: HTMLDivElement): void {
     if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
-    const data = source === 'bank' ? this.bankSlots[slot] : this.invSlots[slot];
+    const data = this.bankSlots[slot];
     if (!data) return;
     this.touchDrag = {
       pointerId: event.pointerId,
-      source,
       slot,
       itemId: data.itemId,
       startX: event.clientX,
       startY: event.clientY,
       dragging: false,
       ghost: null,
-      dropTarget: null,
       dropSlot: null,
       sourceEl,
       longPressTimer: 0,
@@ -453,8 +394,7 @@ export class BankPanel {
         } catch {
           // Pointer capture is best-effort on mobile browsers.
         }
-        if (source === 'bank') this.onBankRightClick(slot, event);
-        else this.onInvRightClick(slot, event);
+        this.onBankRightClick(slot, event);
       }
     }, TOUCH_CONTEXT_MENU_LONG_PRESS_MS);
   }
@@ -481,7 +421,7 @@ export class BankPanel {
     event.preventDefault();
     event.stopPropagation();
     this.moveTouchDragGhost(drag, event.clientX, event.clientY);
-    this.setDropTarget(this.dropTargetAt(event.clientX, event.clientY));
+    this.setDropTarget(this.bankSlotAt(event.clientX, event.clientY));
   }
 
   private finishTouchDrag(event: PointerEvent): void {
@@ -497,20 +437,8 @@ export class BankPanel {
     if (drag.dragging) {
       event.preventDefault();
       event.stopPropagation();
-      const targetInfo = this.dropTargetAt(event.clientX, event.clientY);
-      const target = targetInfo?.target ?? null;
-      const targetSlot = targetInfo?.slot ?? null;
-      if (drag.source === 'inventory' && target === 'bank' && this.invSlots[drag.slot]?.itemId === drag.itemId) {
-        this.sendBankQuantity(ClientOpcode.BANK_DEPOSIT, drag.slot, drag.itemId, 1);
-      } else if (drag.source === 'bank' && target === 'inventory' && this.bankSlots[drag.slot]?.itemId === drag.itemId) {
-        this.sendBankQuantity(ClientOpcode.BANK_WITHDRAW, drag.slot, drag.itemId, 1);
-      } else if (
-        drag.source === 'bank'
-        && target === 'bank'
-        && targetSlot !== null
-        && targetSlot !== drag.slot
-        && this.bankSlots[drag.slot]?.itemId === drag.itemId
-      ) {
+      const targetSlot = this.bankSlotAt(event.clientX, event.clientY);
+      if (targetSlot !== null && targetSlot !== drag.slot && this.bankSlots[drag.slot]?.itemId === drag.itemId) {
         this.network.sendRaw(encodePacket(ClientOpcode.BANK_MOVE_ITEM, drag.slot, targetSlot, drag.itemId));
       }
       this.suppressClickUntil = performance.now() + 350;
@@ -564,41 +492,23 @@ export class BankPanel {
     drag.ghost.style.top = `${clientY}px`;
   }
 
-  private dropTargetAt(clientX: number, clientY: number): { target: BankDropTarget; slot: number | null } | null {
+  private bankSlotAt(clientX: number, clientY: number): number | null {
     const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
-    if (!el) return null;
-    if (this.bankGridEl.contains(el)) {
-      const slotEl = el.closest('[data-bank-slot]') as HTMLElement | null;
-      const slot = slotEl?.dataset.bankSlot;
-      return { target: 'bank', slot: slot === undefined ? null : Number(slot) };
-    }
-    if (this.invGridEl.contains(el)) return { target: 'inventory', slot: null };
-    return null;
+    const slotEl = el && this.bankGridEl.contains(el) ? el.closest('[data-bank-slot]') as HTMLElement | null : null;
+    const slot = slotEl?.dataset.bankSlot;
+    if (slot === undefined) return null;
+    const parsed = Number(slot);
+    return Number.isInteger(parsed) ? parsed : null;
   }
 
-  private setDropTarget(targetInfo: { target: BankDropTarget; slot: number | null } | null): void {
+  private setDropTarget(targetSlot: number | null): void {
     const drag = this.touchDrag;
-    const target = targetInfo?.target ?? null;
-    const targetSlot = targetInfo?.slot ?? null;
-    if (!drag || (drag.dropTarget === target && drag.dropSlot === targetSlot)) return;
-    this.bankGridEl.style.outline = '';
-    this.invGridEl.style.outline = '';
+    if (!drag || drag.dropSlot === targetSlot) return;
     if (drag.dropSlot !== null) this.bankSlotElements[drag.dropSlot]?.style.removeProperty('outline');
-    drag.dropTarget = target;
     drag.dropSlot = targetSlot;
-    const validTarget =
-      (drag.source === 'inventory' && target === 'bank')
-      || (drag.source === 'bank' && target === 'inventory')
-      || (drag.source === 'bank' && target === 'bank' && targetSlot !== null && targetSlot !== drag.slot);
-    if (!validTarget) return;
-    if (drag.source === 'bank' && target === 'bank' && targetSlot !== null) {
-      this.bankSlotElements[targetSlot].style.outline = '1px solid rgba(255, 200, 80, 0.9)';
-      this.bankSlotElements[targetSlot].style.outlineOffset = '-2px';
-      return;
-    }
-    const grid = target === 'bank' ? this.bankGridEl : this.invGridEl;
-    grid.style.outline = '1px solid rgba(255, 200, 80, 0.9)';
-    grid.style.outlineOffset = '-2px';
+    if (targetSlot === null || targetSlot === drag.slot) return;
+    this.bankSlotElements[targetSlot].style.outline = '1px solid rgba(255, 200, 80, 0.9)';
+    this.bankSlotElements[targetSlot].style.outlineOffset = '-2px';
   }
 
   private clearTouchDrag(pointerId: number): void {
@@ -692,36 +602,6 @@ export class BankPanel {
       this.sendBankQuantity(ClientOpcode.BANK_WITHDRAW, slot, s.itemId, n);
     });
   }
-  private onInvClick(slot: number): void {
-    const s = this.invSlots[slot];
-    if (!s) return;
-    this.sendBankQuantity(ClientOpcode.BANK_DEPOSIT, slot, s.itemId, 1);
-  }
-  private onInvRightClick(slot: number, ev: MouseEvent): void {
-    const s = this.invSlots[slot];
-    if (!s) return;
-    const name = this.itemName(s.itemId);
-    const options: QuantityMenuOption[] = [
-      { label: 'Deposit 1', n: 1 },
-      { label: 'Deposit 5', n: 5 },
-      { label: 'Deposit 10', n: 10 },
-      { label: 'Deposit X', n: 0 },
-      { label: 'Deposit All', n: -1 },
-    ];
-    if (this.adminItemDeletionEnabled) {
-      options.push({
-        label: `Delete ${name}`,
-        action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DELETE_ITEM, slot, s.itemId)),
-      });
-    }
-    this.showQuantityMenu(ev, options, (n) => {
-      if (n === 0) {
-        this.promptDepositQuantity(slot, s);
-        return;
-      }
-      this.sendBankQuantity(ClientOpcode.BANK_DEPOSIT, slot, s.itemId, n);
-    });
-  }
 
   private sendBankQuantity(opcode: ClientOpcode, slot: number, itemId: number, quantity: number): void {
     this.network.sendRaw(encodeQuantityPacket(opcode, slot, itemId, quantity));
@@ -741,30 +621,6 @@ export class BankPanel {
         this.sendBankQuantity(ClientOpcode.BANK_WITHDRAW, slot, original.itemId, quantity);
       },
     });
-  }
-
-  private promptDepositQuantity(slot: number, original: BankSlotData): void {
-    if (!this.requestQuantity) return;
-    const max = this.maxDepositable(original);
-    if (max <= 0) return;
-    const name = this.itemName(original.itemId);
-    this.requestQuantity({
-      title: 'Deposit X',
-      prompt: `How many ${name} do you want to deposit?`,
-      max,
-      submitLabel: 'Deposit',
-      onSubmit: (quantity) => {
-        const current = this.invSlots[slot];
-        if (!this.visible || !current || current.itemId !== original.itemId) return;
-        this.sendBankQuantity(ClientOpcode.BANK_DEPOSIT, slot, original.itemId, quantity);
-      },
-    });
-  }
-
-  private maxDepositable(original: BankSlotData): number {
-    const def = this.itemDefs.get(original.itemId);
-    if (def?.stackable) return original.quantity;
-    return this.invSlots.reduce((total, slot) => total + (slot?.itemId === original.itemId ? 1 : 0), 0);
   }
 
   private itemName(itemId: number): string {

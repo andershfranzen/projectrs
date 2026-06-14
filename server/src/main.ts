@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS, isValidMinimapIconFilename, normalizeMinimapMarkers, diagnosticFlagsFromPayload, diagnosticRecordField, measuredFpsFromDiagnosticPayload, rendererFromWebGlDiagnostics } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS, isValidMinimapIconFilename, normalizeMinimapMarkers, diagnosticFlagsFromPayload, diagnosticRecordField, measuredFpsFromDiagnosticPayload, rendererFromWebGlDiagnostics, validateItemDefs } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -637,78 +637,6 @@ async function saveJsonWithBackup(opts: {
     fsp.writeFile(tmpPath, JSON.stringify(data, null, 2)),
   ]);
   await fsp.rename(tmpPath, path);
-}
-
-const EQUIP_SLOTS = new Set(['weapon', 'head', 'body', 'legs', 'shield', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo']);
-const EQUIP_SKILLS = new Set(['weaponry', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcutting', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']);
-const WEAPON_STYLES = new Set(['stab', 'slash', 'crush', 'bow', 'crossbow']);
-const TOOL_TYPES = new Set(['axe', 'pickaxe', 'hammer']);
-const HEAD_RENDER_MODE_SET: ReadonlySet<string> = new Set(HEAD_RENDER_MODES);
-
-function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok: false; error: string } {
-  if (!Array.isArray(items)) return { ok: false, error: 'Body must be { items: ItemDef[] }' };
-  const seen = new Set<number>();
-  const finiteNumberFields = [
-    'value', 'attackSpeed', 'attackRange', 'stabAttack', 'slashAttack', 'crushAttack',
-    'stabDefence', 'slashDefence', 'crushDefence', 'rangedDefence',
-    'magicDefence', 'magicAccuracy', 'meleeStrength', 'rangedAccuracy',
-    'rangedStrength', 'healAmount', 'toolLevel', 'toolBonus', 'levelRequired',
-  ];
-  for (const raw of items) {
-    if (!raw || typeof raw !== 'object') return { ok: false, error: 'Every item must be an object' };
-    const item = raw as Record<string, unknown>;
-    if (!Number.isInteger(item.id) || (item.id as number) <= 0) return { ok: false, error: `Invalid item id: ${String(item.id)}` };
-    if (seen.has(item.id as number)) return { ok: false, error: `Duplicate item id: ${item.id}` };
-    seen.add(item.id as number);
-    if (typeof item.name !== 'string' || item.name.trim().length === 0) return { ok: false, error: `Item ${item.id} is missing a name` };
-    if (typeof item.description !== 'string') return { ok: false, error: `Item ${item.id} is missing a description` };
-    if (typeof item.stackable !== 'boolean') return { ok: false, error: `Item ${item.id} has invalid stackable` };
-    if (typeof item.equippable !== 'boolean') return { ok: false, error: `Item ${item.id} has invalid equippable` };
-    if (item.equipSlot !== undefined && !EQUIP_SLOTS.has(String(item.equipSlot))) return { ok: false, error: `Item ${item.id} has invalid equipSlot` };
-    if (item.equipSkill !== undefined && !EQUIP_SKILLS.has(String(item.equipSkill))) return { ok: false, error: `Item ${item.id} has invalid equipSkill` };
-    if (item.weaponStyle !== undefined && !WEAPON_STYLES.has(String(item.weaponStyle))) return { ok: false, error: `Item ${item.id} has invalid weaponStyle` };
-    if (item.toolType !== undefined && !TOOL_TYPES.has(String(item.toolType))) return { ok: false, error: `Item ${item.id} has invalid toolType` };
-    if (item.headRenderMode !== undefined && !HEAD_RENDER_MODE_SET.has(String(item.headRenderMode))) return { ok: false, error: `Item ${item.id} has invalid headRenderMode` };
-    if (item.thumbnailModel !== undefined && (typeof item.thumbnailModel !== 'string' || item.thumbnailModel.trim().length === 0)) {
-      return { ok: false, error: `Item ${item.id} has invalid thumbnailModel` };
-    }
-    if (item.bodyTypeModels !== undefined) {
-      if (!item.bodyTypeModels || typeof item.bodyTypeModels !== 'object' || Array.isArray(item.bodyTypeModels)) {
-        return { ok: false, error: `Item ${item.id} has invalid bodyTypeModels` };
-      }
-      for (const [bodyType, model] of Object.entries(item.bodyTypeModels as Record<string, unknown>)) {
-        if (!/^\d+$/.test(bodyType) || typeof model !== 'string' || model.trim().length === 0) {
-          return { ok: false, error: `Item ${item.id} has invalid bodyTypeModels.${bodyType}` };
-        }
-      }
-    }
-    if (item.stackModels !== undefined) {
-      if (!Array.isArray(item.stackModels)) return { ok: false, error: `Item ${item.id} has invalid stackModels` };
-      for (const [index, variant] of item.stackModels.entries()) {
-        if (!variant || typeof variant !== 'object') return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}` };
-        const stackVariant = variant as Record<string, unknown>;
-        if (!Number.isInteger(stackVariant.minQuantity) || (stackVariant.minQuantity as number) <= 0) {
-          return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}.minQuantity` };
-        }
-        if (typeof stackVariant.model !== 'string' || stackVariant.model.trim().length === 0) {
-          return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}.model` };
-        }
-        if (stackVariant.scale !== undefined && (typeof stackVariant.scale !== 'number' || !Number.isFinite(stackVariant.scale) || stackVariant.scale <= 0)) {
-          return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}.scale` };
-        }
-      }
-    }
-    for (const field of finiteNumberFields) {
-      const value = item[field];
-      if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
-        return { ok: false, error: `Item ${item.id} has invalid ${field}` };
-      }
-    }
-    if (item.attackRange !== undefined && (item.attackRange as number) <= 0) {
-      return { ok: false, error: `Item ${item.id} has invalid attackRange` };
-    }
-  }
-  return { ok: true, items: items as ItemDef[] };
 }
 
 // --- Backup helper ---
@@ -1775,6 +1703,60 @@ async function readRecentClientDiagnostics(options: {
 }
 
 function clientLogConsoleSummary(event: string, username: string, payload: unknown): string {
+  if (event === 'client_camera_snap' && isPlainRecord(payload)) {
+    const numberField = (key: string, digits: number = 1): string => {
+      const value = payload[key];
+      return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : 'n/a';
+    };
+    const player = isPlainRecord(payload.player) ? payload.player : {};
+    const path = isPlainRecord(payload.path) ? payload.path : {};
+    const framePace = isPlainRecord(payload.framePace) ? payload.framePace : {};
+    const px = typeof player.x === 'number' && Number.isFinite(player.x) ? player.x.toFixed(2) : 'n/a';
+    const pz = typeof player.z === 'number' && Number.isFinite(player.z) ? player.z.toFixed(2) : 'n/a';
+    const pathIndex = typeof path.index === 'number' && Number.isFinite(path.index) ? path.index : 'n/a';
+    const pathLength = typeof path.length === 'number' && Number.isFinite(path.length) ? path.length : 'n/a';
+    const map = String(payload.currentMap ?? 'n/a').slice(0, 48);
+    const floor = typeof payload.currentFloor === 'number' && Number.isFinite(payload.currentFloor) ? payload.currentFloor : 'n/a';
+    const reason = String(payload.reason ?? 'unknown').slice(0, 48);
+    const visibility = String(payload.visibilityState ?? 'n/a').slice(0, 24);
+    const paceMode = String(framePace.mode ?? 'n/a').slice(0, 24);
+    return `[client-log] ${event} user=${username} reason=${reason} dist=${numberField('distance')} dx=${numberField('dx')} dz=${numberField('dz')} dt=${numberField('dtMs')}ms map=${map}/f${floor} pos=${px},${pz} path=${pathIndex}/${pathLength} vis=${visibility} pace=${paceMode}`;
+  }
+  if (event === 'client_frame_spike' && isPlainRecord(payload)) {
+    const numberField = (key: string): string => {
+      const value = payload[key];
+      return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(1) : 'n/a';
+    };
+    const player = isPlainRecord(payload.player) ? payload.player : {};
+    const px = typeof player.x === 'number' && Number.isFinite(player.x) ? player.x.toFixed(2) : 'n/a';
+    const pz = typeof player.z === 'number' && Number.isFinite(player.z) ? player.z.toFixed(2) : 'n/a';
+    const map = String(payload.currentMap ?? 'n/a').slice(0, 48);
+    const floor = typeof payload.currentFloor === 'number' && Number.isFinite(payload.currentFloor) ? payload.currentFloor : 'n/a';
+    const topSlices = Array.isArray(payload.topSlices)
+      ? payload.topSlices
+        .slice(0, 4)
+        .map((slice) => isPlainRecord(slice) ? `${String(slice.label ?? '?')}:${typeof slice.ms === 'number' ? slice.ms.toFixed(1) : 'n/a'}` : '')
+        .filter(Boolean)
+        .join(',')
+      : 'n/a';
+    const longTasks = Array.isArray(payload.longTasks)
+      ? payload.longTasks
+        .slice(0, 4)
+        .map((task) => isPlainRecord(task) && typeof task.durationMs === 'number' ? task.durationMs.toFixed(1) : '')
+        .filter(Boolean)
+        .join(',')
+      : '';
+    const longTaskText = longTasks ? ` longTasks=${longTasks}ms` : ' longTasks=none';
+    const gpuText = typeof payload.gpuFrameMs === 'number' && Number.isFinite(payload.gpuFrameMs)
+      ? ` gpu=${payload.gpuFrameMs.toFixed(1)}ms`
+      : ' gpu=n/a';
+    const framePace = isPlainRecord(payload.framePace) ? payload.framePace : {};
+    const paceMode = String(framePace.mode ?? 'n/a').slice(0, 24);
+    const targetRenderFps = typeof framePace.targetRenderFps === 'number' && Number.isFinite(framePace.targetRenderFps)
+      ? framePace.targetRenderFps.toFixed(1)
+      : 'native';
+    return `[client-log] ${event} user=${username} gap=${numberField('rafGapMs')}ms update=${numberField('updateMs')}ms render=${numberField('renderMs')}ms outside=${numberField('outsideMeasuredFrameMs')}ms pace=${paceMode}/${targetRenderFps} map=${map}/f${floor} pos=${px},${pz}${longTaskText}${gpuText} top=${topSlices}`;
+  }
   const fps = measuredFpsFromDiagnosticPayload(payload);
   const fpsText = fps === null ? 'n/a' : (fps >= 100 ? Math.round(fps).toString() : fps.toFixed(1));
   const flags = diagnosticFlagsFromPayload(payload);
@@ -3429,7 +3411,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         const body = await req.json() as { username?: string; password?: string; deviceId?: string; recaptchaToken?: string };
         const device = validateSignupDevice(req, body.deviceId);
         if (!device.ok) return jsonResponse({ ok: false, error: device.error }, 400);
-        const username = (body.username || '').toLowerCase();
+        const username = typeof body.username === 'string' ? body.username : '';
         const key = ip;
         if (!checkRate(signupAttempts, key, SIGNUP_LIMIT, SIGNUP_WINDOW_MS)) {
           return jsonResponse({ ok: false, error: 'Too many signup attempts. Try again later.' }, 429);

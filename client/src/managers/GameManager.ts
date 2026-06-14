@@ -23,7 +23,7 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import '@babylonjs/loaders/glTF';
 import { ChunkManager, assertOptionalMapResourceResponse } from '../rendering/ChunkManager';
-import { GameCamera } from '../rendering/Camera';
+import { GameCamera, type CameraFollowResult } from '../rendering/Camera';
 import { CharacterEntity, loadGearTemplate, type GearDef, type GearTemplate } from '../rendering/CharacterEntity';
 import { PER_TARGET_GEAR_SLOTS, buildCharacterGearDef, disposeImportedGearResult, loadCharacterGearSmart, loadStaticGearTemplate, resolveCharacterGearModelFile } from '../rendering/CharacterGearLoader';
 import { applyNpcGearFitToNode, createNpcGearTemplateWithFit } from '../rendering/NpcGearAttachment';
@@ -36,12 +36,15 @@ import { DEFAULT_DUNGEON_SKYBOX_CONFIG, DEFAULT_SKYBOX_CONFIG, GameSkybox } from
 import type { Targetable } from '../rendering/Targetable';
 import { WorldObjectModels } from '../rendering/WorldObjectModels';
 import { mountWorldOverlayElement } from '../rendering/worldOverlay';
-import { EntityManager, type GroundItemData } from './EntityManager';
+import { EntityManager, type GroundItemData, type RemoteMovementStep } from './EntityManager';
 import { InputManager } from './InputManager';
 import { NetworkManager } from './NetworkManager';
 import { findPath } from '../rendering/Pathfinding';
-import { SidePanel } from '../ui/SidePanel';
+import { SidePanel, type RenderQualityMode } from '../ui/SidePanel';
 import { ChatPanel } from '../ui/ChatPanel';
+import { isNpcDialogueInChatEnabled } from '../ui/chatSettings';
+import { getGameSettings, type FramePaceMode, type GameSettings, type NameplateMode } from '../ui/gameSettings';
+import { getRenderDistance, renderDistanceOptionFor, type RenderDistanceValue } from '../ui/renderDistance';
 import { GearDebugPanel } from '../ui/GearDebugPanel';
 import { BoneDebugPanel } from '../ui/BoneDebugPanel';
 import { RotateDebugPanel } from '../ui/RotateDebugPanel';
@@ -63,7 +66,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, movementTilesPerSecond, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -101,6 +104,51 @@ const WORLD_OBJECT_PICK_MIN_HEIGHT = 0.45;
 const WORLD_OBJECT_PICK_MAX_HEIGHT = 8;
 const CROP_PICK_MARGIN = 0.04;
 const CROP_PICK_MIN_SIZE = 0.45;
+const CLIENT_FRAME_SPIKE_TELEMETRY_ENABLED = true;
+const CLIENT_FRAME_SPIKE_TELEMETRY_MS = 50;
+const CLIENT_FRAME_SPIKE_PROFILER_MS = 32;
+const CLIENT_FRAME_SPIKE_CONSOLE_COOLDOWN_MS = 250;
+const CLIENT_FRAME_SPIKE_SERVER_COOLDOWN_MS = 10_000;
+const CLIENT_FRAME_SPIKE_PROFILER_STORAGE_KEY = 'evilquest_frame_spike_profiler';
+const CLIENT_FRAME_SPIKE_GPU_TIMER_STORAGE_KEY = 'evilquest_frame_spike_gpu_timer';
+const CLIENT_FRAME_SPIKE_PROFILER_QUERY_FLAGS = ['framestats', 'frameprofiler', 'framespikes'] as const;
+const CLIENT_FRAME_SPIKE_GPU_QUERY_FLAGS = ['framestatsgpu', 'framegpu', 'gputimer'] as const;
+const FRAME_PACE_TARGET_FPS = 60;
+const FRAME_PACE_MIN_PACED_FPS = 45;
+const FRAME_PACE_MIN_PACED_FPS_TOLERANCE = 0.25;
+const FRAME_PACE_NATIVE_REFRESH_CUTOFF_FPS = 80;
+const FRAME_PACE_ESTIMATE_SAMPLE_COUNT = 90;
+
+export function targetRenderFpsForFramePace(displayHz: number): number | null {
+  if (!Number.isFinite(displayHz) || displayHz <= FRAME_PACE_NATIVE_REFRESH_CUTOFF_FPS) return null;
+  const divisor = Math.max(1, Math.ceil(displayHz / FRAME_PACE_TARGET_FPS));
+  const pacedHz = displayHz / divisor;
+  if (divisor <= 1 || pacedHz + FRAME_PACE_MIN_PACED_FPS_TOLERANCE < FRAME_PACE_MIN_PACED_FPS) return null;
+  return pacedHz;
+}
+
+function isTruthyDiagnosticValue(value: string | null): boolean {
+  if (value === null || value === '') return true;
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+function isClientDiagnosticFlagEnabled(queryFlags: readonly string[], storageKey?: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    for (const flag of queryFlags) {
+      const value = params.get(flag);
+      if (params.has(flag) && isTruthyDiagnosticValue(value?.toLowerCase() ?? null)) return true;
+    }
+    if (storageKey) {
+      const stored = window.localStorage?.getItem(storageKey);
+      if (stored && isTruthyDiagnosticValue(stored.toLowerCase())) return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
 
 interface FrameRateSample {
   frames: number;
@@ -193,7 +241,20 @@ type InteractionOption = {
   primary?: boolean;
 };
 
+type HoverActionReadout = {
+  option: InteractionOption;
+  totalOptions: number;
+};
+
 type MinimapEntityPoint = { x: number; z: number };
+type FrameProfileSlice = { label: string; ms: number };
+type FrameLongTask = { startMs: number; durationMs: number; name: string; attribution: string[] };
+type FrameGpuTimer = {
+  gl: WebGL2RenderingContext;
+  ext: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number };
+  pending: Array<{ query: WebGLQuery; startedAtMs: number }>;
+  lastMs: number | null;
+};
 
 type DoorPickProxyBounds = {
   center: Vector3;
@@ -337,6 +398,21 @@ declare global {
   interface Window {
     gm?: GameManager;
     _gameEntities?: EntityManager;
+    __evilQuestAutoWalk?: {
+      ready(): boolean;
+      state(): {
+        ready: boolean;
+        moving: boolean;
+        x: number;
+        z: number;
+        pathIndex: number;
+        pathLength: number;
+        map: string;
+        floor: number;
+      };
+      walkTo(x: number, z: number): boolean;
+      walkRoute(route: Array<{ x: number; z: number }>, opts?: { settleMs?: number; waypointTimeoutMs?: number }): Promise<void>;
+    };
   }
 }
 
@@ -381,6 +457,21 @@ export class GameManager {
   private destroyed: boolean = false;
   private baseHardwareScalingLevel: number;
   private renderHardwareScalingLevel: number = 1;
+  private renderQualityMode: RenderQualityMode = 'auto';
+  private framePaceMode: FramePaceMode = getGameSettings().framePace;
+  private framePaceSamples: number[] = [];
+  private framePaceEstimatedHz: number | null = null;
+  private framePaceTargetIntervalMs: number | null = null;
+  private lastSceneRenderAtMs: number = 0;
+  private pacedSceneRenderCount: number = 0;
+  private pacedSceneSkippedCount: number = 0;
+  private browserZoomWarningLastAt: number = 0;
+  private lastCameraSnapTelemetryAt: number = 0;
+  private browserZoomWarningHandler: ((event: Event) => void) | null = null;
+  private renderDistanceChangeHandler: ((event: Event) => void) | null = null;
+  private gameSettingsChangeHandler: ((event: Event) => void) | null = null;
+  private friendAccountIds: Set<number> = new Set();
+  private friendNames: Set<string> = new Set();
 
   private connectionFrozen: boolean = false;
   private reconnecting: boolean = false;
@@ -392,14 +483,12 @@ export class GameManager {
   private static readonly RECONNECT_DELAY_MS = 1_600;
   private static readonly RECONNECT_LOGIN_TIMEOUT_MS = 8_000;
   private static readonly AUTHORITY_STALE_MS = 12_000;
-  private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
   private static readonly STOPPED_SELF_SYNC_RECONCILE_DIST = 0.35;
-  private static readonly FRESH_PREDICTION_RECONCILE_DIST = 2.25;
-  private static readonly FRESH_PREDICTION_RECONCILE_GRACE_MS = TICK_RATE + 150;
-  private static readonly AUTHORITY_REANCHOR_MAX_SEARCH_TILES = 500;
-  private static readonly AUTHORITY_REANCHOR_MAX_ATTEMPTS = 3;
+  private static readonly LOCAL_AUTHORITY_HARD_RESET_DIST = 4.5;
+  private static readonly RECENT_ARRIVAL_AUTHORITY_GRACE_MS = TICK_RATE * 5 + 250;
   private static readonly HIDDEN_CATCHUP_ARM_MS = 3_000;
   private static readonly HIDDEN_RECONNECT_AFTER_MS = 15_000;
+  private static readonly CAMERA_SNAP_TELEMETRY_COOLDOWN_MS = 5_000;
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 20_000;
   private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
   private static readonly AUTHORITY_LOGIN_GRACE_MS = 5_000;
@@ -453,11 +542,19 @@ export class GameManager {
   // Movement — tick-aligned tile stepping (RS-style)
   private path: { x: number; z: number }[] = [];
   private pathIndex: number = 0;
-  private moveSpeed: number = 1.67; // RS2 walk speed: 1 tile per 600ms tick
+  private movementMode: MovementMode = 'walk';
+  private moveSpeed: number = movementTilesPerSecond('walk');
+  private runEnergyPercent: number = 100;
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
+  private predictedPathUnitSteps: number = 0;
   private predictedPathStartedAt: number = 0;
+  private predictedPathStart: { x: number; z: number } | null = null;
   private predictedPathDestination: { x: number; z: number } | null = null;
   private predictedPathAuthorityReanchorAttempts: number = 0;
+  private recentPredictedArrivalUntil: number = 0;
+  private recentPredictedArrivalStart: { x: number; z: number } | null = null;
+  private recentPredictedArrivalPath: { x: number; z: number }[] = [];
+  private recentPredictedArrivalDestination: { x: number; z: number } | null = null;
   /** NPC entityId to face when the current path completes. 2004scape
    *  Player.faceEntity equivalent — set by talkToNpc/attackNpc, cleared
    *  on arrival or any new ground click. */
@@ -469,26 +566,13 @@ export class GameManager {
   private tileFrom: { x: number; z: number } = { x: 0, z: 0 }; // where we started this tile step
   private controlledMoveUntilMs: number = 0;
 
-  // --- Smooth catch-up slide ---
-  // When the divergence-snap fires for a server position that's on the
-  // client's current path, we update the logical playerX/Z to the server's
-  // tile but render the local player at the OLD visual position briefly,
-  // gliding toward the new logical position over slideDurationMs. The result
-  // is a fast slide-forward instead of an instant teleport — game logic stays
-  // server-authoritative, the visual just catches up smoothly.
-  //
-  // Independent of `speedMult` in updateLocalPlayerMovement: the catch-up
-  // speed-multiplier infrastructure stays in place for a future run anim
-  // (set speedMult > 1 when the queue is long, swap walk → run at that
-  // speed). Smooth-slide handles intermittent micro-drifts; run anim will
-  // handle sustained queue backlog. They compose cleanly.
-  private slideOffsetX: number = 0;
-  private slideOffsetZ: number = 0;
-  private slideStartMs: number = 0;
-  private slideDurationMs: number = 200;
-  private static readonly SLIDE_DURATION_MS = 200;
-  private static readonly HIDDEN_RECONCILE_DIST = 2.5;
-  private static readonly VISIBLE_RECONCILE_DIST = 2.25;
+  // 2004scape advances movement in bounded client cycles. Do not repay a long
+  // RAF stall by consuming a large section of the local route in one frame.
+  private static readonly LOCAL_MOVEMENT_MAX_FRAME_DT = MAX_FRAME_DT_SECONDS;
+  private static readonly REMOTE_MOVEMENT_STEP_QUEUE_MAX = 10;
+  private static readonly REMOTE_MOVEMENT_STEP_RESET_DISTANCE = 2.05;
+  private static readonly REMOTE_MOVEMENT_STEP_CONTIGUOUS_EPSILON = 0.001;
+  private static readonly REMOTE_MOVEMENT_STEP_STASH_MS = 100;
   private static readonly MINIMAP_LIST_REFRESH_INTERVAL_MS = 50;
   private static readonly MINIMAP_ENTITY_TILES_PER_SEC = 1000 / TICK_RATE;
   private static readonly MINIMAP_ENTITY_SNAP_DISTANCE_TILES = 3;
@@ -504,7 +588,7 @@ export class GameManager {
   private _visibilityHandler: (() => void) | null = null;
   private _activityHandler: (() => void) | null = null;
   private _cursorTelemetryHandler: ((event: PointerEvent) => void) | null = null;
-  private _npcTooltipHandler: ((event: PointerEvent) => void) | null = null;
+  private _hoverActionHandler: ((event: PointerEvent) => void) | null = null;
   private _roofHoverLeaveHandler: ((event: PointerEvent) => void) | null = null;
   private _tempVec: Vector3 = new Vector3(); // reusable temp vector to avoid per-frame allocations
   private _minimapRemotes: { x: number; z: number }[] = [];
@@ -525,6 +609,8 @@ export class GameManager {
   // Local player equipment tracking (slot index → item ID)
   private localEquipment: Map<number, number> = new Map();
   private remoteAnimationStates: Map<number, { kind: PlayerAnimationKind; variant: PlayerSkillAnimationVariant; targetId: number; toolItemId: number }> = new Map();
+  private remoteMovementStepStash: Map<number, RemoteMovementStep[]> = new Map();
+  private remoteMovementStepStashTimers: Map<number, number> = new Map();
 
   // Set of entityIds currently holding a server-broadcast skilling tool in
   // place of their real weapon. Restored via localEquipment / remoteEquipment
@@ -650,6 +736,7 @@ export class GameManager {
   private sidePanel: SidePanel | null = null;
   private chatPanel: ChatPanel | null = null;
   private minimap: Minimap | null = null;
+  private hoverActionEl: HTMLDivElement | null = null;
   private mobileControlsEl: HTMLDivElement | null = null;
   private mobileStatusEl: HTMLDivElement | null = null;
   private mobileLogoutButton: HTMLButtonElement | null = null;
@@ -727,6 +814,21 @@ export class GameManager {
   private lowFpsDiagnosticFrames: number = 0;
   private lowFpsDiagnosticSent: boolean = false;
   private lowFpsRendererWarningSent: boolean = false;
+  private readonly frameSpikeProfilerEnabled: boolean = isClientDiagnosticFlagEnabled(
+    CLIENT_FRAME_SPIKE_PROFILER_QUERY_FLAGS,
+    CLIENT_FRAME_SPIKE_PROFILER_STORAGE_KEY,
+  );
+  private readonly frameSpikeGpuTimerEnabled: boolean = this.frameSpikeProfilerEnabled || isClientDiagnosticFlagEnabled(
+    CLIENT_FRAME_SPIKE_GPU_QUERY_FLAGS,
+    CLIENT_FRAME_SPIKE_GPU_TIMER_STORAGE_KEY,
+  );
+  private frameProfileSlices: FrameProfileSlice[] = [];
+  private frameProfileOverlay: HTMLDivElement | null = null;
+  private lastFrameProfileLogAt: number = 0;
+  private lastFrameSpikeTelemetryAt: number = 0;
+  private frameLongTaskObserver: PerformanceObserver | null = null;
+  private recentFrameLongTasks: FrameLongTask[] = [];
+  private frameGpuTimer: FrameGpuTimer | null = null;
   private nativeContextMenuBlocker: ((event: MouseEvent) => void) | null = null;
   private lastWorldContextMenuEventAt: number = 0;
   private lastWorldContextMenuEventX: number = -9999;
@@ -758,7 +860,8 @@ export class GameManager {
     this.engine = new Engine(canvas, false, { antialias: false, adaptToDeviceRatio: false });
     // RS-style chunky pixels: keep the CSS size stable but allow an explicit
     // low-quality framebuffer for players who need the fill-rate savings.
-    this.baseHardwareScalingLevel = this.detectBaseHardwareScalingLevel();
+    this.renderQualityMode = this.detectInitialRenderQualityMode();
+    this.baseHardwareScalingLevel = this.hardwareScalingLevelForRenderQualityMode(this.renderQualityMode);
     this.setRenderHardwareScalingLevel(this.baseHardwareScalingLevel, canvas);
     canvas.style.imageRendering = 'pixelated';
     this.scene = new Scene(this.engine);
@@ -802,6 +905,7 @@ export class GameManager {
 
     // Chunk-based terrain
     this.chunkManager = new ChunkManager(this.scene);
+    this.applyRenderDistance(getRenderDistance());
 
     // Destination marker
     this.createDestinationMarker();
@@ -881,8 +985,9 @@ export class GameManager {
     canvas.addEventListener('pointercancel', (e) => this.cancelTouchPointer(e), true);
     canvas.addEventListener('lostpointercapture', (e) => this.cancelTouchPointer(e), true);
 
-    // Hover tooltip — shows "Name (level-N)" when the cursor is over an NPC.
-    this.setupNpcTooltip(canvas);
+    // RuneScape-style hover readout — shows the default action in the
+    // upper-left of the game view.
+    this.setupHoverActionReadout(canvas);
 
     // Right-click context menu for NPCs/items
     this.setupNativeContextMenuBlocker();
@@ -913,11 +1018,21 @@ export class GameManager {
     this.sidePanel.setAdminItemDeletionEnabled(this.isAdmin);
     this.sidePanel.setSpellCastCallback((spellIndex) => this.sidePanel!.setTargetingSpell(spellIndex));
     this.sidePanel.setAutocastChangeCallback((spellIndex) => this.handleAutocastChange(spellIndex));
+    this.sidePanel.setRenderQualityControls(this.renderQualityMode, (mode) => this.setRenderQualityMode(mode, true));
+    this.sidePanel.setMovementModeControls(this.movementMode, (mode) => this.setMovementMode(mode));
+    this.sidePanel.setRunEnergy(this.runEnergyPercent);
     // Eager-load the spell catalogue so the spellbook tabs render locked
     // icons (and the question marks) immediately — without this, the tabs
     // stay empty until the player happens to fire /spell or /cast.
     void this.ensureSpellsLoaded().then(() => this.sidePanel?.setSpellCatalogue(this.spellsByIndex));
     this.chatPanel = new ChatPanel();
+    this.browserZoomWarningHandler = (event) => this.handleBrowserZoomWarning(event);
+    window.addEventListener('evilquest:browserzoomblocked', this.browserZoomWarningHandler);
+    window.addEventListener('evilquest:browserzoomchanged', this.browserZoomWarningHandler);
+    this.renderDistanceChangeHandler = (event) => this.handleRenderDistanceChange(event);
+    window.addEventListener('evilquest:renderdistancechange', this.renderDistanceChangeHandler);
+    this.gameSettingsChangeHandler = (event) => this.handleGameSettingsChange(event);
+    window.addEventListener('evilquest:gamesettingschange', this.gameSettingsChangeHandler);
     this.chatPanel.setSendHandler((msg) => {
       if (!this.handleChatCommand(msg)) {
         this.network.sendChat(msg);
@@ -969,6 +1084,11 @@ export class GameManager {
           const name = data.name;
           if (typeof entityId !== 'number' || typeof name !== 'string' || name.length === 0) break;
           this.entities.playerNames.set(entityId, name);
+          for (const [knownName, knownEntityId] of this.entities.nameToEntityId) {
+            if (knownEntityId === entityId && knownName !== name.toLowerCase()) {
+              this.entities.nameToEntityId.delete(knownName);
+            }
+          }
           this.entities.nameToEntityId.set(name.toLowerCase(), entityId);
           if (typeof data.isAdmin === 'boolean') {
             this.setRemotePlayerRole(entityId, data.isAdmin, data.isModerator === true);
@@ -980,7 +1100,7 @@ export class GameManager {
           // label in place — re-creating the CharacterEntity to swap the
           // label is far too expensive.
           const existing = this.entities.remotePlayers.get(entityId);
-          if (existing) existing.setLabel(name);
+          if (existing) this.applyRemotePlayerNameplate(entityId);
           break;
         }
         case 'local': {
@@ -1005,17 +1125,29 @@ export class GameManager {
           break;
         case 'social_list':
           if (Array.isArray(data.friends) && Array.isArray(data.ignore)) {
+            this.updateFriendNameplateCache(data.friends);
             this.sidePanel?.setSocialLists(data.friends, data.ignore);
+            this.refreshNameplates();
           }
           break;
         case 'social_presence':
           if (typeof data.accountId === 'number' && typeof data.username === 'string' && typeof data.online === 'boolean') {
+            if (this.friendAccountIds.has(data.accountId)) {
+              this.friendNames.add(data.username.toLowerCase());
+              this.refreshNameplates();
+            }
             this.sidePanel?.setSocialPresence(data.accountId, data.username, data.online);
           }
           break;
+        case 'account_renamed':
+          if (typeof data.username === 'string' && data.username.length > 0) {
+            this.username = data.username;
+            localStorage.setItem('evilquest_username', data.username);
+            localStorage.setItem('evilquest_saved_username', data.username);
+          }
+          break;
         case 'system': {
-          const color = data.message.startsWith('Quest complete:') ? '#4aa3ff' : '#ff0';
-          if (this.chatPanel) this.chatPanel.addSystemMessage(data.message, color);
+          if (this.chatPanel) this.chatPanel.addSystemMessage(data.message, null, { colorKey: 'world' });
           break;
         }
       }
@@ -1069,6 +1201,7 @@ export class GameManager {
       this.itemDefsCache,
       this.npcDefsCache,
     );
+    this.applyGameSettings(getGameSettings());
     // Dev-only console hook for triage (NPC name overrides, entity sprites).
     // Tree-shaken Babylon imports remove the global namespace, so without
     // this the only way to inspect runtime entity state is to hack imports.
@@ -1089,29 +1222,58 @@ export class GameManager {
     // Remove a stale debug overlay from HMR/reconnect. It is opt-in via /fps.
     document.getElementById('fps-counter')?.remove();
     this.fpsLastSampleAt = performance.now();
+    this.setupFrameLongTaskObserver();
+    this.setupFrameGpuTimer();
+    this.installAutoWalkDiagnosticHook();
 
     // Game loop
     let lastTime = performance.now();
+    this.lastSceneRenderAtMs = lastTime;
     this.engine.runRenderLoop(() => {
       const now = performance.now();
+      const frameStart = performance.now();
+      if (this.frameSpikeProfilerEnabled) this.frameProfileSlices.length = 0;
 
       // Belt-and-suspenders resize: if the canvas CSS size drifted from the render
       // buffer size (e.g. ResizeObserver was throttled or the container reflowed
       // mid-frame), fix it here before rendering.
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
       const scale = Math.max(1, this.renderHardwareScalingLevel);
-      const expectedW = Math.max(1, Math.round((canvas.clientWidth * dpr) / scale));
-      const expectedH = Math.max(1, Math.round((canvas.clientHeight * dpr) / scale));
+      const expectedW = Math.max(1, Math.floor(canvas.clientWidth / scale));
+      const expectedH = Math.max(1, Math.floor(canvas.clientHeight / scale));
       if (canvas.width !== expectedW || canvas.height !== expectedH) {
         this.handleViewportResize();
       }
 
-      const dt = Math.min((now - lastTime) / 1000, MAX_FRAME_DT_SECONDS);
+      const frameGapMs = now - lastTime;
+      this.updateFramePaceEstimate(frameGapMs);
+      const dt = Math.min(frameGapMs / 1000, MAX_FRAME_DT_SECONDS);
       lastTime = now;
+      const updateStart = performance.now();
       this.update(dt);
-      this.scene.render();
 
-      this.updateFpsCounter(now);
+      const renderDecisionAt = performance.now();
+      const renderGapMs = renderDecisionAt - this.lastSceneRenderAtMs;
+      const renderThisFrame = this.shouldRenderSceneFrame(renderGapMs);
+      if (renderThisFrame) {
+        this.pacedSceneRenderCount++;
+        const renderDt = Math.min(renderGapMs / 1000, MAX_FRAME_DT_SECONDS);
+        this.updateRenderFrameUi(renderDt);
+        const updateMs = performance.now() - updateStart;
+        this.lastSceneRenderAtMs = renderDecisionAt;
+        const renderStart = performance.now();
+        const gpuQuery = this.beginFrameGpuTimer();
+        this.scene.render();
+        this.endFrameGpuTimer(gpuQuery);
+        this.pollFrameGpuTimer();
+        const renderMs = performance.now() - renderStart;
+        if (this.shouldMonitorFrameSpikes()) {
+          this.reportFrameProfile(performance.now() - frameStart, updateMs, renderMs, renderGapMs);
+        }
+        this.updateFpsCounter(now);
+      } else {
+        this.pacedSceneSkippedCount++;
+      }
+
       this.updateLowFpsDiagnostic(now);
     });
 
@@ -1312,6 +1474,7 @@ export class GameManager {
       this.lastSelfAuthorityAt = 0;
       this.lastSelfAuthorityWarnAt = 0;
       this.selfAuthorityGraceUntil = 0;
+      this.lastCameraSnapTelemetryAt = 0;
       this.latestSelfSync = null;
       this.lastSelfSyncTickLow = null;
       this.lastSelfSyncReceivedAt = 0;
@@ -1390,6 +1553,7 @@ export class GameManager {
       'framePacing',
       'renderScale',
       'baseRenderScale',
+      'framePace',
       'currentMap',
       'currentFloor',
       'player',
@@ -1693,6 +1857,13 @@ export class GameManager {
       proceduralTerrainDetail: true,
       renderScale: this.renderHardwareScalingLevel,
       baseRenderScale: this.baseHardwareScalingLevel,
+      framePace: {
+        mode: this.framePaceMode,
+        estimatedDisplayHz: this.framePaceEstimatedHz === null ? null : Number(this.framePaceEstimatedHz.toFixed(1)),
+        targetRenderFps: this.framePaceTargetIntervalMs === null ? null : Number((1000 / this.framePaceTargetIntervalMs).toFixed(1)),
+        renderCount: this.pacedSceneRenderCount,
+        skippedRenderCount: this.pacedSceneSkippedCount,
+      },
       currentMap: this.chunkManager.getMapId(),
       currentFloor: this.currentFloor,
       player: {
@@ -1757,19 +1928,153 @@ export class GameManager {
     this.updateResponsiveCameraZoom();
   }
 
-  private detectBaseHardwareScalingLevel(): number {
+  private handleBrowserZoomWarning(event: Event): void {
+    const detail = (event as CustomEvent<{ zoomed?: boolean; uiScale?: number | null }>).detail;
+    if (event.type === 'evilquest:browserzoomchanged' && detail?.zoomed !== true) return;
+
+    const now = performance.now();
+    if (now - this.browserZoomWarningLastAt < 5000) return;
+    this.browserZoomWarningLastAt = now;
+
+    const scaleText = typeof detail?.uiScale === 'number'
+      ? ` UI size is now ${Math.round(detail.uiScale * 100)}%.`
+      : '';
+    this.chatPanel?.addSystemMessage(`Browser zoom can blur the game or shrink the interface.${scaleText} Use Settings for UI Size and Render Quality.`);
+  }
+
+  private handleRenderDistanceChange(event: Event): void {
+    const detail = (event as CustomEvent<{ value?: RenderDistanceValue }>).detail;
+    this.applyRenderDistance(detail?.value ?? getRenderDistance());
+  }
+
+  private handleGameSettingsChange(event: Event): void {
+    const detail = (event as CustomEvent<Partial<GameSettings>>).detail;
+    this.applyGameSettings({
+      ...getGameSettings(),
+      ...detail,
+    });
+  }
+
+  private applyRenderDistance(value: RenderDistanceValue): void {
+    const option = renderDistanceOptionFor(value);
+    this.camera.getCamera().maxZ = option.cameraMaxZ;
+    this.chunkManager.setRenderDistanceChunkRadius(option.chunkRadius);
+    this.chunkManager.forceRefreshPlayerPosition(this.playerX, this.playerZ);
+    this.updateEntityRenderVisibility();
+  }
+
+  private applyGameSettings(settings: GameSettings): void {
+    if (this.framePaceMode !== settings.framePace) {
+      this.framePaceMode = settings.framePace;
+      this.resetFramePaceScheduler();
+    }
+    if (!this.entities) return;
+    this.entities.setGroundItemLabelMode(settings.groundItemLabels);
+    this.refreshNameplates(settings.nameplates);
+  }
+
+  private resetFramePaceScheduler(): void {
+    this.lastSceneRenderAtMs = performance.now();
+  }
+
+  private updateFramePaceEstimate(frameGapMs: number): void {
+    if (!Number.isFinite(frameGapMs) || frameGapMs < 3 || frameGapMs > 50) return;
+    if (document.visibilityState !== 'visible') return;
+
+    this.framePaceSamples.push(frameGapMs);
+    if (this.framePaceSamples.length > FRAME_PACE_ESTIMATE_SAMPLE_COUNT) this.framePaceSamples.shift();
+    if (this.framePaceSamples.length < FRAME_PACE_ESTIMATE_SAMPLE_COUNT) return;
+
+    const sorted = [...this.framePaceSamples].sort((a, b) => a - b);
+    const medianMs = sorted[Math.floor(sorted.length / 2)];
+    if (!Number.isFinite(medianMs) || medianMs <= 0) return;
+
+    const estimatedHz = 1000 / medianMs;
+    if (!Number.isFinite(estimatedHz) || estimatedHz < 30 || estimatedHz > 360) return;
+    this.framePaceEstimatedHz = estimatedHz;
+    this.framePaceTargetIntervalMs = this.framePaceTargetIntervalForHz(estimatedHz);
+  }
+
+  private framePaceTargetIntervalForHz(displayHz: number): number | null {
+    const pacedHz = targetRenderFpsForFramePace(displayHz);
+    if (pacedHz === null) return null;
+    return 1000 / pacedHz;
+  }
+
+  private shouldRenderSceneFrame(renderGapMs: number): boolean {
+    if (this.framePaceMode !== 'battery') return true;
+    const targetMs = this.framePaceTargetIntervalMs;
+    if (!targetMs) return true;
+    return renderGapMs + 0.25 >= targetMs;
+  }
+
+  private updateFriendNameplateCache(friends: unknown[]): void {
+    this.friendAccountIds = new Set<number>();
+    this.friendNames = new Set<string>();
+    for (const entry of friends) {
+      if (!entry || typeof entry !== 'object') continue;
+      const accountId = (entry as { accountId?: unknown }).accountId;
+      const username = (entry as { username?: unknown }).username;
+      if (typeof accountId === 'number') this.friendAccountIds.add(accountId);
+      if (typeof username === 'string' && username.length > 0) this.friendNames.add(username.toLowerCase());
+    }
+  }
+
+  private refreshNameplates(mode: NameplateMode = getGameSettings().nameplates): void {
+    if (!this.entities) return;
+    for (const entityId of this.entities.remotePlayers.keys()) this.applyRemotePlayerNameplate(entityId, mode);
+    for (const entityId of this.entities.npcSprites.keys()) this.applyNpcNameplate(entityId, mode);
+  }
+
+  private shouldShowRemotePlayerNameplate(entityId: number, mode: NameplateMode): boolean {
+    if (mode === 'off') return false;
+    if (mode === 'players' || mode === 'all') return true;
+    const name = this.entities.playerNames.get(entityId);
+    return typeof name === 'string' && this.friendNames.has(name.toLowerCase());
+  }
+
+  private applyRemotePlayerNameplate(entityId: number, mode: NameplateMode = getGameSettings().nameplates): void {
+    const remote = this.entities.remotePlayers.get(entityId);
+    if (!remote) return;
+    const name = this.entities.playerNames.get(entityId) || 'Player';
+    remote.setLabel(this.shouldShowRemotePlayerNameplate(entityId, mode) ? name : '');
+    remote.setLabelColor(this.playerNameColor(
+      this.entities.remoteAdminFlags.get(entityId) === true,
+      this.entities.remoteModeratorFlags.get(entityId) === true,
+    ));
+  }
+
+  private applyNpcNameplate(entityId: number, mode: NameplateMode = getGameSettings().nameplates): void {
+    const npc = this.entities.npcSprites.get(entityId);
+    if (!npc) return;
+    if (mode !== 'all') {
+      npc.setLabel('');
+      return;
+    }
+    npc.setLabel(this.npcDisplayName(entityId, this.entities.npcDefs.get(entityId)));
+    npc.setLabelColor('#f4ded5');
+  }
+
+  private detectInitialRenderQualityMode(): RenderQualityMode {
     const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
     const quality = params.get('quality')?.toLowerCase();
-    if (quality === 'high') return 1;
-    if (quality === 'low') return LOW_QUALITY_HARDWARE_SCALE;
+    if (quality === 'high' || quality === 'low' || quality === 'auto') return quality;
 
     try {
-      if (localStorage.getItem(MANUAL_LOW_QUALITY_STORAGE_KEY) === '1') return LOW_QUALITY_HARDWARE_SCALE;
+      if (localStorage.getItem(MANUAL_LOW_QUALITY_STORAGE_KEY) === '1') return 'low';
       localStorage.removeItem(LEGACY_AUTO_LOW_QUALITY_STORAGE_KEY);
     } catch {
       // Storage can be blocked in privacy modes; default to full quality.
     }
-    return 1;
+    return 'auto';
+  }
+
+  private hardwareScalingLevelForRenderQualityMode(mode: RenderQualityMode): number {
+    return mode === 'low' ? LOW_QUALITY_HARDWARE_SCALE : 1;
+  }
+
+  private detectBaseHardwareScalingLevel(): number {
+    return this.hardwareScalingLevelForRenderQualityMode(this.detectInitialRenderQualityMode());
   }
 
   private setRenderHardwareScalingLevel(level: number, canvas?: HTMLCanvasElement): void {
@@ -1797,6 +2102,19 @@ export class GameManager {
     } catch {
       // Storage can be blocked in privacy modes; the current session still changes.
     }
+  }
+
+  private setRenderQualityMode(mode: RenderQualityMode, announce: boolean = true): void {
+    this.renderQualityMode = mode;
+    this.setLowQualityPreference(mode === 'low');
+    const nextScale = this.hardwareScalingLevelForRenderQualityMode(mode);
+    this.baseHardwareScalingLevel = nextScale;
+    this.setRenderHardwareScalingLevel(nextScale);
+    this.sidePanel?.setRenderQualityMode(mode);
+    if (announce) {
+      this.chatPanel?.addSystemMessage(`Render quality set to ${mode} (scale ${this.renderHardwareScalingLevel.toFixed(1)}).`);
+    }
+    this.reportRenderQualityChange(mode);
   }
 
   private reportRenderQualityChange(requestedQuality: string): void {
@@ -1829,22 +2147,7 @@ export class GameManager {
       return;
     }
 
-    let nextScale = 1;
-    if (requestedQuality === 'low') {
-      this.setLowQualityPreference(true);
-      nextScale = LOW_QUALITY_HARDWARE_SCALE;
-    } else if (requestedQuality === 'high') {
-      this.setLowQualityPreference(false);
-      nextScale = 1;
-    } else {
-      this.setLowQualityPreference(false);
-      nextScale = this.detectBaseHardwareScalingLevel();
-    }
-
-    this.baseHardwareScalingLevel = nextScale;
-    this.setRenderHardwareScalingLevel(nextScale);
-    this.chatPanel?.addSystemMessage(`Render quality set to ${requestedQuality} (scale ${this.renderHardwareScalingLevel.toFixed(1)}).`);
-    this.reportRenderQualityChange(requestedQuality);
+    this.setRenderQualityMode(requestedQuality as RenderQualityMode, true);
   }
 
   private setFpsCounterVisible(visible: boolean, announce: boolean = false): void {
@@ -1984,11 +2287,249 @@ export class GameManager {
     if (!this.fpsCounterEl) return;
     this.fpsFrameCount++;
     if (now - this.fpsLastSampleAt < 1000) return;
-    const fps = Math.round(this.engine.getFps());
+    const loopFps = Math.round(this.engine.getFps());
+    const renderFps = this.fpsFrameCount;
     const scale = this.renderHardwareScalingLevel.toFixed(1);
-    this.fpsCounterEl.textContent = `${this.fpsFrameCount} FPS (${fps}) | ${this.scene.getActiveMeshes().length} meshes | scale ${scale}`;
+    const pace = this.framePaceMode === 'battery'
+      ? ` | loop ${loopFps}`
+      : '';
+    this.fpsCounterEl.textContent = `${renderFps} FPS${pace} | ${this.scene.getActiveMeshes().length} meshes | scale ${scale}`;
     this.fpsFrameCount = 0;
     this.fpsLastSampleAt = now;
+  }
+
+  private shouldMonitorFrameSpikes(): boolean {
+    return CLIENT_FRAME_SPIKE_TELEMETRY_ENABLED || this.frameSpikeProfilerEnabled;
+  }
+
+  private profileFrameSlice<T>(label: string, work: () => T): T {
+    if (!this.frameSpikeProfilerEnabled) return work();
+    const start = performance.now();
+    const result = work();
+    const ms = performance.now() - start;
+    this.frameProfileSlices.push({ label, ms });
+    return result;
+  }
+
+  private setupFrameLongTaskObserver(): void {
+    if (!this.shouldMonitorFrameSpikes() || typeof PerformanceObserver === 'undefined') return;
+    try {
+      const supported = PerformanceObserver.supportedEntryTypes;
+      if (Array.isArray(supported) && !supported.includes('longtask')) return;
+      const observer = new PerformanceObserver((list) => {
+        const now = performance.now();
+        for (const entry of list.getEntries()) {
+          const e = entry as PerformanceEntry & {
+            attribution?: Array<{
+              name?: string;
+              containerType?: string;
+              containerName?: string;
+              containerSrc?: string;
+            }>;
+          };
+          this.recentFrameLongTasks.push({
+            startMs: Number(e.startTime.toFixed(1)),
+            durationMs: Number(e.duration.toFixed(1)),
+            name: e.name || e.entryType,
+            attribution: (e.attribution ?? []).slice(0, 3).map((attr) =>
+              [attr.name, attr.containerType, attr.containerName, attr.containerSrc].filter(Boolean).join(':'),
+            ),
+          });
+        }
+        const cutoff = now - 5000;
+        this.recentFrameLongTasks = this.recentFrameLongTasks
+          .filter(task => task.startMs + task.durationMs >= cutoff)
+          .slice(-20);
+      });
+      observer.observe({ type: 'longtask', buffered: true } as PerformanceObserverInit);
+      this.frameLongTaskObserver = observer;
+    } catch {
+      // Browser support varies; frame profiling still works without long-task attribution.
+    }
+  }
+
+  private setupFrameGpuTimer(): void {
+    if (!this.frameSpikeGpuTimerEnabled || typeof WebGL2RenderingContext === 'undefined') return;
+    try {
+      const gl = (this.engine as unknown as { _gl?: unknown })._gl;
+      if (!(gl instanceof WebGL2RenderingContext)) return;
+      const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2') as
+        | { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number }
+        | null;
+      if (!ext) return;
+      this.frameGpuTimer = { gl, ext, pending: [], lastMs: null };
+    } catch {
+      this.frameGpuTimer = null;
+    }
+  }
+
+  private beginFrameGpuTimer(): WebGLQuery | null {
+    const timer = this.frameGpuTimer;
+    if (!timer || timer.pending.length > 12) return null;
+    try {
+      const query = timer.gl.createQuery();
+      if (!query) return null;
+      timer.gl.beginQuery(timer.ext.TIME_ELAPSED_EXT, query);
+      return query;
+    } catch {
+      this.frameGpuTimer = null;
+      return null;
+    }
+  }
+
+  private endFrameGpuTimer(query: WebGLQuery | null): void {
+    const timer = this.frameGpuTimer;
+    if (!timer || !query) return;
+    try {
+      timer.gl.endQuery(timer.ext.TIME_ELAPSED_EXT);
+      timer.pending.push({ query, startedAtMs: performance.now() });
+    } catch {
+      try { timer.gl.deleteQuery(query); } catch { /* ignore */ }
+      this.frameGpuTimer = null;
+    }
+  }
+
+  private pollFrameGpuTimer(): void {
+    const timer = this.frameGpuTimer;
+    if (!timer) return;
+    try {
+      const disjoint = !!timer.gl.getParameter(timer.ext.GPU_DISJOINT_EXT);
+      while (timer.pending.length > 0) {
+        const next = timer.pending[0];
+        const available = !!timer.gl.getQueryParameter(next.query, timer.gl.QUERY_RESULT_AVAILABLE);
+        const tooOld = performance.now() - next.startedAtMs > 5000;
+        if (!available && !tooOld) break;
+        timer.pending.shift();
+        if (available && !disjoint) {
+          const elapsedNs = Number(timer.gl.getQueryParameter(next.query, timer.gl.QUERY_RESULT));
+          if (Number.isFinite(elapsedNs)) timer.lastMs = elapsedNs / 1_000_000;
+        }
+        timer.gl.deleteQuery(next.query);
+      }
+    } catch {
+      this.frameGpuTimer = null;
+    }
+  }
+
+  private ensureFrameProfileOverlay(): HTMLDivElement {
+    if (this.frameProfileOverlay?.isConnected) return this.frameProfileOverlay;
+    document.getElementById('frame-spike-profiler')?.remove();
+    const el = document.createElement('div');
+    el.id = 'frame-spike-profiler';
+    el.style.cssText = [
+      'position:absolute',
+      'left:10px',
+      'top:10px',
+      'z-index:10000',
+      'pointer-events:none',
+      'white-space:pre',
+      'max-width:min(640px,calc(100vw - 20px))',
+      'padding:7px 9px',
+      'font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace',
+      'color:#f4e7c4',
+      'background:rgba(18,12,7,0.84)',
+      'border:1px solid rgba(255,187,92,0.55)',
+      'box-shadow:0 2px 10px rgba(0,0,0,0.35)',
+    ].join(';');
+    (document.getElementById('game-frame') ?? document.body).appendChild(el);
+    this.frameProfileOverlay = el;
+    return el;
+  }
+
+  private reportFrameProfile(totalMs: number, updateMs: number, renderMs: number, rafGapMs: number): void {
+    const spikeMs = Math.max(totalMs, rafGapMs);
+    const profilerEnabled = this.frameSpikeProfilerEnabled;
+    const thresholdMs = profilerEnabled ? CLIENT_FRAME_SPIKE_PROFILER_MS : CLIENT_FRAME_SPIKE_TELEMETRY_MS;
+    if (spikeMs < thresholdMs) return;
+
+    const baseSlices: FrameProfileSlice[] = [
+      { label: 'update', ms: updateMs },
+      { label: 'scene.render', ms: renderMs },
+      { label: 'outside measured frame', ms: Math.max(0, rafGapMs - totalMs) },
+    ];
+    const slices: FrameProfileSlice[] = [
+      ...(profilerEnabled ? this.frameProfileSlices : []),
+      ...baseSlices,
+    ].sort((a, b) => b.ms - a.ms).slice(0, 8);
+
+    const terrain = this.chunkManager.didLastUpdateChangeTerrain();
+    const objects = this.chunkManager.didLastUpdateChangeObjects();
+    const activeMeshes = this.scene.getActiveMeshes().length;
+    const totalMeshes = this.scene.meshes.length;
+    const gpuFrameMs = this.frameGpuTimer?.lastMs ?? null;
+    const gpuPending = this.frameGpuTimer?.pending.length ?? 0;
+    const frameEndMs = performance.now();
+    const frameWindowStartMs = frameEndMs - rafGapMs - 25;
+    const longTasks = this.recentFrameLongTasks
+      .filter(task => task.startMs + task.durationMs >= frameWindowStartMs && task.startMs <= frameEndMs)
+      .slice(-5);
+    const top = slices.map(slice => `${slice.label} ${slice.ms.toFixed(1)}`).join(' | ');
+    const longTaskText = longTasks.length
+      ? `longTasks ${longTasks.map(task => `${task.durationMs.toFixed(1)}ms`).join(',')}`
+      : 'longTasks none';
+    const text = [
+      `Frame spike ${spikeMs.toFixed(1)}ms  gap ${rafGapMs.toFixed(1)}  total ${totalMs.toFixed(1)}`,
+      `update ${updateMs.toFixed(1)}  render ${renderMs.toFixed(1)}  activeMeshes ${activeMeshes}  meshes ${totalMeshes}`,
+      `gpu ${gpuFrameMs === null ? 'n/a' : gpuFrameMs.toFixed(1)}ms pending ${gpuPending}`,
+      `pos ${this.playerX.toFixed(2)},${this.playerZ.toFixed(2)}  path ${this.pathIndex}/${this.path.length}  terrain ${terrain ? 'Y' : 'n'} objects ${objects ? 'Y' : 'n'}`,
+      longTaskText,
+      top,
+    ].join('\n');
+
+    if (profilerEnabled) {
+      this.ensureFrameProfileOverlay().textContent = text;
+    }
+
+    const now = performance.now();
+    const shouldConsoleLog = profilerEnabled
+      && now - this.lastFrameProfileLogAt >= CLIENT_FRAME_SPIKE_CONSOLE_COOLDOWN_MS;
+    const shouldSendTelemetry = CLIENT_FRAME_SPIKE_TELEMETRY_ENABLED
+      && now - this.lastFrameSpikeTelemetryAt >= CLIENT_FRAME_SPIKE_SERVER_COOLDOWN_MS
+      && this.shouldCapturePerformanceDiagnostic();
+    if (!shouldConsoleLog && !shouldSendTelemetry) return;
+
+    const payload = {
+      totalMs: Number(totalMs.toFixed(2)),
+      rafGapMs: Number(rafGapMs.toFixed(2)),
+      updateMs: Number(updateMs.toFixed(2)),
+      renderMs: Number(renderMs.toFixed(2)),
+      outsideMeasuredFrameMs: Number(Math.max(0, rafGapMs - totalMs).toFixed(2)),
+      activeMeshes,
+      totalMeshes,
+      gpuFrameMs: gpuFrameMs === null ? null : Number(gpuFrameMs.toFixed(2)),
+      gpuPending,
+      framePace: {
+        mode: this.framePaceMode,
+        estimatedDisplayHz: this.framePaceEstimatedHz === null ? null : Number(this.framePaceEstimatedHz.toFixed(1)),
+        targetRenderFps: this.framePaceTargetIntervalMs === null ? null : Number((1000 / this.framePaceTargetIntervalMs).toFixed(1)),
+        renderCount: this.pacedSceneRenderCount,
+        skippedRenderCount: this.pacedSceneSkippedCount,
+      },
+      currentMap: this.chunkManager.getMapId(),
+      currentFloor: this.currentFloor,
+      player: { x: Number(this.playerX.toFixed(2)), z: Number(this.playerZ.toFixed(2)) },
+      path: { index: this.pathIndex, length: this.path.length },
+      chunkChanged: { terrain, objects },
+      longTasks,
+      topSlices: slices.map(slice => ({ label: slice.label, ms: Number(slice.ms.toFixed(2)) })),
+      diagnosticFlags: [
+        'frame-spike',
+        profilerEnabled ? 'frame-spike-profiler' : 'frame-spike-telemetry',
+        this.framePaceMode === 'battery' ? 'frame-pace-battery' : 'frame-pace-smooth',
+        'render-limiter-removed',
+        terrain ? 'terrain-changed' : 'terrain-stable',
+        objects ? 'objects-changed' : 'objects-stable',
+      ],
+    };
+
+    if (shouldConsoleLog) {
+      this.lastFrameProfileLogAt = now;
+      console.warn('[frame-spike]', payload);
+    }
+    if (shouldSendTelemetry) {
+      this.lastFrameSpikeTelemetryAt = now;
+      this.reportClientLog('client_frame_spike', payload);
+    }
   }
 
   private async handlePerfCommand(): Promise<void> {
@@ -2184,6 +2725,9 @@ export class GameManager {
     this.hideReconnectOverlay();
     this.fpsCounterEl?.remove();
     this.fpsCounterEl = null;
+    this.frameLongTaskObserver?.disconnect();
+    this.frameLongTaskObserver = null;
+    this.recentFrameLongTasks = [];
     this.network.close();
     this.onFatalDisconnect?.();
   }
@@ -3373,6 +3917,7 @@ export class GameManager {
   private applyRemoteEquipmentArray(target: CharacterEntity, slots: number[], entityId?: number): void {
     for (let i = 0; i < EQUIP_SLOT_NAMES.length; i++) {
       const slotName = EQUIP_SLOT_NAMES[i];
+      if (entityId !== undefined && slotName === 'weapon' && this.toolSwappedEntities.has(entityId)) continue;
       const itemId = slots[i] ?? 0;
       // Fire-and-forget — failures are logged inside loadGearSmart.
       void this.applyGearToCharacter(target, slotName, itemId, /* isLocal */ false, entityId);
@@ -3390,7 +3935,7 @@ export class GameManager {
     }
   }
 
-  private resolveNpcModelGearSlotFit(npcDefId: number, slotName: string, entityId: number): NpcGearSlotConfig | null {
+  private resolveNpcModelGearSlotFit(npcDefId: number, slotName: EquipSlot, entityId: number): NpcGearSlotConfig | null {
     const base = resolveNpcGearSlotConfig(npcDefId, this.npcDefsCache.get(npcDefId), slotName);
     if (!base) return null;
     return mergeNpcGearSlotFit(base, this.entities.npcEquipmentFits.get(entityId)?.[slotName]);
@@ -3412,8 +3957,10 @@ export class GameManager {
 
     current?.dispose();
     const replacement = this.entities.createRemotePlayer(entityId, x, z, name, floor, y, appearance);
+    replacement.setMovementMode(this.entities.remoteMovementModes.get(entityId) ?? 'walk');
     replacement.whenReady().then(() => {
       if (this.entities.remotePlayers.get(entityId) !== replacement) return;
+      replacement.setMovementMode(this.entities.remoteMovementModes.get(entityId) ?? 'walk');
       replacement.applyAppearance(appearance);
       const equipment = this.entities.remoteEquipment.get(entityId);
       if (equipment) this.applyRemoteEquipmentArray(replacement, equipment, entityId);
@@ -3656,7 +4203,7 @@ export class GameManager {
   private async applyGearToNpcModel(
     target: Npc3DEntity,
     npcDefId: number,
-    slotName: string,
+    slotName: EquipSlot,
     itemId: number,
     entityId: number,
   ): Promise<void> {
@@ -3737,13 +4284,14 @@ export class GameManager {
 
   /** Swap the weapon slot to the server-picked skilling tool. Passes
    *  isLocal=false so the gear-template cache is reused across repeated
-   *  chops instead of reloading the GLB on each swap. */
+   *  skilling cycles instead of reloading the GLB on each swap. */
   private async applySkillingTool(
     entityId: number,
     character: CharacterEntity,
     toolItemId: number,
   ): Promise<void> {
-    if (toolItemId <= 0 || this.toolSwappedEntities.has(entityId)) return;
+    if (toolItemId <= 0) return;
+    if (this.toolSwappedEntities.has(entityId)) return;
     if (character.getGearItemId('weapon') === toolItemId) return;
     this.toolSwappedEntities.add(entityId);
     await this.applyGearToCharacter(character, 'weapon', toolItemId, /* isLocal */ false, entityId);
@@ -3796,7 +4344,7 @@ export class GameManager {
   }
 
   private createLocalCharacterEntity(): CharacterEntity {
-    return new CharacterEntity(this.scene, {
+    const character = new CharacterEntity(this.scene, {
       name: 'localPlayer',
       modelPath: getCharacterModelPath(this.localAppearance),
       targetHeight: CHARACTER_TARGET_HEIGHT,
@@ -3808,6 +4356,31 @@ export class GameManager {
       // so re-exports don't require renaming the action in Blender first.
       additionalAnimations: [...PLAYER_ANIMATIONS],
     });
+    character.setMovementMode(this.movementMode);
+    return character;
+  }
+
+  getMovementMode(): MovementMode {
+    return this.movementMode;
+  }
+
+  setMovementMode(mode: MovementMode): boolean {
+    if (this.movementMode === mode) return true;
+    if (mode === 'run' && this.runEnergyPercent < 1) {
+      this.sidePanel?.setRunEnergy(this.runEnergyPercent);
+      return false;
+    }
+    const sent = this.network.sendMovementMode(mode);
+    if (sent) this.applyLocalMovementMode(mode);
+    return sent;
+  }
+
+  private applyLocalMovementMode(mode: MovementMode): void {
+    if (this.movementMode === mode) return;
+    this.movementMode = mode;
+    this.moveSpeed = movementTilesPerSecond(mode);
+    this.localPlayer?.setMovementMode(mode);
+    this.sidePanel?.applyMovementModeFromServer(mode);
   }
 
   private ensureLocalCharacterModel(appearance: PlayerAppearance): void {
@@ -3882,6 +4455,8 @@ export class GameManager {
       // which is 0 — so a saved player on an elevated tile would otherwise
       // drop to the lower terrain.
       const spawnY = (v[3] ?? 0) / 10;
+      const serverMovementMode = movementModeFromIndex(v[5] ?? 0);
+      this.applyLocalMovementMode(serverMovementMode);
       this.network.setLocalPlayerId(this.localPlayerId);
 
       // The local character was pre-created in the ctor at the kcmap default
@@ -3910,6 +4485,58 @@ export class GameManager {
         this.setFpsCounterVisible(true);
       }
     });
+  }
+
+  private queueRemoteMovementSteps(entityId: number, steps: RemoteMovementStep[]): number {
+    const active = this.entities.remoteMovementStepQueues.get(entityId);
+    const stashed = this.remoteMovementStepStash.get(entityId);
+    const existing = active?.length ? active : stashed;
+    this.clearRemoteMovementStepStash(entityId);
+    if (!existing?.length) {
+      this.entities.remoteMovementStepQueues.set(entityId, steps);
+      return steps.length;
+    }
+
+    const lastQueued = existing[existing.length - 1];
+    const firstNew = steps[0];
+    const dx = Math.abs(firstNew.x - lastQueued.x);
+    const dz = Math.abs(firstNew.z - lastQueued.z);
+    const contiguous = Math.max(dx, dz) <= 1 + GameManager.REMOTE_MOVEMENT_STEP_CONTIGUOUS_EPSILON;
+    if (!contiguous || existing.length + steps.length > GameManager.REMOTE_MOVEMENT_STEP_QUEUE_MAX) {
+      this.entities.remoteMovementStepQueues.set(entityId, steps);
+      return steps.length;
+    }
+
+    existing.push(...steps);
+    this.entities.remoteMovementStepQueues.set(entityId, existing);
+    return existing.length;
+  }
+
+  private clearRemoteMovementStepStash(entityId: number): void {
+    const timer = this.remoteMovementStepStashTimers.get(entityId);
+    if (timer !== undefined) window.clearTimeout(timer);
+    this.remoteMovementStepStashTimers.delete(entityId);
+    this.remoteMovementStepStash.delete(entityId);
+  }
+
+  private clearAllRemoteMovementStepStashes(): void {
+    for (const timer of this.remoteMovementStepStashTimers.values()) window.clearTimeout(timer);
+    this.remoteMovementStepStashTimers.clear();
+    this.remoteMovementStepStash.clear();
+  }
+
+  private stashRemoteMovementStepQueue(entityId: number): void {
+    const existing = this.entities.remoteMovementStepQueues.get(entityId);
+    this.entities.remoteMovementStepQueues.delete(entityId);
+    this.clearRemoteMovementStepStash(entityId);
+    if (!existing?.length) return;
+
+    this.remoteMovementStepStash.set(entityId, existing.slice());
+    const timer = window.setTimeout(() => {
+      this.remoteMovementStepStash.delete(entityId);
+      this.remoteMovementStepStashTimers.delete(entityId);
+    }, GameManager.REMOTE_MOVEMENT_STEP_STASH_MS);
+    this.remoteMovementStepStashTimers.set(entityId, timer);
   }
 
   private setupEntitySyncHandlers(): void {
@@ -3951,17 +4578,8 @@ export class GameManager {
         // a small disagreement turns into a multi-tile split.
         const serverX = v[1] / 10;
         const serverZ = v[2] / 10;
-        const dx = serverX - this.playerX;
-        const dz = serverZ - this.playerZ;
         const hiddenCatchup = this.isHiddenCatchupActive();
-        const reconcileDist = hiddenCatchup
-          ? GameManager.HIDDEN_RECONCILE_DIST
-          : GameManager.VISIBLE_RECONCILE_DIST;
-        // Movement is tile/Chebyshev based: a diagonal run step can advance
-        // both axes at once. Compare the largest axis delta instead of
-        // Euclidean distance so a legitimate two-tile diagonal run tick
-        // doesn't look farther apart than a two-tile cardinal run tick.
-        if (Math.max(Math.abs(dx), Math.abs(dz)) > reconcileDist) {
+        if (!this.shouldIgnoreRecentPredictedArrivalAuthority(serverX, serverZ) && (hiddenCatchup || !this.shouldIgnoreVisibleLocalAuthority(serverX, serverZ, false))) {
           this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup);
         }
         if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
@@ -3974,10 +4592,12 @@ export class GameManager {
       if (isNew) {
         const playerName = this.entities.playerNames.get(entityId) || 'Player';
         const remote = this.entities.createRemotePlayer(entityId, x, z, playerName, floor, y, syncAppearance);
+        remote.setMovementMode(this.entities.remoteMovementModes.get(entityId) ?? 'walk');
         const cachedIsAdmin = hasRoleFlags ? syncIsAdmin : this.entities.remoteAdminFlags.get(entityId) === true;
         const cachedIsModerator = hasRoleFlags ? syncIsModerator : this.entities.remoteModeratorFlags.get(entityId) === true;
         if (hasRoleFlags) this.cacheRemotePlayerRole(entityId, cachedIsAdmin, cachedIsModerator);
         remote.setLabelColor(this.playerNameColor(cachedIsAdmin, cachedIsModerator));
+        this.applyRemotePlayerNameplate(entityId);
         // Apply cached appearance + equipment once the GLB + animations finish
         // loading. Both arrive over the network independently of the entity's
         // local-load timing, so we cache them in the EntityManager and flush
@@ -3985,6 +4605,7 @@ export class GameManager {
         remote.whenReady().then(() => {
           // The entity may have been removed before the load completed.
           if (this.entities.remotePlayers.get(entityId) !== remote) return;
+          remote.setMovementMode(this.entities.remoteMovementModes.get(entityId) ?? 'walk');
           const appearance = this.entities.remoteAppearances.get(entityId);
           if (appearance) remote.applyAppearance(appearance);
           const eq = this.entities.remoteEquipment.get(entityId);
@@ -4019,11 +4640,23 @@ export class GameManager {
       // a frame before the next PLAYER_SYNC bumps the target again.
       const prev = this.entities.remoteTargets.get(entityId);
       const moved = !prev || Math.abs(prev.x - x) > 0.001 || Math.abs(prev.z - z) > 0.001;
-      if (moved) {
+      const targetChanged = moved || (prev !== undefined && (prev.floor !== floor || Math.abs((prev.y ?? 0) - y) > 0.001));
+      if (targetChanged) {
+        const syncDistance = prev ? Math.max(Math.abs(prev.x - x), Math.abs(prev.z - z)) : 0;
+        if (!moved || syncDistance > GameManager.REMOTE_MOVEMENT_STEP_RESET_DISTANCE) {
+          this.clearRemoteMovementStepStash(entityId);
+          this.entities.remoteMovementStepQueues.delete(entityId);
+        } else {
+          this.stashRemoteMovementStepQueue(entityId);
+        }
+        const segmentSteps = prev
+          ? Math.max(Math.abs(Math.floor(x) - Math.floor(prev.x)), Math.abs(Math.floor(z) - Math.floor(prev.z)))
+          : 0;
+        this.entities.remoteMovementSegmentSteps.set(entityId, segmentSteps);
         // Grace = 1.5 server ticks. Long enough to bridge a normal 600 ms
         // tick gap plus jitter, short enough to drop to idle quickly when
         // the player actually stops walking.
-        this.entities.remoteWalkUntil.set(entityId, performance.now() + 900);
+        if (moved) this.entities.remoteWalkUntil.set(entityId, performance.now() + 900);
       }
       this.entities.remoteTargets.set(entityId, {
         x,
@@ -4067,31 +4700,18 @@ export class GameManager {
         this.applyLocalAppearance(syncAppearance);
       }
 
+      if (this.shouldIgnoreRecentPredictedArrivalAuthority(serverX, serverZ, now)) return;
+
       const hiddenCatchup = this.isHiddenCatchupActive();
       if (hiddenCatchup && (document.visibilityState === 'hidden' || this.pathIndex >= this.path.length)) {
         // Catch-up reconciles onto the predicted path (fast-forward + keep
         // predicting) when the server is on it, and hard-snaps only on a real
-        // divergence — never the per-tick slide that caused back-and-forth
-        // jitter on tab return.
+        // divergence, never a visible correction layer over the active route.
         this.reconcileLocalPlayerToServer(serverX, serverZ, true, serverMoving);
         return;
       }
 
-      const dx = serverX - this.playerX;
-      const dz = serverZ - this.playerZ;
-      const maxAxisDelta = Math.max(Math.abs(dx), Math.abs(dz));
-      const serverTileOnActiveStep = this.isTileOnActivePredictedStep(Math.floor(serverX), Math.floor(serverZ));
-      // The first self-sync after a click can still be the old stopped tile.
-      // Give a just-started prediction one tick before reanchoring into a slide.
-      const freshPrediction = this.isFreshPredictedPath(now);
-      const reconcileDist = serverMoving || serverTileOnActiveStep
-        ? GameManager.SELF_SYNC_RECONCILE_DIST
-        : freshPrediction
-          ? GameManager.FRESH_PREDICTION_RECONCILE_DIST
-          : GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
-      if (maxAxisDelta <= reconcileDist) return;
-
-      if (!hiddenCatchup && this.tryReanchorPredictedPathToAuthority(serverX, serverZ)) return;
+      if (this.shouldIgnoreVisibleLocalAuthority(serverX, serverZ, serverMoving)) return;
 
       this.reconcileLocalPlayerToServer(serverX, serverZ, false, serverMoving);
     });
@@ -4117,6 +4737,67 @@ export class GameManager {
       // Self-echo from the server — reconcile the sidePanel's optimistic
       // UI if the request was rejected or applied differently than expected.
       if (entityId === this.localPlayerId) this.sidePanel?.applyStanceFromServer(stance);
+    });
+
+    this.network.on(ServerOpcode.PLAYER_MOVEMENT_MODE, (_op, v) => {
+      // Layout: [entityId, modeIdx], where modeIdx 0=walk, 1=run.
+      const entityId = v[0];
+      const mode = movementModeFromIndex(v[1] ?? 0);
+      if (entityId === this.localPlayerId) {
+        this.applyLocalMovementMode(mode);
+        return;
+      }
+      this.entities.remoteMovementModes.set(entityId, mode);
+      this.entities.remotePlayers.get(entityId)?.setMovementMode(mode);
+    });
+
+    this.network.on(ServerOpcode.PLAYER_RUN_ENERGY, (_op, v) => {
+      const rawPercent = v[0] ?? 100;
+      const percent = Number.isFinite(rawPercent) ? Math.trunc(rawPercent) : 100;
+      this.runEnergyPercent = Math.max(0, Math.min(100, percent));
+      this.sidePanel?.setRunEnergy(this.runEnergyPercent);
+    });
+
+    this.network.on(ServerOpcode.PLAYER_MOVE_STEPS, (_op, v) => {
+      // Layout: [entityId, modeIdx, count, x10, z10, floor, y10, ...].
+      const entityId = v[0];
+      if (entityId === this.localPlayerId) return;
+      const mode = movementModeFromIndex(v[1] ?? 0);
+      const count = Math.max(0, Math.min(4, Math.trunc(v[2] ?? 0)));
+      const steps: RemoteMovementStep[] = [];
+      for (let i = 0; i < count; i++) {
+        const offset = 3 + i * 4;
+        if (offset + 3 >= v.length) break;
+        steps.push({
+          x: (v[offset] ?? 0) / 10,
+          z: (v[offset + 1] ?? 0) / 10,
+          floor: Math.trunc(v[offset + 2] ?? 0),
+          y: (v[offset + 3] ?? 0) / 10,
+          mode,
+        });
+      }
+      if (steps.length === 0) return;
+      const queuedStepCount = this.queueRemoteMovementSteps(entityId, steps);
+      this.entities.remoteMovementSegmentSteps.set(entityId, queuedStepCount);
+      this.entities.remoteWalkUntil.set(entityId, performance.now() + 900);
+
+      const final = steps[steps.length - 1];
+      const prev = this.entities.remoteTargets.get(entityId);
+      const targetAlreadyCurrent = prev
+        && Math.abs(prev.x - final.x) <= 0.001
+        && Math.abs(prev.z - final.z) <= 0.001
+        && prev.floor === final.floor;
+      if (!targetAlreadyCurrent) {
+        const current = this.entities.remotePlayers.get(entityId)?.position;
+        this.entities.remoteTargets.set(entityId, {
+          x: final.x,
+          z: final.z,
+          floor: final.floor,
+          y: final.y,
+          prevX: prev?.x ?? current?.x ?? final.x,
+          prevZ: prev?.z ?? current?.z ?? final.z,
+        });
+      }
     });
 
     this.network.on(ServerOpcode.PLAYER_MAGIC_STATE, (_op, v) => {
@@ -4323,6 +5004,7 @@ export class GameManager {
 
       this.entities.cleanupCombatTargetsFor(entityId);
       this.remoteAnimationStates.delete(entityId);
+      this.clearRemoteMovementStepStash(entityId);
       this.toolSwappedEntities.delete(entityId);
       const deathEffectStarted = isTrueDeath && entityId !== this.localPlayerId
         ? this.entities.startEntityDeathEffect(entityId)
@@ -4827,8 +5509,8 @@ export class GameManager {
         this.chatPanel.addSystemMessage(message, '#8cf', { foldConsecutive: true });
       }
       // Chests have no skilling animation — the player stands still while
-      // the lockpick cycle ticks on the server. All other harvestables get
-      // a category-specific looping anim (chop/mine).
+      // the lockpick cycle ticks on the server. Other harvestables get a
+      // category-specific looping animation.
       const variant = objDef?.category === 'tree' ? 'chop'
         : objDef?.category === 'rock' ? 'mine'
         : undefined;
@@ -4891,7 +5573,6 @@ export class GameManager {
         const itemId = v[i];
         const qty = (v[i + 1] & 0xFFFF) * 0x10000 + (v[i + 2] & 0xFFFF);
         if (this.sidePanel) this.sidePanel.updateInvSlot(slot, itemId, qty);
-        if (this.bankPanel) this.bankPanel.updateInventorySlot(slot, itemId, qty);
         if (this.tradePanel) this.tradePanel.updateInventorySlot(slot, itemId, qty);
         if (this.duelPanel) this.duelPanel.updateInventorySlot(slot, itemId, qty);
       }
@@ -4909,6 +5590,10 @@ export class GameManager {
         const qty = (v[base + 2] & 0xFFFF) * 0x10000 + (v[base + 3] & 0xFFFF);
         filled.push({ slot: v[base], itemId: v[base + 1], quantity: qty });
       }
+      this.sidePanel?.switchTab('inventory');
+      this.sidePanel?.setBankDepositCallback((slot, itemId, quantity) => {
+        this.network.sendRaw(encodeQuantityPacket(ClientOpcode.BANK_DEPOSIT, slot, itemId, quantity));
+      });
       this.bankPanel?.openWithContents(filled);
     });
     this.network.on(ServerOpcode.BANK_UPDATE_SLOT, (_op, v) => {
@@ -4917,6 +5602,7 @@ export class GameManager {
       this.bankPanel?.updateBankSlot(slot, itemId, qty);
     });
     this.network.on(ServerOpcode.BANK_CLOSE, () => {
+      this.sidePanel?.setBankDepositCallback(null);
       this.bankPanel?.hide(/*notifyServer*/ false);
     });
 
@@ -5268,6 +5954,7 @@ export class GameManager {
         const entityId = values[0];
         if (str.length > 0) this.entities.npcOverrideNames.set(entityId, str);
         else this.entities.npcOverrideNames.delete(entityId);
+        this.applyNpcNameplate(entityId);
       } else if (opcode === ServerOpcode.NPC_ATTACK_ANIM) {
         // [npcEntityId] follows the anim-name string. Consulted first by
         // getPlayerAttackAnimName; empty string clears the override.
@@ -5360,9 +6047,10 @@ export class GameManager {
       if (!isInitialPlacement || !mapAlreadyLoaded) {
         this.entities.disposeAllEntities();
         this.remoteAnimationStates.clear();
+        this.clearAllRemoteMovementStepStashes();
         // Local player persists across map changes — restore any displaced
-        // tool first, then clear the set so a teleport mid-chop doesn't leave
-        // the next chop unable to re-swap.
+        // tool first, then clear the sets so a teleport mid-skill doesn't
+        // leave the next cycle unable to re-swap.
         if (this.localPlayer && this.toolSwappedEntities.has(this.localPlayerId)) {
           this.restoreSkillingTool(this.localPlayerId, this.localPlayer);
         }
@@ -6156,8 +6844,7 @@ export class GameManager {
 
   private setRemotePlayerRole(entityId: number, isAdmin: boolean, isModerator: boolean): void {
     this.cacheRemotePlayerRole(entityId, isAdmin, isModerator);
-    const remote = this.entities.remotePlayers.get(entityId);
-    if (remote) remote.setLabelColor(this.playerNameColor(isAdmin, isModerator));
+    this.applyRemotePlayerNameplate(entityId);
   }
 
   private nameColorForMessage(name: string, isAdmin: boolean, isModerator: boolean, fallback: string = '#fff'): string {
@@ -6181,11 +6868,9 @@ export class GameManager {
     const canvas = this.engine.getRenderingCanvas();
     if (!canvas || this.engine.isDisposed || this.scene.isDisposed) return null;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = this.engine.getRenderWidth() / Math.max(1, rect.width);
-    const scaleY = this.engine.getRenderHeight() / Math.max(1, rect.height);
     return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY,
+      x: clientX - rect.left,
+      y: clientY - rect.top,
     };
   }
 
@@ -6211,7 +6896,15 @@ export class GameManager {
 
     const lvl = this.npcLevelFor(entityId, npcDefId);
     const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
-    const attackOption: InteractionOption = { label: `Attack ${name}${labelLevel}`, action: () => this.attackNpc(entityId) };
+    const attackOption: InteractionOption = {
+      label: `Attack ${name}${labelLevel}`,
+      labelParts: [
+        { text: 'Attack ' },
+        { text: name },
+        ...(labelLevel ? [{ text: labelLevel, color: this.combatLevelDifferenceColor(this.localCombatLevel(), lvl) }] : []),
+      ],
+      action: () => this.attackNpc(entityId),
+    };
     if ((flags & NPC_INTERACTION_HAS_DIALOGUE) !== 0) {
       const engaged = this.isLocalNpcCombatTarget(entityId);
       const talkOption: InteractionOption = {
@@ -6492,6 +7185,19 @@ export class GameManager {
       goodmagic: this.sidePanel.getSkillLevel('goodmagic'),
       evilmagic: this.sidePanel.getSkillLevel('evilmagic'),
     });
+  }
+
+  private combatLevelDifferenceColor(playerLevel: number, targetLevel: number): string {
+    const diff = Math.floor(playerLevel) - Math.floor(targetLevel);
+    if (diff < -9) return '#ff0000';
+    if (diff < -6) return '#ff3000';
+    if (diff < -3) return '#ff7000';
+    if (diff < 0) return '#ffb000';
+    if (diff > 9) return '#00ff00';
+    if (diff > 6) return '#40ff00';
+    if (diff > 3) return '#80ff00';
+    if (diff > 0) return '#c0ff00';
+    return '#ffff00';
   }
 
   private worldObjectDisplayName(objectEntityId: number, def: WorldObjectDef): string {
@@ -6821,92 +7527,120 @@ export class GameManager {
     return def.combatLevel ?? npcCombatLevel(def);
   }
 
-  private setupNpcTooltip(canvas: HTMLCanvasElement): void {
+  private setupHoverActionReadout(canvas: HTMLCanvasElement): void {
+    document.getElementById('hover-action-label')?.remove();
+
     const el = document.createElement('div');
-    el.className = 'npc-tooltip-overlay';
+    el.id = 'hover-action-label';
+    el.setAttribute('aria-hidden', 'true');
     el.style.cssText = [
-      'position: fixed', 'pointer-events: none', 'z-index: 999',
-      'background: #1a1410ee', 'border: 1px solid #5a4a35',
-      'color: #d8372b', 'font: 12px Arial, Helvetica, sans-serif',
-      'padding: 3px 7px', 'display: none', 'white-space: nowrap',
+      'position: absolute',
+      'left: calc(8px * var(--eq-ui-scale, 1))',
+      'top: calc(6px * var(--eq-ui-scale, 1))',
+      'z-index: 35',
+      'display: none',
+      'pointer-events: none',
+      'max-width: calc(100% - var(--right-rail-width, 300px) - 16px)',
+      'overflow: hidden',
+      'text-overflow: ellipsis',
+      'white-space: nowrap',
+      'font: 700 calc(12px * var(--eq-ui-scale, 1)) Arial, Helvetica, sans-serif',
+      'line-height: calc(15px * var(--eq-ui-scale, 1))',
+      'color: #ffff00',
+      'text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000',
     ].join('; ');
-    document.body.appendChild(el);
+    (document.getElementById('game-frame') ?? canvas.parentElement ?? document.body).appendChild(el);
+    this.hoverActionEl = el;
 
     let lastPickAt = 0;
-    this._npcTooltipHandler = (e) => {
+    this._hoverActionHandler = (e) => {
       this._lastRoofHoverClientX = e.clientX;
       this._lastRoofHoverClientY = e.clientY;
-      // Throttle: scene.pick walks every pickable mesh; running it on every
-      // raw pointermove (which can fire 100+ times/sec on a high-Hz mouse)
-      // would chew frame budget. 30ms gap = ~33Hz, smooth enough for a
-      // tooltip and harmless to skip a few frames in between.
-      const now = performance.now();
-      if (now - lastPickAt < 30) {
-        el.style.left = `${e.clientX + 14}px`;
-        el.style.top = `${e.clientY + 14}px`;
+      if (!this.clientPointIsInsideCanvas(canvas, e.clientX, e.clientY) || this.isTouchPointer(e) || !this.inputManager.isEnabled()) {
+        this.setHoverActionOption(null);
         return;
       }
+
+      // Throttle: getWorldInteractionOptionsAt walks pickable meshes and
+      // entity hit proxies; running it on every raw pointermove (which can
+      // fire 100+ times/sec on a high-Hz mouse) would chew frame budget.
+      // 30ms gap = ~33Hz, smooth enough for a hover readout.
+      const now = performance.now();
+      if (now - lastPickAt < 30) return;
       lastPickAt = now;
-      // Same multiPick logic as the click handlers so the tooltip resolves
-      // an NPC or a ground item even when scenery occludes it from the
-      // closest-hit picker.
       this.updateHoverRoofReveal(e.clientX, e.clientY);
       this._lastRoofHoverRefreshAt = now;
-      const playerEntityId = this.pickPlayerAtPoint(this.scene.pointerX, this.scene.pointerY);
-      const { entityId, groundItem } = this.pickAtCursor();
-      let playerLabel: string | null = null;
-      let playerIsAdmin = false;
-      let playerIsModerator = false;
-      if (playerEntityId != null) {
-        const name = this.entities.playerNames.get(playerEntityId) ?? 'Player';
-        const lvl = this.entities.remoteCombatLevels.get(playerEntityId) ?? 0;
-        playerIsAdmin = this.entities.remoteAdminFlags.get(playerEntityId) === true;
-        playerIsModerator = this.entities.remoteModeratorFlags.get(playerEntityId) === true;
-        playerLabel = lvl > 0 ? `${name} (level-${lvl})` : name;
-      }
-      let npcLabel: string | null = null;
-      if (playerLabel == null && entityId != null) {
-        const npcDefId = this.entities.npcDefs.get(entityId);
-        const name = this.npcDisplayName(entityId, npcDefId);
-        if (this.isNonCombatNpc(entityId, npcDefId)) {
-          npcLabel = name;
-        } else {
-          const lvl = this.npcLevelFor(entityId, npcDefId);
-          npcLabel = lvl > 0 ? `${name} (level-${lvl})` : name;
-        }
-      }
-      // Ground items: only when the cursor isn't already over an NPC — NPC
-      // wins, mirroring the click priority. Show the tile pile in display
-      // order, capped so a large drop stack doesn't rebuild a huge tooltip.
-      let itemLines: string[] = [];
-      if (playerLabel == null && npcLabel == null && groundItem) {
-        itemLines = this.groundItemTooltipLines(this.groundItemStackForPick(groundItem).filter(gi => gi.floor === this.currentFloor));
-      }
-      if (playerLabel != null) {
-        el.style.color = this.playerNameColor(playerIsAdmin, playerIsModerator);
-        el.textContent = playerLabel;
-      } else if (npcLabel != null) {
-        el.style.color = '#d8372b';
-        el.textContent = npcLabel;
-      } else if (itemLines.length > 0) {
-        // Escape — item names are project data, but the tooltip writes them
-        // as innerHTML to get one line per stacked item.
-        const esc = (s: string) => s.replace(/[&<>]/g, (c) =>
-          c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;');
-        el.style.color = '#c8b88a';
-        el.innerHTML = itemLines.map(esc).join('<br>');
-      }
-      if (playerLabel != null || npcLabel != null || itemLines.length > 0) {
-        el.style.left = `${e.clientX + 14}px`;
-        el.style.top = `${e.clientY + 14}px`;
-        el.style.display = 'block';
-      } else if (el.style.display !== 'none') {
-        el.style.display = 'none';
-      }
+
+      this.setHoverActionReadout(this.defaultHoverActionReadout(
+        this.getWorldInteractionOptionsAt(e.clientX, e.clientY),
+      ));
     };
-    this._roofHoverLeaveHandler = () => this.clearHoverRoofPointer();
-    canvas.addEventListener('pointermove', this._npcTooltipHandler);
+    this._roofHoverLeaveHandler = () => {
+      this.clearHoverRoofPointer();
+      this.setHoverActionOption(null);
+    };
+    window.addEventListener('pointermove', this._hoverActionHandler, true);
     canvas.addEventListener('pointerleave', this._roofHoverLeaveHandler);
+  }
+
+  private clientPointIsInsideCanvas(canvas: HTMLCanvasElement, clientX: number, clientY: number): boolean {
+    const rect = canvas.getBoundingClientRect();
+    return clientX >= rect.left
+      && clientX <= rect.right
+      && clientY >= rect.top
+      && clientY <= rect.bottom
+      && rect.width > 0
+      && rect.height > 0;
+  }
+
+  private defaultHoverActionOption(options: readonly InteractionOption[]): InteractionOption | null {
+    return options.find(option => option.primary !== false) ?? options[0] ?? null;
+  }
+
+  private defaultHoverActionReadout(options: readonly InteractionOption[]): HoverActionReadout | null {
+    const option = this.defaultHoverActionOption(options);
+    return option ? { option, totalOptions: options.length } : null;
+  }
+
+  private setHoverActionReadout(readout: HoverActionReadout | null): void {
+    this.setHoverActionOption(readout?.option ?? null, readout?.totalOptions ?? 0);
+  }
+
+  private hoverActionCountText(totalOptions: number): string {
+    return totalOptions > 0 ? ` (${totalOptions})` : '';
+  }
+
+  private setHoverActionOption(option: InteractionOption | null, totalOptions: number = 0): void {
+    const el = this.hoverActionEl;
+    if (!el) return;
+    if (!option || !option.label.trim()) {
+      el.style.display = 'none';
+      el.textContent = '';
+      el.removeAttribute('data-action-label');
+      return;
+    }
+
+    el.replaceChildren();
+    const countText = this.hoverActionCountText(totalOptions);
+    el.dataset.actionLabel = `${option.label}${countText}`;
+    if (option.labelParts?.length) {
+      el.style.color = '#ffff00';
+      for (const part of option.labelParts) {
+        const span = document.createElement('span');
+        span.textContent = part.text;
+        if (part.color) span.style.color = part.color;
+        el.appendChild(span);
+      }
+      if (countText) {
+        const countSpan = document.createElement('span');
+        countSpan.textContent = countText;
+        el.appendChild(countSpan);
+      }
+    } else {
+      el.style.color = option.labelColor ?? '#ffff00';
+      el.textContent = `${option.label}${countText}`;
+    }
+    el.style.display = 'block';
   }
 
   /** Redirect an NPC/object click to a use-on-target packet if the inventory
@@ -7019,7 +7753,7 @@ export class GameManager {
             this.keepCurrentPredictedStepForInteraction();
           }
         } else {
-          this.clearPredictedPath(true);
+          this.clearPredictedPath(true, false);
           if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
           this.faceLocalPlayerTowardNpc(npcEntityId, target);
         }
@@ -7201,7 +7935,7 @@ export class GameManager {
     // sendMove BEFORE TALK_NPC so the server walks the same tiles.
     const bankerBoothPath = this.findPathToBankerBooth(npcEntityId, target);
     if (bankerBoothPath && bankerBoothPath.path.length === 0) {
-      this.clearPredictedPath();
+      this.clearPredictedPath(false, false);
       if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
       this.faceLocalPlayerTowardNpc(npcEntityId, target);
       this.pendingFaceTargetEntityId = -1;
@@ -7231,7 +7965,7 @@ export class GameManager {
           this.keepCurrentPredictedStepForInteraction();
         }
       } else {
-        this.clearPredictedPath();
+        this.clearPredictedPath(false, false);
         if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
         this.faceLocalPlayerTowardNpc(npcEntityId, target);
         this.pendingFaceTargetEntityId = -1;
@@ -7280,25 +8014,82 @@ export class GameManager {
     this.tileFrom.z = z;
   }
 
-  private clearPredictedPath(resetAnchor: boolean = false): void {
+  private clearPredictedPath(resetAnchor: boolean = false, clearRecentArrival: boolean = true): void {
     this.path = [];
     this.pathIndex = 0;
     this.tileProgress = 0;
     this.pendingPath = null;
+    this.predictedPathUnitSteps = 0;
     this.predictedPathStartedAt = 0;
+    this.predictedPathStart = null;
     this.predictedPathDestination = null;
     this.predictedPathAuthorityReanchorAttempts = 0;
     this.localCombatWalkUntilMs = 0;
+    if (clearRecentArrival) this.clearRecentPredictedArrival();
     if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
   }
 
-  private isFreshPredictedPath(now: number = performance.now()): boolean {
-    return this.predictedPathStartedAt > 0
-      && this.pathIndex < this.path.length
-      && now - this.predictedPathStartedAt <= GameManager.FRESH_PREDICTION_RECONCILE_GRACE_MS;
+  private shouldIgnoreVisibleLocalAuthority(serverX: number, serverZ: number, serverMoving: boolean): boolean {
+    if (this.shouldIgnoreRecentPredictedArrivalAuthority(serverX, serverZ)) return true;
+    const maxAxisDelta = Math.max(Math.abs(serverX - this.playerX), Math.abs(serverZ - this.playerZ));
+    if (this.pathIndex < this.path.length) {
+      return maxAxisDelta <= GameManager.LOCAL_AUTHORITY_HARD_RESET_DIST;
+    }
+    if (serverMoving) {
+      return maxAxisDelta <= GameManager.LOCAL_AUTHORITY_HARD_RESET_DIST;
+    }
+    return maxAxisDelta <= GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
+  }
+
+  private clearRecentPredictedArrival(): void {
+    this.recentPredictedArrivalUntil = 0;
+    this.recentPredictedArrivalStart = null;
+    this.recentPredictedArrivalPath = [];
+    this.recentPredictedArrivalDestination = null;
+  }
+
+  private armRecentPredictedArrival(): void {
+    const start = this.predictedPathStart;
+    const destination = this.path[this.path.length - 1] ?? null;
+    if (!start || !destination) {
+      this.clearRecentPredictedArrival();
+      return;
+    }
+    this.recentPredictedArrivalUntil = performance.now() + GameManager.RECENT_ARRIVAL_AUTHORITY_GRACE_MS;
+    this.recentPredictedArrivalStart = { x: start.x, z: start.z };
+    this.recentPredictedArrivalPath = this.path.slice();
+    this.recentPredictedArrivalDestination = { x: destination.x, z: destination.z };
+  }
+
+  private shouldIgnoreRecentPredictedArrivalAuthority(
+    serverX: number,
+    serverZ: number,
+    now: number = performance.now(),
+  ): boolean {
+    if (this.recentPredictedArrivalUntil <= 0) return false;
+    if (now > this.recentPredictedArrivalUntil) {
+      this.clearRecentPredictedArrival();
+      return false;
+    }
+    const tx = Math.floor(serverX);
+    const tz = Math.floor(serverZ);
+    const destination = this.recentPredictedArrivalDestination;
+    if (destination && Math.floor(destination.x) === tx && Math.floor(destination.z) === tz) {
+      return true;
+    }
+
+    const start = this.recentPredictedArrivalStart;
+    if (!start) return false;
+    let from = start;
+    for (const waypoint of this.recentPredictedArrivalPath) {
+      if (this.tileOnCompressedSegment(from, waypoint, tx, tz)) return true;
+      from = waypoint;
+    }
+    return false;
   }
 
   private refreshPredictedDestinationFromPath(): void {
+    this.predictedPathUnitSteps = this.predictedPathRemainingUnitSteps();
     if (!this.predictedPathDestination) return;
     const dest = this.path[this.path.length - 1];
     this.predictedPathDestination = dest ? { x: dest.x, z: dest.z } : null;
@@ -7332,6 +8123,7 @@ export class GameManager {
       && this.pendingPath === null
       && this.sameTile(this.path[0], currentTarget);
     if (alreadyTrimmed) {
+      this.predictedPathUnitSteps = 1;
       if (allowAuthorityReanchor && !this.predictedPathDestination) {
         this.predictedPathDestination = { x: currentTarget.x, z: currentTarget.z };
         this.predictedPathAuthorityReanchorAttempts = 0;
@@ -7345,6 +8137,7 @@ export class GameManager {
     this.path = [currentTarget];
     this.pathIndex = 0;
     this.pendingPath = null;
+    this.predictedPathUnitSteps = 1;
     this.predictedPathDestination = allowAuthorityReanchor ? { x: currentTarget.x, z: currentTarget.z } : null;
     this.predictedPathAuthorityReanchorAttempts = 0;
     if (activeStep) {
@@ -7383,7 +8176,7 @@ export class GameManager {
   ): boolean {
     if (def && this.pathIndex < this.path.length) return this.redirectActiveWalkToObjectInteraction(data, def);
     if (!def && this.keepCurrentPredictedStepForInteraction()) return true;
-    this.clearPredictedPath(true);
+    this.clearPredictedPath(true, false);
     this.minimap?.clearDestination();
     this.localPlayer?.stopWalking();
     this.faceLocalPlayerToward(data.x, data.z);
@@ -7392,9 +8185,6 @@ export class GameManager {
 
   private rootLocalPlayerForSpellCast(notifyServer: boolean = true): void {
     this.clearPredictedPath(true);
-    this.slideOffsetX = 0;
-    this.slideOffsetZ = 0;
-    this.slideStartMs = 0;
     this.localPlayer?.stopWalking();
     if (this.localPlayer) {
       this.localPlayer.setPositionXYZ(this.playerX, this.getHeight(this.playerX, this.playerZ), this.playerZ);
@@ -7449,6 +8239,18 @@ export class GameManager {
       target: { x: targetTileX + 0.5, z: targetTileZ + 0.5 },
       progress: progressedTiles - completedTiles,
     };
+  }
+
+  private remainingPredictedUnitSteps(): number {
+    const activeStep = this.getActiveUnitStep();
+    if (!activeStep) return 0;
+    return 1 + compressedPathTileSteps(activeStep.target, this.path.slice(this.pathIndex));
+  }
+
+  private predictedPathRemainingUnitSteps(): number {
+    return this.pathIndex < this.path.length
+      ? compressedPathTileSteps(this.tileFrom, this.path.slice(this.pathIndex))
+      : 0;
   }
 
   private findPathFromMovementAnchor(goalX: number, goalZ: number, maxSteps: number = 200): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
@@ -7732,6 +8534,7 @@ export class GameManager {
   ): void {
     if (path.length === 0) return;
     const activeStep = this.getActiveUnitStep();
+    this.clearRecentPredictedArrival();
     this.localPlayer?.clearFaceLock(true);
     if (this.localPlayer?.isSkillAnimPlaying()) this.localPlayer.resetTransientAnimation();
     this.path = path;
@@ -7750,49 +8553,12 @@ export class GameManager {
       this.tileProgress = 0;
       this.setTileFrom(this.playerX, this.playerZ);
     }
+    this.predictedPathStart = { x: this.tileFrom.x, z: this.tileFrom.z };
     this.pendingPath = null;
+    const initialSteps = compressedPathTileSteps(this.tileFrom, path);
+    this.predictedPathUnitSteps = initialSteps;
+    this.localPlayer?.setMovementMode(effectiveMovementModeForPath(this.movementMode, initialSteps, initialSteps));
     if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
-  }
-
-  private tryReanchorPredictedPathToAuthority(serverX: number, serverZ: number): boolean {
-    const dest = this.predictedPathDestination;
-    if (!dest) return false;
-    if (this.pathIndex >= this.path.length) return false;
-    if (this.predictedPathAuthorityReanchorAttempts >= GameManager.AUTHORITY_REANCHOR_MAX_ATTEMPTS) return false;
-
-    const path = findPath(
-      serverX,
-      serverZ,
-      dest.x,
-      dest.z,
-      this.isTileBlocked,
-      this.chunkManager.getMapWidth(),
-      this.chunkManager.getMapHeight(),
-      GameManager.AUTHORITY_REANCHOR_MAX_SEARCH_TILES,
-      this.isWallBlockedForPath,
-    );
-    if (!this.pathReachesGoal(path, dest.x, dest.z)) return false;
-
-    const prevLogicalX = this.playerX;
-    const prevLogicalZ = this.playerZ;
-    this.playerX = serverX;
-    this.playerZ = serverZ;
-    this.path = path;
-    this.pathIndex = 0;
-    this.tileProgress = 0;
-    this.pendingPath = null;
-    this.setTileFrom(serverX, serverZ);
-    this.predictedPathStartedAt = 0;
-    this.predictedPathAuthorityReanchorAttempts++;
-
-    const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
-    const slideMs = Math.min(
-      Math.max((dragDist / Math.max(this.moveSpeed, 0.1)) * 1000 * 1.25, TICK_RATE),
-      2400,
-    );
-    this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
-    if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
-    return true;
   }
 
   private usesCornerObjectInteraction(def: WorldObjectDef, hasInteractionMask: boolean = false): boolean {
@@ -8122,9 +8888,7 @@ export class GameManager {
 
     // Cancel current skilling if clicking a different object
     if (this.isSkilling && this.skillingObjectId !== objectEntityId) {
-      this.isSkilling = false;
-      this.skillingObjectId = -1;
-      this.localPlayer?.stopSkillAnimation();
+      this.endLocalSkilling();
     }
 
     const dx = data.x - this.playerX;
@@ -8156,7 +8920,7 @@ export class GameManager {
           shouldSendInteraction = this.pathIndex >= this.path.length;
         }
       } else {
-        this.clearPredictedPath();
+        this.clearPredictedPath(false, false);
         this.localPlayer?.stopWalking();
       }
       if (!shouldSendInteraction) return;
@@ -8935,9 +9699,9 @@ export class GameManager {
     if (npc) {
       npc.showChatBubble(message, alert ? 1800 : 6000, 'dialogue');
     }
-    if (alert) return;
+    if (alert || !isNpcDialogueInChatEnabled()) return;
     const npcName = this.npcDisplayName(npcEntityId, this.entities.npcDefs.get(npcEntityId));
-    this.chatPanel?.addMessage(npcName, message, '#f4ded5');
+    this.chatPanel?.addMessage(npcName, message, '#f4ded5', 'npc');
   }
 
   private hideNpcDialogueBubble(npcEntityId: number): void {
@@ -8951,7 +9715,7 @@ export class GameManager {
     if (this.localPlayer) {
       this.localPlayer.showChatBubble(message, 4500, 'dialogue');
     }
-    this.chatPanel?.addMessage(this.username || 'You', message, this.playerNameColor(this.isAdmin, this.isModerator, '#f4ded5'));
+    this.chatPanel?.addMessage(this.username || 'You', message, this.playerNameColor(this.isAdmin, this.isModerator, '#f4ded5'), 'player');
   }
 
   private hitSplatBasePositionFor(target: Targetable): Vector3 {
@@ -9305,7 +10069,7 @@ export class GameManager {
    *  after arrival, and any remaining visual correction should come through
    *  normal PLAYER_SYNC reconciliation. */
   private prepareSkillingAtObject(objectId: number): void {
-    this.clearPredictedPath();
+    this.clearPredictedPath(false, false);
     this.setTileFrom(this.playerX, this.playerZ);
     if (!this.localPlayer) return;
     this.localPlayer.stopWalking();
@@ -9329,7 +10093,10 @@ export class GameManager {
   private finishPredictedPathArrival(): void {
     this.clearControlledMoveLock();
     this.tileProgress = 0;
+    this.armRecentPredictedArrival();
+    this.predictedPathUnitSteps = 0;
     this.predictedPathStartedAt = 0;
+    this.predictedPathStart = null;
     this.predictedPathDestination = null;
     this.predictedPathAuthorityReanchorAttempts = 0;
     if (this.destMarker) this.destMarker.isVisible = false;
@@ -9340,15 +10107,18 @@ export class GameManager {
       this.localCombatWalkUntilMs = 0;
       this.localPlayer?.stopWalking();
     }
+    this.finishPendingFaceTarget();
+    this.refreshLocalCombatFacing();
+  }
+
+  private finishPendingFaceTarget(): void {
     // Face the NPC we were walking up to talk to / attack. Lookup uses
     // npcTargets, which tracks the latest server-broadcast position even if
     // the NPC wandered while we walked.
-    if (this.pendingFaceTargetEntityId >= 0) {
-      const npcTarget = this.entities.npcTargets.get(this.pendingFaceTargetEntityId);
-      if (npcTarget) this.faceLocalPlayerTowardNpc(this.pendingFaceTargetEntityId, npcTarget);
-      this.pendingFaceTargetEntityId = -1;
-    }
-    this.refreshLocalCombatFacing();
+    if (this.pendingFaceTargetEntityId < 0) return;
+    const npcTarget = this.entities.npcTargets.get(this.pendingFaceTargetEntityId);
+    if (npcTarget) this.faceLocalPlayerTowardNpc(this.pendingFaceTargetEntityId, npcTarget);
+    this.pendingFaceTargetEntityId = -1;
   }
 
   private handleGroundClick(
@@ -9417,6 +10187,64 @@ export class GameManager {
     }
   }
 
+  private installAutoWalkDiagnosticHook(): void {
+    if (new URLSearchParams(window.location.search).get('autowalk') !== '1') return;
+
+    const sleep = (ms: number) => new Promise<void>(resolve => window.setTimeout(resolve, ms));
+    const moving = () => this.pathIndex < this.path.length;
+    const ready = () => this.localPlayerId > 0
+      && !!this.localPlayer
+      && this.inputManager.isEnabled()
+      && this.chunkManager.getMapWidth() > 0
+      && this.chunkManager.getMapHeight() > 0;
+    const state = () => ({
+      ready: ready(),
+      moving: moving(),
+      x: Number(this.playerX.toFixed(2)),
+      z: Number(this.playerZ.toFixed(2)),
+      pathIndex: this.pathIndex,
+      pathLength: this.path.length,
+      map: this.chunkManager.getMapId(),
+      floor: this.currentFloor,
+    });
+    const waitUntilSettled = async (target: { x: number; z: number }, settleMs: number, timeoutMs: number) => {
+      const start = performance.now();
+      let settledSince = 0;
+      while (performance.now() - start < timeoutMs) {
+        const close = Math.max(Math.abs(this.playerX - target.x), Math.abs(this.playerZ - target.z)) <= 0.08;
+        if (!moving() && close) {
+          if (settledSince === 0) settledSince = performance.now();
+          if (performance.now() - settledSince >= settleMs) return;
+        } else {
+          settledSince = 0;
+        }
+        await sleep(100);
+      }
+      throw new Error(`autowalk waypoint timeout at ${target.x},${target.z}; state=${JSON.stringify(state())}`);
+    };
+
+    window.__evilQuestAutoWalk = {
+      ready,
+      state,
+      walkTo: (x: number, z: number) => {
+        if (!ready()) return false;
+        this.handleGroundClick(x, z);
+        return true;
+      },
+      walkRoute: async (route, opts) => {
+        const settleMs = Math.max(0, opts?.settleMs ?? 800);
+        const waypointTimeoutMs = Math.max(5_000, opts?.waypointTimeoutMs ?? 60_000);
+        for (const point of route) {
+          if (!Number.isFinite(point.x) || !Number.isFinite(point.z)) {
+            throw new Error(`invalid autowalk waypoint ${JSON.stringify(point)}`);
+          }
+          this.handleGroundClick(point.x, point.z);
+          await waitUntilSettled(point, settleMs, waypointTimeoutMs);
+        }
+      },
+    };
+  }
+
   private createHUD(): void {
     this.minimap = new Minimap(260);
     this.minimap.setClickMoveHandler((worldX, worldZ, markerWorldX, markerWorldZ) => {
@@ -9432,6 +10260,7 @@ export class GameManager {
       window.clearTimeout(this.reconnectSleepTimer);
       this.reconnectSleepTimer = null;
     }
+    this.clearAllRemoteMovementStepStashes();
     this.cancelPendingTouchInteraction();
     this.clearAllPendingHealthApply();
     this.activeTouchPointers.clear();
@@ -9455,6 +10284,11 @@ export class GameManager {
     this.hideReconnectOverlay();
     this.fpsCounterEl?.remove();
     this.fpsCounterEl = null;
+    this.frameProfileOverlay?.remove();
+    this.frameProfileOverlay = null;
+    this.frameLongTaskObserver?.disconnect();
+    this.frameLongTaskObserver = null;
+    this.recentFrameLongTasks = [];
     this.network.close();
     if (this.minimap) { this.minimap.dispose(); this.minimap = null; }
     if (this.characterCreator) { this.characterCreator.destroy(); this.characterCreator = null; }
@@ -9468,6 +10302,19 @@ export class GameManager {
       window.removeEventListener('resize', this.onWindowResize);
       window.removeEventListener('evilquest:viewportchange', this.onWindowResize);
       this.onWindowResize = null;
+    }
+    if (this.browserZoomWarningHandler) {
+      window.removeEventListener('evilquest:browserzoomblocked', this.browserZoomWarningHandler);
+      window.removeEventListener('evilquest:browserzoomchanged', this.browserZoomWarningHandler);
+      this.browserZoomWarningHandler = null;
+    }
+    if (this.renderDistanceChangeHandler) {
+      window.removeEventListener('evilquest:renderdistancechange', this.renderDistanceChangeHandler);
+      this.renderDistanceChangeHandler = null;
+    }
+    if (this.gameSettingsChangeHandler) {
+      window.removeEventListener('evilquest:gamesettingschange', this.gameSettingsChangeHandler);
+      this.gameSettingsChangeHandler = null;
     }
     this.clearHiddenCatchupTimer();
     if (this._keydownHandler) { window.removeEventListener('keydown', this._keydownHandler); this._keydownHandler = null; }
@@ -9488,9 +10335,9 @@ export class GameManager {
       window.removeEventListener('pointerdown', this._cursorTelemetryHandler, true);
       this._cursorTelemetryHandler = null;
     }
-    if (this._npcTooltipHandler) {
-      this.engine.getRenderingCanvas()?.removeEventListener('pointermove', this._npcTooltipHandler);
-      this._npcTooltipHandler = null;
+    if (this._hoverActionHandler) {
+      window.removeEventListener('pointermove', this._hoverActionHandler, true);
+      this._hoverActionHandler = null;
     }
     if (this._roofHoverLeaveHandler) {
       this.engine.getRenderingCanvas()?.removeEventListener('pointerleave', this._roofHoverLeaveHandler);
@@ -9531,6 +10378,8 @@ export class GameManager {
     document.querySelectorAll('.entity-health-bar').forEach(el => el.remove());
     document.querySelectorAll('.character-name-overlay').forEach(el => el.remove());
     document.querySelectorAll('.npc-tooltip-overlay').forEach(el => el.remove());
+    this.hoverActionEl?.remove();
+    this.hoverActionEl = null;
   }
 
   private applyCachedNpcRigState(entityId: number, sprite: CharacterEntity | Npc3DEntity): void {
@@ -9571,6 +10420,7 @@ export class GameManager {
     }
     if (created instanceof CharacterEntity || created instanceof Npc3DEntity) {
       this.applyCachedNpcRigState(entityId, created);
+      this.applyNpcNameplate(entityId);
     }
   }
 
@@ -9610,6 +10460,7 @@ export class GameManager {
   }
 
   private updateEntityRenderVisibility(): void {
+    if (!this.entities) return;
     const enableDist = this.getEntityRenderDistanceTiles();
     const disableDist = enableDist + ENTITY_RENDER_HYSTERESIS_TILES;
 
@@ -9650,8 +10501,9 @@ export class GameManager {
     const cam = this.scene.activeCamera;
     if (!cam) return false;
     cam.getViewMatrix().multiplyToRef(cam.getProjectionMatrix(), this._overlayTransform);
-    const w = this.engine.getRenderWidth();
-    const h = this.engine.getRenderHeight();
+    const canvas = this.engine.getRenderingCanvas();
+    const w = canvas?.clientWidth && canvas.clientWidth > 0 ? canvas.clientWidth : this.engine.getRenderWidth();
+    const h = canvas?.clientHeight && canvas.clientHeight > 0 ? canvas.clientHeight : this.engine.getRenderHeight();
     this._overlayVp.x = 0; this._overlayVp.y = 0;
     this._overlayVp.width = w; this._overlayVp.height = h;
     this._overlayTransformReady = true;
@@ -9758,10 +10610,7 @@ export class GameManager {
     for (const [, sprite] of this.entities.npcSprites) {
       const hasBubble = sprite.hasChatBubble();
       const hasBar = sprite.hasHealthBar();
-      // Npc3DEntity has no getLabelWorldPos — check via the CharacterEntity
-      // sibling type. instanceof on a hot path is fine (V8 inlines the check),
-      // but cache the cast so we don't re-narrow on each subsequent call.
-      const labelHost = sprite instanceof CharacterEntity ? sprite : null;
+      const labelHost = sprite instanceof CharacterEntity || sprite instanceof Npc3DEntity ? sprite : null;
       const hasLabel = labelHost ? labelHost.getLabelWorldPos(wp) !== null : false;
       if (!hasBubble && !hasBar && !hasLabel) continue;
 
@@ -9804,6 +10653,28 @@ export class GameManager {
         }
       }
     }
+
+    this.entities.forEachGroundItemLabel((label) => {
+      wp.set(label.x, label.y, label.z);
+      const dx = wp.x - camPos.x;
+      const dy = wp.y - camPos.y;
+      const dz = wp.z - camPos.z;
+      if (dx * dx + dy * dy + dz * dz > maxDistSq) {
+        label.element.style.left = `${offscreenX}px`;
+        label.element.style.top = `${offscreenY}px`;
+        return;
+      }
+      Vector3.ProjectToRef(wp, identity, transform, vp, screenPos);
+      const fogOpacity = this.overlayFogOpacity(wp, camPos);
+      if (screenPos.z > 0 && screenPos.z < 1 && fogOpacity > 0.01) {
+        label.element.style.left = `${screenPos.x}px`;
+        label.element.style.top = `${screenPos.y}px`;
+        label.element.style.opacity = fogOpacity.toString();
+      } else {
+        label.element.style.left = `${offscreenX}px`;
+        label.element.style.top = `${offscreenY}px`;
+      }
+    });
 
     for (const [, sprite] of this.entities.deathEffectEntities) {
       if (!sprite.hasHealthBar()) continue;
@@ -9997,73 +10868,145 @@ export class GameManager {
     this.checkSelfAuthorityFreshness();
     if (this.connectionFrozen) return;
 
-    this.updateCameraKeys(dt);
+    this.profileFrameSlice('camera/input', () => this.updateCameraKeys(dt));
 
-    this.refreshDuelFacing();
-    if (this.localPlayer) this.localPlayer.updateAnimation(dt);
-    this.updateEntityRenderVisibility();
-    this.entities.updateAnimations(dt);
+    this.profileFrameSlice('local/entity anim', () => {
+      this.refreshDuelFacing();
+      if (this.localPlayer) this.localPlayer.updateAnimation(dt);
+      this.updateEntityRenderVisibility();
+      this.entities.updateAnimations(dt);
+    });
 
     const camPos = this.scene.activeCamera?.position ?? null;
 
-    if (this.chunkManager.updatePlayerPosition(this.playerX, this.playerZ)) {
-      const objectsChanged = this.chunkManager.didLastUpdateChangeObjects();
-      if (objectsChanged) {
-        this.cleanupDisposedWorldObjects();
-        this.linkPlacedObjectsToWorldObjects();
-        this.reapplyWorldObjectVisualStates();
+    this.profileFrameSlice('chunk update', () => {
+      if (this.chunkManager.updatePlayerPosition(this.playerX, this.playerZ)) {
+        const objectsChanged = this.chunkManager.didLastUpdateChangeObjects();
+        if (objectsChanged) {
+          this.cleanupDisposedWorldObjects();
+          this.linkPlacedObjectsToWorldObjects();
+          this.reapplyWorldObjectVisualStates();
+        }
+        // Chunk visibility flips can re-enable placed nodes; re-hide only on
+        // those events instead of walking the hidden roof list every frame.
+        if (objectsChanged || this.chunkManager.didLastUpdateChangeTerrain()) {
+          this.reapplyHiddenRoofStates();
+          this.refreshHoverHiddenRoofs(true);
+        }
       }
-      // Chunk visibility flips can re-enable placed nodes; re-hide only on
-      // those events instead of walking the hidden roof list every frame.
-      if (objectsChanged || this.chunkManager.didLastUpdateChangeTerrain()) {
-        this.reapplyHiddenRoofStates();
-        this.refreshHoverHiddenRoofs(true);
+    });
+    this.profileFrameSlice('chunk animations/fog', () => {
+      this.chunkManager.updateAnimations();
+      this.updateFog(dt);
+    });
+
+    this.profileFrameSlice('local movement', () => {
+      this.updatePlayerFollowPrediction(dt);
+      this.updateCombatFollow(dt);
+      this.updateLocalPlayerMovement(dt, camPos);
+      this.updateLocalCombatWalkGrace();
+    });
+
+    this.profileFrameSlice('remote/npc movement', () => {
+      this.entities.interpolateRemotePlayers(
+        dt,
+        camPos,
+        (entityId) => this.remoteAnimationStates.get(entityId)?.kind === PlayerAnimationKind.Skill,
+        (entityId) => this.resolveTargetableIncludingLocal(entityId),
+      );
+      this.refreshDuelFacing();
+      this.maintainNpcMaterialization();
+      this.entities.interpolateNpcs(dt, camPos, this.localPlayerId, this.localPlayer?.position ?? null);
+      // Remote actors get per-frame combat face locks in EntityManager. The
+      // local player owns its own movement prediction, so keep its NPC combat
+      // facing alive here without enabling strafe-lock while pathing.
+      this.refreshLocalCombatFacing();
+    });
+
+    this.profileFrameSlice('indoor/doors/camera', () => {
+      this.updateIndoorDetection();
+      this.updateDoorAnimations(dt);
+
+      if (this.localPlayer) {
+        this._tempVec.set(this.localPlayer.position.x, this.localPlayer.position.y, this.localPlayer.position.z);
+        const followResult = this.camera.followTarget(this._tempVec, dt, true);
+        this.maybeReportCameraSnap(followResult);
       }
-    }
-    this.chunkManager.updateAnimations();
-    this.updateFog(dt);
+    });
+    this.profileFrameSlice('roof hover', () => this.refreshHoverRoofForStoredPointer(performance.now()));
 
-    this.expireFinishedSlide();
-    this.updatePlayerFollowPrediction(dt);
-    this.updateCombatFollow(dt);
-    this.updateLocalPlayerMovement(dt, camPos);
-    // If a slide is in flight but there's no active path, updateLocalPlayerMovement
-    // early-returns without touching the render position — drive the decay
-    // ourselves so the visual catches up to the snapped logical position.
-    if (this.slideStartMs !== 0 && this.pathIndex >= this.path.length) {
-      this.renderLocalPlayerWithSlide();
-    }
-    this.updateLocalCombatWalkGrace();
+  }
 
-    this.entities.interpolateRemotePlayers(
-      dt,
-      camPos,
-      (entityId) => this.remoteAnimationStates.get(entityId)?.kind === PlayerAnimationKind.Skill,
-      (entityId) => this.resolveTargetableIncludingLocal(entityId),
-    );
-    this.refreshDuelFacing();
-    this.maintainNpcMaterialization();
-    this.entities.interpolateNpcs(dt, camPos, this.localPlayerId, this.localPlayer?.position ?? null);
-    // Remote actors get per-frame combat face locks in EntityManager. The
-    // local player owns its own movement prediction, so keep its NPC combat
-    // facing alive here without enabling strafe-lock while pathing.
-    this.refreshLocalCombatFacing();
+  private maybeReportCameraSnap(result: CameraFollowResult): void {
+    if (!result.snapped || result.reason === 'initial') return;
+    if (!this._loginSettled || !this.shouldCapturePerformanceDiagnostic()) return;
+    const now = performance.now();
+    if (now - this.lastCameraSnapTelemetryAt < GameManager.CAMERA_SNAP_TELEMETRY_COOLDOWN_MS) return;
+    this.lastCameraSnapTelemetryAt = now;
 
-    this.updateIndoorDetection();
-    this.updateDoorAnimations(dt);
+    const camera = this.camera.getCamera();
+    const round = (value: number, decimals: number = 2): number | null =>
+      Number.isFinite(value) ? Number(value.toFixed(decimals)) : null;
+    const hiddenCatchup = this.isHiddenCatchupActive(now);
 
-    if (this.localPlayer) {
-      this._tempVec.set(this.localPlayer.position.x, this.localPlayer.position.y, this.localPlayer.position.z);
-      this.camera.followTarget(this._tempVec);
-    }
-    this.refreshHoverRoofForStoredPointer(performance.now());
+    this.reportClientLog('client_camera_snap', {
+      reason: result.reason,
+      dx: round(result.dx),
+      dz: round(result.dz),
+      distance: round(result.distance),
+      dtMs: round(result.dt * 1000, 1),
+      smooth: result.smooth,
+      locked: result.locked,
+      currentMap: this.chunkManager.getMapId(),
+      currentFloor: this.currentFloor,
+      visibilityState: document.visibilityState,
+      hiddenCatchupActive: hiddenCatchup,
+      sinceSelfAuthorityMs: this.lastSelfAuthorityAt === 0 ? null : round(now - this.lastSelfAuthorityAt, 1),
+      player: {
+        x: round(this.playerX),
+        z: round(this.playerZ),
+        y: round(this.localPlayer?.position.y ?? 0),
+        walking: this.localPlayer?.isWalking() ?? false,
+        movementMode: this.movementMode,
+      },
+      path: {
+        index: this.pathIndex,
+        length: this.path.length,
+        tileProgress: round(this.tileProgress, 3),
+        predictedUnitSteps: this.predictedPathUnitSteps,
+      },
+      camera: {
+        alpha: round(camera.alpha, 3),
+        beta: round(camera.beta, 3),
+        radius: round(camera.radius, 2),
+        previousTarget: result.previousTarget,
+        target: result.target,
+      },
+      framePace: {
+        mode: this.framePaceMode,
+        estimatedDisplayHz: this.framePaceEstimatedHz === null ? null : round(this.framePaceEstimatedHz, 1),
+        targetRenderFps: this.framePaceTargetIntervalMs === null ? null : round(1000 / this.framePaceTargetIntervalMs, 1),
+        renderCount: this.pacedSceneRenderCount,
+        skippedRenderCount: this.pacedSceneSkippedCount,
+      },
+      diagnosticFlags: [
+        'camera-snap',
+        `camera-snap-${result.reason}`,
+        hiddenCatchup ? 'hidden-catchup-active' : 'visible-play',
+        this.pathIndex < this.path.length ? 'path-active' : 'path-idle',
+      ],
+    });
+  }
 
-    this._overlayTransformReady = false;
-    this.updateTransientHealthBars();
-    this.updateOverlayPositions();
-    this.updateHitSplats(dt);
-    this.updateXpDrops(dt);
-    this.updateMinimap(dt);
+  private updateRenderFrameUi(dt: number): void {
+    this.profileFrameSlice('html overlays', () => {
+      this._overlayTransformReady = false;
+      this.updateTransientHealthBars();
+      this.updateOverlayPositions();
+      this.updateHitSplats(dt);
+      this.updateXpDrops(dt);
+      this.updateMinimap(dt);
+    });
   }
 
   private updateCameraKeys(dt: number): void {
@@ -10209,32 +11152,6 @@ export class GameManager {
     this.minimap?.clearDestination();
   }
 
-  /** Current slide-offset effect on the rendered local-player position.
-   *  Linearly decays from the initial offset to (0, 0) over slideDurationMs.
-   *  PURE: no side effects — it can be called multiple times per frame (and
-   *  mid-frame from packet handlers) without mutating slide state, which
-   *  previously let an expiry-zeroing side effect leak between same-frame
-   *  reads and produce sub-frame position discontinuities. Expiry cleanup is
-   *  done once per frame in `expireFinishedSlide()`. */
-  private getSlideOffset(): { x: number; z: number } {
-    if (this.slideStartMs === 0) return { x: 0, z: 0 };
-    const age = performance.now() - this.slideStartMs;
-    if (age >= this.slideDurationMs) return { x: 0, z: 0 };
-    const factor = 1 - age / this.slideDurationMs;
-    return { x: this.slideOffsetX * factor, z: this.slideOffsetZ * factor };
-  }
-
-  /** Deterministic once-per-frame slide expiry. Replaces the old read-time
-   *  side effect in getSlideOffset so reads stay pure. */
-  private expireFinishedSlide(): void {
-    if (this.slideStartMs === 0) return;
-    if (performance.now() - this.slideStartMs >= this.slideDurationMs) {
-      this.slideStartMs = 0;
-      this.slideOffsetX = 0;
-      this.slideOffsetZ = 0;
-    }
-  }
-
   private isHiddenCatchupActive(now: number = performance.now()): boolean {
     return this._hiddenSinceMs !== 0 || now < this._hiddenCatchupUntilMs;
   }
@@ -10286,8 +11203,8 @@ export class GameManager {
       // If the server is on our path (the common case — we predicted the same
       // route the server walks), this fast-forwards pathIndex and prediction
       // resumes smooth forward-animated movement. Only a genuine divergence
-      // hard-snaps. Previously we cleared the path and slid to authority on
-      // every sync, which lurched backward each tick (visible jitter).
+      // hard-snaps. Visible play does not run this per-tick; it keeps
+      // draining the local path instead.
       this.reconcileLocalPlayerToServer(this.latestSelfSync.x, this.latestSelfSync.z, true, this.latestSelfSync.moving);
     }
     if (this._loginSettled && this.network.isConnected()) {
@@ -10350,6 +11267,16 @@ export class GameManager {
   }
 
   private reconcileLocalPlayerToServer(serverX: number, serverZ: number, hiddenCatchup: boolean, serverMoving: boolean = false): void {
+    if (hiddenCatchup && this.fastForwardPredictedPathToAuthority(serverX, serverZ)) {
+      this.renderLocalPlayerAtLogicalPosition();
+      this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
+      return;
+    }
+    this.hardResetLocalPlayerToAuthority(serverX, serverZ, serverMoving);
+  }
+
+  private fastForwardPredictedPathToAuthority(serverX: number, serverZ: number): boolean {
+    if (this.pathIndex >= this.path.length) return false;
     const sTx = Math.floor(serverX);
     const sTz = Math.floor(serverZ);
     let foundIndex = -1;
@@ -10361,123 +11288,117 @@ export class GameManager {
       }
     }
 
-    const prevLogicalX = this.playerX;
-    const prevLogicalZ = this.playerZ;
-    this.playerX = serverX;
-    this.playerZ = serverZ;
-
     if (foundIndex >= 0) {
-      // Server is on our path: skip ahead and keep walking the remainder.
+      this.playerX = serverX;
+      this.playerZ = serverZ;
       this.pathIndex = foundIndex + 1;
       this.tileProgress = 0;
       this.setTileFrom(serverX, serverZ);
-      const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
-      const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
-      this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
       if (this.pathIndex >= this.path.length) {
         this.finishPredictedPathArrival();
+        return true;
       }
-      return;
+      this.predictedPathUnitSteps = this.predictedPathRemainingUnitSteps();
+      if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
+      return true;
     }
 
     const segmentIdx = this.findPathSegmentContainingTile(sTx, sTz);
     if (segmentIdx >= 0) {
-      // The server can be on an intermediate unit tile inside one compressed
-      // client segment. Keep the same waypoint target and re-anchor the
-      // segment at the authoritative tile instead of treating this as a
-      // wrong-path snap.
+      this.playerX = serverX;
+      this.playerZ = serverZ;
       this.pathIndex = segmentIdx;
       this.tileProgress = 0;
       this.setTileFrom(serverX, serverZ);
-      const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
-      const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
-      this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
-      return;
+      this.predictedPathUnitSteps = this.predictedPathRemainingUnitSteps();
+      if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
+      return true;
     }
 
-    // Server is not on the path the client is currently predicting. During
-    // visible play, keep the server queue authoritative and slide the local
-    // visual onto it. After a hidden-tab return, hard-reset only the stale
-    // client visual; do not send an empty move that would cancel the server's
-    // still-authoritative queue.
+    return false;
+  }
+
+  private hardResetLocalPlayerToAuthority(serverX: number, serverZ: number, serverMoving: boolean = false): void {
     this.clearPredictedPath();
+    this.clearControlledMoveLock();
+    this.playerX = serverX;
+    this.playerZ = serverZ;
     this.setTileFrom(serverX, serverZ);
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
-
-    if (hiddenCatchup) {
-      this.slideOffsetX = 0;
-      this.slideOffsetZ = 0;
-      this.slideStartMs = 0;
-      if (this.localPlayer) {
-        this.localPlayer.setPositionXYZ(serverX, this.getHeight(serverX, serverZ), serverZ);
-        this.localPlayer.stopWalking();
-      }
-      this.inputManager.setPlayerY(this.getHeight(serverX, serverZ));
-    } else {
-      const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
-      const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
-      this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
-      if (serverMoving) {
-        if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
-      } else {
-        this.localPlayer?.stopWalking();
-      }
+    this.renderLocalPlayerAtLogicalPosition();
+    this.inputManager.setPlayerY(this.getHeight(serverX, serverZ));
+    if (serverMoving) {
+      this.localCombatWalkUntilMs = 0;
+      this.localPlayer?.stopWalking();
+      return;
     }
+
+    if (this.shouldKeepLocalCombatWalkLoopAlive()) {
+      this.localCombatWalkUntilMs = performance.now() + TICK_RATE + 150;
+    } else {
+      this.localCombatWalkUntilMs = 0;
+      this.localPlayer?.stopWalking();
+    }
+    this.finishPendingFaceTarget();
+    this.refreshLocalCombatFacing();
   }
 
-  /** Begin a smooth-slide visual catch-up. The logical playerX/Z should
-   *  already be updated to the new (server) position by the caller. The
-   *  rendered position will start at the OLD visual location and glide to
-   *  the new logical position over durationMs. Stacking is safe: if another
-   *  slide is in flight, the rendered position is held still and a fresh
-   *  decay starts from there — never a visual hiccup, even on rapid snaps. */
-  private beginVisualSlide(prevLogicalX: number, prevLogicalZ: number, durationMs: number = GameManager.SLIDE_DURATION_MS): void {
-    const cur = this.getSlideOffset();
-    const oldRenderedX = prevLogicalX + cur.x;
-    const oldRenderedZ = prevLogicalZ + cur.z;
-    this.slideOffsetX = oldRenderedX - this.playerX;
-    this.slideOffsetZ = oldRenderedZ - this.playerZ;
-    this.slideStartMs = performance.now();
-    this.slideDurationMs = durationMs;
-  }
-
-  /** Apply the current slide offset to the local player's rendered position.
-   *  Called every frame so the offset visibly decays even when the path is
-   *  empty (e.g., snapped while standing still). When no slide is active
-   *  this is a cheap pass-through — same coords the path code would set. */
-  private renderLocalPlayerWithSlide(): void {
+  /** Render the local player at the logical prediction position. */
+  private renderLocalPlayerAtLogicalPosition(): void {
     if (!this.localPlayer) return;
-    const off = this.getSlideOffset();
-    const vx = this.playerX + off.x;
-    const vz = this.playerZ + off.z;
-    const vy = this.getHeight(vx, vz);
-    this.localPlayer.setPositionXYZ(vx, vy, vz);
+    const vy = this.getHeight(this.playerX, this.playerZ);
+    this.localPlayer.setPositionXYZ(this.playerX, vy, this.playerZ);
   }
 
   private updateLocalPlayerMovement(dt: number, camPos: Vector3 | null): void {
     if (this.pathIndex >= this.path.length || !this.localPlayer) return;
+    const remainingUnitSteps = this.remainingPredictedUnitSteps();
+    const pathUnitSteps = this.predictedPathUnitSteps || remainingUnitSteps;
+    const effectiveMode = effectiveMovementModeForPath(this.movementMode, pathUnitSteps, remainingUnitSteps);
+    this.localPlayer.setMovementMode(effectiveMode);
     if (!this.localPlayer.isWalking()) this.localPlayer.startWalking();
 
-    if (this.pathIndex >= this.path.length) return;
-    const target = this.path[this.pathIndex];
-    const dx = target.x - this.tileFrom.x;
-    const dz = target.z - this.tileFrom.z;
-    // Chebyshev (max-of-axes), not Euclidean: server processes one unit-tile
-    // per tick regardless of direction, so a diagonal step takes the same
-    // 600 ms as a cardinal step. Using Euclidean distance here would slow
-    // diagonals to ~0.85 sec/tile, drifting the local visual behind server
-    // position — which is what mogn would see for testchar2 over time.
-    const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
+    let timeLeft = Math.min(Math.max(0, dt), GameManager.LOCAL_MOVEMENT_MAX_FRAME_DT);
+    const EPSILON = 0.000001;
 
-    const effectiveSpeed = this.moveSpeed;
+    while (timeLeft > EPSILON && this.pathIndex < this.path.length) {
+      const target = this.path[this.pathIndex];
+      const dx = target.x - this.tileFrom.x;
+      const dz = target.z - this.tileFrom.z;
+      // Chebyshev (max-of-axes), not Euclidean: server processes one unit-tile
+      // per tick regardless of direction, so a diagonal step takes the same
+      // 600 ms as a cardinal step. Advance to unit-tile boundaries inside
+      // compressed segments so leftover time from a short first segment cannot
+      // become a large percentage jump on the next long diagonal.
+      const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
+      if (tileSteps <= EPSILON) {
+        this.tileProgress = 1;
+      } else {
+        const currentRemainingSteps = this.remainingPredictedUnitSteps();
+        const currentPathSteps = this.predictedPathUnitSteps || currentRemainingSteps;
+        const mode = effectiveMovementModeForPath(this.movementMode, currentPathSteps, currentRemainingSteps);
+        this.localPlayer.setMovementMode(mode);
+        const speed = effectiveMovementTilesPerSecondForPath(this.movementMode, currentPathSteps, currentRemainingSteps);
+        const progressTiles = Math.max(0, Math.min(tileSteps, this.tileProgress * tileSteps));
+        const nextBoundaryTiles = Math.min(Math.floor(progressTiles + EPSILON) + 1, tileSteps);
+        const distanceToBoundary = Math.max(0, nextBoundaryTiles - progressTiles);
+        if (distanceToBoundary > EPSILON) {
+          const timeToBoundary = distanceToBoundary / Math.max(speed, EPSILON);
+          if (timeLeft + EPSILON < timeToBoundary) {
+            this.tileProgress = (progressTiles + speed * timeLeft) / tileSteps;
+            timeLeft = 0;
+            break;
+          }
+          this.tileProgress = nextBoundaryTiles / tileSteps;
+          timeLeft -= timeToBoundary;
+        }
+      }
 
-    const stepRate = tileSteps > 0 ? (effectiveSpeed * dt) / tileSteps : 1;
-    this.tileProgress += stepRate;
+      if (this.tileProgress < 1 - EPSILON) continue;
 
-    while (this.tileProgress >= 1.0 && this.pathIndex < this.path.length) {
       const stepTarget = this.path[this.pathIndex];
-      this.tileProgress -= 1.0;
+      this.tileProgress = 0;
       this.playerX = stepTarget.x;
       this.playerZ = stepTarget.z;
       this.setTileFrom(stepTarget.x, stepTarget.z);
@@ -10487,11 +11408,12 @@ export class GameManager {
         this.path = this.pendingPath;
         this.pathIndex = 0;
         this.pendingPath = null;
+        this.predictedPathUnitSteps = this.predictedPathRemainingUnitSteps();
       }
 
       if (this.pathIndex >= this.path.length) {
         this.finishPredictedPathArrival();
-        this.renderLocalPlayerWithSlide();
+        this.renderLocalPlayerAtLogicalPosition();
         this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
         return;
       }
@@ -10503,17 +11425,12 @@ export class GameManager {
       const activeDz = activeTarget.z - this.tileFrom.z;
       this.playerX = this.tileFrom.x + activeDx * this.tileProgress;
       this.playerZ = this.tileFrom.z + activeDz * this.tileProgress;
-    } else if (this.tileProgress < 1.0) {
-      this.playerX = this.tileFrom.x + dx * this.tileProgress;
-      this.playerZ = this.tileFrom.z + dz * this.tileProgress;
     }
 
     if (!this.isSkilling) {
       if (camPos && this.pathIndex < this.path.length) {
-        const nextTarget = this.path[this.pathIndex];
+        const nextTarget = this.getActiveUnitStep()?.target ?? this.path[this.pathIndex];
         this.localPlayer.updateMovementDirection(nextTarget.x - this.playerX, nextTarget.z - this.playerZ, camPos);
-      } else if (camPos && (dx !== 0 || dz !== 0)) {
-        this.localPlayer.updateMovementDirection(dx, dz, camPos);
       }
 
       // Do not face-lock to NPCs while pathing. Keeping the body aimed at a
@@ -10522,11 +11439,10 @@ export class GameManager {
       // has actually finished.
     }
 
-    // Apply the visual slide offset (zero when no slide is active, so this
-    // is a no-op on normal walking frames). InputManager.playerY uses the
-    // logical height — interaction picks should resolve at the gameplay
-    // position, not the briefly-offset visual one.
-    this.renderLocalPlayerWithSlide();
+    // Render exactly where local prediction says we are. InputManager.playerY
+    // uses the same logical height so interaction picks resolve at gameplay
+    // position.
+    this.renderLocalPlayerAtLogicalPosition();
     this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
   }
 
