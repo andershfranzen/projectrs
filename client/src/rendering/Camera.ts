@@ -242,13 +242,12 @@ export class GameCamera {
     }
   }
 
-  followTarget(position: Vector3): void {
+  followTarget(position: Vector3, _dt: number = 1 / 60): void {
     // RS2 looks at a point ~0.39 tiles above ground in locked mode.
     const targetY = this.locked ? position.y + LOCKED_TARGET_Y_OFFSET : position.y;
-    const speed = 0.2;
-    this.camera.target.x += (position.x - this.camera.target.x) * speed;
-    this.camera.target.y += (targetY - this.camera.target.y) * speed;
-    this.camera.target.z += (position.z - this.camera.target.z) * speed;
+    this.camera.target.x = position.x;
+    this.camera.target.y = targetY;
+    this.camera.target.z = position.z;
 
     if (this.targetRadius > 0) {
       const diff = this.targetRadius - this.camera.radius;

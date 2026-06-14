@@ -1,9 +1,8 @@
 import { Database as SQLiteDB } from 'bun:sqlite';
 import { createHash, randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
-import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance, QuestState } from '@projectrs/shared';
-import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, STANCE_KEYS, DEFAULT_APPEARANCE, combatLevel, initSkills, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
-import type { EquipSlot } from './entity/Player';
+import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance, QuestState, EquipSlot } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, STANCE_KEYS, DEFAULT_APPEARANCE, combatLevel, initSkills, isEquipSlot, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const OAUTH_ACCESS_TOKEN_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
@@ -2543,9 +2542,8 @@ export class GameDatabase {
       const saved = JSON.parse(row.equipment) as Record<string, unknown>;
       equipment = new Map();
       equipmentQuantities = new Map();
-      const validSlots: Set<string> = new Set(['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo']);
       for (const [slot, value] of Object.entries(saved)) {
-        if (!validSlots.has(slot)) continue;
+        if (!isEquipSlot(slot)) continue;
         let itemId: unknown = value;
         let quantity: unknown = 1;
         if (value && typeof value === 'object') {
@@ -2555,8 +2553,8 @@ export class GameDatabase {
         }
         if (typeof itemId !== 'number' || !Number.isInteger(itemId) || itemId <= 0) continue;
         if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity <= 0 || quantity > MAX_STACK) continue;
-        equipment.set(slot as EquipSlot, itemId);
-        if (slot === 'ammo' || quantity !== 1) equipmentQuantities.set(slot as EquipSlot, quantity);
+        equipment.set(slot, itemId);
+        if (slot === 'ammo' || quantity !== 1) equipmentQuantities.set(slot, quantity);
       }
     } catch {
       equipment = new Map();

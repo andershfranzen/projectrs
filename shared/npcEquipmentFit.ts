@@ -1,3 +1,5 @@
+import { isEquipSlot, type EquipSlot } from './equipment';
+
 export interface NpcEquipmentFitVector3 {
   x: number;
   y: number;
@@ -13,21 +15,7 @@ export interface NpcEquipmentFitOverride {
   localRotation?: NpcEquipmentFitVector3;
 }
 
-export type NpcEquipmentFitOverrides = Partial<Record<string, NpcEquipmentFitOverride>>;
-
-const EQUIPMENT_FIT_SLOTS = new Set([
-  'weapon',
-  'shield',
-  'head',
-  'body',
-  'legs',
-  'neck',
-  'ring',
-  'hands',
-  'feet',
-  'cape',
-  'ammo',
-]);
+export type NpcEquipmentFitOverrides = Partial<Record<EquipSlot, NpcEquipmentFitOverride>>;
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -48,7 +36,7 @@ export function normalizeNpcEquipmentFits(raw: unknown): NpcEquipmentFitOverride
   const out: NpcEquipmentFitOverrides = {};
 
   for (const [slot, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (!EQUIPMENT_FIT_SLOTS.has(slot) || !value || typeof value !== 'object' || Array.isArray(value)) continue;
+    if (!isEquipSlot(slot) || !value || typeof value !== 'object' || Array.isArray(value)) continue;
     const src = value as Record<string, unknown>;
     const fit: NpcEquipmentFitOverride = {};
 

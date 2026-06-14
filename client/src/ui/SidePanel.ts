@@ -9,7 +9,7 @@ import {
   QUEST_STAGE_COMPLETED,
   isAutocastableSpell, spellReagentSummary, spellSchoolSkill,
   zeroBonuses, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, combatLevelFromLevels,
-  isNotedItem,
+  isNotedItem, EQUIPMENT_SLOT_LABELS, EQUIPMENT_SLOT_NAMES,
   type SkillId, type MeleeStance, type MagicStance, type ItemDef, type QuestDef, type QuestState,
   type CombatBonuses,
   type SpellEffectDef, type SpellSchool,
@@ -95,7 +95,7 @@ import {
   type ChatMessageColorKey,
 } from './chatSettings';
 
-const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'Ring', 'Hands', 'Feet', 'Cape', 'Ammo'];
+const EQUIP_SLOT_NAMES = EQUIPMENT_SLOT_NAMES.map(slot => EQUIPMENT_SLOT_LABELS[slot]);
 const WATER_CONTAINER_ITEM_IDS: ReadonlySet<number> = new Set(SOFT_CLAY_WATER_CONTAINER_ITEM_IDS);
 const LOG_CRAFT_BUCKET_RECIPE_INDEX = 0;
 const LOG_CRAFT_SHORTBOW_RECIPE_INDEX = 1;

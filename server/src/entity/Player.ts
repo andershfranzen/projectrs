@@ -11,12 +11,10 @@ import {
   MAPLE_SHORTBOW_ITEM_ID, YEW_SHORTBOW_ITEM_ID, MAGIC_SHORTBOW_ITEM_ID,
   SHORTBOW_HQ_ITEM_ID, OAK_SHORTBOW_HQ_ITEM_ID, WILLOW_SHORTBOW_HQ_ITEM_ID,
   MAPLE_SHORTBOW_HQ_ITEM_ID, YEW_SHORTBOW_HQ_ITEM_ID, MAGIC_SHORTBOW_HQ_ITEM_ID,
-  type PlayerAppearance, type ItemDef, type QuestState,
+  type PlayerAppearance, type ItemDef, type QuestState, type EquipSlot,
 } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 
-export const EQUIP_SLOTS = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo'] as const;
-export type EquipSlot = typeof EQUIP_SLOTS[number];
 export type PlayerDelayReason = 'generic' | 'eat';
 /** 17 ticks at 600ms is 10.2s, so the combat logout block is never shorter
  *  than the requested 10 seconds. */
@@ -468,6 +466,11 @@ export class Player extends Entity {
     return true;
   }
 
+  private shouldApplyAmmoOffensiveBonuses(itemDefs: Map<number, ItemDef>, def: ItemDef): boolean {
+    if (def.equipSlot !== 'ammo') return true;
+    return this.canFireAmmo(itemDefs, def);
+  }
+
   // Recompute bonuses from all equipped items
   computeBonuses(itemDefs: Map<number, ItemDef>): CombatBonuses {
     const b = zeroBonuses();
@@ -481,8 +484,10 @@ export class Player extends Entity {
       b.slashDefence += def.slashDefence || 0;
       b.crushDefence += def.crushDefence || 0;
       b.meleeStrength += def.meleeStrength || 0;
-      b.rangedAccuracy += def.rangedAccuracy || 0;
-      b.rangedStrength += def.rangedStrength || 0;
+      if (this.shouldApplyAmmoOffensiveBonuses(itemDefs, def)) {
+        b.rangedAccuracy += def.rangedAccuracy || 0;
+        b.rangedStrength += def.rangedStrength || 0;
+      }
       b.rangedDefence += def.rangedDefence || 0;
       b.magicAccuracy += def.magicAccuracy || 0;
       b.magicDefence += def.magicDefence || 0;

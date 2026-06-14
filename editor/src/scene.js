@@ -210,6 +210,172 @@ function tuneModelLighting(model, assetOrPath = null) {
   waterTexture.wrapU = Texture.WRAP_ADDRESSMODE
   waterTexture.wrapV = Texture.WRAP_ADDRESSMODE
 
+  const EDITOR_ACTIVE_RENDER_MS = 300
+  const EDITOR_STARTUP_RENDER_MS = 4000
+  const EDITOR_IDLE_RENDER_MS = 1000
+  const EDITOR_ANIMATION_IDLE_RENDER_MS = 250
+  const EDITOR_FRAME_SPIKE_MS = 50
+  const EDITOR_FRAME_STATS_STORAGE_KEY = 'evilquest_editor_frame_stats'
+  const EDITOR_FRAME_STATS_QUERY_FLAGS = ['framestats', 'frameprofiler', 'editorstats']
+
+  function editorDiagnosticFlagEnabled(queryFlags, storageKey) {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      for (const flag of queryFlags) {
+        if (!params.has(flag)) continue
+        const value = String(params.get(flag) ?? '1').toLowerCase()
+        return value !== '0' && value !== 'false' && value !== 'off'
+      }
+      return window.localStorage?.getItem(storageKey) === '1'
+    } catch {
+      return false
+    }
+  }
+
+  const editorFrameStatsEnabled = editorDiagnosticFlagEnabled(
+    EDITOR_FRAME_STATS_QUERY_FLAGS,
+    EDITOR_FRAME_STATS_STORAGE_KEY,
+  )
+  let editorRenderDirty = true
+  let editorRenderReason = 'startup'
+  let editorRenderActiveUntil = performance.now() + EDITOR_STARTUP_RENDER_MS
+  let lastEditorRenderAt = 0
+  let editorSkippedFrames = 0
+  let editorFrameStatsOverlay = null
+  let editorFrameStatsWindowStart = performance.now()
+  let editorFrameStatsLoopCount = 0
+  let editorFrameStatsRenderCount = 0
+  let editorFrameStatsLoopFps = 0
+  let editorFrameStatsRenderFps = 0
+  let editorFrameStatsLastOverlayUpdate = 0
+
+  function requestEditorRender(reason = 'change') {
+    editorRenderDirty = true
+    editorRenderReason = reason
+  }
+
+  function requestEditorActiveRender(reason = 'interaction', durationMs = EDITOR_ACTIVE_RENDER_MS) {
+    const now = performance.now()
+    editorRenderActiveUntil = Math.max(editorRenderActiveUntil, now + durationMs)
+    requestEditorRender(reason)
+  }
+
+  function hasActiveEditorAnimations() {
+    return scene.animationGroups?.some((group) => {
+      const isPlaying = group?.isPlaying
+      return typeof isPlaying === 'function' ? isPlaying.call(group) : isPlaying === true
+    }) === true
+  }
+
+  function isEditorInteractionActive() {
+    return Boolean(
+      state.isPainting ||
+      isDragSelecting ||
+      transformMode ||
+      isRightDragging ||
+      isMiddleDragging ||
+      isMiddlePanning,
+    )
+  }
+
+  function shouldRenderEditorFrame(now) {
+    if (document.visibilityState !== 'visible') return false
+    if (editorRenderDirty) return true
+    if (isEditorInteractionActive()) return true
+    if (now < editorRenderActiveUntil) return true
+
+    const idleInterval = hasActiveEditorAnimations()
+      ? EDITOR_ANIMATION_IDLE_RENDER_MS
+      : EDITOR_IDLE_RENDER_MS
+    return now - lastEditorRenderAt >= idleInterval
+  }
+
+  function ensureEditorFrameStatsOverlay() {
+    if (!editorFrameStatsEnabled) return null
+    if (editorFrameStatsOverlay) return editorFrameStatsOverlay
+
+    editorFrameStatsOverlay = document.createElement('div')
+    editorFrameStatsOverlay.style.cssText = [
+      'position:fixed',
+      'left:8px',
+      'bottom:8px',
+      'z-index:100000',
+      'padding:6px 8px',
+      'background:rgba(0,0,0,0.76)',
+      'color:#d7f5ff',
+      'font:11px/1.35 monospace',
+      'border:1px solid rgba(255,255,255,0.2)',
+      'border-radius:4px',
+      'pointer-events:none',
+      'white-space:pre',
+    ].join(';')
+    document.body.appendChild(editorFrameStatsOverlay)
+    return editorFrameStatsOverlay
+  }
+
+  function updateEditorFrameStats({ now, updateMs, renderMs, rendered, totalMs, reason }) {
+    if (!editorFrameStatsEnabled) return
+
+    editorFrameStatsLoopCount++
+    if (rendered) editorFrameStatsRenderCount++
+
+    const windowMs = now - editorFrameStatsWindowStart
+    if (windowMs >= 500) {
+      editorFrameStatsLoopFps = editorFrameStatsLoopCount * 1000 / windowMs
+      editorFrameStatsRenderFps = editorFrameStatsRenderCount * 1000 / windowMs
+      editorFrameStatsLoopCount = 0
+      editorFrameStatsRenderCount = 0
+      editorFrameStatsWindowStart = now
+    }
+
+    if (rendered && (totalMs >= EDITOR_FRAME_SPIKE_MS || updateMs >= EDITOR_FRAME_SPIKE_MS || renderMs >= EDITOR_FRAME_SPIKE_MS)) {
+      console.warn('[editor-frame-spike]', {
+        totalMs: totalMs.toFixed(1),
+        updateMs: updateMs.toFixed(1),
+        renderMs: renderMs.toFixed(1),
+        reason,
+        meshes: scene.meshes.length,
+      })
+    }
+
+    if (now - editorFrameStatsLastOverlayUpdate < 150) return
+    editorFrameStatsLastOverlayUpdate = now
+    const overlay = ensureEditorFrameStatsOverlay()
+    if (!overlay) return
+
+    overlay.textContent = [
+      `loop ${editorFrameStatsLoopFps.toFixed(0)} fps`,
+      `render ${editorFrameStatsRenderFps.toFixed(0)} fps`,
+      `skipped ${editorSkippedFrames}`,
+      `reason ${reason || editorRenderReason}`,
+      `update ${updateMs.toFixed(1)} ms`,
+      `render ${renderMs.toFixed(1)} ms`,
+      `meshes ${scene.meshes.length}`,
+    ].join('\n')
+  }
+
+  function installEditorRenderInvalidators() {
+    scene.onNewMeshAddedObservable?.add(() => requestEditorRender('mesh-added'))
+    scene.onMeshRemovedObservable?.add(() => requestEditorRender('mesh-removed'))
+
+    const wake = () => requestEditorActiveRender('input')
+    const wakePointerMove = (event) => {
+      if (event.buttons !== 0 || event.target === canvas) requestEditorActiveRender('pointer')
+    }
+
+    document.addEventListener('pointerdown', wake, true)
+    document.addEventListener('pointerup', wake, true)
+    document.addEventListener('pointermove', wakePointerMove, true)
+    document.addEventListener('wheel', wake, { capture: true, passive: true })
+    document.addEventListener('keydown', wake, true)
+    document.addEventListener('keyup', wake, true)
+    document.addEventListener('input', wake, true)
+    document.addEventListener('change', wake, true)
+    document.addEventListener('visibilitychange', () => requestEditorRender('visibility'))
+  }
+
+  installEditorRenderInvalidators()
+
   // Babylon.js animations auto-update — no mixer management needed
   // We keep a simple set of animation groups for cleanup
   const _animGroups = new Map() // model -> AnimationGroup[]
@@ -2598,6 +2764,7 @@ let selectedWaterFlowChunk = null
     if (rebuildTexturePlanes) skipTexturePlanes = false
     if (rebuildTextureOverlays) skipTextureOverlays = false
     _terrainDirty = true
+    requestEditorRender('terrain-dirty')
     if (!skipTexturePlanes)   _terrainDirtyOpts.skipTexturePlanes   = false
     if (!skipShadows)         _terrainDirtyOpts.skipShadows         = false
     if (!skipTextureOverlays) _terrainDirtyOpts.skipTextureOverlays = false
@@ -2642,6 +2809,7 @@ let selectedWaterFlowChunk = null
 
   function markCollisionDirty() {
     _collisionDirty = true
+    requestEditorRender('collision-dirty')
   }
 
   // Highlight mesh for hovered tile
@@ -2679,6 +2847,7 @@ let selectedWaterFlowChunk = null
     if (halfPaintPreviewLine) { halfPaintPreviewLine.dispose(); halfPaintPreviewLine = null }
     if (halfPaintPreviewFill) { halfPaintPreviewFill.dispose(); halfPaintPreviewFill = null }
     halfPaintPreviewKey = null
+    requestEditorRender('half-preview-clear')
   }
 
   function updateHalfPaintPreview(tile, eventLike) {
@@ -9100,6 +9269,7 @@ let selectedWaterFlowChunk = null
   }
 
   function updateSelectionHelper() {
+    requestEditorRender('selection')
     clearSelectionHelper()
 
     const totalSelected = selectedPlacedObjects.length + selectedTexturePlanes.length
@@ -10135,6 +10305,7 @@ let selectedWaterFlowChunk = null
     texturePlaneGroup = newPlanes
     reindexTexturePlaneNodes()
     updateSelectionHelper()
+    requestEditorRender('texture-planes')
   }
 
   function appendTexturePlane(plane) {
@@ -10148,6 +10319,7 @@ let selectedWaterFlowChunk = null
       indexTexturePlaneNode(mesh)
     }
     updateSelectionHelper()
+    requestEditorRender('texture-plane-add')
   }
 
   function removeTexturePlaneMesh(plane) {
@@ -10155,6 +10327,7 @@ let selectedWaterFlowChunk = null
     if (node) {
       texturePlaneNodesById.delete(plane?.id)
       node.dispose()
+      requestEditorRender('texture-plane-remove')
     }
   }
 
@@ -10167,6 +10340,7 @@ let selectedWaterFlowChunk = null
     if (textureOverlayGroup) textureOverlayGroup.dispose()
     if (newOverlays) newOverlays.setEnabled(true)
     textureOverlayGroup = newOverlays
+    requestEditorRender('texture-overlays')
   }
 
   /** Fast single-tile texture overlay update — avoids full map rebuild */
@@ -10187,6 +10361,7 @@ let selectedWaterFlowChunk = null
     if (!meshes) return
     for (const m of meshes) m.dispose(false, false)
     overlayMeshesByTile.delete(key)
+    requestEditorRender('texture-overlay-remove')
   }
 
   function updateTextureOverlaysInRegion(region) {
@@ -10279,6 +10454,7 @@ let selectedWaterFlowChunk = null
     node.rotation.set(plane.rotation?.x ?? 0, plane.rotation?.y ?? 0, plane.rotation?.z ?? 0)
     node.scaling.set(plane.scale?.x ?? 1, plane.scale?.y ?? 1, plane.scale?.z ?? 1)
     setTexturePlaneNodeFrozen(node, true)
+    requestEditorRender('texture-plane-transform')
   }
 
   let _lastMouseEvent = null
@@ -11558,6 +11734,7 @@ function applyToolAtTile(tile, eventLike = null) {
     const pos = tileWorldPosition(state.hovered.x, state.hovered.z)
     applyWallPlacementSnap(previewObject, pos, asset, state.hovered)
     previewObject.position.copyFrom(pos)
+    requestEditorRender('preview-object')
   }
 
   async function placeSelectedAsset(tile, event) {
@@ -16285,6 +16462,7 @@ function applyToolAtTile(tile, eventLike = null) {
     camera.target.copyFrom(target)
     updateCompass()
     if (heightCullEnabled) applyHeightCull()
+    requestEditorActiveRender('camera')
   }
 
   function panCamera(deltaX, deltaY) {
@@ -16539,6 +16717,7 @@ function applyToolAtTile(tile, eventLike = null) {
 
   window.addEventListener('resize', () => {
     engine.resize()
+    requestEditorActiveRender('resize')
   })
 
   window.addEventListener('keydown', async (event) => {
@@ -16973,20 +17152,54 @@ if (key === 'e') {
   Promise.all([initAssets(), initTextures()]).then(() => initDefaultSave())
 
   engine.runRenderLoop(() => {
+    const loopStart = performance.now()
+    const updateStart = loopStart
     if (_collisionDirty) {
       rebuildCollisionMeshes()
       _collisionDirty = false
+      requestEditorRender('collision-rebuilt')
     }
     if (_terrainDirty) {
       rebuildTerrain({ ..._terrainDirtyOpts, _heightsOnlyRegion: _terrainDirtyRegion })
       _terrainDirty = false
       _terrainDirtyRegion = null
       _terrainDirtyOpts = { skipTexturePlanes: true, skipShadows: true, skipTextureOverlays: true }
+      requestEditorRender('terrain-rebuilt')
     }
-    // Selection helpers are recreated on change, no per-frame update needed
-    const t = performance.now() * 0.0003
+    const updateMs = performance.now() - updateStart
+    const now = performance.now()
+    const renderReason = editorRenderReason
+
+    if (!shouldRenderEditorFrame(now)) {
+      editorSkippedFrames++
+      updateEditorFrameStats({
+        now,
+        updateMs,
+        renderMs: 0,
+        rendered: false,
+        totalMs: performance.now() - loopStart,
+        reason: renderReason,
+      })
+      return
+    }
+
+    // Selection helpers are recreated on change, no per-frame update needed.
+    const t = now * 0.0003
     waterTexture.uOffset = t * 0.18
     waterTexture.vOffset = t * 0.09
+
+    editorRenderDirty = false
+    const renderStart = performance.now()
     scene.render()
+    const renderMs = performance.now() - renderStart
+    lastEditorRenderAt = now
+    updateEditorFrameStats({
+      now: performance.now(),
+      updateMs,
+      renderMs,
+      rendered: true,
+      totalMs: performance.now() - loopStart,
+      reason: renderReason,
+    })
   })
 }

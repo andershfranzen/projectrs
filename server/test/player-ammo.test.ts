@@ -103,6 +103,41 @@ describe('player ammo selection', () => {
     });
   });
 
+  test('only applies equipped ammo offensive bonuses when the weapon can fire it', () => {
+    const player = makePlayer();
+    player.setEquipment('ammo', STEEL_ARROWS_ITEM_ID, 20);
+    const defs = new Map<number, ItemDef>([
+      [SHORTBOW_ITEM_ID, baseItem(SHORTBOW_ITEM_ID, 'Shortbow', {
+        equippable: true,
+        equipSlot: 'weapon',
+        weaponStyle: 'bow',
+        ammoType: 'arrow',
+      })],
+      [OAK_SHORTBOW_ITEM_ID, baseItem(OAK_SHORTBOW_ITEM_ID, 'Oak Shortbow', {
+        equippable: true,
+        equipSlot: 'weapon',
+        weaponStyle: 'bow',
+        ammoType: 'arrow',
+      })],
+      [STEEL_ARROWS_ITEM_ID, baseItem(STEEL_ARROWS_ITEM_ID, 'Steel Arrows', {
+        stackable: true,
+        equippable: true,
+        equipSlot: 'ammo',
+        isAmmo: true,
+        ammoType: 'arrow',
+        rangedAccuracy: 5,
+        rangedStrength: 16,
+      })],
+    ]);
+
+    expect(player.computeBonuses(defs).rangedAccuracy).toBe(0);
+    expect(player.computeBonuses(defs).rangedStrength).toBe(0);
+
+    player.setEquipment('weapon', OAK_SHORTBOW_ITEM_ID);
+    expect(player.computeBonuses(defs).rangedAccuracy).toBe(5);
+    expect(player.computeBonuses(defs).rangedStrength).toBe(16);
+  });
+
   test('bows use accurate and rapid attack pacing', () => {
     const player = makePlayer();
     const CROSSBOW_ITEM_ID = 9000;

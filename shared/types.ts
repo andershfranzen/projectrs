@@ -1,4 +1,5 @@
 import type { PlayerAppearance } from './appearance';
+import type { EquipSlot } from './equipment';
 import type { MinimapMarker } from './minimapIcons';
 import type { NpcEquipmentFitOverrides } from './npcEquipmentFit';
 import type { SkillId } from './skills';
@@ -72,7 +73,12 @@ export interface ItemDef {
   /** Item id of the canonical item this noted variant represents. */
   unnotedId?: number;
   equippable: boolean;
-  equipSlot?: 'weapon' | 'head' | 'body' | 'legs' | 'shield' | 'neck' | 'ring' | 'hands' | 'feet' | 'cape' | 'ammo';
+  equipSlot?: EquipSlot;
+  /**
+   * Equipment slots this item occupies while worn. Defaults to `[equipSlot]`.
+   * `twoHanded` weapons still imply `['weapon', 'shield']` for legacy items.
+   */
+  occupiesSlots?: EquipSlot[];
   /**
    * For `equipSlot === 'body'` items only — how much of the character's bare
    * skin to hide while equipped.

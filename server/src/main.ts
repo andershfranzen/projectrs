@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS, isValidMinimapIconFilename, normalizeMinimapMarkers, diagnosticFlagsFromPayload, diagnosticRecordField, measuredFpsFromDiagnosticPayload, rendererFromWebGlDiagnostics } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS, isValidMinimapIconFilename, normalizeMinimapMarkers, diagnosticFlagsFromPayload, diagnosticRecordField, measuredFpsFromDiagnosticPayload, rendererFromWebGlDiagnostics, validateItemDefs } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -637,78 +637,6 @@ async function saveJsonWithBackup(opts: {
     fsp.writeFile(tmpPath, JSON.stringify(data, null, 2)),
   ]);
   await fsp.rename(tmpPath, path);
-}
-
-const EQUIP_SLOTS = new Set(['weapon', 'head', 'body', 'legs', 'shield', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo']);
-const EQUIP_SKILLS = new Set(['weaponry', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcutting', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']);
-const WEAPON_STYLES = new Set(['stab', 'slash', 'crush', 'bow', 'crossbow']);
-const TOOL_TYPES = new Set(['axe', 'pickaxe', 'hammer']);
-const HEAD_RENDER_MODE_SET: ReadonlySet<string> = new Set(HEAD_RENDER_MODES);
-
-function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok: false; error: string } {
-  if (!Array.isArray(items)) return { ok: false, error: 'Body must be { items: ItemDef[] }' };
-  const seen = new Set<number>();
-  const finiteNumberFields = [
-    'value', 'attackSpeed', 'attackRange', 'stabAttack', 'slashAttack', 'crushAttack',
-    'stabDefence', 'slashDefence', 'crushDefence', 'rangedDefence',
-    'magicDefence', 'magicAccuracy', 'meleeStrength', 'rangedAccuracy',
-    'rangedStrength', 'healAmount', 'toolLevel', 'toolBonus', 'levelRequired',
-  ];
-  for (const raw of items) {
-    if (!raw || typeof raw !== 'object') return { ok: false, error: 'Every item must be an object' };
-    const item = raw as Record<string, unknown>;
-    if (!Number.isInteger(item.id) || (item.id as number) <= 0) return { ok: false, error: `Invalid item id: ${String(item.id)}` };
-    if (seen.has(item.id as number)) return { ok: false, error: `Duplicate item id: ${item.id}` };
-    seen.add(item.id as number);
-    if (typeof item.name !== 'string' || item.name.trim().length === 0) return { ok: false, error: `Item ${item.id} is missing a name` };
-    if (typeof item.description !== 'string') return { ok: false, error: `Item ${item.id} is missing a description` };
-    if (typeof item.stackable !== 'boolean') return { ok: false, error: `Item ${item.id} has invalid stackable` };
-    if (typeof item.equippable !== 'boolean') return { ok: false, error: `Item ${item.id} has invalid equippable` };
-    if (item.equipSlot !== undefined && !EQUIP_SLOTS.has(String(item.equipSlot))) return { ok: false, error: `Item ${item.id} has invalid equipSlot` };
-    if (item.equipSkill !== undefined && !EQUIP_SKILLS.has(String(item.equipSkill))) return { ok: false, error: `Item ${item.id} has invalid equipSkill` };
-    if (item.weaponStyle !== undefined && !WEAPON_STYLES.has(String(item.weaponStyle))) return { ok: false, error: `Item ${item.id} has invalid weaponStyle` };
-    if (item.toolType !== undefined && !TOOL_TYPES.has(String(item.toolType))) return { ok: false, error: `Item ${item.id} has invalid toolType` };
-    if (item.headRenderMode !== undefined && !HEAD_RENDER_MODE_SET.has(String(item.headRenderMode))) return { ok: false, error: `Item ${item.id} has invalid headRenderMode` };
-    if (item.thumbnailModel !== undefined && (typeof item.thumbnailModel !== 'string' || item.thumbnailModel.trim().length === 0)) {
-      return { ok: false, error: `Item ${item.id} has invalid thumbnailModel` };
-    }
-    if (item.bodyTypeModels !== undefined) {
-      if (!item.bodyTypeModels || typeof item.bodyTypeModels !== 'object' || Array.isArray(item.bodyTypeModels)) {
-        return { ok: false, error: `Item ${item.id} has invalid bodyTypeModels` };
-      }
-      for (const [bodyType, model] of Object.entries(item.bodyTypeModels as Record<string, unknown>)) {
-        if (!/^\d+$/.test(bodyType) || typeof model !== 'string' || model.trim().length === 0) {
-          return { ok: false, error: `Item ${item.id} has invalid bodyTypeModels.${bodyType}` };
-        }
-      }
-    }
-    if (item.stackModels !== undefined) {
-      if (!Array.isArray(item.stackModels)) return { ok: false, error: `Item ${item.id} has invalid stackModels` };
-      for (const [index, variant] of item.stackModels.entries()) {
-        if (!variant || typeof variant !== 'object') return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}` };
-        const stackVariant = variant as Record<string, unknown>;
-        if (!Number.isInteger(stackVariant.minQuantity) || (stackVariant.minQuantity as number) <= 0) {
-          return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}.minQuantity` };
-        }
-        if (typeof stackVariant.model !== 'string' || stackVariant.model.trim().length === 0) {
-          return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}.model` };
-        }
-        if (stackVariant.scale !== undefined && (typeof stackVariant.scale !== 'number' || !Number.isFinite(stackVariant.scale) || stackVariant.scale <= 0)) {
-          return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}.scale` };
-        }
-      }
-    }
-    for (const field of finiteNumberFields) {
-      const value = item[field];
-      if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
-        return { ok: false, error: `Item ${item.id} has invalid ${field}` };
-      }
-    }
-    if (item.attackRange !== undefined && (item.attackRange as number) <= 0) {
-      return { ok: false, error: `Item ${item.id} has invalid attackRange` };
-    }
-  }
-  return { ok: true, items: items as ItemDef[] };
 }
 
 // --- Backup helper ---

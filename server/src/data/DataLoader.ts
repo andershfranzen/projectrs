@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { COOKING_RANGE_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, withGeneratedBankNotes, type NpcDef, type ItemDef, type SpawnsFile, type WorldObjectDef, type ShopDef, type DialogueTree, type QuestDef, type SpellEffectDef, type RareDropTableDef } from '@projectrs/shared';
+import { COOKING_RANGE_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, validateItemDefs, withGeneratedBankNotes, type NpcDef, type ItemDef, type SpawnsFile, type WorldObjectDef, type ShopDef, type DialogueTree, type QuestDef, type SpellEffectDef, type RareDropTableDef } from '@projectrs/shared';
 
 const DATA_DIR = resolve(import.meta.dir, '../../data');
 const MAPS_DIR = resolve(DATA_DIR, 'maps');
@@ -83,7 +83,10 @@ export class DataLoader {
     const path = resolve(DATA_DIR, 'items.json');
     try {
       const raw = readFileSync(path, 'utf-8');
-      const defs: ItemDef[] = withGeneratedBankNotes(JSON.parse(raw));
+      const parsed = JSON.parse(raw);
+      const validation = validateItemDefs(parsed, { arrayError: 'items.json must be an ItemDef[]' });
+      if (!validation.ok) throw new Error(validation.error);
+      const defs: ItemDef[] = withGeneratedBankNotes(validation.items);
       for (const def of defs) this.items.set(def.id, def);
       console.log(`Loaded ${this.items.size} item definitions`);
     } catch (e) {

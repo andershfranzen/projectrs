@@ -1,10 +1,10 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, EQUIPMENT_SLOT_NAMES, occupiedEquipmentSlotsForDef, equipmentSlotSetsConflict, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe, type EquipSlot, type InventorySlot } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
 import { addXp, levelFromXp, MAX_SKILL_LEVEL, MAX_SKILL_XP, statRandom, spellSchoolSkill, xpForLevel } from '@projectrs/shared';
 import { GameMap } from './GameMap';
-import { Player, type EquipSlot, type PlayerAmmo } from './entity/Player';
+import { Player, type PlayerAmmo } from './entity/Player';
 import { Npc, type NpcOptions } from './entity/Npc';
 import { WorldObject, releaseObjectEntityId } from './entity/WorldObject';
 import { DataLoader } from './data/DataLoader';
@@ -47,6 +47,52 @@ const STALL_SPOT_WARNING = 'Hey! Get your hands off there!';
 const STALL_MERCHANT_GUARD_CALL = 'Guards guards!';
 const STALL_MERCHANT_BLOCK_MESSAGE = 'The merchant is watching you too closely.';
 type ItemQuantity = { itemId: number; quantity: number };
+type EquipmentConflict = ItemQuantity & { slot: EquipSlot };
+
+function cloneInventorySlots(inventory: readonly (InventorySlot | null)[]): (InventorySlot | null)[] {
+  return inventory.map(slot => slot ? { itemId: slot.itemId, quantity: slot.quantity } : null);
+}
+
+function inventorySnapshotCanFitItems(
+  inventory: readonly (InventorySlot | null)[],
+  itemDefs: Map<number, ItemDef>,
+  items: readonly ItemQuantity[],
+): boolean {
+  const slots = cloneInventorySlots(inventory);
+
+  for (const item of items) {
+    const quantity = Math.floor(item.quantity);
+    if (!Number.isInteger(item.itemId) || item.itemId <= 0 || quantity <= 0 || quantity > MAX_STACK) return false;
+    const def = itemDefs.get(item.itemId);
+    if (def?.stackable === true) {
+      const existing = slots.find(slot => slot?.itemId === item.itemId);
+      if (existing) {
+        const headroom = MAX_STACK - existing.quantity;
+        if (headroom < quantity) return false;
+        existing.quantity += quantity;
+        continue;
+      }
+      const empty = slots.findIndex(slot => slot === null);
+      if (empty < 0) return false;
+      slots[empty] = { itemId: item.itemId, quantity };
+      continue;
+    }
+
+    for (let i = 0; i < quantity; i++) {
+      const empty = slots.findIndex(slot => slot === null);
+      if (empty < 0) return false;
+      slots[empty] = { itemId: item.itemId, quantity: 1 };
+    }
+  }
+
+  return true;
+}
+
+function occupiedSlotsForEquippedItem(def: ItemDef | undefined, fallbackSlot: EquipSlot): EquipSlot[] {
+  const slots = occupiedEquipmentSlotsForDef(def);
+  return slots.length > 0 ? slots : [fallbackSlot];
+}
+
 type BankInventoryItemsForCoinsAction = Extract<import('@projectrs/shared').DialogueAction, { type: 'bankInventoryItemsForCoins' }>;
 type PlayerMovementLayerState = { floor: number; y: number; lastFloorChangeTile: number };
 type SultansMineDoorTransit = { doorId: number; finalX: number; finalZ: number; expiresTick: number; moved: boolean };
@@ -310,9 +356,6 @@ const LOW_VALUE_NPC_DROP_LOG_SUPPRESSION_ITEM_IDS = new Set([
   301, // Human Skin
 ]);
 
-/** Canonical ordering of equipment slots used for binary opcode encoding.
- *  Must stay in sync with the client-side decoder in GameManager. */
-const EQUIPMENT_SLOT_NAMES: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo'];
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 
 export interface GroundItem {
@@ -6270,7 +6313,7 @@ export class World {
     const itemDef = this.data.getItem(slot.itemId);
     if (!itemDef || !itemDef.equippable || !itemDef.equipSlot) return;
 
-    const equipSlot = itemDef.equipSlot as EquipSlot;
+    const equipSlot = itemDef.equipSlot;
     const requiredLevel = itemDef.levelRequired ?? 1;
     const requiredSkill = itemDef.equipSkill ?? (equipSlot === 'weapon' ? 'weaponry' : equipSlot === 'ammo' ? undefined : 'defence');
     if (requiredSkill && requiredLevel > 1 && (player.skills[requiredSkill]?.level ?? 1) < requiredLevel) {
@@ -6318,37 +6361,34 @@ export class World {
       return;
     }
 
-    // Pre-flight: figure out if any side-unequips (2H↔shield) will displace
-    // an item into the inventory, and reject the swap if there's no room.
-    // Without this check, the displaced item silently vanishes — leaving both
-    // pieces equipped (e.g. 2H weapon + shield).
-    let sideUnequipId: number | undefined;
-    if (equipSlot === 'weapon' && itemDef.twoHanded) {
-      sideUnequipId = player.equipment.get('shield');
-    } else if (equipSlot === 'shield') {
-      const weaponId = player.equipment.get('weapon');
-      if (weaponId !== undefined) {
-        const weaponDef = this.data.getItem(weaponId);
-        if (weaponDef?.twoHanded) sideUnequipId = weaponId;
-      }
+    const incomingOccupiedSlots = occupiedEquipmentSlotsForDef(itemDef);
+    const conflicts: EquipmentConflict[] = [];
+    for (const [wornSlot, wornItemId] of player.equipment) {
+      if (wornSlot === equipSlot) continue;
+      const wornDef = this.data.getItem(wornItemId);
+      const wornOccupiedSlots = occupiedSlotsForEquippedItem(wornDef, wornSlot);
+      if (!equipmentSlotSetsConflict(incomingOccupiedSlots, wornOccupiedSlots)) continue;
+      conflicts.push({
+        slot: wornSlot,
+        itemId: wornItemId,
+        quantity: player.getEquipmentQuantity(wornSlot),
+      });
     }
 
-    if (sideUnequipId !== undefined) {
-      // After the source-slot swap, the source slot is filled iff there's a
-      // current equipped item to displace into it. So free slots available for
-      // the side-unequip are: current free slots, plus 1 if source becomes empty.
-      let freeSlots = 0;
-      for (const s of player.inventory) if (s === null) freeSlots++;
-      const freeAfterSwap = freeSlots + (currentEquipped === undefined ? 1 : 0);
-      if (freeAfterSwap < 1) {
-        // Not enough room — refuse the equip entirely. Better than leaving
-        // the player in an invalid two-mainhand state.
+    if (conflicts.length > 0) {
+      const inventoryAfterSourceSwap = cloneInventorySlots(player.inventory);
+      inventoryAfterSourceSwap[slotIndex] = currentEquipped !== undefined
+        ? { itemId: currentEquipped, quantity: player.getEquipmentQuantity(equipSlot) }
+        : null;
+      if (!inventorySnapshotCanFitItems(inventoryAfterSourceSwap, this.data.itemDefs, conflicts)) {
         this.sendChatSystem(player, 'You need a free inventory slot to do that.');
         return;
       }
     }
 
     const weaponBefore = player.equipment.get('weapon');
+    const originalSourceSlot = slot ? { itemId: slot.itemId, quantity: slot.quantity } : null;
+    const originalEquippedQuantity = currentEquipped !== undefined ? player.getEquipmentQuantity(equipSlot) : 0;
     this.interruptPlayerAction(playerId, player);
 
     // Source slot: receives displaced equipment if any, else cleared.
@@ -6360,13 +6400,25 @@ export class World {
 
     player.setEquipment(equipSlot, slot.itemId);
 
-    if (sideUnequipId !== undefined) {
-      // Pre-flight guarantees this fits, but use the transaction return to
-      // catch any future drift in canFit logic.
-      const addResult = player.addItem(sideUnequipId, 1, this.data.itemDefs);
-      if (addResult.completed > 0) {
-        player.deleteEquipment(equipSlot === 'weapon' ? 'shield' : 'weapon');
+    const conflictAdds: ReturnType<Player['addItem']>[] = [];
+    for (const conflict of conflicts) {
+      const addResult = player.addItem(conflict.itemId, conflict.quantity, this.data.itemDefs);
+      if (addResult.completed !== conflict.quantity) {
+        player.revertAdd(addResult);
+        for (let i = conflictAdds.length - 1; i >= 0; i--) player.revertAdd(conflictAdds[i]);
+        player.inventory[slotIndex] = originalSourceSlot;
+        if (currentEquipped !== undefined) {
+          player.setEquipment(equipSlot, currentEquipped, originalEquippedQuantity);
+        } else {
+          player.deleteEquipment(equipSlot);
+        }
+        this.sendChatSystem(player, 'You need a free inventory slot to do that.');
+        return;
       }
+      conflictAdds.push(addResult);
+    }
+    for (const conflict of conflicts) {
+      player.deleteEquipment(conflict.slot);
     }
 
     const weaponChanged = weaponBefore !== player.equipment.get('weapon');

@@ -290,7 +290,7 @@ describe('item thumbnail families', () => {
     }
   });
 
-  test('chicken and cooked meat items resolve to 3D models instead of legacy PNGs', () => {
+  test('food items resolve to 3D models instead of legacy PNGs', () => {
     const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
     const expectedModels = new Map<number, string>([
       [11, '/assets/models/ChickenRaw.glb'],
@@ -298,6 +298,8 @@ describe('item thumbnail families', () => {
       [14, '/assets/models/BeefRat.glb'],
       [15, '/assets/models/BeefRatCooked.glb'],
       [16, '/assets/models/BeefCooked.glb'],
+      [230, '/assets/models/RiceRaw.glb'],
+      [231, '/assets/models/RiceCooked.glb'],
     ]);
 
     for (const [id, expectedModel] of expectedModels) {
@@ -314,6 +316,23 @@ describe('item thumbnail families', () => {
       expect(getItemLegacyIconUrl(def)).toBeNull();
       expect(existsSync(`client/public${expectedModel}`)).toBe(true);
     }
+  });
+
+  test('quest item shells resolve to 3D models instead of placeholder PNGs', () => {
+    const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
+    const def = defs.get(309);
+    const expectedModel = '/assets/models/HumanHeart.glb';
+    if (!def) throw new Error('missing Prisoner\'s Heart item');
+
+    expect(def.icon).toBeUndefined();
+    expect(def.sprite).toBeUndefined();
+    expect(def.model).toBe(expectedModel);
+    expect(def.thumbnailModel).toBeUndefined();
+    expect(resolveItemModelPath(def, 1)).toBe(expectedModel);
+    expect(resolveGroundItemModelPath(def, 1)).toBe(expectedModel);
+    expect(getItemIconSyncUrl(def, 1)).toBeNull();
+    expect(getItemLegacyIconUrl(def)).toBeNull();
+    expect(existsSync(`client/public${expectedModel}`)).toBe(true);
   });
 
   test('ore models render as 3D thumbnails and ground drops', () => {

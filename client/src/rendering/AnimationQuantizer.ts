@@ -10,7 +10,9 @@ export const DEFAULT_QUANTIZE_FRAMES = 8;
  * samples and looks jittery.
  */
 export const ANIM_QUANTIZE_FRAMES: Record<string, number> = {
-  walk: 5, // 5 canonical poses at frames 0, 6, 13, 19, 26
+  // Local movement root position is smooth every frame; keep enough walk samples
+  // that the skeleton does not read as sluggish/choppy at high FPS.
+  walk: 9,
 };
 
 export const ANIM_DURATIONS: Record<string, number> = {
@@ -32,7 +34,7 @@ export const ANIM_DURATIONS: Record<string, number> = {
 
 const ANIM_SAMPLE_CURVES: Record<string, number[]> = {
   idle:         [0, 0.14, 0.28, 0.43, 0.57, 0.71, 0.86, 1.0],
-  walk:         [0, 0.231, 0.500, 0.731, 1.0], // exact ratios for our 5 canonical poses
+  walk:         [0, 0.125, 0.250, 0.375, 0.500, 0.625, 0.750, 0.875, 1.0],
   attack:       [0, 0.10, 0.25, 0.45, 0.60, 0.75, 0.88, 1.0],
   attack_slash: [0, 0.10, 0.25, 0.45, 0.60, 0.75, 0.88, 1.0],
   attack_punch: [0, 0.10, 0.30, 0.50, 0.65, 0.78, 0.90, 1.0],

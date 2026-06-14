@@ -66,7 +66,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -398,6 +398,21 @@ declare global {
   interface Window {
     gm?: GameManager;
     _gameEntities?: EntityManager;
+    __evilQuestAutoWalk?: {
+      ready(): boolean;
+      state(): {
+        ready: boolean;
+        moving: boolean;
+        x: number;
+        z: number;
+        pathIndex: number;
+        pathLength: number;
+        map: string;
+        floor: number;
+      };
+      walkTo(x: number, z: number): boolean;
+      walkRoute(route: Array<{ x: number; z: number }>, opts?: { settleMs?: number; waypointTimeoutMs?: number }): Promise<void>;
+    };
   }
 }
 
@@ -1211,6 +1226,7 @@ export class GameManager {
     this.fpsLastSampleAt = performance.now();
     this.setupFrameLongTaskObserver();
     this.setupFrameGpuTimer();
+    this.installAutoWalkDiagnosticHook();
 
     // Game loop
     let lastTime = performance.now();
@@ -3919,7 +3935,7 @@ export class GameManager {
     }
   }
 
-  private resolveNpcModelGearSlotFit(npcDefId: number, slotName: string, entityId: number): NpcGearSlotConfig | null {
+  private resolveNpcModelGearSlotFit(npcDefId: number, slotName: EquipSlot, entityId: number): NpcGearSlotConfig | null {
     const base = resolveNpcGearSlotConfig(npcDefId, this.npcDefsCache.get(npcDefId), slotName);
     if (!base) return null;
     return mergeNpcGearSlotFit(base, this.entities.npcEquipmentFits.get(entityId)?.[slotName]);
@@ -4185,7 +4201,7 @@ export class GameManager {
   private async applyGearToNpcModel(
     target: Npc3DEntity,
     npcDefId: number,
-    slotName: string,
+    slotName: EquipSlot,
     itemId: number,
     entityId: number,
   ): Promise<void> {
@@ -9996,6 +10012,64 @@ export class GameManager {
       // Minimap arrow still indicates where you're heading.
       this.minimap?.setDestination(markerTarget?.worldX ?? dest.x, markerTarget?.worldZ ?? dest.z);
     }
+  }
+
+  private installAutoWalkDiagnosticHook(): void {
+    if (new URLSearchParams(window.location.search).get('autowalk') !== '1') return;
+
+    const sleep = (ms: number) => new Promise<void>(resolve => window.setTimeout(resolve, ms));
+    const moving = () => this.pathIndex < this.path.length;
+    const ready = () => this.localPlayerId > 0
+      && !!this.localPlayer
+      && this.inputManager.isEnabled()
+      && this.chunkManager.getMapWidth() > 0
+      && this.chunkManager.getMapHeight() > 0;
+    const state = () => ({
+      ready: ready(),
+      moving: moving(),
+      x: Number(this.playerX.toFixed(2)),
+      z: Number(this.playerZ.toFixed(2)),
+      pathIndex: this.pathIndex,
+      pathLength: this.path.length,
+      map: this.chunkManager.getMapId(),
+      floor: this.currentFloor,
+    });
+    const waitUntilSettled = async (target: { x: number; z: number }, settleMs: number, timeoutMs: number) => {
+      const start = performance.now();
+      let settledSince = 0;
+      while (performance.now() - start < timeoutMs) {
+        const close = Math.max(Math.abs(this.playerX - target.x), Math.abs(this.playerZ - target.z)) <= 0.08;
+        if (!moving() && close) {
+          if (settledSince === 0) settledSince = performance.now();
+          if (performance.now() - settledSince >= settleMs) return;
+        } else {
+          settledSince = 0;
+        }
+        await sleep(100);
+      }
+      throw new Error(`autowalk waypoint timeout at ${target.x},${target.z}; state=${JSON.stringify(state())}`);
+    };
+
+    window.__evilQuestAutoWalk = {
+      ready,
+      state,
+      walkTo: (x: number, z: number) => {
+        if (!ready()) return false;
+        this.handleGroundClick(x, z);
+        return true;
+      },
+      walkRoute: async (route, opts) => {
+        const settleMs = Math.max(0, opts?.settleMs ?? 800);
+        const waypointTimeoutMs = Math.max(5_000, opts?.waypointTimeoutMs ?? 60_000);
+        for (const point of route) {
+          if (!Number.isFinite(point.x) || !Number.isFinite(point.z)) {
+            throw new Error(`invalid autowalk waypoint ${JSON.stringify(point)}`);
+          }
+          this.handleGroundClick(point.x, point.z);
+          await waitUntilSettled(point, settleMs, waypointTimeoutMs);
+        }
+      },
+    };
   }
 
   private createHUD(): void {

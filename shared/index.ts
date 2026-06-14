@@ -30,3 +30,5 @@ export * from './objectShadows';
 export * from './minimapIcons';
 export * from './firemaking';
 export * from './performanceDiagnostics';
+export * from './equipment';
+export * from './itemValidation';
