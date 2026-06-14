@@ -23,7 +23,7 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import '@babylonjs/loaders/glTF';
 import { ChunkManager, assertOptionalMapResourceResponse } from '../rendering/ChunkManager';
-import { GameCamera } from '../rendering/Camera';
+import { GameCamera, type CameraFollowResult } from '../rendering/Camera';
 import { CharacterEntity, loadGearTemplate, type GearDef, type GearTemplate } from '../rendering/CharacterEntity';
 import { PER_TARGET_GEAR_SLOTS, buildCharacterGearDef, disposeImportedGearResult, loadCharacterGearSmart, loadStaticGearTemplate, resolveCharacterGearModelFile } from '../rendering/CharacterGearLoader';
 import { applyNpcGearFitToNode, createNpcGearTemplateWithFit } from '../rendering/NpcGearAttachment';
@@ -466,6 +466,7 @@ export class GameManager {
   private pacedSceneRenderCount: number = 0;
   private pacedSceneSkippedCount: number = 0;
   private browserZoomWarningLastAt: number = 0;
+  private lastCameraSnapTelemetryAt: number = 0;
   private browserZoomWarningHandler: ((event: Event) => void) | null = null;
   private renderDistanceChangeHandler: ((event: Event) => void) | null = null;
   private gameSettingsChangeHandler: ((event: Event) => void) | null = null;
@@ -487,6 +488,7 @@ export class GameManager {
   private static readonly RECENT_ARRIVAL_AUTHORITY_GRACE_MS = TICK_RATE * 5 + 250;
   private static readonly HIDDEN_CATCHUP_ARM_MS = 3_000;
   private static readonly HIDDEN_RECONNECT_AFTER_MS = 15_000;
+  private static readonly CAMERA_SNAP_TELEMETRY_COOLDOWN_MS = 5_000;
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 20_000;
   private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
   private static readonly AUTHORITY_LOGIN_GRACE_MS = 5_000;
@@ -1472,6 +1474,7 @@ export class GameManager {
       this.lastSelfAuthorityAt = 0;
       this.lastSelfAuthorityWarnAt = 0;
       this.selfAuthorityGraceUntil = 0;
+      this.lastCameraSnapTelemetryAt = 0;
       this.latestSelfSync = null;
       this.lastSelfSyncTickLow = null;
       this.lastSelfSyncReceivedAt = 0;
@@ -10926,11 +10929,73 @@ export class GameManager {
 
       if (this.localPlayer) {
         this._tempVec.set(this.localPlayer.position.x, this.localPlayer.position.y, this.localPlayer.position.z);
-        this.camera.followTarget(this._tempVec, dt, this.localPlayer.isWalking());
+        const followResult = this.camera.followTarget(this._tempVec, dt, true);
+        this.maybeReportCameraSnap(followResult);
       }
     });
     this.profileFrameSlice('roof hover', () => this.refreshHoverRoofForStoredPointer(performance.now()));
 
+  }
+
+  private maybeReportCameraSnap(result: CameraFollowResult): void {
+    if (!result.snapped || result.reason === 'initial') return;
+    if (!this._loginSettled || !this.shouldCapturePerformanceDiagnostic()) return;
+    const now = performance.now();
+    if (now - this.lastCameraSnapTelemetryAt < GameManager.CAMERA_SNAP_TELEMETRY_COOLDOWN_MS) return;
+    this.lastCameraSnapTelemetryAt = now;
+
+    const camera = this.camera.getCamera();
+    const round = (value: number, decimals: number = 2): number | null =>
+      Number.isFinite(value) ? Number(value.toFixed(decimals)) : null;
+    const hiddenCatchup = this.isHiddenCatchupActive(now);
+
+    this.reportClientLog('client_camera_snap', {
+      reason: result.reason,
+      dx: round(result.dx),
+      dz: round(result.dz),
+      distance: round(result.distance),
+      dtMs: round(result.dt * 1000, 1),
+      smooth: result.smooth,
+      locked: result.locked,
+      currentMap: this.chunkManager.getMapId(),
+      currentFloor: this.currentFloor,
+      visibilityState: document.visibilityState,
+      hiddenCatchupActive: hiddenCatchup,
+      sinceSelfAuthorityMs: this.lastSelfAuthorityAt === 0 ? null : round(now - this.lastSelfAuthorityAt, 1),
+      player: {
+        x: round(this.playerX),
+        z: round(this.playerZ),
+        y: round(this.localPlayer?.position.y ?? 0),
+        walking: this.localPlayer?.isWalking() ?? false,
+        movementMode: this.movementMode,
+      },
+      path: {
+        index: this.pathIndex,
+        length: this.path.length,
+        tileProgress: round(this.tileProgress, 3),
+        predictedUnitSteps: this.predictedPathUnitSteps,
+      },
+      camera: {
+        alpha: round(camera.alpha, 3),
+        beta: round(camera.beta, 3),
+        radius: round(camera.radius, 2),
+        previousTarget: result.previousTarget,
+        target: result.target,
+      },
+      framePace: {
+        mode: this.framePaceMode,
+        estimatedDisplayHz: this.framePaceEstimatedHz === null ? null : round(this.framePaceEstimatedHz, 1),
+        targetRenderFps: this.framePaceTargetIntervalMs === null ? null : round(1000 / this.framePaceTargetIntervalMs, 1),
+        renderCount: this.pacedSceneRenderCount,
+        skippedRenderCount: this.pacedSceneSkippedCount,
+      },
+      diagnosticFlags: [
+        'camera-snap',
+        `camera-snap-${result.reason}`,
+        hiddenCatchup ? 'hidden-catchup-active' : 'visible-play',
+        this.pathIndex < this.path.length ? 'path-active' : 'path-idle',
+      ],
+    });
   }
 
   private updateRenderFrameUi(dt: number): void {

@@ -50,6 +50,21 @@ const FREE_LOWER_RADIUS = 5;
 const FREE_UPPER_RADIUS = 30;
 const FREE_DEFAULT_RADIUS = 12;
 
+export type CameraFollowSnapReason = 'initial' | 'smoothing-disabled' | 'large-delta';
+
+export interface CameraFollowResult {
+  snapped: boolean;
+  reason: CameraFollowSnapReason | null;
+  dx: number;
+  dz: number;
+  distance: number;
+  smooth: boolean;
+  locked: boolean;
+  dt: number;
+  previousTarget: { x: number; y: number; z: number };
+  target: { x: number; y: number; z: number };
+}
+
 export class GameCamera {
   private camera: ArcRotateCamera;
   private targetPosition: Vector3;
@@ -247,10 +262,10 @@ export class GameCamera {
     }
   }
 
-  followTarget(position: Vector3, dt: number = 1 / 60, smooth: boolean = true): void {
+  followTarget(position: Vector3, dt: number = 1 / 60, smooth: boolean = true): CameraFollowResult {
     // RS2 looks at a point ~0.39 tiles above ground in locked mode.
     const targetY = this.locked ? position.y + LOCKED_TARGET_Y_OFFSET : position.y;
-    this.updateFollowAnchor(position, targetY, dt, smooth);
+    const result = this.updateFollowAnchor(position, targetY, dt, smooth);
     this.camera.target.copyFrom(this.targetPosition);
 
     if (this.targetRadius > 0) {
@@ -284,26 +299,56 @@ export class GameCamera {
     }
 
     this.syncLockedRadiusToPitch();
+    return result;
   }
 
-  private updateFollowAnchor(position: Vector3, targetY: number, dt: number, smooth: boolean): void {
+  private updateFollowAnchor(position: Vector3, targetY: number, dt: number, smooth: boolean): CameraFollowResult {
+    const previousTarget = {
+      x: this.targetPosition.x,
+      y: this.targetPosition.y,
+      z: this.targetPosition.z,
+    };
     if (!this.locked) {
       this.targetPosition.set(position.x, targetY, position.z);
       this.followTargetInitialized = true;
-      return;
+      return {
+        snapped: false,
+        reason: null,
+        dx: position.x - previousTarget.x,
+        dz: position.z - previousTarget.z,
+        distance: Math.hypot(position.x - previousTarget.x, position.z - previousTarget.z),
+        smooth,
+        locked: false,
+        dt,
+        previousTarget,
+        target: { x: this.targetPosition.x, y: this.targetPosition.y, z: this.targetPosition.z },
+      };
     }
 
     const dx = position.x - this.targetPosition.x;
     const dz = position.z - this.targetPosition.z;
-    if (
-      !this.followTargetInitialized
-      || !smooth
-      || Math.abs(dx) > RS_CAMERA_FOLLOW_SNAP_TILES
-      || Math.abs(dz) > RS_CAMERA_FOLLOW_SNAP_TILES
-    ) {
+    const reason: CameraFollowSnapReason | null = !this.followTargetInitialized
+      ? 'initial'
+      : !smooth
+        ? 'smoothing-disabled'
+        : Math.abs(dx) > RS_CAMERA_FOLLOW_SNAP_TILES || Math.abs(dz) > RS_CAMERA_FOLLOW_SNAP_TILES
+          ? 'large-delta'
+          : null;
+    if (reason) {
       this.targetPosition.set(position.x, targetY, position.z);
       this.followTargetInitialized = true;
-      return;
+      return {
+        snapped: true,
+        reason,
+        dx,
+        dz,
+        distance: Math.hypot(dx, dz),
+        smooth,
+        locked: true,
+        dt,
+        previousTarget,
+        target: { x: this.targetPosition.x, y: this.targetPosition.y, z: this.targetPosition.z },
+      };
     }
 
     const safeDt = Number.isFinite(dt) ? Math.max(0, dt) : 1 / 60;
@@ -314,6 +359,18 @@ export class GameCamera {
     this.targetPosition.x += dx * followT;
     this.targetPosition.y = targetY;
     this.targetPosition.z += dz * followT;
+    return {
+      snapped: false,
+      reason: null,
+      dx,
+      dz,
+      distance: Math.hypot(dx, dz),
+      smooth,
+      locked: true,
+      dt,
+      previousTarget,
+      target: { x: this.targetPosition.x, y: this.targetPosition.y, z: this.targetPosition.z },
+    };
   }
 
   setTargetRadius(radius: number): void {

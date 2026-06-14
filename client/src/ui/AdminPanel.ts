@@ -188,6 +188,7 @@ const CLIENT_DIAGNOSTIC_EVENTS: Array<{ value: string; label: string }> = [
   { value: 'client_low_fps_snapshot', label: 'Low FPS' },
   { value: 'client_low_fps_post_scale_snapshot', label: 'Post-scale FPS' },
   { value: 'client_frame_spike', label: 'Frame spikes' },
+  { value: 'client_camera_snap', label: 'Camera snaps' },
   { value: 'client_perf_snapshot', label: 'Perf' },
   { value: 'client_quality_change', label: 'Quality' },
   { value: 'game_connection_lost', label: 'Disconnects' },
@@ -2200,6 +2201,7 @@ export class AdminPanel {
       case 'client_low_fps_snapshot': return 'Low FPS';
       case 'client_low_fps_post_scale_snapshot': return 'Post-scale FPS';
       case 'client_frame_spike': return 'Frame spike';
+      case 'client_camera_snap': return 'Camera snap';
       case 'client_perf_snapshot': return 'Perf';
       case 'client_quality_change': return 'Quality';
       case 'game_connection_lost': return 'Disconnect';

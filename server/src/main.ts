@@ -1703,6 +1703,25 @@ async function readRecentClientDiagnostics(options: {
 }
 
 function clientLogConsoleSummary(event: string, username: string, payload: unknown): string {
+  if (event === 'client_camera_snap' && isPlainRecord(payload)) {
+    const numberField = (key: string, digits: number = 1): string => {
+      const value = payload[key];
+      return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : 'n/a';
+    };
+    const player = isPlainRecord(payload.player) ? payload.player : {};
+    const path = isPlainRecord(payload.path) ? payload.path : {};
+    const framePace = isPlainRecord(payload.framePace) ? payload.framePace : {};
+    const px = typeof player.x === 'number' && Number.isFinite(player.x) ? player.x.toFixed(2) : 'n/a';
+    const pz = typeof player.z === 'number' && Number.isFinite(player.z) ? player.z.toFixed(2) : 'n/a';
+    const pathIndex = typeof path.index === 'number' && Number.isFinite(path.index) ? path.index : 'n/a';
+    const pathLength = typeof path.length === 'number' && Number.isFinite(path.length) ? path.length : 'n/a';
+    const map = String(payload.currentMap ?? 'n/a').slice(0, 48);
+    const floor = typeof payload.currentFloor === 'number' && Number.isFinite(payload.currentFloor) ? payload.currentFloor : 'n/a';
+    const reason = String(payload.reason ?? 'unknown').slice(0, 48);
+    const visibility = String(payload.visibilityState ?? 'n/a').slice(0, 24);
+    const paceMode = String(framePace.mode ?? 'n/a').slice(0, 24);
+    return `[client-log] ${event} user=${username} reason=${reason} dist=${numberField('distance')} dx=${numberField('dx')} dz=${numberField('dz')} dt=${numberField('dtMs')}ms map=${map}/f${floor} pos=${px},${pz} path=${pathIndex}/${pathLength} vis=${visibility} pace=${paceMode}`;
+  }
   if (event === 'client_frame_spike' && isPlainRecord(payload)) {
     const numberField = (key: string): string => {
       const value = payload[key];
