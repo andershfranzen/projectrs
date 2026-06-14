@@ -296,6 +296,7 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
     case ClientOpcode.PLAYER_SET_STANCE:
     case ClientOpcode.PLAYER_SET_MAGIC_STANCE:
     case ClientOpcode.PLAYER_SET_AUTO_RETALIATE:
+    case ClientOpcode.PLAYER_SET_MOVEMENT_MODE:
     case ClientOpcode.PLAYER_BUY_ITEM:
     case ClientOpcode.PLAYER_SELL_ITEM:
     case ClientOpcode.PLAYER_MOVE_INV_ITEM:
@@ -409,6 +410,7 @@ function gameplayCommandTimingSignature(opcode: number, values: number[]): strin
     case ClientOpcode.PLAYER_SET_STANCE:
     case ClientOpcode.PLAYER_SET_MAGIC_STANCE:
     case ClientOpcode.PLAYER_SET_AUTO_RETALIATE:
+    case ClientOpcode.PLAYER_SET_MOVEMENT_MODE:
       return `combat-ui:${opcode}:${v(0)}`;
     default:
       return `${opcode}:${values.slice(0, 3).map(value => Number.isFinite(value) ? Math.floor(value) : '?').join(':')}`;
@@ -424,6 +426,7 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
     case ClientOpcode.PLAYER_SET_AUTOCAST:
     case ClientOpcode.PLAYER_SET_MAGIC_STANCE:
     case ClientOpcode.PLAYER_SET_AUTO_RETALIATE:
+    case ClientOpcode.PLAYER_SET_MOVEMENT_MODE:
       return { bucket: 'combat', maxMessages: 8, windowMs: 1000 };
     case ClientOpcode.PLAYER_FOLLOW:
     case ClientOpcode.PLAYER_PICKUP_ITEM:
@@ -610,6 +613,12 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
     case ClientOpcode.PLAYER_SET_AUTO_RETALIATE: {
       if (!hasValues(values, 1)) return invalid('missing-auto-retaliate');
       if (values[0] !== 0 && values[0] !== 1) return invalid('bad-auto-retaliate');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_SET_MOVEMENT_MODE: {
+      if (!hasValues(values, 1)) return invalid('missing-movement-mode');
+      if (values[0] !== 0 && values[0] !== 1) return invalid('bad-movement-mode');
       return OK_PACKET;
     }
 
@@ -1080,6 +1089,7 @@ function completeGameSocketLogin(
       ? saved.autocastSpellIndex
       : -1;
     player.autoRetaliate = saved.autoRetaliate;
+    player.setRunEnergy(saved.runEnergy);
     player.appearance = saved.appearance;
     // Pad bank to BANK_SIZE — older saves may have a shorter or empty array
     const bank = saved.bank;
@@ -1371,6 +1381,12 @@ function handleDecryptedGameSocketMessage(
     case ClientOpcode.PLAYER_SET_AUTO_RETALIATE: {
       if (!hasValues(values, 1)) return;
       world.handlePlayerSetAutoRetaliate(playerId, values[0] === 1);
+      break;
+    }
+
+    case ClientOpcode.PLAYER_SET_MOVEMENT_MODE: {
+      if (!hasValues(values, 1)) return;
+      world.handlePlayerSetMovementMode(playerId, values[0]);
       break;
     }
 

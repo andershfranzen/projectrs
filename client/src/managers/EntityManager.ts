@@ -12,7 +12,7 @@ import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { mountWorldOverlayElement } from '../rendering/worldOverlay';
 import type { GroundItemLabelMode } from '../ui/gameSettings';
-import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, normalizeNpcVisualScale, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors, type NpcEquipmentFitOverrides } from '@projectrs/shared';
+import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, normalizeNpcVisualScale, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementTilesPerSecond, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors, type NpcEquipmentFitOverrides, type MovementMode } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -44,6 +44,14 @@ export interface RemotePlayerTarget {
   prevZ: number;
 }
 
+export interface RemoteMovementStep {
+  x: number;
+  z: number;
+  floor: number;
+  y: number;
+  mode: MovementMode;
+}
+
 export interface GroundItemLabelOverlay {
   element: HTMLDivElement;
   x: number;
@@ -70,6 +78,9 @@ export class EntityManager {
    *  latest server target. Bridges the ~600 ms gap between server ticks
    *  so the walk animation doesn't briefly drop to idle between steps. */
   readonly remoteWalkUntil: Map<number, number> = new Map();
+  readonly remoteMovementModes: Map<number, MovementMode> = new Map();
+  readonly remoteMovementSegmentSteps: Map<number, number> = new Map();
+  readonly remoteMovementStepQueues: Map<number, RemoteMovementStep[]> = new Map();
   readonly playerNames: Map<number, string> = new Map();
   readonly nameToEntityId: Map<string, number> = new Map();
   readonly remoteAdminFlags: Map<number, boolean> = new Map();
@@ -627,6 +638,9 @@ export class EntityManager {
       this.remotePlayers.delete(entityId);
       this.remoteTargets.delete(entityId);
       this.remoteWalkUntil.delete(entityId);
+      this.remoteMovementModes.delete(entityId);
+      this.remoteMovementSegmentSteps.delete(entityId);
+      this.remoteMovementStepQueues.delete(entityId);
       this.remoteCombatTargets.delete(entityId);
       this.playDeathPortalAndDispose(entityId, character);
       return true;
@@ -660,6 +674,9 @@ export class EntityManager {
       this.remotePlayers.delete(entityId);
       this.remoteTargets.delete(entityId);
       this.remoteWalkUntil.delete(entityId);
+      this.remoteMovementModes.delete(entityId);
+      this.remoteMovementSegmentSteps.delete(entityId);
+      this.remoteMovementStepQueues.delete(entityId);
     }
     if (forgetCachedState) {
       this.remoteAppearances.delete(entityId);
@@ -771,20 +788,32 @@ export class EntityManager {
   ): void {
     const now = performance.now();
     for (const [entityId, sprite] of this.remotePlayers) {
-      const target = this.remoteTargets.get(entityId);
+      const stepQueue = this.remoteMovementStepQueues.get(entityId);
+      const queuedStep = stepQueue?.[0];
+      const finalTarget = this.remoteTargets.get(entityId);
+      const target = queuedStep ?? finalTarget;
       if (!target) continue;
       if (!sprite.isRenderEnabled()) {
         if (sprite.isWalking()) sprite.stopWalking();
-        sprite.setPositionXYZ(target.x, target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y), target.z);
+        sprite.setMovementMode(this.remoteMovementModes.get(entityId) ?? 'walk');
+        this.remoteMovementSegmentSteps.delete(entityId);
+        this.remoteMovementStepQueues.delete(entityId);
+        const snapTarget = finalTarget ?? target;
+        sprite.setPositionXYZ(snapTarget.x, snapTarget.y ?? this.getHeight(snapTarget.x, snapTarget.z, snapTarget.floor, sprite.position.y), snapTarget.z);
         continue;
       }
+      const movementMode = queuedStep?.mode ?? this.remoteMovementModes.get(entityId) ?? 'walk';
       const c = sprite.position;
       const dx = target.x - c.x;
       const dz = target.z - c.z;
       const dist = Math.hypot(dx, dz);
       if (isRemoteSkilling(entityId)) {
-        if (dist > 0.05) {
-          sprite.setPositionXYZ(target.x, target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y), target.z);
+        this.remoteMovementStepQueues.delete(entityId);
+        this.remoteMovementSegmentSteps.delete(entityId);
+        const snapTarget = finalTarget ?? target;
+        const snapDist = Math.hypot(snapTarget.x - c.x, snapTarget.z - c.z);
+        if (snapDist > 0.05) {
+          sprite.setPositionXYZ(snapTarget.x, snapTarget.y ?? this.getHeight(snapTarget.x, snapTarget.z, snapTarget.floor, sprite.position.y), snapTarget.z);
         }
         continue;
       }
@@ -794,6 +823,10 @@ export class EntityManager {
       const combatTarget = this.remoteCombatTargets.get(entityId);
       const combatTargetSprite = combatTarget !== undefined ? resolveCombatTarget(combatTarget) : null;
       if (dist > 0.05) {
+        const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
+        const segmentSteps = queuedStep ? 1 : Math.max(this.remoteMovementSegmentSteps.get(entityId) ?? tileSteps, tileSteps);
+        const effectiveMode = queuedStep ? queuedStep.mode : effectiveMovementModeForPath(movementMode, segmentSteps, tileSteps);
+        sprite.setMovementMode(effectiveMode);
         if (!sprite.isWalking()) sprite.startWalking();
         if (camPos) sprite.updateMovementDirection(dx, dz, camPos);
         if (combatTargetSprite) {
@@ -801,14 +834,33 @@ export class EntityManager {
         }
         // Chebyshev-paced interpolation matches the server's 1 tile/tick
         // regardless of direction.
-        const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
-        const stepRatio = Math.min(1.67 * dt / Math.max(tileSteps, 0.001), 1);
-        const nx = c.x + dx * stepRatio;
-        const nz = c.z + dz * stepRatio;
-        sprite.setPositionXYZ(nx, this.getHeight(nx, nz, target.floor, sprite.position.y), nz);
+        const speed = queuedStep
+          ? movementTilesPerSecond(queuedStep.mode)
+          : effectiveMovementTilesPerSecondForPath(movementMode, segmentSteps, tileSteps);
+        const stepRatio = Math.min(speed * dt / Math.max(tileSteps, 0.001), 1);
+        const reached = stepRatio >= 1;
+        const nx = reached ? target.x : c.x + dx * stepRatio;
+        const nz = reached ? target.z : c.z + dz * stepRatio;
+        const ny = reached && queuedStep
+          ? queuedStep.y
+          : this.getHeight(nx, nz, target.floor, sprite.position.y);
+        sprite.setPositionXYZ(nx, ny, nz);
+        if (reached && queuedStep && stepQueue) {
+          stepQueue.shift();
+          if (stepQueue.length === 0) this.remoteMovementStepQueues.delete(entityId);
+        }
+      } else if (queuedStep && stepQueue) {
+        sprite.setMovementMode(queuedStep.mode);
+        sprite.setPositionXYZ(queuedStep.x, queuedStep.y, queuedStep.z);
+        stepQueue.shift();
+        if (stepQueue.length === 0) this.remoteMovementStepQueues.delete(entityId);
+        if (!sprite.isWalking()) sprite.startWalking();
       } else if (serverWalking) {
         if (!sprite.isWalking()) sprite.startWalking();
       } else {
+        sprite.setMovementMode(movementMode);
+        this.remoteMovementSegmentSteps.delete(entityId);
+        this.remoteMovementStepQueues.delete(entityId);
         if (sprite.isWalking()) sprite.stopWalking();
         if (combatTargetSprite) {
           this.applyCombatFaceLockToTarget(sprite, combatTargetSprite, camPos);
@@ -981,6 +1033,9 @@ export class EntityManager {
     this.activeDeathEffectEntityIds.clear();
     this.remoteTargets.clear();
     this.remoteWalkUntil.clear();
+    this.remoteMovementModes.clear();
+    this.remoteMovementSegmentSteps.clear();
+    this.remoteMovementStepQueues.clear();
     this.remoteAppearances.clear();
     this.remoteEquipment.clear();
     this.remoteStances.clear();

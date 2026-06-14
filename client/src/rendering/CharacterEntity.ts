@@ -14,10 +14,11 @@ import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '../../../shared/appearance';
+import type { MovementMode } from '../../../shared/movement';
 import { getObjectFootprintContinuousCenterCoord } from '../../../shared/objectFootprint';
 import { normalizeNpcVisualScale, type CustomColors, type HeadRenderMode } from '../../../shared/types';
 import '@babylonjs/loaders/glTF';
-import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, isWalkVariant, type WalkVariantName } from './AnimationQuantizer';
+import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, isWalkVariant, isMovementAnimation, type MovementAnimationName } from './AnimationQuantizer';
 import { bindHumanoidAnimationTemplate, buildHumanoidRigContext, getHumanoidAnimationTemplate } from './HumanoidAnimationTemplateCache';
 import { remapSkinningToSkeleton } from './skinnedArmor';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
@@ -184,8 +185,11 @@ function devCacheBust(file: string): string {
  */
 const ANIM_SPEED_RATIO: Record<string, number> = {
   walk: 1.1,
+  // Authored run.glb is 0.8s. Run movement covers two tiles in one 600ms
+  // server tick, so play the authored cycle at 0.8 / 0.6 = 1.333x.
+  run: 1.333,
 };
-
+const MOVEMENT_BLEND_SPEED = 0.12;
 
 /**
  * Animation state priority (higher = takes precedence).
@@ -328,7 +332,6 @@ export class CharacterEntity {
   private currentAnimLoop: boolean = true;
   private queuedState: AnimState = AnimState.Idle;
   private queuedAnimName: string = '';
-
   // 7-slot RS2 movement set. Slot fields hold the animGroups key for each
   // movement direction; missing slots fall back to walkanim so a partial
   // set still plays (moonwalking sideways/back until the strafes exist).
@@ -338,10 +341,13 @@ export class CharacterEntity {
   private walkanim_b: string = 'walk_b';
   private walkanim_l: string = 'walk_l';
   private walkanim_r: string = 'walk_r';
+  private runanim: string = 'run';
   // Cached at ready() — strafe picker hot-path skips Map.has() per frame.
   private hasWalkB: boolean = false;
   private hasWalkL: boolean = false;
   private hasWalkR: boolean = false;
+  private hasRun: boolean = false;
+  private movementMode: MovementMode = 'walk';
 
   // Travel direction tracked separately from body yaw (targetRotationY).
   // When face is unlocked the two coincide; when locked they diverge and
@@ -371,7 +377,7 @@ export class CharacterEntity {
   private oneShotIsLayered: boolean = false;
   private activeOneShotBase: string = '';
   private activeOneShotCanLayerOnWalk: boolean = false;
-  private activeWalkBase: WalkVariantName = 'walk';
+  private activeWalkBase: MovementAnimationName = 'walk';
   // Cached `${activeWalkBase}_lower` name + group reference — avoid
   // re-allocating the template string and re-querying the Map on every
   // frame of startWalking's layered hot path.
@@ -788,6 +794,7 @@ export class CharacterEntity {
       this.hasWalkB = this.animGroups.has(this.walkanim_b);
       this.hasWalkL = this.animGroups.has(this.walkanim_l);
       this.hasWalkR = this.animGroups.has(this.walkanim_r);
+      this.hasRun = this.animGroups.has(this.runanim);
 
       // Start idle by default, unless movement was requested while the
       // character + external animation GLBs were still loading.
@@ -1037,8 +1044,17 @@ export class CharacterEntity {
    *  playAnimByState(Walk) re-entry path (post-attack resume, etc.). */
   private startWalkCycle(): void {
     this.walkCycleStartMs = performance.now();
-    this.playAnim(this.walkanim, true);
+    this.playAnim(this.movementAnimName(), true);
     this.currentState = AnimState.Walk;
+  }
+
+  private movementAnimName(): MovementAnimationName {
+    return (this.movementMode === 'run' && this.hasRun ? this.runanim : this.walkanim) as MovementAnimationName;
+  }
+
+  private movementAnimNameForContext(previousName: string): MovementAnimationName {
+    if (this.movementMode === 'run' && this.hasRun) return this.runanim as MovementAnimationName;
+    return (isWalkVariant(previousName) ? previousName : this.walkanim) as MovementAnimationName;
   }
 
   private walkCyclePhase(name: string, now: number = performance.now()): number {
@@ -1059,13 +1075,12 @@ export class CharacterEntity {
   }
 
   private startWalkCyclePreservingPhase(name: string): boolean {
-    const walkName = isWalkVariant(name)
-      ? name
-      : (isWalkVariant(this.walkanim) ? this.walkanim : 'walk');
+    const walkName = this.movementAnimNameForContext(name);
     const group = this.animGroups.get(walkName);
     if (!group) return false;
 
-    const phase = this.walkCyclePhase(walkName);
+    const phaseSource = isMovementAnimation(name) ? name : walkName;
+    const phase = this.walkCyclePhase(phaseSource);
     const oldGroup = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
     if (oldGroup && oldGroup !== group) oldGroup.stop();
 
@@ -1073,6 +1088,7 @@ export class CharacterEntity {
     this.currentAnimLoop = true;
     this.oneShotCallback = null;
     if (this.renderEnabled) {
+      this.configureAnimationBlending(group, walkName);
       group.start(true, this.getAnimationSpeed(walkName), group.from, group.to, false);
       this.seekAnimationGroupToPhase(group, phase);
     }
@@ -1161,7 +1177,7 @@ export class CharacterEntity {
     this.oneShotIsLayered = false;
     this.activeOneShotBase = '';
     this.activeOneShotCanLayerOnWalk = false;
-    this.activeWalkBase = isWalkVariant(this.walkanim) ? this.walkanim : 'walk';
+    this.activeWalkBase = this.movementAnimName();
     this.activeWalkLowerName = `${this.activeWalkBase}_lower`;
     this.activeWalkLowerGroup = null;
   }
@@ -1190,6 +1206,7 @@ export class CharacterEntity {
     if (!this.renderEnabled) return;
 
     const speed = this.getAnimationSpeed(name);
+    this.configureAnimationBlending(group, name);
     group.start(loop, speed, group.from, group.to, false);
 
     if (!loop && onEnd) {
@@ -1207,9 +1224,35 @@ export class CharacterEntity {
     return ANIM_SPEED_RATIO[isWalkVariant(baseName) ? 'walk' : baseName] ?? 1.0;
   }
 
+  private shouldBlendAnimation(name: string): boolean {
+    const baseName = name.replace(/_(upper|lower)$/, '');
+    return baseName === this.readyanim || baseName === this.turnanim || isMovementAnimation(baseName);
+  }
+
+  private configureAnimationBlending(group: AnimationGroup, name: string): void {
+    const enabled = this.shouldBlendAnimation(name);
+    for (const ta of group.targetedAnimations) {
+      ta.animation.enableBlending = enabled;
+      ta.animation.blendingSpeed = enabled ? MOVEMENT_BLEND_SPEED : 0;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Public animation API (mirrors SpriteEntity interface)
   // ---------------------------------------------------------------------------
+
+  setMovementMode(mode: MovementMode): void {
+    if (this.movementMode === mode) return;
+    this.movementMode = mode;
+    if (this._ready) this.hasRun = this.animGroups.has(this.runanim);
+    if (this.currentState === AnimState.Walk && !this.oneShotIsLayered) {
+      this.startWalkCyclePreservingPhase(this.currentAnimName);
+    }
+  }
+
+  getMovementMode(): MovementMode {
+    return this.movementMode;
+  }
 
   /** Start walking animation. */
   startWalking(): void {
@@ -1294,7 +1337,7 @@ export class CharacterEntity {
       this.activeOneShotCanLayerOnWalk
       && this.isWalking()
       && this.ensureBoneSplitVariants(name)
-      && this.ensureBoneSplitVariants(this.activeWalkVariant())
+      && this.ensureBoneSplitVariants(this.activeMovementVariant())
     ) {
       this.playLayeredOneShot(name);
       return true;
@@ -1342,7 +1385,7 @@ export class CharacterEntity {
       wasWalking
       && attackName
       && this.ensureBoneSplitVariants(attackName)
-      && this.ensureBoneSplitVariants(this.activeWalkVariant())
+      && this.ensureBoneSplitVariants(this.activeMovementVariant())
     ) {
       this.playLayeredOneShot(attackName);
       return;
@@ -1370,20 +1413,20 @@ export class CharacterEntity {
     return true;
   }
 
-  /** Resolve the active walk variant from currentAnimName. The strafe
+  /** Resolve the active movement animation from currentAnimName. The strafe
    *  picker may have swapped to walk_l/r/b during a face-locked combat
-   *  approach, so we can't assume 'walk'. Falls back to walkanim. */
-  private activeWalkVariant(): WalkVariantName {
-    return isWalkVariant(this.currentAnimName)
+   *  approach, and future run mode can swap to run, so we can't assume walk. */
+  private activeMovementVariant(): MovementAnimationName {
+    return isMovementAnimation(this.currentAnimName)
       ? this.currentAnimName
-      : (isWalkVariant(this.walkanim) ? this.walkanim : 'walk');
+      : this.movementAnimName();
   }
 
   /** Start a layered one-shot — `<walk variant>_lower` runs for the legs,
    *  `<baseName>_upper` for the upper body. Detects which walk variant was
    *  playing (forward / strafe / back) so the legs do not snap to forward. */
   private playLayeredOneShot(baseName: string): void {
-    const walkVariant = this.activeWalkVariant();
+    const walkVariant = this.activeMovementVariant();
     const walkPhase = this.walkCyclePhase(walkVariant);
     // Stop whichever walk variant is currently driving the body so it does
     // not fight the upper-body one-shot.
@@ -1440,7 +1483,7 @@ export class CharacterEntity {
     if (this.oneShotIsLayered || this.currentState !== AnimState.Attack || !this.activeOneShotCanLayerOnWalk) return;
     const baseName = this.currentAnimName;
     if (!baseName || !this.animGroups.has(baseName)) return;
-    const walkVariant = isWalkVariant(this.walkanim) ? this.walkanim : 'walk';
+    const walkVariant = this.movementAnimName();
     if (!this.ensureBoneSplitVariants(baseName) || !this.ensureBoneSplitVariants(walkVariant)) return;
 
     const fullBody = this.animGroups.get(baseName);
@@ -1613,10 +1656,10 @@ export class CharacterEntity {
     if (
       this.currentState === AnimState.Walk
       && !this.oneShotIsLayered
-      && isWalkVariant(this.currentAnimName)
-      && this.currentAnimName !== this.walkanim
+      && isMovementAnimation(this.currentAnimName)
+      && this.currentAnimName !== this.movementAnimName()
     ) {
-      this.swapWalkSeqPreservingPhase(isWalkVariant(this.walkanim) ? this.walkanim : 'walk');
+      this.swapWalkSeqPreservingPhase(this.movementAnimName());
     }
   }
 
@@ -1646,7 +1689,8 @@ export class CharacterEntity {
    *  delta. Only meaningful while face-locked: an unlocked body chases
    *  travel direction so the diff is only non-zero during the rotation
    *  lerp, and we don't want strafe to flicker through that catch-up. */
-  private pickWalkSeq(): string {
+  private pickMovementSeq(): string {
+    if (this.movementMode === 'run' && this.hasRun) return this.runanim;
     const diff = wrapAnglePi(this.travelYaw - this._rotationY);
     const a = Math.abs(diff);
     if (a <= CharacterEntity.STRAFE_FORWARD_THRESHOLD) return this.walkanim;
@@ -1667,6 +1711,7 @@ export class CharacterEntity {
     if (oldGroup) oldGroup.stop();
 
     const phase = this.walkCyclePhase(name);
+    this.configureAnimationBlending(newGroup, name);
     newGroup.start(true, this.getAnimationSpeed(name), newGroup.from, newGroup.to, false);
     this.seekAnimationGroupToPhase(newGroup, phase);
     this.currentAnimName = name;
@@ -1719,7 +1764,7 @@ export class CharacterEntity {
       && this.hasTravelDir
       && !this.oneShotIsLayered
     ) {
-      const seq = this.pickWalkSeq();
+      const seq = this.pickMovementSeq();
       if (seq !== this.currentAnimName) this.swapWalkSeqPreservingPhase(seq);
     }
 
@@ -1753,7 +1798,7 @@ export class CharacterEntity {
     if (walking) {
       const walkName = this.oneShotIsLayered
         ? this.activeWalkBase
-        : (isWalkVariant(this.currentAnimName) ? this.currentAnimName : this.walkanim);
+        : (isMovementAnimation(this.currentAnimName) ? this.currentAnimName : this.movementAnimName());
       const phase = this.walkCyclePhase(walkName);
       const stride = Math.sin(phase * Math.PI * 2);
       const push = (1 - Math.cos(phase * Math.PI * 4)) * 0.5;

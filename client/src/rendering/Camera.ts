@@ -25,6 +25,9 @@ const RS_PITCH_MIN = 128;
 const RS_PITCH_MAX = 383;
 const RS_UNITS_PER_TILE = 128;
 const RS_TARGET_Y_OFFSET_UNITS = 50;
+const RS_CAMERA_FOLLOW_SNAP_TILES = 500 / RS_UNITS_PER_TILE;
+const RS_CAMERA_FOLLOW_CYCLE_SECONDS = 0.02;
+const RS_CAMERA_FOLLOW_LERP_PER_CYCLE = 1 / 16;
 const LOCKED_FOV = 0.93;  // ~53° HFOV
 const LOCKED_BETA_AT_PITCH_MIN = Math.PI / 2 - (RS_PITCH_MIN / 2048) * 2 * Math.PI;
 const LOCKED_BETA_AT_PITCH_MAX = Math.PI / 2 - (RS_PITCH_MAX / 2048) * 2 * Math.PI;
@@ -59,6 +62,7 @@ export class GameCamera {
   private lockedZoomedOutIntent: boolean = false;
   private lastLockedAppliedRadius: number = LOCKED_DEFAULT_RADIUS;
   private lastLockedRadiusInitialized: boolean = false;
+  private followTargetInitialized: boolean = false;
   private debugZoom: boolean = false;
   private readonly canvas: HTMLCanvasElement;
   private readonly wheelIntentHandler = (event: WheelEvent): void => this.trackWheelZoomIntent(event);
@@ -109,6 +113,7 @@ export class GameCamera {
   setLockedMode(locked: boolean): void {
     if (this.locked === locked) return;
     this.locked = locked;
+    this.followTargetInitialized = false;
     this.applyLockState();
   }
 
@@ -242,12 +247,11 @@ export class GameCamera {
     }
   }
 
-  followTarget(position: Vector3, _dt: number = 1 / 60): void {
+  followTarget(position: Vector3, dt: number = 1 / 60, smooth: boolean = true): void {
     // RS2 looks at a point ~0.39 tiles above ground in locked mode.
     const targetY = this.locked ? position.y + LOCKED_TARGET_Y_OFFSET : position.y;
-    this.camera.target.x = position.x;
-    this.camera.target.y = targetY;
-    this.camera.target.z = position.z;
+    this.updateFollowAnchor(position, targetY, dt, smooth);
+    this.camera.target.copyFrom(this.targetPosition);
 
     if (this.targetRadius > 0) {
       const diff = this.targetRadius - this.camera.radius;
@@ -280,6 +284,36 @@ export class GameCamera {
     }
 
     this.syncLockedRadiusToPitch();
+  }
+
+  private updateFollowAnchor(position: Vector3, targetY: number, dt: number, smooth: boolean): void {
+    if (!this.locked) {
+      this.targetPosition.set(position.x, targetY, position.z);
+      this.followTargetInitialized = true;
+      return;
+    }
+
+    const dx = position.x - this.targetPosition.x;
+    const dz = position.z - this.targetPosition.z;
+    if (
+      !this.followTargetInitialized
+      || !smooth
+      || Math.abs(dx) > RS_CAMERA_FOLLOW_SNAP_TILES
+      || Math.abs(dz) > RS_CAMERA_FOLLOW_SNAP_TILES
+    ) {
+      this.targetPosition.set(position.x, targetY, position.z);
+      this.followTargetInitialized = true;
+      return;
+    }
+
+    const safeDt = Number.isFinite(dt) ? Math.max(0, dt) : 1 / 60;
+    const followT = 1 - Math.pow(
+      1 - RS_CAMERA_FOLLOW_LERP_PER_CYCLE,
+      safeDt / RS_CAMERA_FOLLOW_CYCLE_SECONDS,
+    );
+    this.targetPosition.x += dx * followT;
+    this.targetPosition.y = targetY;
+    this.targetPosition.z += dz * followT;
   }
 
   setTargetRadius(radius: number): void {

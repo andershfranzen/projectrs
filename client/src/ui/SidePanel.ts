@@ -11,7 +11,7 @@ import {
   zeroBonuses, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, combatLevelFromLevels,
   isNotedItem, EQUIPMENT_SLOT_LABELS, EQUIPMENT_SLOT_NAMES,
   type SkillId, type MeleeStance, type MagicStance, type ItemDef, type QuestDef, type QuestState,
-  type CombatBonuses,
+  type CombatBonuses, type MovementMode,
   type SpellEffectDef, type SpellSchool,
 } from '@projectrs/shared';
 import { QuestJournalPopup } from './QuestJournalPopup';
@@ -279,6 +279,7 @@ export class SidePanel {
   private tooltipModeButtons: Map<TooltipMode, HTMLButtonElement> = new Map();
   private npcDialogueChatButtons: Map<'show' | 'hide', HTMLButtonElement> = new Map();
   private brightnessButtons: Map<BrightnessLevel, HTMLButtonElement> = new Map();
+  private movementModeButtons: Map<MovementMode, HTMLButtonElement> = new Map();
   private chatColorControlSwatches: Map<ChatMessageColorKey, HTMLSpanElement> = new Map();
   private chatColorPickerPanel: HTMLDivElement | null = null;
   private chatColorPickerTitleEl: HTMLSpanElement | null = null;
@@ -290,6 +291,11 @@ export class SidePanel {
   private renderQualityButtons: Map<RenderQualityMode, HTMLButtonElement> = new Map();
   private framePaceButtons: Map<FramePaceMode, HTMLButtonElement> = new Map();
   private renderQualityChangeCallback: ((mode: RenderQualityMode) => void) | null = null;
+  private movementMode: MovementMode = 'walk';
+  private movementModeChangeCallback: ((mode: MovementMode) => boolean) | null = null;
+  private runEnergyPercent: number = 100;
+  private runEnergyFillEl: HTMLDivElement | null = null;
+  private runEnergyTextEl: HTMLSpanElement | null = null;
   private brandResizeObserver: ResizeObserver | null = null;
 
   constructor(network: NetworkManager, token: string = '') {
@@ -1594,6 +1600,25 @@ export class SidePanel {
     this.updateSettingsButtonGroup(this.renderQualityButtons, mode);
   }
 
+  setMovementModeControls(mode: MovementMode, callback: (mode: MovementMode) => boolean): void {
+    this.movementMode = mode;
+    this.movementModeChangeCallback = callback;
+    this.updateSettingsButtonGroup(this.movementModeButtons, mode);
+    this.refreshRunEnergyUi();
+  }
+
+  applyMovementModeFromServer(mode: MovementMode): void {
+    this.movementMode = mode;
+    this.updateSettingsButtonGroup(this.movementModeButtons, mode);
+    this.refreshRunEnergyUi();
+  }
+
+  setRunEnergy(percent: number): void {
+    const value = Number.isFinite(percent) ? Math.trunc(percent) : 100;
+    this.runEnergyPercent = Math.max(0, Math.min(100, value));
+    this.refreshRunEnergyUi();
+  }
+
   private updateSettingsButtonGroup<T extends string | number>(buttons: Map<T, HTMLButtonElement>, activeValue: T): void {
     for (const [key, button] of buttons) {
       const active = key === activeValue;
@@ -1608,6 +1633,25 @@ export class SidePanel {
     }
   }
 
+  private refreshRunEnergyUi(): void {
+    if (this.runEnergyTextEl) this.runEnergyTextEl.textContent = `${this.runEnergyPercent}%`;
+    if (this.runEnergyFillEl) {
+      this.runEnergyFillEl.style.width = `${this.runEnergyPercent}%`;
+      this.runEnergyFillEl.style.background = this.runEnergyPercent <= 10
+        ? 'linear-gradient(90deg, #8f3028, #d05b45)'
+        : this.runEnergyPercent <= 35
+          ? 'linear-gradient(90deg, #9a6b22, #d6ad45)'
+          : 'linear-gradient(90deg, #3e7a42, #7dbb5a)';
+    }
+    const runButton = this.movementModeButtons.get('run');
+    if (!runButton) return;
+    const disabled = this.runEnergyPercent < 1 && this.movementMode !== 'run';
+    runButton.disabled = disabled;
+    runButton.setAttribute('aria-disabled', String(disabled));
+    runButton.style.opacity = disabled ? '0.55' : '1';
+    runButton.style.cursor = disabled ? 'not-allowed' : 'pointer';
+  }
+
   private buildSettingsContent(): HTMLDivElement {
     const view = document.createElement('div');
     view.style.cssText = `${panelFrameCss()} gap: 12px;`;
@@ -1618,6 +1662,7 @@ export class SidePanel {
     this.tooltipModeButtons.clear();
     this.npcDialogueChatButtons.clear();
     this.brightnessButtons.clear();
+    this.movementModeButtons.clear();
     this.chatColorControlSwatches.clear();
     this.renderQualityButtons.clear();
     this.framePaceButtons.clear();
@@ -1673,7 +1718,7 @@ export class SidePanel {
       value: T,
       label: string,
       description: string,
-      onSelect: (value: T) => void,
+      onSelect: (value: T) => unknown,
     ): HTMLButtonElement => {
       const button = document.createElement('button');
       button.type = 'button';
@@ -1692,8 +1737,8 @@ export class SidePanel {
       button.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        onSelect(value);
-        this.updateSettingsButtonGroup(buttons, value);
+        const accepted = onSelect(value);
+        if (accepted !== false) this.updateSettingsButtonGroup(buttons, value);
       });
       button.addEventListener('mouseenter', (event) => {
         this.showSettingsTooltip(label, description, event.clientX, event.clientY);
@@ -1811,6 +1856,57 @@ export class SidePanel {
 
     const gameSettings = getGameSettings();
     const gameGroup = makeGroup('Game', 'settings-group-game');
+
+    const movementModeBlock = makeBlock('Movement Mode', 'movement-mode-setting');
+    const movementModeRow = makeRow('Movement mode', 2);
+    movementModeRow.append(
+      makeToggleButton(this.movementModeButtons, 'walk', 'Walk', 'Move one tile per server tick.', (mode) => {
+        if (this.movementMode === mode) return true;
+        const accepted = this.movementModeChangeCallback?.(mode) ?? false;
+        if (accepted) this.movementMode = mode;
+        return accepted;
+      }),
+      makeToggleButton(this.movementModeButtons, 'run', 'Run', 'Move two tiles per server tick and use the run animation.', (mode) => {
+        if (this.movementMode === mode) return true;
+        const accepted = this.movementModeChangeCallback?.(mode) ?? false;
+        if (accepted) this.movementMode = mode;
+        return accepted;
+      }),
+    );
+    movementModeBlock.appendChild(movementModeRow);
+    const runEnergyRow = document.createElement('div');
+    runEnergyRow.style.cssText = `
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) 38px;
+      align-items: center;
+      gap: 6px;
+      color: #b8b0a0;
+      font: 700 11px Arial, Helvetica, sans-serif;
+      text-shadow: 1px 1px 0 #000;
+    `;
+    const runEnergyLabel = document.createElement('span');
+    runEnergyLabel.textContent = 'Energy';
+    const runEnergyTrack = document.createElement('div');
+    runEnergyTrack.style.cssText = `
+      height: 7px;
+      min-width: 0;
+      border: 1px solid rgba(91,71,45,0.78);
+      background: rgba(10,8,6,0.82);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.75);
+      overflow: hidden;
+    `;
+    this.runEnergyFillEl = document.createElement('div');
+    this.runEnergyFillEl.style.cssText = `
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, #3e7a42, #7dbb5a);
+    `;
+    runEnergyTrack.appendChild(this.runEnergyFillEl);
+    this.runEnergyTextEl = document.createElement('span');
+    this.runEnergyTextEl.style.cssText = 'text-align: right; color: #f4ded5;';
+    runEnergyRow.append(runEnergyLabel, runEnergyTrack, this.runEnergyTextEl);
+    movementModeBlock.appendChild(runEnergyRow);
+    gameGroup.appendChild(movementModeBlock);
 
     const groundItemLabelsBlock = makeBlock('Ground Item Labels', 'ground-item-labels-setting');
     const groundItemLabelsRow = makeRow('Ground item labels', GROUND_ITEM_LABEL_OPTIONS.length);
@@ -1986,6 +2082,8 @@ export class SidePanel {
     this.updateSettingsButtonGroup(this.nameplateButtons, gameSettings.nameplates);
     this.updateSettingsButtonGroup(this.tooltipModeButtons, gameSettings.tooltips);
     this.updateSettingsButtonGroup(this.framePaceButtons, gameSettings.framePace);
+    this.updateSettingsButtonGroup(this.movementModeButtons, this.movementMode);
+    this.refreshRunEnergyUi();
     this.updateSettingsButtonGroup(this.npcDialogueChatButtons, chatSettings.npcDialogueInChat ? 'show' : 'hide');
     this.updateSettingsButtonGroup(this.brightnessButtons, getBrightnessLevel());
     this.updateSettingsButtonGroup(this.renderQualityButtons, this.renderQualityMode);

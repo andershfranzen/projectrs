@@ -11,7 +11,10 @@ import {
   MAPLE_SHORTBOW_ITEM_ID, YEW_SHORTBOW_ITEM_ID, MAGIC_SHORTBOW_ITEM_ID,
   SHORTBOW_HQ_ITEM_ID, OAK_SHORTBOW_HQ_ITEM_ID, WILLOW_SHORTBOW_HQ_ITEM_ID,
   MAPLE_SHORTBOW_HQ_ITEM_ID, YEW_SHORTBOW_HQ_ITEM_ID, MAGIC_SHORTBOW_HQ_ITEM_ID,
-  type PlayerAppearance, type ItemDef, type QuestState, type EquipSlot,
+  RUN_ENERGY_LEVEL_1_AGILITY, RUN_ENERGY_MAX,
+  canRunWithEnergy, clampRunEnergy, effectiveMovementMode, effectiveMovementTilesPerTick,
+  movementTilesPerTick, runEnergyDrainPerRunTick, runEnergyPercent, runEnergyRecoverPerTick,
+  type PlayerAppearance, type ItemDef, type QuestState, type EquipSlot, type MovementMode,
 } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 
@@ -125,8 +128,11 @@ export class Player extends Entity {
   reconnectDeadlineTick: number = 0;
   private moveQueue: { x: number; z: number }[] = [];
   private moveQueueIndex: number = 0;
-  moveSpeed: number = 1;
+  movementMode: MovementMode = 'walk';
+  moveSpeed: number = movementTilesPerTick('walk');
   movementCredit: number = 0;
+  runEnergy: number = RUN_ENERGY_MAX;
+  lastRunEnergyPercent: number = -1;
   pendingPickup: number = -1;
   pendingInteraction: {
     objectEntityId: number;
@@ -754,7 +760,8 @@ export class Player extends Entity {
   }
 
   processMovement(currentTick: number): boolean {
-    // One unit tile per tick = 1.67 t/s.
+    // One unit tile per movement credit. Walk grants one credit/tick; run
+    // grants two, while collision/path validation still happens per unit tile.
     // moveQueue is unit-tile expanded by handlePlayerMove (server-side path
     // validation), so each cursor advance here is a 1-tile step.
     if (this.hasMoveQueue() && this.movementCredit >= 1) {
@@ -767,6 +774,64 @@ export class Player extends Entity {
     }
     if (!this.hasMoveQueue()) this.clearMoveQueue();
     return false;
+  }
+
+  setMovementMode(mode: MovementMode): void {
+    this.movementMode = mode === 'run' && !this.canRun() ? 'walk' : mode;
+    this.moveSpeed = movementTilesPerTick(this.movementMode);
+  }
+
+  remainingMoveSteps(): number {
+    return Math.max(0, this.moveQueue.length - this.moveQueueIndex);
+  }
+
+  movementCreditPerTick(): number {
+    return effectiveMovementTilesPerTick(this.energyQualifiedMovementMode(), this.remainingMoveSteps());
+  }
+
+  effectiveMovementModePerTick(): MovementMode {
+    return effectiveMovementMode(this.energyQualifiedMovementMode(), this.remainingMoveSteps());
+  }
+
+  setRunEnergy(energy: number): void {
+    this.runEnergy = clampRunEnergy(energy);
+    if (this.movementMode === 'run' && !this.canRun()) this.setMovementMode('walk');
+  }
+
+  runEnergyPercent(): number {
+    return runEnergyPercent(this.runEnergy);
+  }
+
+  canRun(): boolean {
+    return canRunWithEnergy(this.runEnergy);
+  }
+
+  updateRunEnergy(
+    movedStepsThisTick: number,
+    agilityLevel: number = RUN_ENERGY_LEVEL_1_AGILITY,
+    runWeightGrams: number = 0,
+  ): { changed: boolean; percentChanged: boolean; modeChanged: boolean } {
+    const previousEnergy = this.runEnergy;
+    const previousPercent = this.runEnergyPercent();
+    const previousMode = this.movementMode;
+    const movedSteps = Number.isFinite(movedStepsThisTick)
+      ? Math.max(0, Math.floor(movedStepsThisTick))
+      : 0;
+    if (movedSteps >= movementTilesPerTick('run')) {
+      this.runEnergy = clampRunEnergy(this.runEnergy - runEnergyDrainPerRunTick(runWeightGrams));
+    } else {
+      this.runEnergy = clampRunEnergy(this.runEnergy + runEnergyRecoverPerTick(agilityLevel));
+    }
+    if (this.movementMode === 'run' && !this.canRun()) this.setMovementMode('walk');
+    return {
+      changed: this.runEnergy !== previousEnergy,
+      percentChanged: this.runEnergyPercent() !== previousPercent,
+      modeChanged: this.movementMode !== previousMode,
+    };
+  }
+
+  private energyQualifiedMovementMode(): MovementMode {
+    return this.movementMode === 'run' && !this.canRun() ? 'walk' : this.movementMode;
   }
 
   setMoveQueue(path: { x: number; z: number }[]): void {

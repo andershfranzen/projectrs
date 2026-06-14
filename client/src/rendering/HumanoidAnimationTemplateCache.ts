@@ -12,6 +12,7 @@ export interface HumanoidAnimationDef {
   name: string;
   path: string;
   animName?: string;
+  optional?: boolean;
 }
 
 export interface HumanoidRigContext {
@@ -48,6 +49,7 @@ const TRANSLATION_BONE_WHITELIST = new Set([
   'mixamorig:Spine1',
   'mixamorig:Spine2',
 ]);
+const RUN_HIPS_BOB_SCALE = 0.7;
 
 const sceneTemplateCaches = new WeakMap<Scene, Map<string, Promise<HumanoidAnimationTemplate | null>>>();
 const warnedTemplateFailures = new Set<string>();
@@ -89,6 +91,45 @@ function warnOnce(key: string, message: string): void {
   if (warnedTemplateFailures.has(key)) return;
   warnedTemplateFailures.add(key);
   console.warn(message);
+}
+
+function describeLoadError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+function responseLooksLikeStaticAsset(res: Response): boolean {
+  const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
+  return !contentType.includes('text/html');
+}
+
+export async function optionalAnimationFileExists(path: string): Promise<boolean | null> {
+  if (typeof fetch !== 'function') return null;
+  try {
+    const res = await fetch(path, { method: 'HEAD', cache: 'no-store' });
+    if (res.status === 404) return false;
+    if (res.ok) return responseLooksLikeStaticAsset(res);
+    if (res.status !== 405) return null;
+  } catch {
+    return null;
+  }
+
+  try {
+    const res = await fetch(path, {
+      cache: 'no-store',
+      headers: { Range: 'bytes=0-0' },
+    });
+    if (res.status === 404) return false;
+    if (res.ok || res.status === 206) return responseLooksLikeStaticAsset(res);
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function roundedQuat(q: Quaternion): string {
@@ -229,10 +270,14 @@ function stripUnsafeHipsTranslation(ta: AnimationGroup['targetedAnimations'][num
   const prop = ta.animation.targetProperty;
   if (prop !== 'position' && !prop.startsWith('position')) return;
 
-  const isInPlaceCycle = isWalkVariant(animName);
+  const isInPlaceCycle = isWalkVariant(animName) || animName === 'run';
+  const preserveVerticalBob = animName === 'run';
+  const restY = typeof target.position?.y === 'number' ? target.position.y : 0;
   for (const k of ta.animation.getKeys()) {
     const v = k.value as any;
-    if (v && typeof v.y === 'number') v.y = 0;
+    if (v && typeof v.y === 'number') {
+      v.y = preserveVerticalBob ? (v.y - restY) * RUN_HIPS_BOB_SCALE : 0;
+    }
     if (isInPlaceCycle && v) {
       if (typeof v.x === 'number') v.x = 0;
       if (typeof v.z === 'number') v.z = 0;
@@ -351,8 +396,14 @@ async function createTemplate(
       tracks,
     };
     return template;
-  } catch {
-    warnOnce(cacheKey, `[HumanoidAnimationTemplateCache] Failed to load animation file ${anim.path}`);
+  } catch (err) {
+    const exists = anim.optional ? await optionalAnimationFileExists(anim.path) : true;
+    if (!anim.optional || exists !== false) {
+      warnOnce(
+        cacheKey,
+        `[HumanoidAnimationTemplateCache] Failed to load animation file ${anim.path}: ${describeLoadError(err)}`,
+      );
+    }
     return null;
   } finally {
     if (quantizeGroup) quantizeGroup.dispose();
@@ -375,7 +426,7 @@ export function getHumanoidAnimationTemplate(
   let promise = sceneCache.get(key);
   if (!promise) {
     promise = createTemplate(scene, anim, rig, key).then((template) => {
-      if (template === null && sceneCache?.get(key) === promise) {
+      if (template === null && !anim.optional && sceneCache?.get(key) === promise) {
         sceneCache.delete(key);
       }
       return template;
