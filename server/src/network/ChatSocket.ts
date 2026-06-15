@@ -16,13 +16,6 @@ function recordGameEvent(world: World, input: GameEventLogInput): void {
   if (typeof recorder === 'function') recorder.call(db, input);
 }
 
-function mutedMessage(reason: string, expiresAt: number | null): string {
-  const suffix = reason ? ` Reason: ${reason}` : '';
-  if (expiresAt === null) return `You are muted permanently.${suffix}`;
-  const until = new Date(expiresAt * 1000).toLocaleString();
-  return `You are muted until ${until}.${suffix}`;
-}
-
 /** Reject a command from a non-admin and notify them. Returns true if blocked.
  *  Admin status is bound at WS upgrade time from the DB (accounts.is_admin),
  *  so this is just a flag check — no per-message DB hit. */
@@ -77,6 +70,27 @@ const chatRateState = new WeakMap<ServerWebSocket<ChatSocketData>, { count: numb
 const COMMAND_COOLDOWN_MS = 1000;
 const UNSTUCK_COOLDOWN_MS = 10 * 60 * 1000;
 const UNSTUCK_TARGET_MAP = 'kcmap';
+const DEFAULT_MUTE_DURATION_SECONDS = 60 * 60;
+const MAX_MUTE_DURATION_SECONDS = 366 * 24 * 60 * 60;
+const MUTED_CHAT_ADJECTIVES = [
+  'wobbly', 'sparkly', 'dramatic', 'tiny', 'soggy', 'polite', 'mysterious', 'crunchy',
+  'fancy', 'sleepy', 'suspicious', 'velvet', 'baffled', 'shiny', 'leftover', 'heroic',
+];
+const MUTED_CHAT_NOUNS = [
+  'spoon', 'pancake', 'mailbox', 'teapot', 'pickle', 'sock', 'noodle', 'button',
+  'waffle', 'cactus', 'turnip', 'doorknob', 'cupcake', 'lampshade', 'muffin', 'biscuit',
+];
+const MUTED_CHAT_VERBS = [
+  'juggles', 'audits', 'tickles', 'polishes', 'misplaces', 'summons', 'folds', 'questions',
+  'balances', 'launches', 'befriends', 'reboots', 'measures', 'argues', 'decorates', 'reheats',
+];
+const MUTED_CHAT_ADVERBS = [
+  'boldly', 'quietly', 'sideways', 'politely', 'wildly', 'almost', 'briefly', 'probably',
+];
+const MUTED_CHAT_OBJECTS = [
+  'moon cheese', 'pocket thunder', 'invisible soup', 'accordion dust', 'bubble paperwork',
+  'waffle logic', 'velvet confetti', 'pickle math', 'noodle weather', 'emergency glitter',
+];
 const commandCooldowns = new Map<string, number>();
 const unstuckCooldowns = new Map<number, number>();
 
@@ -175,7 +189,7 @@ function sendPrivateMessage(
   if (!msg) return;
   const mute = world.db.isAccountMuted(ws.data.accountId);
   if (mute) {
-    sendSystem(ws, mutedMessage(mute.reason, mute.expiresAt));
+    sendMutedPrivateMessage(ws, targetName, msg, world);
     return;
   }
   const normalizedTarget = targetName.trim();
@@ -251,16 +265,124 @@ function sendPrivateMessage(
   });
 }
 
+function localChatPayload(from: string, message: string, fromAccountId?: number, fromIsAdmin: boolean = false, fromIsModerator: boolean = false): string {
+  return JSON.stringify({ type: 'local', from, fromAccountId, isAdmin: fromIsAdmin, isModerator: fromIsModerator, message });
+}
+
+function sendLocalEchoToAccount(accountId: number, from: string, message: string, fromIsAdmin: boolean = false, fromIsModerator: boolean = false): void {
+  const payload = localChatPayload(from, message, accountId, fromIsAdmin, fromIsModerator);
+  for (const sock of chatSockets) {
+    if (sock.data.accountId === accountId) {
+      chatSend(sock, payload);
+    }
+  }
+}
+
 export function broadcastLocalMessage(from: string, message: string, fromAccountId?: number, fromIsAdmin: boolean = false, fromIsModerator: boolean = false): void {
   const msg = message.substring(0, 1000);
   if (!from || msg.length === 0) return;
-  const payload = JSON.stringify({ type: 'local', from, fromAccountId, isAdmin: fromIsAdmin, isModerator: fromIsModerator, message: msg });
+  const payload = localChatPayload(from, msg, fromAccountId, fromIsAdmin, fromIsModerator);
+  broadcastLocalPayload(payload, fromAccountId);
+}
+
+function broadcastLocalPayload(payload: string, fromAccountId?: number, excludeAccountId?: number): void {
   for (const sock of chatSockets) {
+    if (excludeAccountId != null && sock.data.accountId === excludeAccountId) {
+      continue;
+    }
     if (fromAccountId != null && ignoredAccountIdsByAccountId.get(sock.data.accountId)?.has(fromAccountId)) {
       continue;
     }
     chatSend(sock, payload);
   }
+}
+
+function sendMutedLocalMessage(ws: ServerWebSocket<ChatSocketData>, from: string, message: string): void {
+  const original = message.substring(0, 1000);
+  const scrambled = randomMutedMessage(original);
+  sendLocalEchoToAccount(ws.data.accountId, from, original, ws.data.isAdmin, ws.data.isModerator);
+  broadcastLocalPayload(
+    localChatPayload(from, scrambled, ws.data.accountId, ws.data.isAdmin, ws.data.isModerator),
+    ws.data.accountId,
+    ws.data.accountId,
+  );
+}
+
+function sendMutedPrivateMessage(
+  ws: ServerWebSocket<ChatSocketData>,
+  targetName: string,
+  message: string,
+  world: World,
+): void {
+  const normalizedTarget = targetName.trim();
+  if (!normalizedTarget) {
+    sendSystem(ws, 'Choose a player to message.');
+    return;
+  }
+
+  const targetAccountId = world.db.getAccountIdByUsername(normalizedTarget);
+  const targetUsername = targetAccountId == null
+    ? normalizedTarget
+    : world.db.getUsernameByAccountId(targetAccountId) ?? normalizedTarget;
+
+  try {
+    ws.send(JSON.stringify({
+      type: 'private_sent',
+      to: targetUsername,
+      toAccountId: targetAccountId ?? undefined,
+      message,
+    }));
+  } catch { /* sender socket is closing */ }
+
+  if (targetAccountId == null || targetAccountId === ws.data.accountId) return;
+  if (world.db.isIgnoring(ws.data.accountId, targetAccountId)) return;
+  if (world.db.isIgnoring(targetAccountId, ws.data.accountId)) return;
+
+  const targetSocket = chatSocketsByAccountId.get(targetAccountId);
+  if (!targetSocket) return;
+  try {
+    targetSocket.send(JSON.stringify({
+      type: 'private',
+      from: ws.data.username,
+      fromAccountId: ws.data.accountId,
+      message: randomMutedMessage(message),
+    }));
+  } catch { /* target socket is closing */ }
+}
+
+function randomMutedMessage(message: string): string {
+  const words = message.trim().split(/\s+/).filter(Boolean);
+  const fallbackCount = Math.max(1, Math.ceil(message.trim().length / 8));
+  const count = Math.max(1, Math.min(12, words.length || fallbackCount));
+  const rng = seededMutedChatRng(`${message}:${Date.now()}:${Math.random()}`);
+  const pick = (list: string[]): string => list[Math.floor(rng() * list.length)] ?? list[0] ?? 'waffle';
+  const patterns: Array<() => string[]> = [
+    () => [pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_NOUNS), pick(MUTED_CHAT_VERBS), pick(MUTED_CHAT_OBJECTS)],
+    () => [pick(MUTED_CHAT_ADVERBS), pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_NOUNS), pick(MUTED_CHAT_VERBS), pick(MUTED_CHAT_OBJECTS)],
+    () => [pick(MUTED_CHAT_NOUNS), pick(MUTED_CHAT_VERBS), pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_OBJECTS)],
+    () => [pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_NOUNS), 'with', pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_NOUNS)],
+  ];
+
+  const output: string[] = [];
+  while (output.length < count) {
+    output.push(...patterns[Math.floor(rng() * patterns.length)]());
+  }
+  return output.slice(0, count).join(' ');
+}
+
+function seededMutedChatRng(seedText: string): () => number {
+  let seed = 0x811c9dc5;
+  for (let i = 0; i < seedText.length; i++) {
+    seed ^= seedText.charCodeAt(i);
+    seed = Math.imul(seed, 0x01000193);
+  }
+  return () => {
+    seed += 0x6d2b79f5;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 export function handleChatSocketOpen(
@@ -346,7 +468,7 @@ export function handleChatSocketMessage(
 
       const mute = world.db.isAccountMuted(ws.data.accountId);
       if (mute) {
-        sendSystem(ws, mutedMessage(mute.reason, mute.expiresAt));
+        sendMutedLocalMessage(ws, from, msg);
         return;
       }
 
@@ -845,6 +967,59 @@ function handleCommand(
       break;
     }
 
+    case '/mute': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const targetName = parts[1];
+      if (!targetName) {
+        sendSystem(ws, 'Usage: /mute <player> [30m|1h|24h|7d|permanent] [reason]');
+        return;
+      }
+      const accountId = world.db.getAccountIdByUsername(targetName);
+      if (accountId == null) {
+        sendSystem(ws, `Account "${targetName}" not found.`);
+        return;
+      }
+      if (accountId === ws.data.accountId) {
+        sendSystem(ws, 'You cannot mute your own account.');
+        return;
+      }
+      const target = world.db.getAccountModerationInfo(accountId);
+      if (!target) {
+        sendSystem(ws, `Account "${targetName}" not found.`);
+        return;
+      }
+      if (target.isAdmin) {
+        sendSystem(ws, 'Admin accounts cannot be muted.');
+        return;
+      }
+      const parsed = parseMuteCommandArgs(parts.slice(2));
+      if (!parsed.ok) {
+        sendSystem(ws, parsed.error);
+        return;
+      }
+      world.db.muteAccount(accountId, parsed.reason, from, parsed.expiresAt);
+      sendSystem(ws, `Muted ${target.username} (${moderationExpiryLabel(parsed.expiresAt)}).`);
+      break;
+    }
+
+    case '/unmute': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const targetName = parts[1];
+      if (!targetName) {
+        sendSystem(ws, 'Usage: /unmute <player>');
+        return;
+      }
+      const accountId = world.db.getAccountIdByUsername(targetName);
+      if (accountId == null) {
+        sendSystem(ws, `Account "${targetName}" not found.`);
+        return;
+      }
+      const targetUsername = world.db.getUsernameByAccountId(accountId) ?? targetName;
+      const removed = world.db.unmuteAccount(accountId);
+      sendSystem(ws, removed ? `Unmuted ${targetUsername}.` : `${targetUsername} was not muted.`);
+      break;
+    }
+
     case '/rename':
     case '/setname': {
       if (denyIfNotAdmin(ws, from)) return;
@@ -1017,6 +1192,40 @@ function handleCommand(
       sendSystem(ws, `Unknown command: ${cmd}`);
     }
   }
+}
+
+function parseMuteCommandArgs(args: string[]): { ok: true; expiresAt: number | null; reason: string } | { ok: false; error: string } {
+  const first = args[0]?.trim();
+  const parsedDuration = first ? parseMuteDurationToken(first) : null;
+  if (parsedDuration && !parsedDuration.ok) return parsedDuration;
+
+  const durationSeconds = parsedDuration?.durationSeconds ?? DEFAULT_MUTE_DURATION_SECONDS;
+  const expiresAt = durationSeconds === null ? null : Math.floor(Date.now() / 1000) + durationSeconds;
+  const reasonStart = parsedDuration ? 1 : 0;
+  const reason = args.slice(reasonStart).join(' ').trim().slice(0, 200);
+  return { ok: true, expiresAt, reason };
+}
+
+function parseMuteDurationToken(token: string): { ok: true; durationSeconds: number | null } | { ok: false; error: string } | null {
+  const normalized = token.toLowerCase();
+  if (normalized === 'permanent' || normalized === 'perm' || normalized === '0') {
+    return { ok: true, durationSeconds: null };
+  }
+
+  const match = normalized.match(/^(\d+)([smhd])?$/);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2] ?? 's';
+  const multiplier = unit === 'd' ? 24 * 60 * 60 : unit === 'h' ? 60 * 60 : unit === 'm' ? 60 : 1;
+  const seconds = amount * multiplier;
+  if (!Number.isFinite(seconds)) return { ok: false, error: 'Invalid mute duration.' };
+  if (seconds < 60) return { ok: false, error: 'Temporary mutes must be at least 1 minute.' };
+  if (seconds > MAX_MUTE_DURATION_SECONDS) return { ok: false, error: 'Temporary mutes cannot exceed 366 days.' };
+  return { ok: true, durationSeconds: Math.floor(seconds) };
+}
+
+function moderationExpiryLabel(expiresAt: number | null): string {
+  return expiresAt === null ? 'permanent' : `until ${new Date(expiresAt * 1000).toISOString()}`;
 }
 
 function parseQuestAdminCommand(

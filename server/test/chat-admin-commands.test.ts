@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { handleChatSocketMessage } from '../src/network/ChatSocket';
+import { handleChatSocketClose, handleChatSocketMessage, handleChatSocketOpen } from '../src/network/ChatSocket';
 
 function makePlayer(
   id: number,
@@ -37,33 +37,99 @@ function makeAdminSocket(username: string): { ws: any; messages: string[] } {
   };
 }
 
-function makeUserSocket(username: string, accountId: number): { ws: any; messages: string[] } {
-  const messages: string[] = [];
+function makeCollectingSocket(username: string, accountId: number, isAdmin: boolean = false): { ws: any; payloads: any[] } {
+  const payloads: any[] = [];
   return {
-    messages,
+    payloads,
     ws: {
-      data: { type: 'chat', accountId, username, isAdmin: false, isModerator: false },
+      data: { type: 'chat', accountId, username, isAdmin, isModerator: false },
       send(message: string) {
-        messages.push(JSON.parse(message).message);
+        payloads.push(JSON.parse(message));
       },
+      getBufferedAmount() {
+        return 0;
+      },
+      close() {},
+    },
+  };
+}
+
+function makeSocialWorld(extra: Record<string, unknown> = {}): any {
+  return {
+    players: new Map(),
+    db: {
+      listSocialRelations() {
+        return { friends: [], ignore: [] };
+      },
+      ...extra,
     },
   };
 }
 
 describe('admin chat teleport commands', () => {
-  test('muted accounts cannot send local chat', () => {
-    const { ws, messages } = makeUserSocket('Muted', 42);
+  test('muted local chat echoes normally to sender and scrambles for others', () => {
+    const sender = makeCollectingSocket('Muted', 42);
+    const senderOtherTab = makeCollectingSocket('Muted', 42);
+    const other = makeCollectingSocket('Other', 43);
+    const world = makeSocialWorld({
+      isAccountMuted(accountId: number) {
+        return accountId === 42 ? { reason: 'spam', mutedAt: 1000, expiresAt: null } : null;
+      },
+    });
+
+    try {
+      handleChatSocketOpen(sender.ws, world);
+      handleChatSocketOpen(senderOtherTab.ws, world);
+      handleChatSocketOpen(other.ws, world);
+      sender.payloads.length = 0;
+      senderOtherTab.payloads.length = 0;
+      other.payloads.length = 0;
+
+      handleChatSocketMessage(sender.ws, JSON.stringify({ type: 'local', message: 'meet me at bank' }), world);
+
+      const senderLocal = sender.payloads.find(payload => payload.type === 'local');
+      const senderOtherTabLocal = senderOtherTab.payloads.find(payload => payload.type === 'local');
+      const otherLocal = other.payloads.find(payload => payload.type === 'local');
+      expect(senderLocal).toMatchObject({ type: 'local', from: 'Muted', message: 'meet me at bank' });
+      expect(senderOtherTabLocal).toMatchObject({ type: 'local', from: 'Muted', message: 'meet me at bank' });
+      expect(otherLocal?.type).toBe('local');
+      expect(otherLocal?.from).toBe('Muted');
+      expect(otherLocal?.message).not.toBe('meet me at bank');
+      expect(otherLocal?.message).toMatch(/^[a-z ]+$/);
+      expect(otherLocal?.message.split(/\s+/).length).toBeGreaterThanOrEqual(3);
+    } finally {
+      handleChatSocketClose(sender.ws, world);
+      handleChatSocketClose(senderOtherTab.ws, world);
+      handleChatSocketClose(other.ws, world);
+    }
+  });
+
+  test('/mute stores a temporary account mute for admins', () => {
+    const muteCalls: any[] = [];
     const world: any = {
+      players: new Map(),
       db: {
-        isAccountMuted() {
-          return { reason: 'spam', mutedAt: 1000, expiresAt: null };
+        getAccountIdByUsername(username: string) {
+          return username.toLowerCase() === 'target' ? 2 : null;
+        },
+        getAccountModerationInfo(accountId: number) {
+          return accountId === 2 ? { accountId, username: 'Target', isAdmin: false, isModerator: false } : null;
+        },
+        muteAccount(accountId: number, reason: string, mutedBy: string, expiresAt: number | null) {
+          muteCalls.push({ accountId, reason, mutedBy, expiresAt });
         },
       },
     };
+    const { ws, messages } = makeAdminSocket('Admin');
 
-    handleChatSocketMessage(ws, JSON.stringify({ type: 'local', message: 'hello' }), world);
+    handleChatSocketMessage(ws, JSON.stringify({ type: 'local', message: '/mute Target 30m spamming chat' }), world);
 
-    expect(messages).toEqual(['You are muted permanently. Reason: spam']);
+    expect(muteCalls).toHaveLength(1);
+    expect(muteCalls[0].accountId).toBe(2);
+    expect(muteCalls[0].reason).toBe('spamming chat');
+    expect(muteCalls[0].mutedBy).toBe('Admin');
+    expect(muteCalls[0].expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    expect(messages[0]).toContain('Muted Target');
   });
 
   test('/tpto teleports the admin to another player across maps', () => {
