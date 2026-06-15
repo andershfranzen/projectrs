@@ -144,6 +144,12 @@ export const GROUND_ITEM_SPAWN_ASSET_IDS: ReadonlySet<string> = new Set([
   'bone',
   'Bones.glb',
   'bone.glb',
+  'Knife',
+  'knife',
+  'Knife.glb',
+  'knife.glb',
+  '/assets/models/Knife.glb',
+  'assets/models/Knife.glb',
   'Sapphire',
   'Emerald',
   'Ruby',
@@ -173,6 +179,26 @@ export function isCropPlacedAssetId(assetId: string): boolean {
 export interface SceneryExamineMeta {
   name: string;
   examineText: string;
+}
+
+export interface PlacedObjectStorageSurfaceProfile {
+  /** Model-space height from the placed object's origin to the usable top surface. */
+  surfaceHeight: number;
+}
+
+export const PLACED_OBJECT_STORAGE_SURFACE_PROFILES: Readonly<Record<string, PlacedObjectStorageSurfaceProfile>> = {
+  // Values are model-space and multiplied by the placed object's Y scale.
+  // table1 is commonly placed at scaleY ~= 0.55, giving a tabletop Y ~= 0.8.
+  'table1': { surfaceHeight: 1.45 },
+  'Theodosian_Table_1': { surfaceHeight: 2.2 },
+};
+
+export function storageSurfaceProfileForPlacedAsset(assetId: string): PlacedObjectStorageSurfaceProfile | undefined {
+  return PLACED_OBJECT_STORAGE_SURFACE_PROFILES[assetId];
+}
+
+export function isPlacedObjectStorageSurfaceAssetId(assetId: string): boolean {
+  return storageSurfaceProfileForPlacedAsset(assetId) !== undefined;
 }
 
 export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta>> = {
@@ -296,6 +322,10 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
     name: 'Table',
     examineText: 'A plain wooden table.',
   },
+  'Theodosian_Table_1': {
+    name: 'Table',
+    examineText: 'A sturdy table.',
+  },
   'Tent': {
     name: 'Tent',
     examineText: 'A canvas tent pitched for a short stay.',
@@ -330,7 +360,10 @@ export function isWalkHerePrimarySceneryAssetId(assetId: string): boolean {
 
 export function objectDefIdForPlacedAsset(assetId: string): number | undefined {
   if (isGroundItemSpawnAssetId(assetId)) return undefined;
-  return ASSET_TO_OBJECT_DEF[assetId] ?? (EXAMINABLE_SCENERY_ASSETS.has(assetId) ? GENERIC_SCENERY_OBJECT_DEF_ID : undefined);
+  return ASSET_TO_OBJECT_DEF[assetId]
+    ?? (EXAMINABLE_SCENERY_ASSETS.has(assetId) || isPlacedObjectStorageSurfaceAssetId(assetId)
+      ? GENERIC_SCENERY_OBJECT_DEF_ID
+      : undefined);
 }
 
 /**

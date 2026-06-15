@@ -46,6 +46,17 @@ const objectDef: WorldObjectDef = {
   color: [1, 1, 1],
 };
 
+const tableDef: WorldObjectDef = {
+  id: 45,
+  name: 'Table',
+  actions: ['Examine'],
+  width: 1,
+  height: 1,
+  blocking: false,
+  category: 'scenery',
+  color: [1, 1, 1],
+};
+
 const ladderDef: WorldObjectDef = {
   id: 51,
   name: 'Ladder',
@@ -146,6 +157,7 @@ function makeWorld(): any {
   world.cancelSkilling = () => {};
   world.closeNpcUiContext = () => {};
   world.clearPendingObjectIntents = () => {};
+  world.forEachPlayerNearOnFloor = () => {};
   world.interruptPlayerAction = () => {};
   world.teleportPlayer = (player: Player, x: number, z: number, y: number, forcedFloor?: number) => {
     player.position.x = x;
@@ -316,6 +328,102 @@ describe('floor isolation', () => {
     const groundItem = makeGroundItem(9005, 6.5, 5.5);
     player.visibleEntityIds.add(groundItem.id);
     world.blockedObjectTiles.add(world.blockedKeyFor('kcmap', 6, 5, 0));
+    world.players.set(player.id, player);
+    world.groundItems.set(groundItem.id, groundItem);
+
+    world.handlePlayerPickup(player.id, groundItem.id);
+
+    expect(world.groundItems.has(groundItem.id)).toBe(false);
+    expect(player.inventory.some(slot => slot?.itemId === itemDef.id && slot.quantity === groundItem.quantity)).toBe(true);
+  });
+
+  test('blocked table item can be picked up from a cardinal edge tile', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('player', 1);
+    const groundItem = makeGroundItem(9006, 6.5, 5.5);
+    player.visibleEntityIds.add(groundItem.id);
+    world.blockedObjectTiles.add(world.blockedKeyFor('kcmap', 6, 5, 0));
+    world.players.set(player.id, player);
+    world.groundItems.set(groundItem.id, groundItem);
+
+    world.handlePlayerPickup(player.id, groundItem.id);
+
+    expect(world.groundItems.has(groundItem.id)).toBe(false);
+    expect(player.inventory.some(slot => slot?.itemId === itemDef.id && slot.quantity === groundItem.quantity)).toBe(true);
+  });
+
+  test('using an item on a table stores the stack on the tabletop', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('player', 1);
+    player.inventory[0] = { itemId: itemDef.id, quantity: 7 };
+    const table = new WorldObject(tableDef, 6.5, 5.5, 'kcmap', 0, 0);
+    table.assetId = 'table1';
+    table.scale = { x: 0.5, y: 0.55, z: 0.55 };
+    world.allocateGroundItemId = () => 9010;
+    world.players.set(player.id, player);
+    world.worldObjects.set(table.id, table);
+
+    world.handlePlayerUseItemOnObject(player.id, 0, itemDef.id, table.id);
+
+    const stored = world.groundItems.get(9010);
+    expect(player.inventory[0]).toBeNull();
+    expect(stored?.itemId).toBe(itemDef.id);
+    expect(stored?.quantity).toBe(7);
+    expect(stored?.x).toBe(table.x);
+    expect(stored?.z).toBe(table.z);
+    expect(stored?.floor).toBe(table.floor);
+    expect(stored?.y).toBeCloseTo(0.7975, 5);
+    expect(world.despawningItemIds.has(9010)).toBe(true);
+    expect(player.isBusy(world.currentTick)).toBe(true);
+    expect(player.isBusy(world.currentTick + 1)).toBe(false);
+  });
+
+  test('blocked table item pickup from reach distance cannot cross a wall edge', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('player', 1);
+    const groundItem = makeGroundItem(9007, 6.5, 5.5);
+    player.visibleEntityIds.add(groundItem.id);
+    world.blockedObjectTiles.add(world.blockedKeyFor('kcmap', 6, 5, 0));
+    world.maps.set('kcmap', {
+      ...world.maps.get('kcmap'),
+      isWallBlocked: (_fx: number, _fz: number, tx: number, tz: number) => tx === 6 && tz === 5,
+      isWallBlockedOnFloor: (_fx: number, _fz: number, tx: number, tz: number) => tx === 6 && tz === 5,
+    });
+    world.players.set(player.id, player);
+    world.groundItems.set(groundItem.id, groundItem);
+
+    world.handlePlayerPickup(player.id, groundItem.id);
+
+    expect(world.groundItems.has(groundItem.id)).toBe(true);
+    expect(player.inventory.every((slot: unknown) => slot === null)).toBe(true);
+  });
+
+  test('blocked table item cannot be picked up from a non-cardinal tile', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('player', 1);
+    const groundItem = makeGroundItem(9009, 7.5, 5.5);
+    player.visibleEntityIds.add(groundItem.id);
+    world.blockedObjectTiles.add(world.blockedKeyFor('kcmap', 7, 5, 0));
+    world.players.set(player.id, player);
+    world.groundItems.set(groundItem.id, groundItem);
+
+    world.handlePlayerPickup(player.id, groundItem.id);
+
+    expect(world.groundItems.has(groundItem.id)).toBe(true);
+    expect(player.inventory.every((slot: unknown) => slot === null)).toBe(true);
+  });
+
+  test('elevated table item can be picked up across its final collision edge', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('player', 1);
+    const groundItem = makeGroundItem(9008, 6.5, 5.5);
+    groundItem.y = 0.8;
+    player.visibleEntityIds.add(groundItem.id);
+    world.maps.set('kcmap', {
+      ...world.maps.get('kcmap'),
+      isWallBlocked: (_fx: number, _fz: number, tx: number, tz: number) => tx === 6 && tz === 5,
+      isWallBlockedOnFloor: (_fx: number, _fz: number, tx: number, tz: number) => tx === 6 && tz === 5,
+    });
     world.players.set(player.id, player);
     world.groundItems.set(groundItem.id, groundItem);
 

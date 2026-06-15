@@ -63,6 +63,8 @@ export class WorldObject {
   name?: string;
   /** Source editor asset id, when this object came from a placed GLB. */
   assetId?: string;
+  /** Source editor scale, when this object came from a placed GLB. */
+  scale?: { x: number; y: number; z: number };
   /** Optional per-instance examine text from an editor placed object. */
   examineText?: string;
   /** Optional per-action effects from an editor placed object. */

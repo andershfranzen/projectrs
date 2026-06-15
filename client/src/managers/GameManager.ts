@@ -66,7 +66,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, movementTilesPerSecond, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, movementTilesPerSecond, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -8868,38 +8868,93 @@ export class GameManager {
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_PICKUP_ITEM, groundItemId));
   }
 
-  private canReachGroundItemTileFrom(fromTileX: number, fromTileZ: number, itemTileX: number, itemTileZ: number): boolean {
-    const dx = itemTileX - fromTileX;
-    const dz = itemTileZ - fromTileZ;
-    if (dx === 0 && dz === 0) return true;
-    if (Math.abs(dx) > 1 || Math.abs(dz) > 1) return false;
-    if (dx === 0 || dz === 0) {
-      return !this.isWallBlockedForPath(fromTileX, fromTileZ, itemTileX, itemTileZ);
-    }
+  private groundItemReachCollision(): {
+    width?: number;
+    height?: number;
+    isTileBlocked: (tileX: number, tileZ: number) => boolean;
+    isWallBlocked: (fromTileX: number, fromTileZ: number, toTileX: number, toTileZ: number) => boolean;
+  } {
+    const chunkManager = this.chunkManager as unknown as {
+      getMapWidth?: () => number;
+      getMapHeight?: () => number;
+    } | undefined;
+    return {
+      width: typeof chunkManager?.getMapWidth === 'function' ? chunkManager.getMapWidth() : undefined,
+      height: typeof chunkManager?.getMapHeight === 'function' ? chunkManager.getMapHeight() : undefined,
+      isTileBlocked: this.isTileBlocked,
+      isWallBlocked: this.isWallBlockedForPath,
+    };
+  }
 
-    const horizontalTileX = fromTileX + dx;
-    const verticalTileZ = fromTileZ + dz;
-    if (this.isTileBlocked(horizontalTileX, fromTileZ)) return false;
-    if (this.isTileBlocked(fromTileX, verticalTileZ)) return false;
-    if (this.isWallBlockedForPath(fromTileX, fromTileZ, horizontalTileX, fromTileZ)) return false;
-    if (this.isWallBlockedForPath(fromTileX, fromTileZ, fromTileX, verticalTileZ)) return false;
-    if (this.isWallBlockedForPath(horizontalTileX, fromTileZ, itemTileX, itemTileZ)) return false;
-    if (this.isWallBlockedForPath(fromTileX, verticalTileZ, itemTileX, itemTileZ)) return false;
-    return true;
+  private canReachGroundItemTileFrom(
+    fromTileX: number,
+    fromTileZ: number,
+    itemTileX: number,
+    itemTileZ: number,
+    allowBlockedSurfaceReach: boolean = false,
+    ignoreFinalWallToItem: boolean = false,
+  ): boolean {
+    return canReachGroundItemTile(
+      this.groundItemReachCollision(),
+      fromTileX,
+      fromTileZ,
+      itemTileX,
+      itemTileZ,
+      allowBlockedSurfaceReach,
+      ignoreFinalWallToItem,
+    );
+  }
+
+  private groundItemSurfaceReachState(item: GroundItemData): { insideCollisionBox: boolean; elevated: boolean } {
+    const collision = this.groundItemReachCollision();
+    const insideCollisionBox = isTileInsidePathingCollisionBox(
+      collision,
+      Math.floor(item.x),
+      Math.floor(item.z),
+    );
+    return {
+      insideCollisionBox,
+      elevated: insideCollisionBox && this.isGroundItemElevatedAboveFloor(item),
+    };
+  }
+
+  private isGroundItemElevatedAboveFloor(item: GroundItemData): boolean {
+    if (!Number.isFinite(item.y)) return false;
+    const floor = Math.floor(item.floor ?? 0);
+    const floorY = this.getHeightAtFloor(
+      item.x,
+      item.z,
+      floor,
+      floor > 0 ? Number.POSITIVE_INFINITY : undefined,
+    );
+    return item.y - floorY >= GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT;
   }
 
   private findPathToGroundItem(item: GroundItemData): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
     const itemTileX = Math.floor(item.x);
     const itemTileZ = Math.floor(item.z);
-    if (!this.isTileBlocked(itemTileX, itemTileZ)) {
-      const direct = this.findPathFromMovementAnchor(item.x, item.z);
-      if (direct.path.length === 0 || this.pathReachesGoal(direct.path, item.x, item.z)) return direct;
-    }
-
     const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
     const start = activeStep?.target ?? { x: this.playerX, z: this.playerZ };
+    const surfaceReach = this.groundItemSurfaceReachState(item);
+    let allowBlockedSurfaceReach = surfaceReach.insideCollisionBox && this.isTileBlocked(itemTileX, itemTileZ);
+    if (!this.isTileBlocked(itemTileX, itemTileZ)) {
+      const direct = this.findPathFromMovementAnchor(item.x, item.z);
+      const alreadyAtItemTile = Math.floor(start.x) === itemTileX && Math.floor(start.z) === itemTileZ;
+      if (this.pathReachesGoal(direct.path, item.x, item.z) || (direct.path.length === 0 && alreadyAtItemTile)) {
+        return direct;
+      }
+      allowBlockedSurfaceReach = surfaceReach.insideCollisionBox;
+    }
+
     const reached = (tileX: number, tileZ: number): boolean =>
-      this.canReachGroundItemTileFrom(tileX, tileZ, itemTileX, itemTileZ);
+      this.canReachGroundItemTileFrom(
+        tileX,
+        tileZ,
+        itemTileX,
+        itemTileZ,
+        allowBlockedSurfaceReach,
+        surfaceReach.elevated,
+      );
 
     if (!activeStep && reached(Math.floor(this.playerX), Math.floor(this.playerZ))) {
       return { path: [], preserveCurrentStep: false };

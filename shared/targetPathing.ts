@@ -282,6 +282,72 @@ export function canTravel(
   return !isFootprintWallBlocked(collision, fromTileX, fromTileZ, toTileX, toTileZ, span);
 }
 
+export const GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT = 0.35;
+export const CARDINAL_TILE_OFFSETS: ReadonlyArray<Readonly<{ dx: number; dz: number }>> = Object.freeze([
+  Object.freeze({ dx: 1, dz: 0 }),
+  Object.freeze({ dx: -1, dz: 0 }),
+  Object.freeze({ dx: 0, dz: 1 }),
+  Object.freeze({ dx: 0, dz: -1 }),
+]);
+
+export function areTilesCardinallyAdjacent(
+  fromTileX: number,
+  fromTileZ: number,
+  toTileX: number,
+  toTileZ: number,
+): boolean {
+  return Math.abs(toTileX - fromTileX) + Math.abs(toTileZ - fromTileZ) === 1;
+}
+
+export function isTileInsidePathingCollisionBox(
+  collision: TargetPathingCollision,
+  tileX: number,
+  tileZ: number,
+): boolean {
+  if (!inBounds(collision, tileX, tileZ)) return false;
+  if (collision.isTileBlocked(tileX, tileZ)) return true;
+  if (!collision.isWallBlocked) return false;
+  for (const { dx, dz } of CARDINAL_TILE_OFFSETS) {
+    const fromTileX = tileX + dx;
+    const fromTileZ = tileZ + dz;
+    if (!inBounds(collision, fromTileX, fromTileZ)) continue;
+    if (collision.isWallBlocked(fromTileX, fromTileZ, tileX, tileZ)) return true;
+  }
+  return false;
+}
+
+export function canReachGroundItemTile(
+  collision: TargetPathingCollision,
+  fromTileX: number,
+  fromTileZ: number,
+  itemTileX: number,
+  itemTileZ: number,
+  allowBlockedSurfaceReach: boolean = false,
+  ignoreFinalWallToItem: boolean = false,
+): boolean {
+  const dx = itemTileX - fromTileX;
+  const dz = itemTileZ - fromTileZ;
+  if (dx === 0 && dz === 0) return true;
+
+  if (allowBlockedSurfaceReach) {
+    if (!inBounds(collision, fromTileX, fromTileZ) || !inBounds(collision, itemTileX, itemTileZ)) return false;
+    if (!areTilesCardinallyAdjacent(fromTileX, fromTileZ, itemTileX, itemTileZ)) return false;
+    if (ignoreFinalWallToItem) return true;
+    return !collision.isWallBlocked?.(fromTileX, fromTileZ, itemTileX, itemTileZ);
+  }
+
+  if (Math.abs(dx) > 1 || Math.abs(dz) > 1) return false;
+  if (dx === 0 || dz === 0) {
+    return !collision.isWallBlocked?.(fromTileX, fromTileZ, itemTileX, itemTileZ);
+  }
+
+  if (!canTravel(collision, fromTileX, fromTileZ, dx, 0)) return false;
+  if (!canTravel(collision, fromTileX, fromTileZ, 0, dz)) return false;
+  if (collision.isWallBlocked?.(fromTileX + dx, fromTileZ, itemTileX, itemTileZ)) return false;
+  if (collision.isWallBlocked?.(fromTileX, fromTileZ + dz, itemTileX, itemTileZ)) return false;
+  return true;
+}
+
 function intersects(
   srcX: number,
   srcZ: number,

@@ -4,9 +4,12 @@ import {
   GENERIC_SCENERY_OBJECT_DEF_ID,
   WELL_OBJECT_DEF_ID,
   isCropPlacedAssetId,
+  isGroundItemSpawnAssetId,
+  isPlacedObjectStorageSurfaceAssetId,
   isWalkHerePrimarySceneryAssetId,
   objectDefIdForPlacedAsset,
   sceneryExamineMetaForAsset,
+  storageSurfaceProfileForPlacedAsset,
 } from './index';
 
 test('filler scenery has clean display names and authored examine text', () => {
@@ -40,6 +43,20 @@ test('carpet scenery keeps examine metadata but defaults to walk here', () => {
   expect(isWalkHerePrimarySceneryAssetId('Carpet1x4')).toBe(true);
   expect(isWalkHerePrimarySceneryAssetId('Carpet2x3')).toBe(true);
   expect(isWalkHerePrimarySceneryAssetId('bookcase2')).toBe(false);
+});
+
+test('placed knife assets are ground item spawns, not scenery', () => {
+  expect(isGroundItemSpawnAssetId('Knife')).toBe(true);
+  expect(isGroundItemSpawnAssetId('/assets/models/Knife.glb')).toBe(true);
+  expect(objectDefIdForPlacedAsset('Knife')).toBeUndefined();
+});
+
+test('table scenery can act as storage surfaces', () => {
+  expect(objectDefIdForPlacedAsset('table1')).toBe(GENERIC_SCENERY_OBJECT_DEF_ID);
+  expect(isPlacedObjectStorageSurfaceAssetId('table1')).toBe(true);
+  expect(storageSurfaceProfileForPlacedAsset('table1')?.surfaceHeight).toBeGreaterThan(1);
+  expect(objectDefIdForPlacedAsset('Theodosian_Table_1')).toBe(GENERIC_SCENERY_OBJECT_DEF_ID);
+  expect(isPlacedObjectStorageSurfaceAssetId('Theodosian_Table_1')).toBe(true);
 });
 
 test('tree assets resolve to the right harvestable object definitions', () => {

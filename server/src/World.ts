@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_KEY_ITEM_ID, BROTHER_MONK_BEAR_HIDE_ITEM_ID, BEAR_HIDE_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, EQUIPMENT_SLOT_NAMES, occupiedEquipmentSlotsForDef, equipmentSlotSetsConflict, movementModeFromIndex, movementModeIndex, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe, type EquipSlot, type InventorySlot } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_KEY_ITEM_ID, BROTHER_MONK_BEAR_HIDE_ITEM_ID, BEAR_HIDE_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, storageSurfaceProfileForPlacedAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, EQUIPMENT_SLOT_NAMES, occupiedEquipmentSlotsForDef, equipmentSlotSetsConflict, movementModeFromIndex, movementModeIndex, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe, type EquipSlot, type InventorySlot } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -400,6 +400,7 @@ interface RuntimeObjectSpawn {
   y?: number;
   floor?: number;
   rotY?: number;
+  scale?: { x: number; y: number; z: number };
   name?: string;
   examineText?: string;
   interactions?: WorldObject['interactions'];
@@ -1108,28 +1109,75 @@ export class World {
     const fromTileX = Math.floor(player.position.x);
     const fromTileZ = Math.floor(player.position.y);
     const collision = this.playerPathCollision(player, map);
-    return this.canReachGroundItemTileFrom(collision, fromTileX, fromTileZ, item);
+    const surfaceReach = this.groundItemSurfaceReachState(item, map, collision);
+    return this.canReachGroundItemTileFrom(
+      collision,
+      fromTileX,
+      fromTileZ,
+      item,
+      surfaceReach.insideCollisionBox && this.shouldAllowBlockedSurfaceGroundItemReach(player, item, collision),
+      surfaceReach.elevated,
+    );
   }
 
-  private canReachGroundItemTileFrom(collision: PathingCollision, fromTileX: number, fromTileZ: number, item: GroundItem): boolean {
+  private shouldAllowBlockedSurfaceGroundItemReach(player: Player, item: GroundItem, collision: PathingCollision): boolean {
     const itemTileX = Math.floor(item.x);
     const itemTileZ = Math.floor(item.z);
-    const dx = itemTileX - fromTileX;
-    const dz = itemTileZ - fromTileZ;
-    if (dx === 0 && dz === 0) return true;
-    if (Math.abs(dx) > 1 || Math.abs(dz) > 1) return false;
-    if (dx === 0 || dz === 0) {
-      return !collision.isWallBlocked?.(fromTileX, fromTileZ, itemTileX, itemTileZ);
-    }
+    if (collision.isTileBlocked(itemTileX, itemTileZ)) return true;
+    if (Math.floor(player.position.x) === itemTileX && Math.floor(player.position.y) === itemTileZ) return false;
+    return findPathToTile({
+      startX: player.position.x,
+      startZ: player.position.y,
+      goalX: itemTileX + 0.5,
+      goalZ: itemTileZ + 0.5,
+      collision,
+      maxSearchTiles: DEFAULT_MAX_SEARCH_TILES,
+    }).length === 0;
+  }
 
-    // Diagonal pickup still needs clear corner access. Ignore the item tile's
-    // occupancy for table/counter drops, but keep side-tile and wall checks so
-    // players cannot pick through fences or blocked corners.
-    if (!canTravel(collision, fromTileX, fromTileZ, dx, 0)) return false;
-    if (!canTravel(collision, fromTileX, fromTileZ, 0, dz)) return false;
-    if (collision.isWallBlocked?.(fromTileX + dx, fromTileZ, itemTileX, itemTileZ)) return false;
-    if (collision.isWallBlocked?.(fromTileX, fromTileZ + dz, itemTileX, itemTileZ)) return false;
-    return true;
+  private canReachGroundItemTileFrom(
+    collision: PathingCollision,
+    fromTileX: number,
+    fromTileZ: number,
+    item: GroundItem,
+    allowBlockedSurfaceReach: boolean = false,
+    ignoreFinalWallToItem: boolean = false,
+  ): boolean {
+    return canReachGroundItemTile(
+      collision,
+      fromTileX,
+      fromTileZ,
+      Math.floor(item.x),
+      Math.floor(item.z),
+      allowBlockedSurfaceReach,
+      ignoreFinalWallToItem,
+    );
+  }
+
+  private groundItemSurfaceReachState(
+    item: GroundItem,
+    map: GameMap,
+    collision: PathingCollision,
+  ): { insideCollisionBox: boolean; elevated: boolean } {
+    const itemTileX = Math.floor(item.x);
+    const itemTileZ = Math.floor(item.z);
+    const insideCollisionBox = isTileInsidePathingCollisionBox(collision, itemTileX, itemTileZ);
+    return {
+      insideCollisionBox,
+      elevated: insideCollisionBox && this.isGroundItemElevatedAboveFloor(item, map),
+    };
+  }
+
+  private isGroundItemElevatedAboveFloor(item: GroundItem, map: GameMap = this.getMap(item.mapLevel)): boolean {
+    if (!Number.isFinite(item.y)) return false;
+    const floor = Math.floor(item.floor ?? 0);
+    const floorY = map.getEffectiveHeightOnFloor(
+      item.x,
+      item.z,
+      floor,
+      floor > 0 ? Number.POSITIVE_INFINITY : undefined,
+    );
+    return item.y! - floorY >= GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT;
   }
 
   private findPlayerPathToGroundItem(player: Player, item: GroundItem, maxSearchTiles: number = DEFAULT_MAX_SEARCH_TILES): { x: number; z: number }[] {
@@ -1137,6 +1185,8 @@ export class World {
     const collision = this.playerPathCollision(player, map);
     const itemTileX = Math.floor(item.x);
     const itemTileZ = Math.floor(item.z);
+    const surfaceReach = this.groundItemSurfaceReachState(item, map, collision);
+    let allowBlockedSurfaceReach = surfaceReach.insideCollisionBox && collision.isTileBlocked(itemTileX, itemTileZ);
     if (!collision.isTileBlocked(itemTileX, itemTileZ)) {
       const directPath = findPathToTile({
         startX: player.position.x,
@@ -1147,13 +1197,21 @@ export class World {
         maxSearchTiles,
       });
       if (directPath.length > 0) return directPath;
+      allowBlockedSurfaceReach = surfaceReach.insideCollisionBox;
     }
     return findPathToReach({
       startX: player.position.x,
       startZ: player.position.y,
       collision,
       maxSearchTiles,
-      reached: (tileX, tileZ) => this.canReachGroundItemTileFrom(collision, tileX, tileZ, item),
+      reached: (tileX, tileZ) => this.canReachGroundItemTileFrom(
+        collision,
+        tileX,
+        tileZ,
+        item,
+        allowBlockedSurfaceReach,
+        surfaceReach.elevated,
+      ),
     });
   }
 
@@ -2103,6 +2161,7 @@ export class World {
           z: placed.position.z,
           y: placed.position.y,
           rotY: placed.rotation?.y,
+          scale: placed.scale,
           name: placed.name || sceneryMeta?.name,
           examineText: placed.examineText || sceneryMeta?.examineText,
           interactions: placed.interactions,
@@ -2141,6 +2200,7 @@ export class World {
     const obj = new WorldObject(objDef, spawn.x, spawn.z, mapId, resolved.floor, resolved.y);
     if (spawn.assetId) obj.assetId = spawn.assetId;
     if (spawn.rotY != null) obj.rotationY = spawn.rotY;
+    if (spawn.scale) obj.scale = spawn.scale;
     if (spawn.name) obj.name = spawn.name;
     if (spawn.examineText) obj.examineText = spawn.examineText;
     obj.setInteractions(spawn.interactions);
@@ -5189,10 +5249,9 @@ export class World {
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(groundItemId)) return;
     this.interruptPlayerAction(playerId, player);
 
-    // Walk to item if not in range or if an adjacent wall/fence blocks direct pickup.
-    const dx = Math.abs(player.position.x - item.x);
-    const dz = Math.abs(player.position.y - item.z);
-    if (dx > 1.5 || dz > 1.5 || !this.canPlayerReachGroundItemFromCurrentTile(player, item)) {
+    // Walk until the item is reachable. Blocked table/counter drops may be
+    // reachable from a short distance even though their tile cannot be stood on.
+    if (!this.canPlayerReachGroundItemFromCurrentTile(player, item)) {
       // The client normally sends PLAYER_MOVE immediately before PICKUP.
       // Preserve that queue instead of replacing it with a separately
       // pathfound server route from an earlier authoritative tile; otherwise
@@ -7229,6 +7288,55 @@ export class World {
     return true;
   }
 
+  private objectStorageSurfaceWorldY(obj: WorldObject): number | null {
+    if (!obj.assetId) return null;
+    const profile = storageSurfaceProfileForPlacedAsset(obj.assetId);
+    if (!profile) return null;
+    const scaleY = Number.isFinite(obj.scale?.y) ? Math.abs(obj.scale!.y) : 1;
+    return obj.worldY + profile.surfaceHeight * scaleY;
+  }
+
+  private storeInventoryItemOnObjectSurface(player: Player, invSlot: number, itemId: number, obj: WorldObject): boolean {
+    const surfaceY = this.objectStorageSurfaceWorldY(obj);
+    if (surfaceY === null) return false;
+
+    const slot = player.inventory[invSlot];
+    if (!slot || slot.itemId !== itemId || slot.quantity <= 0) return true;
+    const itemDef = this.data.getItem(itemId);
+    if (itemDef?.questItem) {
+      this.sendChatSystem(player, 'You should keep that for the quest.');
+      return true;
+    }
+
+    const quantity = Math.max(1, Math.floor(slot.quantity));
+    const removed = player.removeItem(invSlot, quantity);
+    if (removed.completed <= 0) return true;
+
+    const groundItem = this.spawnGroundItemAt(
+      obj.mapLevel,
+      obj.floor,
+      obj.x,
+      obj.z,
+      removed.itemId,
+      removed.completed,
+      GROUND_ITEM_DESPAWN_TICKS,
+      surfaceY,
+    );
+    if (!groundItem) {
+      player.revertRemove(removed);
+      this.sendChatSystem(player, 'The table is too cluttered.');
+      return true;
+    }
+
+    this.sendInventory(player);
+    player.setDelay(this.currentTick, 1);
+    const itemName = itemDef?.name ?? `item ${itemId}`;
+    this.sendChatSystem(player, removed.completed > 1
+      ? `You put ${removed.completed} x ${itemName} on the table.`
+      : `You put ${itemName} on the table.`);
+    return true;
+  }
+
   private handleWaterSourceInteraction(playerId: number, player: Player, obj: WorldObject): void {
     this.interruptPlayerAction(playerId, player);
     if (this.playerHasFillableContainer(player)) {
@@ -7372,6 +7480,7 @@ export class World {
       }
       return;
     }
+    if (this.storeInventoryItemOnObjectSurface(player, invSlot, itemId, obj)) return;
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
 
@@ -9542,16 +9651,18 @@ export class World {
     itemId: number,
     quantity: number,
     despawnTimer: number,
-  ): void {
-    if (quantity <= 0) return;
+    y?: number,
+  ): GroundItem | null {
+    if (quantity <= 0) return null;
     const id = this.allocateGroundItemId();
-    if (id === null) return;
+    if (id === null) return null;
     const groundItem: GroundItem = {
       id,
       itemId,
       quantity,
       x,
       z,
+      y,
       floor,
       mapLevel,
       despawnTimer,
@@ -9562,6 +9673,7 @@ export class World {
     if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
     this.forEachPlayerNearOnFloor(groundItem.mapLevel, groundItem.floor, groundItem.x, groundItem.z, p =>
       this.sendGroundItemUpdate(p, groundItem));
+    return groundItem;
   }
 
   private spawnPrivateGroundItemFor(

@@ -206,4 +206,65 @@ describe('GameManager ground item picking', () => {
 
     expect((manager as any).canReachGroundItemTileFrom(5, 5, 6, 5)).toBe(false);
   });
+
+  test('blocked table item reach requires a cardinal edge tile', () => {
+    const manager = Object.create(GameManager.prototype) as GameManager;
+    (manager as any).isTileBlocked = (x: number, z: number) => x === 6 && z === 5;
+    (manager as any).isWallBlockedForPath = () => false;
+
+    expect((manager as any).canReachGroundItemTileFrom(5, 5, 6, 5)).toBe(true);
+    expect((manager as any).canReachGroundItemTileFrom(5, 5, 6, 5, true)).toBe(true);
+    expect((manager as any).canReachGroundItemTileFrom(5, 4, 6, 5, true)).toBe(false);
+    expect((manager as any).canReachGroundItemTileFrom(4, 5, 6, 5, true)).toBe(false);
+
+    (manager as any).isWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number) =>
+      fx === 5 && fz === 5 && tx === 6 && tz === 5;
+
+    expect((manager as any).canReachGroundItemTileFrom(5, 5, 6, 5, true)).toBe(false);
+  });
+
+  test('pathing to a blocked table item stops at the reachable edge tile', () => {
+    const manager = Object.create(GameManager.prototype) as GameManager;
+    const item: GroundItemData = { id: 3, itemId: 102, quantity: 1, x: 6.5, z: 5.5, floor: 0, y: 1 };
+    (manager as any).tileProgress = 0;
+    (manager as any).playerX = 3.5;
+    (manager as any).playerZ = 5.5;
+    (manager as any).isTileBlocked = (x: number, z: number) => x === 6 && z === 5;
+    (manager as any).isWallBlockedForPath = () => false;
+    (manager as any).chunkManager = {
+      getMapWidth: () => 20,
+      getMapHeight: () => 20,
+      getEffectiveHeight: () => 0,
+    };
+
+    const result = (manager as any).findPathToGroundItem(item) as { path: { x: number; z: number }[] };
+
+    expect(result.path.at(-1)).toEqual({ x: 5.5, z: 5.5 });
+  });
+
+  test('elevated table item reach can cross the final surface collision edge', () => {
+    const manager = Object.create(GameManager.prototype) as GameManager;
+    const item: GroundItemData = { id: 3, itemId: 102, quantity: 1, x: 7.5, z: 5.5, floor: 0, y: 0.8 };
+    (manager as any).tileProgress = 0;
+    (manager as any).playerX = 6.5;
+    (manager as any).playerZ = 5.5;
+    (manager as any).isTileBlocked = () => false;
+    (manager as any).isWallBlockedForPath = (_fx: number, _fz: number, tx: number, tz: number) =>
+      tx === 7 && tz === 5;
+    (manager as any).chunkManager = {
+      getMapWidth: () => 20,
+      getMapHeight: () => 20,
+      getEffectiveHeight: () => 0,
+    };
+
+    expect((manager as any).canReachGroundItemTileFrom(6, 5, 7, 5, true)).toBe(false);
+    expect((manager as any).canReachGroundItemTileFrom(6, 5, 7, 5, true, true)).toBe(true);
+    expect((manager as any).groundItemSurfaceReachState(item)).toEqual({
+      insideCollisionBox: true,
+      elevated: true,
+    });
+
+    const result = (manager as any).findPathToGroundItem(item) as { path: { x: number; z: number }[] };
+    expect(result.path).toEqual([]);
+  });
 });
