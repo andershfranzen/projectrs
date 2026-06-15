@@ -304,6 +304,82 @@
     }
   },
   {
+    "assetId": "Bones",
+    "layerId": "layer_0",
+    "position": {
+      "x": 108.5,
+      "y": 0.011653829303270408,
+      "z": 98.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Bones",
+    "layerId": "layer_0",
+    "position": {
+      "x": 109.5,
+      "y": 0,
+      "z": 98.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "bush3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 112.5,
+      "y": 0,
+      "z": 101.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "bush3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 114.5,
+      "y": 0,
+      "z": 101.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
     "assetId": "FishingSpotBubblesNet",
     "layerId": "layer_0",
     "position": {

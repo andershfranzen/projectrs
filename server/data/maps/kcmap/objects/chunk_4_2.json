@@ -5890,5 +5890,25 @@
       "y": 0.85,
       "z": 1
     }
+  },
+  {
+    "assetId": "StallBase",
+    "layerId": "layer_0",
+    "position": {
+      "x": 131.67696666610286,
+      "y": 0,
+      "z": 80.58875339135122
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "examineText": "Brother Fenn's Broken Stall."
   }
 ]

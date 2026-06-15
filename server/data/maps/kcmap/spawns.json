@@ -491,14 +491,15 @@
     },
     {
       "id": 62,
-      "npcId": 101,
+      "npcId": 107,
       "x": 310.5,
-      "z": 136.5,
-      "wanderRange": 6,
+      "z": 129.5,
+      "wanderRange": 0,
       "aggressive": false,
       "appearance": {
+        "bodyType": 0,
         "shirtColor": 0,
-        "pantsColor": 10,
+        "pantsColor": 7,
         "shoesColor": 0,
         "hairColor": 0,
         "beltColor": 9,
@@ -951,12 +952,13 @@
     },
     {
       "id": 63,
-      "npcId": 20,
+      "npcId": 122,
       "x": 170.5,
       "z": 160.5,
       "wanderRange": 2,
       "aggressive": false,
       "appearance": {
+        "bodyType": 0,
         "shirtColor": 4,
         "pantsColor": 3,
         "shoesColor": 0,
@@ -1229,8 +1231,7 @@
             ]
           }
         }
-      },
-      "name": "Farmer Borin"
+      }
     },
     {
       "id": 137,
@@ -1240,13 +1241,14 @@
       "wanderRange": 1,
       "aggressive": false,
       "appearance": {
+        "bodyType": 1,
         "shirtColor": 15,
         "pantsColor": 4,
         "shoesColor": 6,
         "hairColor": 0,
         "beltColor": 1,
         "skinColor": 0,
-        "hairStyle": 6
+        "hairStyle": 10
       },
       "dialogue": {
         "root": "sela_wait",
@@ -3954,8 +3956,580 @@
           }
         ]
       }
+    },
+    {
+      "id": 206,
+      "npcId": 122,
+      "x": 133.5,
+      "z": 80.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 7,
+        "pantsColor": 0,
+        "shoesColor": 6,
+        "hairColor": 0,
+        "beltColor": 7,
+        "skinColor": 6,
+        "hairStyle": 1
+      },
+      "name": "Brother Fenn",
+      "dialogue": {
+        "root": "fenn_idle",
+        "rootConditions": [
+          {
+            "condition": {
+              "type": "questCompleted",
+              "questId": "quest_8djo2"
+            },
+            "node": "fenn_done"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "quest_8djo2",
+              "minStage": 4,
+              "maxStage": 4
+            },
+            "node": "fenn_mended"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "quest_8djo2",
+              "minStage": 3,
+              "maxStage": 3
+            },
+            "node": "fenn_needslog"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "quest_8djo2",
+              "minStage": 2,
+              "maxStage": 2
+            },
+            "node": "fenn_drunk"
+          }
+        ],
+        "nodes": {
+          "fenn_idle": {
+            "id": "fenn_idle",
+            "lines": [
+              "(hic) ...lovely day for it. Or night. Hard to say."
+            ],
+            "options": [
+              {
+                "label": "Right then."
+              }
+            ]
+          },
+          "fenn_drunk": {
+            "id": "fenn_drunk",
+            "lines": [
+              "(hic) ...'s all busted. Stall's busted, I'm busted. Don' tell Aldous."
+            ],
+            "options": [
+              {
+                "label": "Hold still - this'll sober you up.",
+                "conditions": [
+                  {
+                    "type": "hasItem",
+                    "itemId": 248,
+                    "quantity": 1
+                  }
+                ],
+                "actions": [
+                  {
+                    "type": "takeItem",
+                    "itemId": 248,
+                    "qty": 1
+                  },
+                  {
+                    "type": "giveItem",
+                    "itemId": 247,
+                    "qty": 1
+                  },
+                  {
+                    "type": "setQuestStage",
+                    "questId": "quest_8djo2",
+                    "stage": 3
+                  }
+                ],
+                "next": "fenn_sobered"
+              },
+              {
+                "label": "Have you been drinking the supplies?",
+                "next": "fenn_drink"
+              },
+              {
+                "label": "What happened to your stall?",
+                "next": "fenn_stall"
+              },
+              {
+                "label": "I'll be back."
+              }
+            ]
+          },
+          "fenn_drink": {
+            "id": "fenn_drink",
+            "lines": [
+              "...maybe a little. Quality control! (hic)"
+            ],
+            "options": [
+              {
+                "label": "Back.",
+                "next": "fenn_drunk"
+              }
+            ]
+          },
+          "fenn_stall": {
+            "id": "fenn_stall",
+            "lines": [
+              "Table cracked clean off. Need good timber to mend it, and I'm in no state to cut any.",
+              "Sober me up first, eh? A bucket of water'd do it - there's a well just south."
+            ],
+            "options": [
+              {
+                "label": "Back.",
+                "next": "fenn_drunk"
+              }
+            ]
+          },
+          "fenn_sobered": {
+            "id": "fenn_sobered",
+            "lines": [
+              "(splutters, blinks) ...by the gods, that's better.",
+              "Now - that stall. Fresh timber and I'm away. A single good log would do it."
+            ],
+            "options": [
+              {
+                "label": "I'll find you a log."
+              }
+            ]
+          },
+          "fenn_needslog": {
+            "id": "fenn_needslog",
+            "lines": [
+              "Still need that timber for the stall. A good log, if you'd be so kind."
+            ],
+            "options": [
+              {
+                "label": "Here - a fresh log.",
+                "conditions": [
+                  {
+                    "type": "hasItem",
+                    "itemId": 23,
+                    "quantity": 1
+                  }
+                ],
+                "actions": [
+                  {
+                    "type": "takeItem",
+                    "itemId": 23,
+                    "qty": 1
+                  },
+                  {
+                    "type": "setQuestStage",
+                    "questId": "quest_8djo2",
+                    "stage": 4
+                  }
+                ],
+                "next": "fenn_mended_reply"
+              },
+              {
+                "label": "Still looking for one."
+              }
+            ]
+          },
+          "fenn_mended_reply": {
+            "id": "fenn_mended_reply",
+            "lines": [
+              "You're a saint. I'll have her mended and be right behind you.",
+              "Go tell Aldous I'm coming - and that the birthday's saved."
+            ],
+            "options": [
+              {
+                "label": "Will do."
+              }
+            ]
+          },
+          "fenn_mended": {
+            "id": "fenn_mended",
+            "lines": [
+              "Nearly done here. Go on ahead and tell Aldous I'm coming!"
+            ],
+            "options": [
+              {
+                "label": "Aye."
+              }
+            ]
+          },
+          "fenn_done": {
+            "id": "fenn_done",
+            "lines": [
+              "Stall's good as new, and Wren had her birthday. Couldn't have done it without you. (hic - happy, this time!)"
+            ],
+            "options": [
+              {
+                "label": "Take care, Fenn."
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 207,
+      "npcId": 122,
+      "x": 153.5,
+      "z": 94.5,
+      "wanderRange": 0,
+      "facing": 3.141592653589793,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 0,
+        "hairStyle": 1
+      },
+      "dialogue": {
+        "root": "aldous_start",
+        "rootConditions": [
+          {
+            "condition": {
+              "type": "questCompleted",
+              "questId": "quest_8djo2"
+            },
+            "node": "aldous_done"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "quest_8djo2",
+              "minStage": 4,
+              "maxStage": 4
+            },
+            "node": "aldous_finish"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "quest_8djo2",
+              "minStage": 2,
+              "maxStage": 3
+            },
+            "node": "aldous_fenn_wait"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "quest_8djo2",
+              "minStage": 1,
+              "maxStage": 1
+            },
+            "node": "aldous_return"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "quest_8djo2",
+              "minStage": 0,
+              "maxStage": 0
+            },
+            "node": "aldous_chest_wait"
+          }
+        ],
+        "nodes": {
+          "aldous_start": {
+            "id": "aldous_start",
+            "lines": [
+              "Oh, traveller - forgive me, I've not slept a wink.",
+              "Little Wren's bear hide was taken by a skeleton in the night, and the poor child hasn't stopped crying since. None of us have rested."
+            ],
+            "options": [
+              {
+                "label": "Who took it?",
+                "next": "aldous_who"
+              },
+              {
+                "label": "Why does a bear hide matter so much?",
+                "next": "aldous_why"
+              },
+              {
+                "label": "I'll get it back.",
+                "actions": [
+                  {
+                    "type": "setQuestStage",
+                    "questId": "quest_8djo2",
+                    "stage": 0
+                  }
+                ],
+                "next": "aldous_accept"
+              },
+              {
+                "label": "Sounds like a you problem."
+              }
+            ]
+          },
+          "aldous_who": {
+            "id": "aldous_who",
+            "lines": [
+              "Skeletons. They keep to a spot west of here - thank the gods - but it's no place for the faint-hearted. They've locked the hide away in a chest."
+            ],
+            "options": [
+              {
+                "label": "Back.",
+                "next": "aldous_start"
+              }
+            ]
+          },
+          "aldous_why": {
+            "id": "aldous_why",
+            "lines": [
+              "To you, a scrap of leather. To a frightened child, the whole world.",
+              "We'd fetch it ourselves, but monks make poor burglars."
+            ],
+            "options": [
+              {
+                "label": "Back.",
+                "next": "aldous_start"
+              }
+            ]
+          },
+          "aldous_accept": {
+            "id": "aldous_accept",
+            "lines": [
+              "Bless you. The chest is west, past the old fence. You'll need a deft hand to pick the lock - a little roguery goes a long way."
+            ],
+            "options": [
+              {
+                "label": "I'll find it."
+              }
+            ]
+          },
+          "aldous_chest_wait": {
+            "id": "aldous_chest_wait",
+            "lines": [
+              "The chest is west of here, guarded by skeletons. Pick the lock and bring back Wren's bear hide, if you would."
+            ],
+            "options": [
+              {
+                "label": "I'm on it."
+              }
+            ]
+          },
+          "aldous_return": {
+            "id": "aldous_return",
+            "lines": [
+              "You're back! Is that...?"
+            ],
+            "options": [
+              {
+                "label": "Here's little Wren's bear hide.",
+                "conditions": [
+                  {
+                    "type": "hasItem",
+                    "itemId": 297,
+                    "quantity": 1
+                  }
+                ],
+                "actions": [
+                  {
+                    "type": "takeItem",
+                    "itemId": 297,
+                    "qty": 1
+                  },
+                  {
+                    "type": "setQuestStage",
+                    "questId": "quest_8djo2",
+                    "stage": 2
+                  }
+                ],
+                "next": "aldous_return_thanks"
+              },
+              {
+                "label": "Not yet - still looking."
+              }
+            ]
+          },
+          "aldous_return_thanks": {
+            "id": "aldous_return_thanks",
+            "lines": [
+              "Oh, the little one will sleep soundly tonight. Bless you for this.",
+              "Could I trouble you with one more thing? It's Wren's first birthday, and we've supplies coming from the next village.",
+              "Brother Fenn was meant to bring them, but he's not returned. Would you find him? He went north, past the well, to his stall."
+            ],
+            "options": [
+              {
+                "label": "I'll find Fenn."
+              }
+            ]
+          },
+          "aldous_fenn_wait": {
+            "id": "aldous_fenn_wait",
+            "lines": [
+              "Any sign of Brother Fenn? He's north, by his stall past the well. I do hope he's not got himself into trouble."
+            ],
+            "options": [
+              {
+                "label": "Still looking."
+              }
+            ]
+          },
+          "aldous_finish": {
+            "id": "aldous_finish",
+            "lines": [
+              "Fenn's on his way? The bear hide's home, and Wren's finally settled.",
+              "You've done this house a great kindness. Here - a little something for your trouble."
+            ],
+            "options": [
+              {
+                "label": "Thank you, Brother Aldous.",
+                "actions": [
+                  {
+                    "type": "completeQuest",
+                    "questId": "quest_8djo2"
+                  }
+                ],
+                "next": "aldous_complete_bye"
+              }
+            ]
+          },
+          "aldous_complete_bye": {
+            "id": "aldous_complete_bye",
+            "lines": [
+              "Go with our blessing, traveller."
+            ],
+            "options": [
+              {
+                "label": "Farewell."
+              }
+            ]
+          },
+          "aldous_done": {
+            "id": "aldous_done",
+            "lines": [
+              "Wren carries that bear hide everywhere now. You did a kind thing here.",
+              "Peace be with you, traveller."
+            ],
+            "options": [
+              {
+                "label": "Farewell."
+              }
+            ]
+          }
+        }
+      },
+      "name": "Brother Aldous"
+    },
+    {
+      "id": 208,
+      "npcId": 101,
+      "x": 316.5,
+      "z": 129.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 0,
+        "pantsColor": 2,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 9,
+        "skinColor": 0,
+        "hairStyle": 0
+      },
+      "equipment": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "skinColor": [
+          0.5333333333333333,
+          0.5333333333333333,
+          0.5333333333333333
+        ],
+        "shirtColor": [
+          0.5333333333333333,
+          0.5333333333333333,
+          0.5333333333333333
+        ],
+        "shoesColor": [
+          0.5333333333333333,
+          0.5333333333333333,
+          0.5333333333333333
+        ]
+      },
+      "attackAnim": "attack_1h_slash"
+    },
+    {
+      "id": 209,
+      "npcId": 107,
+      "x": 109.5,
+      "z": 96.5,
+      "wanderRange": 2,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 7,
+        "hairStyle": 12
+      },
+      "equipment": [
+        73,
+        81,
+        66,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "dialogue": {
+        "root": "start",
+        "nodes": {
+          "start": {
+            "id": "start",
+            "lines": [
+              "!"
+            ],
+            "options": [
+              {
+                "label": "Bye."
+              }
+            ]
+          }
+        }
+      }
     }
   ],
   "objects": [],
-  "items": []
+  "items": [
+    {
+      "itemId": 247,
+      "x": 134.5,
+      "z": 79.5,
+      "quantity": 1
+    }
+  ]
 }

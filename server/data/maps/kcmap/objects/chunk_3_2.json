@@ -929,5 +929,134 @@
       "y": 1,
       "z": 1
     }
+  },
+  {
+    "assetId": "tier 1 chest",
+    "layerId": "layer_0",
+    "position": {
+      "x": 107.5,
+      "y": 0.09402281955800289,
+      "z": 94.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "name": "Brother Monk Chest",
+    "examineText": "Chest guarded by a Skeleton.",
+    "interactionTiles": [
+      {
+        "x": 0,
+        "z": 1
+      }
+    ],
+    "interactions": [
+      {
+        "action": "Lockpick",
+        "conditions": [
+          {
+            "type": "questStage",
+            "questId": "quest_8djo2",
+            "minStage": 0,
+            "maxStage": 0
+          }
+        ],
+        "effects": [
+          {
+            "type": "giveItem",
+            "itemId": 297,
+            "qty": 1
+          },
+          {
+            "type": "setQuestStage",
+            "questId": "quest_8djo2",
+            "stage": 1
+          }
+        ],
+        "message": "You pick the lock. Tucked beneath a few coins is little Wren's bear hide!"
+      }
+    ]
+  },
+  {
+    "assetId": "Barrel",
+    "layerId": "layer_0",
+    "position": {
+      "x": 109.5,
+      "y": 0,
+      "z": 93.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Barrel",
+    "layerId": "layer_0",
+    "position": {
+      "x": 110.5,
+      "y": 0,
+      "z": 93.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "bush3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 109.5,
+      "y": 0,
+      "z": 86.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "bush3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 114.5,
+      "y": 0,
+      "z": 82.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
   }
 ]

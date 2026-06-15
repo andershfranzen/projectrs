@@ -177,16 +177,37 @@
   },
   {
     "id": "quest_8djo2",
-    "name": "Please Brother",
-    "blurb": "Work in Progress",
+    "name": "Brother Monk",
+    "blurb": "The monks have had a hard night, and a frightened child needs her bear hide back.",
     "stages": [
       {
         "id": 0,
-        "description": ""
+        "description": "Brother Aldous asked me to recover little Wren's bear hide from the skeleton-guarded chest, west of the monastery. I'll need some roguery to pick the lock."
+      },
+      {
+        "id": 1,
+        "description": "I have little Wren's bear hide. I should return it to Brother Aldous at the monastery."
+      },
+      {
+        "id": 2,
+        "description": "Brother Aldous asked me to find Brother Fenn, who went north past the well to fetch supplies and never returned. I found him slumped by his broken stall, dead drunk. I should sober him up - fill a bucket at the well and pour the water over him."
+      },
+      {
+        "id": 3,
+        "description": "Brother Fenn is sober, but his stall is broken. He needs fresh timber. I should bring him a log."
+      },
+      {
+        "id": 4,
+        "description": "Fenn will mend his stall and follow on. I should return to Brother Aldous to finish up."
       }
     ],
     "rewards": {
-      "items": []
+      "items": [],
+      "xp": {
+        "woodcutting": 1000,
+        "roguery": 500
+      },
+      "renown": 1
     }
   }
 ]

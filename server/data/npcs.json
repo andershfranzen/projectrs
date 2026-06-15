@@ -2548,5 +2548,237 @@
         }
       }
     }
+  },
+  {
+    "id": 122,
+    "name": "Brother Aldous",
+    "examineText": "A farmer with soil on his boots and weather in his bones.",
+    "health": 12,
+    "attack": -10,
+    "defence": -10,
+    "strength": -10,
+    "attackBonus": 5,
+    "strengthBonus": 6,
+    "attackStyle": "stab",
+    "attackSpeed": 6,
+    "respawnTime": 18,
+    "aggressive": false,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 32,
+        "quantity": 1,
+        "chance": 0.02
+      },
+      {
+        "itemId": 52,
+        "quantity": 1,
+        "chance": 0.4
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.011667
+      },
+      {
+        "itemId": 301,
+        "quantity": 1,
+        "chance": 0.25
+      },
+      {
+        "itemId": 31,
+        "quantity": 1,
+        "chance": 0.2
+      },
+      {
+        "itemId": 33,
+        "quantity": 1,
+        "chance": 0.2
+      }
+    ],
+    "modelNpcId": 20,
+    "dialogue": {
+      "root": "start",
+      "nodes": {
+        "start": {
+          "id": "start",
+          "lines": [
+            "Hello!"
+          ],
+          "options": [
+            {
+              "label": "Bye."
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "id": 123,
+    "name": "Monk",
+    "examineText": "A farmer with soil on his boots and weather in his bones.",
+    "health": 20,
+    "attack": -10,
+    "defence": -10,
+    "strength": -10,
+    "attackBonus": -7,
+    "strengthBonus": -10,
+    "attackStyle": "stab",
+    "attackSpeed": 6,
+    "respawnTime": 18,
+    "aggressive": false,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 32,
+        "quantity": 1,
+        "chance": 0.02
+      },
+      {
+        "itemId": 52,
+        "quantity": 1,
+        "chance": 0.4
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.011667
+      },
+      {
+        "itemId": 301,
+        "quantity": 1,
+        "chance": 0.25
+      },
+      {
+        "itemId": 31,
+        "quantity": 1,
+        "chance": 0.2
+      },
+      {
+        "itemId": 33,
+        "quantity": 1,
+        "chance": 0.2
+      }
+    ],
+    "modelNpcId": 20
+  },
+  {
+    "id": 124,
+    "name": "Brother Fenn",
+    "examineText": "A farmer with soil on his boots and weather in his bones.",
+    "health": 20,
+    "attack": -10,
+    "defence": -10,
+    "strength": -10,
+    "attackBonus": -7,
+    "strengthBonus": -10,
+    "attackStyle": "stab",
+    "attackSpeed": 6,
+    "respawnTime": 18,
+    "aggressive": false,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 32,
+        "quantity": 1,
+        "chance": 0.02
+      },
+      {
+        "itemId": 52,
+        "quantity": 1,
+        "chance": 0.4
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.011667
+      },
+      {
+        "itemId": 301,
+        "quantity": 1,
+        "chance": 0.25
+      },
+      {
+        "itemId": 31,
+        "quantity": 1,
+        "chance": 0.2
+      },
+      {
+        "itemId": 33,
+        "quantity": 1,
+        "chance": 0.2
+      }
+    ],
+    "modelNpcId": 20
+  },
+  {
+    "id": 125,
+    "name": "Brother Fenn",
+    "examineText": "A farmer with soil on his boots and weather in his bones.",
+    "health": 20,
+    "attack": -10,
+    "defence": -10,
+    "strength": -10,
+    "attackBonus": -7,
+    "strengthBonus": -10,
+    "attackStyle": "stab",
+    "attackSpeed": 6,
+    "respawnTime": 18,
+    "aggressive": false,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 32,
+        "quantity": 1,
+        "chance": 0.02
+      },
+      {
+        "itemId": 52,
+        "quantity": 1,
+        "chance": 0.4
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.011667
+      },
+      {
+        "itemId": 301,
+        "quantity": 1,
+        "chance": 0.25
+      },
+      {
+        "itemId": 31,
+        "quantity": 1,
+        "chance": 0.2
+      },
+      {
+        "itemId": 33,
+        "quantity": 1,
+        "chance": 0.2
+      }
+    ],
+    "modelNpcId": 20
   }
 ]
