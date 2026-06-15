@@ -60,11 +60,14 @@ export function decodeNpcVisualScale(value: unknown): number {
 
 export const HEAD_RENDER_MODES = ['helmet', 'hat', 'hairTuck', 'hairFit'] as const;
 export type HeadRenderMode = typeof HEAD_RENDER_MODES[number];
+export type ItemToolType = 'axe' | 'pickaxe' | 'hammer' | 'fishing_net' | 'fishing_rod' | 'harpoon';
 
 export interface ItemDef {
   id: number;
   name: string;
   description: string;
+  /** Quest-only items cannot be sold, traded, staked, or dropped to other players. */
+  questItem?: boolean;
   stackable: boolean;
   /** OSRS-style banking: unnoted item can withdraw as a stackable paper note. */
   noteable?: boolean;
@@ -127,8 +130,8 @@ export interface ItemDef {
   // Equipment requirements
   equipSkill?: SkillId;
   levelRequired?: number;
-  // Tool properties (axes, pickaxes, hammers)
-  toolType?: 'axe' | 'pickaxe' | 'hammer';
+  // Tool properties (axes, pickaxes, hammers, fishing tools)
+  toolType?: ItemToolType;
   toolLevel?: number;
   toolBonus?: number;
   // Visual
@@ -276,6 +279,21 @@ export type DialogueAction =
   | { type: 'takeItem'; itemId: number; qty: number }
   | { type: 'grantXp'; skill: SkillId; amount: number }
   | { type: 'bankInventoryItemsForCoins'; itemIds: number[]; coinCost: number; itemLabel?: string; coinCostByItemId?: Record<string, number> }
+  | {
+      type: 'buyQuestItem';
+      itemId: number;
+      coinCost: number;
+      qty?: number;
+      questId?: string;
+      minStage?: number;
+      maxStage?: number;
+      unique?: boolean;
+      successMessage?: string;
+      notEnoughCoinsMessage?: string;
+      alreadyHasMessage?: string;
+      wrongStageMessage?: string;
+      noRoomMessage?: string;
+    }
   | { type: 'closeDialogue' }
   | { type: 'setQuestStage'; questId: string; stage: number }
   | { type: 'setQuestVar'; questId: string; key: string; value: number }
@@ -312,6 +330,13 @@ export interface DialogueOption {
   label: string;
   /** ID of the next node, or omitted to end dialogue. */
   next?: string;
+  /** When following `next`, show only the target node's filtered choices.
+   *  Options labelled "Back" or "Back." do this automatically server-side;
+   *  this flag is for non-Back navigation options that need the same UX. */
+  nextChoicesOnly?: boolean;
+  /** Do not show this option label as an overhead player reply. "Back" and
+   *  "Back." options with `next` are silent automatically server-side. */
+  silent?: boolean;
   /** Server-side effect to run when this option is chosen. Legacy shorthand
    *  for one entry in `actions`; both can be present and run in order. */
   action?: DialogueAction;
@@ -483,6 +508,10 @@ export interface WorldObjectDef {
   harvestItemId?: number;
   harvestQuantity?: number;
   harvestTime?: number; // ticks per attempt cycle (default 4)
+  /** Client animation name to play for harvest testing/specialized skill loops. */
+  skillAnimation?: 'chop' | 'mine' | 'fish_net' | 'fish_rod' | 'fish_harpoon' | string;
+  /** Item model to temporarily show in-hand while this harvest action runs. */
+  visualToolItemId?: number;
   depletionChance?: number; // 0-1, chance per success
   respawnTime?: number; // ticks after depletion
   harvestOptions?: Array<{
@@ -617,6 +646,10 @@ export interface SpawnEntry {
   shop?: ShopDef;
   /** Per-spawn dialogue override. When set, fully replaces NpcDef.dialogue. */
   dialogue?: DialogueTree;
+  /** Allows Attack to appear and resolve directly even when this spawn also
+   *  has dialogue. Use for hostile NPCs that can talk, not protected quest NPCs
+   *  whose dialogue action must advance state before combat. */
+  directAttack?: boolean;
   /** Optional per-player visibility gate for quest-only NPCs. */
   visibilityCondition?: QuestCondition;
   /** Per-spawn combat stat overrides. Any field set here wins over the

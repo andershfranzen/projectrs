@@ -175,8 +175,10 @@ export const NPC_INTERACTION_HAS_DIALOGUE = 1 << 0;
 export const NPC_INTERACTION_HAS_SHOP = 1 << 1;
 export const NPC_INTERACTION_HAS_BANK = 1 << 2;
 /** Dialogue tree contains a server-authored startNpcCombat action. The client
- *  still uses Talk-to as the default interaction until combat is active. */
+ *  can keep combat running after that action starts a fight. */
 export const NPC_INTERACTION_STARTS_COMBAT = 1 << 3;
+/** Spawn opts into direct attack while still having dialogue. */
+export const NPC_INTERACTION_DIRECT_ATTACK = 1 << 4;
 
 // Server → Client opcodes
 export enum ServerOpcode {
@@ -292,7 +294,7 @@ export enum ServerOpcode {
   DIALOGUE_CLOSE = 77,
   /** Per-NPC interaction flags. Layout: [npcEntityId, flagBits].
    *  flagBits: bit 0 = hasDialogue, bit 1 = hasShop, bit 2 = hasBank,
-   *  bit 3 = dialogue can start NPC combat.
+   *  bit 3 = dialogue can start NPC combat, bit 4 = direct attack allowed.
    *  Broadcast on chunk-entry alongside NPC_APPEARANCE/NPC_EQUIPMENT so the
    *  client can render "Talk-to" / "Trade" / "Bank" right-click options. */
   NPC_INTERACTIONS = 78,
@@ -459,4 +461,7 @@ export enum PlayerSkillAnimationVariant {
   Chop = 1,
   Mine = 2,
   Magic = 3,
+  FishNet = 4,
+  FishRod = 5,
+  FishHarpoon = 6,
 }

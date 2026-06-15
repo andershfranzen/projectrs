@@ -26,6 +26,7 @@ interface BakeTarget {
 }
 
 function stackBakeQuantities(def: ItemDef): number[] {
+  if (def.thumbnailModel) return [1];
   const quantities = new Set<number>([1]);
   for (const variant of def.stackModels ?? []) {
     const quantity = Number(variant?.minQuantity);
@@ -38,7 +39,7 @@ function buildTargets(defs: ItemDef[]): BakeTarget[] {
   const targets: BakeTarget[] = [];
   for (const def of defs) {
     const quantities = stackBakeQuantities(def);
-    const hasStackVariants = !!def.stackModels?.length;
+    const hasStackVariants = quantities.length > 1;
     for (const quantity of quantities) {
       const modelPath = resolveItemModelPath(def, quantity);
       if (!modelPath) continue;

@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, EQUIPMENT_SLOT_NAMES, occupiedEquipmentSlotsForDef, equipmentSlotSetsConflict, movementModeFromIndex, movementModeIndex, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe, type EquipSlot, type InventorySlot } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_KEY_ITEM_ID, BEAR_HIDE_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, EQUIPMENT_SLOT_NAMES, occupiedEquipmentSlotsForDef, equipmentSlotSetsConflict, movementModeFromIndex, movementModeIndex, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe, type EquipSlot, type InventorySlot } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -31,6 +31,12 @@ const MAGIC_DEBUG_ENABLED = process.env.EQ_MAGIC_DEBUG === '1';
 const DEFAULT_HQ_XP_MULTIPLIER = 3.25;
 const BOW_STRINGING_HQ_CHANCE = 1 / 256;
 const COINS_ITEM_ID = 10;
+const BROTHER_MONK_QUEST_ID = 'quest_8djo2';
+const BROTHER_MONK_KEY_SKELETON_MAP_LEVEL = 'kcmap';
+const BROTHER_MONK_KEY_SKELETON_NPC_DEF_ID = 107;
+const BROTHER_MONK_KEY_SKELETON_SPAWN_X = 109.5;
+const BROTHER_MONK_KEY_SKELETON_SPAWN_Z = 96.5;
+const BROTHER_MONK_KEY_SKELETON_SPAWN_EPSILON = 0.01;
 const ROYAL_MINE_ORE_ITEM_IDS = new Set([25, 26, 34, 35, 44, 45, 142, 407, 408]);
 const SULTANS_MINE_MAP_LEVEL = 'the_sultans_mine';
 const SULTANS_ROYAL_GUARD_NPC_ID = 108;
@@ -94,6 +100,7 @@ function occupiedSlotsForEquippedItem(def: ItemDef | undefined, fallbackSlot: Eq
 }
 
 type BankInventoryItemsForCoinsAction = Extract<import('@projectrs/shared').DialogueAction, { type: 'bankInventoryItemsForCoins' }>;
+type BuyQuestItemAction = Extract<import('@projectrs/shared').DialogueAction, { type: 'buyQuestItem' }>;
 type PlayerMovementLayerState = { floor: number; y: number; lastFloorChangeTile: number };
 type SultansMineDoorTransit = { doorId: number; finalX: number; finalZ: number; expiresTick: number; moved: boolean };
 type ItemOnItemRecipe = {
@@ -364,6 +371,7 @@ export interface GroundItem {
   quantity: number;
   x: number;
   z: number;
+  y?: number;
   floor: number;
   mapLevel: string;
   despawnTimer: number;
@@ -377,6 +385,7 @@ interface GroundItemRespawnSource {
   quantity: number;
   x: number;
   z: number;
+  y?: number;
   floor: number;
   mapLevel: string;
   respawnTime: number;
@@ -1098,13 +1107,54 @@ export class World {
     if (!this.canPlayerTargetGroundItem(player, item)) return false;
     const fromTileX = Math.floor(player.position.x);
     const fromTileZ = Math.floor(player.position.y);
+    const collision = this.playerPathCollision(player, map);
+    return this.canReachGroundItemTileFrom(collision, fromTileX, fromTileZ, item);
+  }
+
+  private canReachGroundItemTileFrom(collision: PathingCollision, fromTileX: number, fromTileZ: number, item: GroundItem): boolean {
     const itemTileX = Math.floor(item.x);
     const itemTileZ = Math.floor(item.z);
     const dx = itemTileX - fromTileX;
     const dz = itemTileZ - fromTileZ;
     if (dx === 0 && dz === 0) return true;
     if (Math.abs(dx) > 1 || Math.abs(dz) > 1) return false;
-    return canTravel(this.playerPathCollision(player, map), fromTileX, fromTileZ, dx, dz);
+    if (dx === 0 || dz === 0) {
+      return !collision.isWallBlocked?.(fromTileX, fromTileZ, itemTileX, itemTileZ);
+    }
+
+    // Diagonal pickup still needs clear corner access. Ignore the item tile's
+    // occupancy for table/counter drops, but keep side-tile and wall checks so
+    // players cannot pick through fences or blocked corners.
+    if (!canTravel(collision, fromTileX, fromTileZ, dx, 0)) return false;
+    if (!canTravel(collision, fromTileX, fromTileZ, 0, dz)) return false;
+    if (collision.isWallBlocked?.(fromTileX + dx, fromTileZ, itemTileX, itemTileZ)) return false;
+    if (collision.isWallBlocked?.(fromTileX, fromTileZ + dz, itemTileX, itemTileZ)) return false;
+    return true;
+  }
+
+  private findPlayerPathToGroundItem(player: Player, item: GroundItem, maxSearchTiles: number = DEFAULT_MAX_SEARCH_TILES): { x: number; z: number }[] {
+    const map = this.getPlayerMap(player);
+    const collision = this.playerPathCollision(player, map);
+    const itemTileX = Math.floor(item.x);
+    const itemTileZ = Math.floor(item.z);
+    if (!collision.isTileBlocked(itemTileX, itemTileZ)) {
+      const directPath = findPathToTile({
+        startX: player.position.x,
+        startZ: player.position.y,
+        goalX: itemTileX + 0.5,
+        goalZ: itemTileZ + 0.5,
+        collision,
+        maxSearchTiles,
+      });
+      if (directPath.length > 0) return directPath;
+    }
+    return findPathToReach({
+      startX: player.position.x,
+      startZ: player.position.y,
+      collision,
+      maxSearchTiles,
+      reached: (tileX, tileZ) => this.canReachGroundItemTileFrom(collision, tileX, tileZ, item),
+    });
   }
 
   private canPlayerReachPlayer(player: Player, target: Player, maxRange: number): boolean {
@@ -1678,6 +1728,10 @@ export class World {
   private objectInteractionTiles(obj: WorldObject): { x: number; z: number }[] {
     const explicit = this.explicitObjectInteractionTiles(obj);
     if (explicit.length > 0) return explicit;
+    return this.generatedObjectInteractionTiles(obj);
+  }
+
+  private generatedObjectInteractionTiles(obj: WorldObject): { x: number; z: number }[] {
     const allowedWorldSides = obj.interactionSides
       ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def)
       : undefined;
@@ -1761,16 +1815,45 @@ export class World {
         .some(tile => tile.x === tileX && tile.z === tileZ);
     }
     const explicit = this.explicitObjectInteractionTiles(obj);
-    const adjacent = explicit.length > 0
-      ? explicit.some(tile => tile.x === tileX && tile.z === tileZ)
-      : isTileAdjacentToObject(tileX, tileZ, obj.x, obj.z, obj.def, {
-          allowedWorldSides: obj.interactionSides
-            ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def)
-            : undefined,
-          rotationY: obj.rotationY,
-          includeCorners: this.usesCornerObjectInteraction(obj),
-        });
-    return adjacent && this.hasClearObjectInteractionEdge(player, obj, tileX, tileZ, map, explicit.length > 0);
+    if (explicit.length > 0) {
+      if (explicit.some(tile => tile.x === tileX && tile.z === tileZ)) {
+        return this.hasClearObjectInteractionEdge(player, obj, tileX, tileZ, map, true);
+      }
+      const gameMap = map ?? this.getPlayerMap(player);
+      if (this.hasReachableExplicitObjectInteractionTile(player, obj, gameMap)) return false;
+    }
+
+    const adjacent = isTileAdjacentToObject(tileX, tileZ, obj.x, obj.z, obj.def, {
+      allowedWorldSides: obj.interactionSides
+        ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def)
+        : undefined,
+      rotationY: obj.rotationY,
+      includeCorners: this.usesCornerObjectInteraction(obj),
+    });
+    return adjacent && this.hasClearObjectInteractionEdge(player, obj, tileX, tileZ, map, false);
+  }
+
+  private reachableExplicitObjectInteractionTiles(player: Player, obj: WorldObject, map: GameMap): { x: number; z: number }[] {
+    const explicit = this.explicitObjectInteractionTiles(obj);
+    return explicit.filter(tile =>
+      !this.isTileBlockedForPlayer(player, map, tile.x, tile.z)
+      && this.hasClearObjectInteractionEdge(player, obj, tile.x, tile.z, map, true),
+    );
+  }
+
+  private hasReachableExplicitObjectInteractionTile(player: Player, obj: WorldObject, map: GameMap): boolean {
+    const candidates = this.reachableExplicitObjectInteractionTiles(player, obj, map);
+    if (candidates.length === 0) return false;
+    const ptx = Math.floor(player.position.x);
+    const ptz = Math.floor(player.position.y);
+    if (candidates.some(tile => tile.x === ptx && tile.z === ptz)) return true;
+    return findPathToAnyTile({
+      startX: player.position.x,
+      startZ: player.position.y,
+      goals: candidates,
+      collision: this.playerPathCollision(player, map),
+      maxSearchTiles: DEFAULT_MAX_SEARCH_TILES,
+    }).length > 0;
   }
 
   private findPathToObjectInteraction(player: Player, obj: WorldObject): { x: number; z: number }[] {
@@ -1778,16 +1861,22 @@ export class World {
     const interactionTiles = obj.def.category === 'ladder' && obj.verticalLinks?.length
       ? this.ladderInteractionTilesForPlayer(player, obj)
       : this.objectInteractionTiles(obj);
-    const candidates = interactionTiles
-      .filter(tile => !this.isTileBlockedForPlayer(player, map, tile.x, tile.z))
-      .filter(tile => this.canUseObjectFromTile(player, obj, tile.x, tile.z, map));
-    return findPathToAnyTile({
-      startX: player.position.x,
-      startZ: player.position.y,
-      goals: candidates,
-      collision: this.playerPathCollision(player, map),
-      maxSearchTiles: DEFAULT_MAX_SEARCH_TILES,
-    });
+    const findPath = (tiles: readonly { x: number; z: number }[]): { x: number; z: number }[] => {
+      const candidates = tiles
+        .filter(tile => !this.isTileBlockedForPlayer(player, map, tile.x, tile.z))
+        .filter(tile => this.canUseObjectFromTile(player, obj, tile.x, tile.z, map));
+      return findPathToAnyTile({
+        startX: player.position.x,
+        startZ: player.position.y,
+        goals: candidates,
+        collision: this.playerPathCollision(player, map),
+        maxSearchTiles: DEFAULT_MAX_SEARCH_TILES,
+      });
+    };
+
+    const path = findPath(interactionTiles);
+    if (path.length > 0 || !obj.interactionTiles?.length || obj.def.category === 'ladder') return path;
+    return findPath(this.generatedObjectInteractionTiles(obj));
   }
 
   private npcOptionsFromSpawn(spawn: SpawnEntry, npcDef: NpcDef): NpcOptions {
@@ -1805,6 +1894,7 @@ export class World {
       statsOverride: spawn.stats ?? null,
       customColors: spawn.customColors ?? npcDef.defaultCustomColors ?? null,
       attackAnimOverride: spawn.attackAnim ?? npcDef.defaultAttackAnim ?? null,
+      directAttack: spawn.directAttack === true,
       facing: spawn.facing ?? null,
       maxRange: spawn.maxRange ?? null,
       huntRange: spawn.huntRange ?? null,
@@ -1900,13 +1990,15 @@ export class World {
       const id = this.allocateGroundItemId();
       if (id === null) continue;
       const quantity = Math.max(1, Math.floor(item.quantity ?? 1));
+      const resolved = this.resolveAuthoredFloor(gameMap, item.x, item.z, item.y, item.floor);
       const groundItem: GroundItem = {
         id,
         itemId: item.itemId,
         quantity,
         x: item.x,
         z: item.z,
-        floor: this.resolveAuthoredFloor(gameMap, item.x, item.z, item.y, item.floor).floor,
+        y: resolved.y,
+        floor: resolved.floor,
         mapLevel: mapId,
         despawnTimer: -1, // permanent spawn
       };
@@ -1934,20 +2026,21 @@ export class World {
         quantity: Math.max(1, Math.floor(spawnDef.quantity ?? 1)),
         x: placed.position.x,
         z: placed.position.z,
+        y: resolved.y,
         floor: resolved.floor,
         mapLevel: mapId,
         respawnTime: Math.max(1, Math.floor(spawnDef.respawnTime ?? GROUND_ITEM_DESPAWN_TICKS)),
         respawnTimer: -1,
       };
-      const spawnKey = this.placedGroundItemSpawnKey(mapId, placed.assetId, i, source.x, source.z, source.floor);
+      const spawnKey = this.placedGroundItemSpawnKey(mapId, placed.assetId, i, source.x, source.z, source.y, source.floor);
       this.groundItemRespawnSources.set(spawnKey, source);
       if (this.spawnRespawningGroundItem(spawnKey, source, false)) count++;
     }
     return count;
   }
 
-  private placedGroundItemSpawnKey(mapId: string, assetId: string, index: number, x: number, z: number, floor: number): string {
-    return `${mapId}|${assetId}|${index}|${Math.floor(floor)}|${qPos(x)}|${qPos(z)}`;
+  private placedGroundItemSpawnKey(mapId: string, assetId: string, index: number, x: number, z: number, y: number | undefined, floor: number): string {
+    return `${mapId}|${assetId}|${index}|${Math.floor(floor)}|${qPos(x)}|${qPos(z)}|${Number.isFinite(y) ? qPos(y!) : 0}`;
   }
 
   private spawnRespawningGroundItem(spawnKey: string, source: GroundItemRespawnSource, broadcast: boolean): GroundItem | null {
@@ -1959,6 +2052,7 @@ export class World {
       quantity: source.quantity,
       x: source.x,
       z: source.z,
+      y: source.y,
       floor: source.floor,
       mapLevel: source.mapLevel,
       despawnTimer: -1,
@@ -2716,8 +2810,15 @@ export class World {
   }
 
   private releasePrivateGroundItemsForPlayer(playerId: number): void {
-    for (const [, item] of this.groundItems) {
+    for (const [id, item] of this.groundItems) {
       if (item.ownerPlayerId !== playerId) continue;
+      if (this.isQuestItemId(item.itemId)) {
+        this.groundItems.delete(id);
+        this.despawningItemIds.delete(id);
+        const cm = this.chunkManagers.get(item.mapLevel);
+        if (cm) cm.removeEntity(id);
+        continue;
+      }
       item.ownerPlayerId = undefined;
       item.privateTicks = 0;
       this.forEachPlayerNearOnFloor(item.mapLevel, item.floor, item.x, item.z, p => this.sendGroundItemUpdate(p, item));
@@ -3653,6 +3754,7 @@ export class World {
   private isNpcInteractionCombatBlocked(player: Player, npc: Npc): boolean {
     if (npc.hasShop || npc.hasBank) return true;
     if (!npc.hasDialogue) return false;
+    if (npc.directAttack) return false;
     return !this.isPlayerCombatStartedWithNpc(player, npc);
   }
 
@@ -3756,11 +3858,103 @@ export class World {
         }
       },
       notifyQuestKill: (questKiller, deadNpc) => {
+        this.awardBrotherMonkChestKeyForQuestNpcKill(questKiller, deadNpc);
         this.quests.notifyQuestEvent(questKiller, { type: 'npcKill', npcDefId: deadNpc.def.id });
       },
       creditMobKill: (deadNpc) => this.creditMobKill(deadNpc),
       spawnLoot: (deadNpc, ownerPlayerId) => this.spawnNpcLoot(deadNpc, ownerPlayerId),
     }, npc, killer);
+  }
+
+  private isBrotherMonkStage(player: Player, stage: number): boolean {
+    return player.quests[BROTHER_MONK_QUEST_ID]?.stage === stage;
+  }
+
+  private playerHasItemAnywhere(player: Player, itemId: number): boolean {
+    if (this.countInventoryItem(player, itemId) > 0) return true;
+    if (player.bank.some(slot => slot?.itemId === itemId)) return true;
+    for (const item of this.groundItems.values()) {
+      if (item.itemId === itemId && item.ownerPlayerId === player.id) return true;
+    }
+    return false;
+  }
+
+  private isBrotherMonkKeySkeleton(npc: Npc): boolean {
+    return npc.currentMapLevel === BROTHER_MONK_KEY_SKELETON_MAP_LEVEL
+      && npc.def.id === BROTHER_MONK_KEY_SKELETON_NPC_DEF_ID
+      && Math.abs(npc.spawnX - BROTHER_MONK_KEY_SKELETON_SPAWN_X) <= BROTHER_MONK_KEY_SKELETON_SPAWN_EPSILON
+      && Math.abs(npc.spawnZ - BROTHER_MONK_KEY_SKELETON_SPAWN_Z) <= BROTHER_MONK_KEY_SKELETON_SPAWN_EPSILON;
+  }
+
+  private awardBrotherMonkChestKeyForQuestNpcKill(player: Player, npc: Npc): void {
+    if (!this.isBrotherMonkKeySkeleton(npc)) return;
+    if (!this.isBrotherMonkStage(player, 0)) return;
+    if (this.playerHasItemAnywhere(player, BROTHER_MONK_CHEST_KEY_ITEM_ID)) return;
+
+    this.spawnPrivateGroundItemFor(player, npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y, BROTHER_MONK_CHEST_KEY_ITEM_ID, 1, NPC_LOOT_DESPAWN_TICKS);
+    this.sendChatSystem(player, 'You find the Brother Monk chest key on the skeleton warrior.');
+  }
+
+  private formatQuestItemPurchaseMessage(template: string | undefined, itemName: string, cost: number, qty: number): string | null {
+    if (!template || typeof template !== 'string') return null;
+    return template
+      .replace(/\{item\}/g, itemName)
+      .replace(/\{cost\}/g, String(cost))
+      .replace(/\{qty\}/g, String(qty));
+  }
+
+  private questStageInRange(player: Player, action: BuyQuestItemAction): boolean {
+    if (!action.questId) return true;
+    const state = player.quests[action.questId];
+    if (!state) return false;
+    if (action.minStage !== undefined && state.stage < action.minStage) return false;
+    if (action.maxStage !== undefined && state.stage > action.maxStage) return false;
+    return true;
+  }
+
+  private buyQuestItemFromNpc(player: Player, _npc: Npc, action: BuyQuestItemAction): boolean {
+    const itemId = Math.floor(action.itemId);
+    const cost = Math.floor(action.coinCost);
+    const qty = Math.floor(action.qty ?? 1);
+    const itemDef = this.data.itemDefs.get(itemId);
+    const itemName = itemDef?.name ?? 'that item';
+
+    if (!Number.isSafeInteger(itemId) || itemId <= 0 || !itemDef || !Number.isSafeInteger(cost) || cost <= 0 || cost > MAX_STACK || !Number.isSafeInteger(qty) || qty <= 0 || qty > MAX_STACK) {
+      this.sendChatSystem(player, 'That sale is not configured correctly.');
+      return false;
+    }
+
+    if (!this.questStageInRange(player, action)) {
+      this.sendChatSystem(player, this.formatQuestItemPurchaseMessage(action.wrongStageMessage, itemName, cost, qty) ?? 'You do not need that right now.');
+      return false;
+    }
+
+    if (action.unique !== false && this.playerHasItemAnywhere(player, itemId)) {
+      this.sendChatSystem(player, this.formatQuestItemPurchaseMessage(action.alreadyHasMessage, itemName, cost, qty) ?? `You already have ${itemName}.`);
+      return false;
+    }
+
+    if (this.countInventoryItem(player, COINS_ITEM_ID) < cost) {
+      this.sendChatSystem(player, this.formatQuestItemPurchaseMessage(action.notEnoughCoinsMessage, itemName, cost, qty) ?? `You need ${cost} coins to buy ${itemName}.`);
+      return false;
+    }
+
+    const removed = player.removeItemById(COINS_ITEM_ID, cost);
+    if (removed.completed !== cost) {
+      player.revertRemove(removed);
+      return false;
+    }
+    const added = player.addItem(itemId, qty, this.data.itemDefs);
+    if (added.completed !== qty) {
+      player.revertAdd(added);
+      player.revertRemove(removed);
+      this.sendChatSystem(player, this.formatQuestItemPurchaseMessage(action.noRoomMessage, itemName, cost, qty) ?? `You can't carry ${itemName}.`);
+      return false;
+    }
+
+    this.sendInventory(player);
+    this.sendChatSystem(player, this.formatQuestItemPurchaseMessage(action.successMessage, itemName, cost, qty) ?? `You buy ${itemName} for ${cost} coins.`);
+    return true;
   }
 
   private handleNpcRespawn(npc: Npc): void {
@@ -4134,9 +4328,9 @@ export class World {
     const npc = this.npcs.get(npcId);
     if (!player || !npc || npc.dead) return;
     if (player.isInterfaceOpen()) return;
-    // Dialogue-only NPCs stay protected until a dialogue action explicitly
-    // starts the fight. Once combat is active, repeated attack packets are
-    // allowed for chase/autocast follow-up.
+    // Plain dialogue NPCs stay protected. A spawn must opt into directAttack
+    // before attack/spell packets can bypass the dialogue; this prevents quest
+    // fights from skipping state-advancing dialogue actions.
     if (this.isNpcInteractionCombatBlocked(player, npc)) return;
     if (!this.canPlayerTargetNpc(player, npc)) return;
     if (!this.canPlayerEngageNpcCombat(player, npc)) return;
@@ -4453,7 +4647,13 @@ export class World {
     return tree.root;
   }
 
-  private openDialogueAt(player: Player, npc: Npc, nodeId: string, newSession: boolean = false): void {
+  private openDialogueAt(
+    player: Player,
+    npc: Npc,
+    nodeId: string,
+    newSession: boolean = false,
+    opts: { choicesOnly?: boolean } = {},
+  ): void {
     const tree = npc.effectiveDialogue;
     if (!tree) return;
     const node = tree.nodes[nodeId];
@@ -4484,10 +4684,11 @@ export class World {
     const payload = JSON.stringify({
       sessionId,
       speaker: wireNode.speaker ?? npc.displayName,
-      lines: wireNode.lines,
+      lines: opts.choicesOnly ? [] : wireNode.lines,
       options: visibleOptions.map(o => ({
         label: o.label,
         terminal: !o.next,
+        silent: o.silent === true || this.isDialogueBackOption(o),
       })),
     });
     const packet = encodeStringPacket(ServerOpcode.DIALOGUE_OPEN, payload, npc.id, sessionId);
@@ -4549,7 +4750,9 @@ export class World {
     // sendDialogueClose already fired inside runDialogueAction. Otherwise
     // advance to the next node, or close if the option ends the conversation.
     if (player.openDialogueState && option.next) {
-      this.openDialogueAt(player, npc, option.next);
+      this.openDialogueAt(player, npc, option.next, false, {
+        choicesOnly: option.nextChoicesOnly === true || this.isDialogueBackOption(option),
+      });
     } else if (player.openDialogueState && !option.next) {
       this.sendDialogueClose(player);
     }
@@ -4631,6 +4834,11 @@ export class World {
         this.sendDialogueClose(player);
         this.bankInventoryItemsForCoins(player, action);
         return;
+      case 'buyQuestItem':
+        if (!this.buyQuestItemFromNpc(player, npc, action)) {
+          this.sendDialogueClose(player);
+        }
+        return;
       case 'startNpcCombat':
         this.sendDialogueClose(player);
         if (npc.dead || !this.canPlayerTargetNpc(player, npc)) return;
@@ -4650,6 +4858,10 @@ export class World {
    *  per-list) so the caller can also record the original index. */
   private dialogueOptionVisible(player: Player, opt: import('@projectrs/shared').DialogueOption): boolean {
     return this.quests.dialogueOptionVisible(player, opt);
+  }
+
+  private isDialogueBackOption(opt: import('@projectrs/shared').DialogueOption): boolean {
+    return opt.next !== undefined && /^back\.?$/i.test(opt.label.trim());
   }
 
   private openBankWithAcknowledgement(player: Player, npc: Npc): void {
@@ -4924,6 +5136,10 @@ export class World {
 
     const itemDef = this.data.getItem(invItem.itemId);
     if (!itemDef) return;
+    if (itemDef.questItem) {
+      this.sendChatSystem(player, 'You should keep that for the quest.');
+      return;
+    }
     const priceItemId = isNotedItem(itemDef) ? itemDef.unnotedId : invItem.itemId;
     const priceItemDef = this.data.getItem(priceItemId) ?? itemDef;
 
@@ -4982,7 +5198,7 @@ export class World {
       // pathfound server route from an earlier authoritative tile; otherwise
       // running redirects can rubber-band when the two routes differ.
       if (!player.hasMoveQueue()) {
-        const path = this.findPlayerPathToTile(player, Math.floor(item.x), Math.floor(item.z));
+        const path = this.findPlayerPathToGroundItem(player, item);
         if (path.length > 0) player.setMoveQueue(path);
       }
       if (player.hasMoveQueue()) {
@@ -5006,7 +5222,7 @@ export class World {
       if (itemCm) itemCm.removeEntity(groundItemId);
       // Map-wide broadcast: a viewer who saw the drop, walked OOR, and stays
       // away when someone else grabs it would otherwise keep the stale sprite.
-      const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, groundItemId, 0, 0, 0, 0, 0, item.floor, qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)));
+      const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, groundItemId, 0, 0, 0, 0, 0, item.floor, qPos(this.groundItemWorldY(item)));
       for (const [, p] of this.players) {
         if (p.currentMapLevel !== item.mapLevel || p.currentFloor !== item.floor) continue;
         try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
@@ -5055,6 +5271,11 @@ export class World {
 
     const slot = player.inventory[slotIndex];
     if (!slot) return;
+    const itemDef = this.data.getItem(slot.itemId);
+    if (itemDef?.questItem) {
+      this.sendChatSystem(player, 'You should keep that for the quest.');
+      return;
+    }
     const groundItemId = this.allocateGroundItemId();
     if (groundItemId === null) {
       this.sendChatSystem(player, 'The ground is too cluttered here.');
@@ -5332,6 +5553,11 @@ export class World {
       return;
     }
 
+    if (obj.defId === BROTHER_MONK_CHEST_OBJECT_DEF_ID) {
+      this.handleBrotherMonkChestInteraction(player, obj, action);
+      return;
+    }
+
     if (action === 'Fill' && this.isWaterSourceObject(obj)) {
       this.handleWaterSourceInteraction(playerId, player, obj);
       return;
@@ -5487,6 +5713,17 @@ export class World {
   }
 
   private objectExamineTextFor(player: Player, obj: WorldObject): string {
+    if (obj.defId === BROTHER_MONK_CHEST_OBJECT_DEF_ID) {
+      if (this.isBrotherMonkStage(player, 0)) {
+        return this.countInventoryItem(player, BROTHER_MONK_CHEST_KEY_ITEM_ID) > 0
+          ? 'The key fits the chest lock.'
+          : 'A locked chest. Aldous said the skeleton west of him was holding a key.';
+      }
+      if (this.isBrotherMonkStage(player, 1)) {
+        return "I've already recovered Wren's bear hide from this chest.";
+      }
+      return "It's locked tight. I have no reason to open it.";
+    }
     if (obj.def.category === 'altar') {
       const hasRelic = player.inventory.some(slot => slot !== null && RELIC_ITEM_IDS.has(slot.itemId));
       return hasRelic
@@ -5494,6 +5731,53 @@ export class World {
         : 'i wish i had something worth sacrificing';
     }
     return obj.examineText || obj.def.examineText || `It's ${obj.displayName}.`;
+  }
+
+  private handleBrotherMonkChestInteraction(player: Player, obj: WorldObject, action: string): void {
+    if (action !== 'Unlock') {
+      this.sendChatSystem(player, "It's locked tight.");
+      return;
+    }
+
+    if (!this.isBrotherMonkStage(player, 0)) {
+      this.sendChatSystem(player, this.isBrotherMonkStage(player, 1)
+        ? "I've already recovered Wren's bear hide."
+        : "I have no reason to open this chest.");
+      return;
+    }
+
+    if (this.countInventoryItem(player, BROTHER_MONK_CHEST_KEY_ITEM_ID) <= 0) {
+      this.sendChatSystem(player, 'The chest is locked. You need the key from the skeleton west of Brother Aldous.');
+      return;
+    }
+
+    const removed = player.removeItemById(BROTHER_MONK_CHEST_KEY_ITEM_ID, 1);
+    if (removed.completed !== 1) {
+      this.sendInventory(player);
+      this.sendChatSystem(player, 'The chest needs the Brother Monk chest key.');
+      return;
+    }
+
+    const added = player.addItem(BEAR_HIDE_ITEM_ID, 1, this.data.itemDefs);
+    if (added.completed !== 1) {
+      player.revertRemove(removed);
+      this.sendInventory(player);
+      this.sendChatSystem(player, "You need room to take Wren's bear hide.");
+      return;
+    }
+
+    if (!this.quests.setPlayerQuestStage(player, BROTHER_MONK_QUEST_ID, 1)) {
+      player.revertAdd(added);
+      player.revertRemove(removed);
+      this.sendInventory(player);
+      this.sendChatSystem(player, "The lock turns, but something isn't right.");
+      return;
+    }
+
+    this.sendInventory(player);
+    this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId: BEAR_HIDE_ITEM_ID, quantity: 1, source: 'object' });
+    this.sendChatSystem(player, "You unlock the chest and take Wren's bear hide.");
+    this.depleteObjectFromInteractionEffect(obj, 33);
   }
 
   private npcExamineTextFor(npc: Npc): string {
@@ -6109,6 +6393,10 @@ export class World {
       toolItemId = bestTool.id;
       toolBonus = bestTool.toolBonus ?? 0;
     }
+    if (toolItemId == null && obj.def.visualToolItemId && this.data.getItem(obj.def.visualToolItemId)) {
+      toolItemId = obj.def.visualToolItemId;
+    }
+
     // Better pickaxes shorten the mining cycle. Other harvestables still use
     // the raw tool bonus to shorten the cycle.
     let cycleTime: number;
@@ -6129,11 +6417,19 @@ export class World {
       toolBonus,
     });
     if (obj.def.category !== 'rock') player.actionDelay = 0;
-    const variant = obj.def.category === 'tree'
-      ? PlayerSkillAnimationVariant.Chop
-      : obj.def.category === 'rock'
-        ? PlayerSkillAnimationVariant.Mine
-        : PlayerSkillAnimationVariant.None;
+    const variant = obj.def.skillAnimation === 'fish_net'
+      ? PlayerSkillAnimationVariant.FishNet
+      : obj.def.skillAnimation === 'fish_rod'
+        ? PlayerSkillAnimationVariant.FishRod
+        : obj.def.skillAnimation === 'fish_harpoon'
+          ? PlayerSkillAnimationVariant.FishHarpoon
+          : obj.def.category === 'fishingspot'
+            ? PlayerSkillAnimationVariant.FishNet
+            : obj.def.category === 'tree'
+              ? PlayerSkillAnimationVariant.Chop
+              : obj.def.category === 'rock'
+                ? PlayerSkillAnimationVariant.Mine
+                : PlayerSkillAnimationVariant.None;
     this.setPlayerAnimation(player, PlayerAnimationKind.Skill, variant, obj.id, false, toolItemId ?? 0);
     this.sendToPlayer(player, ServerOpcode.SKILLING_START, obj.id, toolItemId ?? 0);
   }
@@ -8148,6 +8444,10 @@ export class World {
     const itemId = invSlot.itemId;
     const itemDef = this.data.getItem(itemId);
     if (!itemDef) return;
+    if (itemDef.questItem) {
+      this.sendChatSystem(player, "You can't trade quest items.");
+      return;
+    }
     const isStackable = itemDef.stackable === true;
 
     const available = isStackable
@@ -8670,6 +8970,10 @@ export class World {
     const itemId = invSlot.itemId;
     const itemDef = this.data.getItem(itemId);
     if (!itemDef) return;
+    if (itemDef.questItem) {
+      this.sendChatSystem(player, "You can't stake quest items.");
+      return;
+    }
     const isStackable = itemDef.stackable === true;
     const available = isStackable
       ? invSlot.quantity
@@ -9258,6 +9562,44 @@ export class World {
     if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
     this.forEachPlayerNearOnFloor(groundItem.mapLevel, groundItem.floor, groundItem.x, groundItem.z, p =>
       this.sendGroundItemUpdate(p, groundItem));
+  }
+
+  private spawnPrivateGroundItemFor(
+    owner: Player,
+    mapLevel: string,
+    floor: number,
+    x: number,
+    z: number,
+    itemId: number,
+    quantity: number,
+    despawnTimer: number,
+  ): void {
+    if (quantity <= 0) return;
+    const id = this.allocateGroundItemId();
+    if (id === null) return;
+    const groundItem: GroundItem = {
+      id,
+      itemId,
+      quantity,
+      x,
+      z,
+      floor,
+      mapLevel,
+      despawnTimer,
+      ownerPlayerId: owner.id,
+      privateTicks: NPC_LOOT_PRIVATE_TICKS,
+    };
+    this.groundItems.set(groundItem.id, groundItem);
+    this.despawningItemIds.add(groundItem.id);
+    const cm = this.chunkManagers.get(mapLevel);
+    if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
+    if (owner.currentMapLevel === mapLevel && owner.currentFloor === floor) {
+      this.sendGroundItemUpdate(owner, groundItem);
+    }
+  }
+
+  private isQuestItemId(itemId: number): boolean {
+    return this.data.getItem(itemId)?.questItem === true;
   }
 
   private spawnRuntimeFire(mapLevel: string, floor: number, tileX: number, tileZ: number): WorldObject | null {
@@ -10463,14 +10805,14 @@ export class World {
     if (action.kind === 'itemOnObject') {
       const invSlot = player.inventory.findIndex(slot => slot?.itemId === action.recipe.inputItemId);
       if (invSlot < 0) return false;
-      return this.handleItemOnObjectRecipe(player, invSlot, action.recipe, { sendMessage: false });
+      return this.handleItemOnObjectRecipe(player, invSlot, action.recipe, { sendMessage: true });
     }
 
     if (action.kind === 'waterSource') {
       if (!this.isWaterSourceObject(obj)) return false;
       for (const recipe of ITEM_ON_OBJECT_RECIPES) {
         const invSlot = player.inventory.findIndex(slot => slot?.itemId === recipe.inputItemId);
-        if (invSlot >= 0) return this.handleItemOnObjectRecipe(player, invSlot, recipe, { sendMessage: false });
+        if (invSlot >= 0) return this.handleItemOnObjectRecipe(player, invSlot, recipe, { sendMessage: true });
       }
       return false;
     }
@@ -10965,6 +11307,10 @@ export class World {
       if (item.privateTicks && item.privateTicks > 0) {
         item.privateTicks--;
         if (item.privateTicks <= 0) {
+          if (this.isQuestItemId(item.itemId)) {
+            item.privateTicks = 0;
+            continue;
+          }
           item.ownerPlayerId = undefined;
           item.privateTicks = 0;
           this.forEachPlayerNearOnFloor(item.mapLevel, item.floor, item.x, item.z, p => this.sendGroundItemUpdate(p, item));
@@ -10979,7 +11325,7 @@ export class World {
         // A player who saw the drop and then walked OOR keeps a stale local
         // sprite if the despawn is filtered by chunk proximity. Cost is
         // negligible — items despawn at ~200-tick intervals.
-        const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, id, 0, 0, 0, 0, 0, item.floor, qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)));
+        const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, id, 0, 0, 0, 0, 0, item.floor, qPos(this.groundItemWorldY(item)));
         for (const [, p] of this.players) {
           if (p.currentMapLevel !== item.mapLevel || p.currentFloor !== item.floor) continue;
           try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
@@ -11126,20 +11472,21 @@ export class World {
     const itemDefs = this.data.itemDefs;
     type DropEntry = { itemId: number; quantity: number; totalValue: number };
     const pool: DropEntry[] = [];
+    const keptQuestItems: DropEntry[] = [];
     for (const s of player.inventory) {
       if (!s) continue;
       const def = itemDefs.get(s.itemId);
       const v = (def?.value ?? 0) * s.quantity;
-      pool.push({ itemId: s.itemId, quantity: s.quantity, totalValue: v });
+      (def?.questItem ? keptQuestItems : pool).push({ itemId: s.itemId, quantity: s.quantity, totalValue: v });
     }
     for (const [slot, itemId] of player.equipment) {
       const quantity = player.getEquipmentQuantity(slot);
       const def = itemDefs.get(itemId);
       const v = (def?.value ?? 0) * quantity;
-      pool.push({ itemId, quantity, totalValue: v });
+      (def?.questItem ? keptQuestItems : pool).push({ itemId, quantity, totalValue: v });
     }
     pool.sort((a, b) => b.totalValue - a.totalValue);
-    const kept = pool.slice(0, 3);
+    const kept = [...keptQuestItems, ...pool.slice(0, 3)];
     const dropped = pool.slice(3);
 
     // Wipe inventory + equipment completely. We rebuild inventory from `kept`.
@@ -12031,7 +12378,13 @@ export class World {
   private isGroundItemVisibleTo(viewer: Player, item: GroundItem): boolean {
     return item.mapLevel === viewer.currentMapLevel
       && (item.floor ?? 0) === viewer.currentFloor
-      && (!item.ownerPlayerId || item.ownerPlayerId === viewer.id || (item.privateTicks ?? 0) <= 0);
+      && (!item.ownerPlayerId || item.ownerPlayerId === viewer.id || (!this.isQuestItemId(item.itemId) && (item.privateTicks ?? 0) <= 0));
+  }
+
+  private groundItemWorldY(item: GroundItem): number {
+    return Number.isFinite(item.y)
+      ? item.y!
+      : this.floorWorldY(item.mapLevel, item.x, item.z, item.floor);
   }
 
   private sendGroundItemUpdate(viewer: Player, item: GroundItem): void {
@@ -12045,7 +12398,7 @@ export class World {
       qPos(item.x),
       qPos(item.z),
       item.floor,
-      qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)),
+      qPos(this.groundItemWorldY(item)),
     );
   }
 
@@ -12060,7 +12413,7 @@ export class World {
       qPos(item.x),
       qPos(item.z),
       item.floor,
-      qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)),
+      qPos(this.groundItemWorldY(item)),
     );
   }
 

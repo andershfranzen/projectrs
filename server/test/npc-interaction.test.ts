@@ -3,7 +3,7 @@ import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
 import { isPointInNpcMagicAttackRange, processNpcCombat, processPlayerCombat, processPlayerRangedCombat } from '../src/combat/Combat';
-import { NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_STARTS_COMBAT, ServerOpcode, TICK_RATE, decodePacket, getObjectFootprintBounds, type DialogueAction, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
+import { NPC_INTERACTION_DIRECT_ATTACK, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_STARTS_COMBAT, ServerOpcode, TICK_RATE, decodePacket, decodeStringPacket, getObjectFootprintBounds, type DialogueAction, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
 
 const fakeWs = {
   sendBinary() {},
@@ -205,6 +205,82 @@ describe('NPC interaction reachability', () => {
     expect(player.bank.find(slot => slot?.itemId === 35)?.quantity).toBe(3);
     expect(messages).toEqual(['The royal guard exports 6 ore to your bank through the royal minecart system for 14 coins.']);
     expect(inventorySends).toBe(1);
+  });
+
+  test('dialogue Back options return to a menu without replaying node lines', () => {
+    const dialogue: DialogueTree = {
+      root: 'greet',
+      nodes: {
+        greet: {
+          id: 'greet',
+          lines: ['What do you need?'],
+          options: [
+            { label: 'Ask about the road.', next: 'road' },
+            { label: 'Goodbye.' },
+          ],
+        },
+        road: {
+          id: 'road',
+          lines: ['Road is muddy.'],
+          options: [
+            { label: 'Back.', next: 'greet' },
+          ],
+        },
+      },
+    };
+    const sent: Uint8Array[] = [];
+    const ws = {
+      sendBinary(packet: Uint8Array) { sent.push(packet); },
+      send() {},
+    } as any;
+    const player = new Player('talker', 9.5, 10.5, ws, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5, { effectiveDialogue: dialogue });
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.openDialogueState = {
+      sessionId: 123,
+      npcEntityId: npc.id,
+      nodeId: 'road',
+      visibleOptionIndices: [0],
+    };
+    const { world } = makeCombatWorld(player, npc);
+    world.quests = {
+      notifyQuestEvent() {},
+      dialogueOptionVisible: () => true,
+    };
+
+    world.openDialogueAt(player, npc, 'road', true);
+    expect(sent).toHaveLength(1);
+    const roadPacket = decodeStringPacket(sent[0].buffer.slice(sent[0].byteOffset, sent[0].byteOffset + sent[0].byteLength) as ArrayBuffer);
+    expect(JSON.parse(roadPacket.str)).toMatchObject({
+      lines: ['Road is muddy.'],
+      options: [{ label: 'Back.', terminal: false, silent: true }],
+    });
+    const roadSession = player.openDialogueState!.sessionId;
+
+    sent.length = 0;
+    world.handleDialogueChoose(player.id, npc.id, roadSession, 0);
+
+    expect(sent).toHaveLength(1);
+    const exact = sent[0].buffer.slice(sent[0].byteOffset, sent[0].byteOffset + sent[0].byteLength) as ArrayBuffer;
+    const packet = decodeStringPacket(exact);
+    expect(packet.opcode).toBe(ServerOpcode.DIALOGUE_OPEN);
+    expect(packet.values).toEqual([npc.id, roadSession]);
+    expect(JSON.parse(packet.str)).toMatchObject({
+      sessionId: roadSession,
+      speaker: 'Guide',
+      lines: [],
+      options: [
+        { label: 'Ask about the road.', terminal: false, silent: false },
+        { label: 'Goodbye.', terminal: true },
+      ],
+    });
+    expect(player.openDialogueState).toMatchObject({
+      sessionId: roadSession,
+      npcEntityId: npc.id,
+      nodeId: 'greet',
+      visibleOptionIndices: [0, 1],
+    });
   });
 
   test('royal guard ore banking uses tiered fees and does not charge when coins are short', () => {
@@ -430,9 +506,10 @@ describe('NPC interaction reachability', () => {
 
     expect(new Npc(npcDef, 10.5, 10.5, { effectiveDialogue: plainDialogue }).interactionFlags()).toBe(NPC_INTERACTION_HAS_DIALOGUE);
     expect(new Npc(npcDef, 10.5, 10.5, { effectiveDialogue: combatDialogue }).interactionFlags()).toBe(NPC_INTERACTION_HAS_DIALOGUE | NPC_INTERACTION_STARTS_COMBAT);
+    expect(new Npc(npcDef, 10.5, 10.5, { effectiveDialogue: combatDialogue, directAttack: true }).interactionFlags()).toBe(NPC_INTERACTION_HAS_DIALOGUE | NPC_INTERACTION_STARTS_COMBAT | NPC_INTERACTION_DIRECT_ATTACK);
   });
 
-  test('combat-start dialogue blocks direct attacks until the dialogue starts combat', () => {
+  test('combat-start dialogue blocks direct attacks until the dialogue starts combat without directAttack', () => {
     const combatDialogue: DialogueTree = {
       root: 'root',
       nodes: {
@@ -453,6 +530,27 @@ describe('NPC interaction reachability', () => {
     expect(world.playerCombatTargets.has(player.id)).toBe(false);
 
     world.runDialogueAction(player, npc, { type: 'startNpcCombat' });
+    world.handlePlayerAttackNpc(player.id, npc.id);
+    expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
+  });
+
+  test('directAttack dialogue NPCs can be attacked directly', () => {
+    const combatDialogue: DialogueTree = {
+      root: 'root',
+      nodes: {
+        root: {
+          id: 'root',
+          lines: ['Fight me.'],
+          options: [{ label: 'Fight.', actions: [{ type: 'startNpcCombat' }] }],
+        },
+      },
+    };
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5, { effectiveDialogue: combatDialogue, directAttack: true });
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+
     world.handlePlayerAttackNpc(player.id, npc.id);
     expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
   });

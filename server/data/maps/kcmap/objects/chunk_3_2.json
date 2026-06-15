@@ -931,7 +931,7 @@
     }
   },
   {
-    "assetId": "tier 1 chest",
+    "assetId": "brother monk chest",
     "layerId": "layer_0",
     "position": {
       "x": 107.5,
@@ -944,40 +944,12 @@
       "z": 0
     },
     "scale": {
-      "x": 1,
-      "y": 1,
-      "z": 1
+      "x": 1.1,
+      "y": 1.1,
+      "z": 1.1
     },
     "name": "Brother Monk Chest",
-    "examineText": "Chest guarded by a Skeleton.",
-    "interactions": [
-      {
-        "action": "Lockpick",
-        "conditions": [
-          {
-            "type": "questStage",
-            "questId": "quest_8djo2",
-            "minStage": 0,
-            "maxStage": 0
-          }
-        ],
-        "effects": [
-          {
-            "type": "giveItem",
-            "itemId": 297,
-            "qty": 1
-          },
-          {
-            "type": "setQuestStage",
-            "questId": "quest_8djo2",
-            "stage": 1
-          }
-        ],
-        "message": "You pick the lock. Tucked beneath a few coins is little Wren's bear hide!",
-        "depleteObject": true,
-        "depleteRespawnTicks": 33
-      }
-    ],
+    "examineText": "A locked chest watched by a vampire.",
     "interactionTiles": [
       {
         "x": 0,

@@ -1,4 +1,7 @@
+import { Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Space } from '@babylonjs/core/Maths/math.axis';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
+import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { HEAD_RENDER_MODES, type HeadRenderMode } from '../../../shared/types';
 import { EQUIP_SLOT_BONES, HEAD_HAIR_MORPH_KEYS, type GearOverride, type HeadHairFit, type HeadHairMorphKey } from '../data/EquipmentConfig';
 import { getThumbnail } from '../rendering/ThumbnailRenderer';
@@ -8,7 +11,7 @@ type BoneGetter = (slot: string) => string;
 type ItemInfoGetter = (slot: string) => { id: number; name: string; toolType?: string; modelPath?: string; headRenderMode?: HeadRenderMode } | null;
 type SaveCallback = (itemId: number, override: GearOverride) => Promise<void>;
 type BulkSaveCallback = (sourceItemId: number, slot: string, override: GearOverride) => Promise<number>;
-type LoadGlbCallback = (slot: string, path: string, itemId?: number) => Promise<void>;
+type LoadGlbCallback = (slot: string, path: string, itemId?: number, override?: GearOverride) => Promise<void>;
 type AnimCallback = (anim: string) => void;
 type UnequipCallback = (slot: string) => void;
 type OverrideGetter = (itemId: number) => GearOverride | null;
@@ -32,7 +35,7 @@ interface ParamDef {
   step: number;
   fineStep: number;
   value: number;
-  group: 'pos' | 'rot' | 'scale';
+  group: 'pos' | 'rot' | 'mesh' | 'scale';
   color: string;
 }
 
@@ -43,8 +46,12 @@ const PARAMS: ParamDef[] = [
   { key: 'rot.x', label: 'X', min: -3.15, max: 3.15, step: 0.01, fineStep: 0.001, value: 0, group: 'rot', color: '#f66' },
   { key: 'rot.y', label: 'Y', min: -3.15, max: 3.15, step: 0.01, fineStep: 0.001, value: 0, group: 'rot', color: '#6f6' },
   { key: 'rot.z', label: 'Z', min: -3.15, max: 3.15, step: 0.01, fineStep: 0.001, value: 0, group: 'rot', color: '#66f' },
+  { key: 'mesh.x', label: 'X', min: -1, max: 1, step: 0.001, fineStep: 0.001, value: 0, group: 'mesh', color: '#f66' },
+  { key: 'mesh.y', label: 'Y', min: -1, max: 1, step: 0.001, fineStep: 0.001, value: 0, group: 'mesh', color: '#6f6' },
+  { key: 'mesh.z', label: 'Z', min: -1, max: 1, step: 0.001, fineStep: 0.001, value: 0, group: 'mesh', color: '#66f' },
   { key: 'scale', label: 'S', min: 0.05, max: 3, step: 0.01, fineStep: 0.001, value: 1, group: 'scale', color: '#f8c' },
 ];
+const PARAM_BY_KEY = new Map(PARAMS.map((p) => [p.key, p]));
 
 const HEAD_HAIR_PARAM_DEFS: { key: HeadHairMorphKey; label: string; title: string }[] = [
   { key: 'topFlatten', label: 'TOP', title: 'Flatten hair above the hat brim' },
@@ -68,7 +75,23 @@ const SLOT_COLORS: Record<string, string> = {
   legs: '#c96', neck: '#f6f', ring: '#6f6', hands: '#fc6', feet: '#c6f', cape: '#6ff',
 };
 
-const ANIMS = ['idle', 'walk', 'attack', 'chop', 'mine'];
+const MOVE_NUDGE_STEPS = [0.001, 0.01, 0.05];
+const ROTATION_NUDGE_STEPS = [
+  { label: '5', value: Math.PI / 36 },
+  { label: '15', value: Math.PI / 12 },
+  { label: '45', value: Math.PI / 4 },
+  { label: '90', value: Math.PI / 2 },
+];
+const ANIMS: { key: string; label: string }[] = [
+  { key: 'idle', label: 'idle' },
+  { key: 'walk', label: 'walk' },
+  { key: 'attack', label: 'attack' },
+  { key: 'chop', label: 'chop' },
+  { key: 'mine', label: 'mine' },
+  { key: 'fish_net', label: 'net' },
+  { key: 'fish_rod', label: 'rod' },
+  { key: 'fish_harpoon', label: 'harpoon' },
+];
 const THUMB_SIZE = 52;
 
 export class GearDebugPanel {
@@ -84,6 +107,7 @@ export class GearDebugPanel {
   private statusLabel!: HTMLSpanElement;
   private overrideStatusEl!: HTMLSpanElement;
   private glbInput!: HTMLInputElement;
+  private centerOriginInput!: HTMLInputElement;
   private thumbGrid!: HTMLDivElement;
   private thumbToggleBtn!: HTMLButtonElement;
   private headHairSection!: HTMLDivElement;
@@ -107,7 +131,17 @@ export class GearDebugPanel {
   private thumbGridOpen = true;
   private thumbCache: Map<string, string> = new Map();
   private slotFilesCache: Map<string, GearFileInfo[]> = new Map();
+  private loadedGlbSlot: string | null = null;
   private loadedGlbPath: string | null = null;
+  private loadedGlbItemId: number | undefined;
+  private loadedPreviewOverride: GearOverride | null = null;
+  private previewReloadSeq = 0;
+  private moveNudgeStep = 0.01;
+  private rotationNudgeStep = Math.PI / 12;
+  private moveStepButtons: HTMLButtonElement[] = [];
+  private rotationStepButtons: HTMLButtonElement[] = [];
+  private meshOffsetBaseTarget: TransformNode | null = null;
+  private meshOffsetBasePositions: Map<TransformNode, Vector3> = new Map();
 
   // Drag state
   private dragOffsetX = 0;
@@ -279,10 +313,26 @@ export class GearDebugPanel {
     glbRow.appendChild(loadBtn);
     body.appendChild(glbRow);
 
+    const pivotModeRow = document.createElement('label');
+    pivotModeRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin:-4px 0 8px;color:#888;font-size:10px;';
+    this.centerOriginInput = document.createElement('input');
+    this.centerOriginInput.type = 'checkbox';
+    this.centerOriginInput.style.cssText = 'margin:0;accent-color:#8cf;';
+    this.centerOriginInput.addEventListener('change', () => {
+      this.updateOverrideStatus();
+      void this.reloadCurrentPreview('Origin mode applied');
+    });
+    const pivotModeText = document.createElement('span');
+    pivotModeText.textContent = 'keep authored GLB origin on load';
+    pivotModeRow.appendChild(this.centerOriginInput);
+    pivotModeRow.appendChild(pivotModeText);
+    body.appendChild(pivotModeRow);
+
     // Control groups
     const groups: [string, string, ParamDef[]][] = [
       ['Position', '#8cf', PARAMS.filter(p => p.group === 'pos')],
       ['Rotation', '#cf8', PARAMS.filter(p => p.group === 'rot')],
+      ['Visual Offset', '#fc8', PARAMS.filter(p => p.group === 'mesh')],
       ['Scale', '#f8c', PARAMS.filter(p => p.group === 'scale')],
     ];
 
@@ -294,6 +344,13 @@ export class GearDebugPanel {
 
       for (const p of params) {
         body.appendChild(this.buildRow(p));
+      }
+      if (groupName === 'Position') {
+        body.appendChild(this.buildMoveNudgeSection());
+      } else if (groupName === 'Rotation') {
+        body.appendChild(this.buildRotationNudgeSection());
+      } else if (groupName === 'Visual Offset') {
+        body.appendChild(this.buildMeshOffsetNudgeSection());
       }
     }
 
@@ -307,20 +364,21 @@ export class GearDebugPanel {
     body.appendChild(animLabel);
 
     const animRow = document.createElement('div');
-    animRow.style.cssText = 'display:flex;gap:3px;margin-bottom:10px;';
+    animRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:3px;margin-bottom:10px;';
     for (const anim of ANIMS) {
       const btn = document.createElement('button');
-      btn.textContent = anim;
+      btn.textContent = anim.label;
+      btn.title = anim.key;
       Object.assign(btn.style, {
-        flex: '1', padding: '4px 2px', cursor: 'pointer',
-        background: anim === 'idle' ? '#2a2a20' : '#12100c',
-        color: anim === 'idle' ? '#d8372b' : '#666',
-        border: `1px solid ${anim === 'idle' ? '#554a3a' : '#2a2520'}`,
+        flex: '1 0 46px', padding: '4px 2px', cursor: 'pointer',
+        background: anim.key === 'idle' ? '#2a2a20' : '#12100c',
+        color: anim.key === 'idle' ? '#d8372b' : '#666',
+        border: `1px solid ${anim.key === 'idle' ? '#554a3a' : '#2a2520'}`,
         borderRadius: '3px', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '10px',
       });
-      btn.addEventListener('click', () => this.playAnim(anim));
+      btn.addEventListener('click', () => this.playAnim(anim.key));
       animRow.appendChild(btn);
-      this.animButtons.set(anim, btn);
+      this.animButtons.set(anim.key, btn);
     }
     body.appendChild(animRow);
 
@@ -436,6 +494,379 @@ export class GearDebugPanel {
     this.sliders.set(p.key, slider);
     this.numInputs.set(p.key, numInput);
     return row;
+  }
+
+  private buildMoveNudgeSection(): HTMLDivElement {
+    const section = this.buildNudgeSection();
+    const header = this.buildStepHeader('MOVE STEP');
+    this.moveStepButtons = [];
+    for (const step of MOVE_NUDGE_STEPS) {
+      const btn = this.makeNudgeButton(step.toString(), `Use ${step}m movement nudges`, () => {
+        this.moveNudgeStep = step;
+        this.updateMoveStepButtons();
+      });
+      btn.dataset.step = String(step);
+      this.moveStepButtons.push(btn);
+      header.appendChild(btn);
+    }
+    section.appendChild(header);
+    section.appendChild(this.buildNudgeButtonRow('VIEW', [
+      { text: 'L', title: 'Move left on screen', onClick: () => this.nudgeViewPosition('right', -1) },
+      { text: 'R', title: 'Move right on screen', onClick: () => this.nudgeViewPosition('right', 1) },
+      { text: 'U', title: 'Move up on screen', onClick: () => this.nudgeViewPosition('up', 1) },
+      { text: 'D', title: 'Move down on screen', onClick: () => this.nudgeViewPosition('up', -1) },
+      { text: 'IN', title: 'Move into the screen', onClick: () => this.nudgeViewPosition('forward', 1) },
+      { text: 'OUT', title: 'Move out of the screen', onClick: () => this.nudgeViewPosition('forward', -1) },
+    ]));
+    section.appendChild(this.buildNudgeButtonRow('WORLD', [
+      { text: 'X-', title: 'Move along world -X', onClick: () => this.nudgeWorldPosition('x', -1) },
+      { text: 'X+', title: 'Move along world +X', onClick: () => this.nudgeWorldPosition('x', 1) },
+      { text: 'Y-', title: 'Move along world -Y', onClick: () => this.nudgeWorldPosition('y', -1) },
+      { text: 'Y+', title: 'Move along world +Y', onClick: () => this.nudgeWorldPosition('y', 1) },
+      { text: 'Z-', title: 'Move along world -Z', onClick: () => this.nudgeWorldPosition('z', -1) },
+      { text: 'Z+', title: 'Move along world +Z', onClick: () => this.nudgeWorldPosition('z', 1) },
+    ]));
+    this.updateMoveStepButtons();
+    return section;
+  }
+
+  private buildRotationNudgeSection(): HTMLDivElement {
+    const section = this.buildNudgeSection();
+    const header = this.buildStepHeader('ROT STEP');
+    this.rotationStepButtons = [];
+    for (const step of ROTATION_NUDGE_STEPS) {
+      const btn = this.makeNudgeButton(step.label, `Use ${step.label} degree rotation nudges`, () => {
+        this.rotationNudgeStep = step.value;
+        this.updateRotationStepButtons();
+      });
+      btn.dataset.step = String(step.value);
+      this.rotationStepButtons.push(btn);
+      header.appendChild(btn);
+    }
+    section.appendChild(header);
+    section.appendChild(this.buildNudgeButtonRow('LOCAL', [
+      { text: 'X-', title: 'Rotate around local -X', onClick: () => this.nudgeRotation('x', -1) },
+      { text: 'X+', title: 'Rotate around local +X', onClick: () => this.nudgeRotation('x', 1) },
+      { text: 'Y-', title: 'Rotate around local -Y', onClick: () => this.nudgeRotation('y', -1) },
+      { text: 'Y+', title: 'Rotate around local +Y', onClick: () => this.nudgeRotation('y', 1) },
+      { text: 'Z-', title: 'Rotate around local -Z', onClick: () => this.nudgeRotation('z', -1) },
+      { text: 'Z+', title: 'Rotate around local +Z', onClick: () => this.nudgeRotation('z', 1) },
+    ]));
+    section.appendChild(this.buildNudgeButtonRow('VIEW', [
+      { text: 'P-', title: 'Pitch down on screen', onClick: () => this.nudgeViewRotation('right', -1) },
+      { text: 'P+', title: 'Pitch up on screen', onClick: () => this.nudgeViewRotation('right', 1) },
+      { text: 'Y-', title: 'Yaw left on screen', onClick: () => this.nudgeViewRotation('up', -1) },
+      { text: 'Y+', title: 'Yaw right on screen', onClick: () => this.nudgeViewRotation('up', 1) },
+      { text: 'R-', title: 'Roll counter-clockwise on screen', onClick: () => this.nudgeViewRotation('forward', -1) },
+      { text: 'R+', title: 'Roll clockwise on screen', onClick: () => this.nudgeViewRotation('forward', 1) },
+    ]));
+    section.appendChild(this.buildNudgeButtonRow('WORLD', [
+      { text: 'X-', title: 'Rotate around world -X', onClick: () => this.nudgeWorldRotation('x', -1) },
+      { text: 'X+', title: 'Rotate around world +X', onClick: () => this.nudgeWorldRotation('x', 1) },
+      { text: 'Y-', title: 'Rotate around world -Y', onClick: () => this.nudgeWorldRotation('y', -1) },
+      { text: 'Y+', title: 'Rotate around world +Y', onClick: () => this.nudgeWorldRotation('y', 1) },
+      { text: 'Z-', title: 'Rotate around world -Z', onClick: () => this.nudgeWorldRotation('z', -1) },
+      { text: 'Z+', title: 'Rotate around world +Z', onClick: () => this.nudgeWorldRotation('z', 1) },
+    ]));
+    this.updateRotationStepButtons();
+    return section;
+  }
+
+  private buildMeshOffsetNudgeSection(): HTMLDivElement {
+    const section = this.buildNudgeSection();
+    section.appendChild(this.buildNudgeButtonRow('AUTO', [
+      { text: 'CENTER', title: 'Move mesh so its bounds center sits on the attachment pivot', onClick: () => this.snapMeshOffsetToBounds('center') },
+      { text: 'BOTTOM', title: 'Move mesh so its lower bounds center sits on the attachment pivot', onClick: () => this.snapMeshOffsetToBounds('bottom') },
+      { text: 'RESET', title: 'Clear visual offset', onClick: () => this.resetMeshOffset() },
+    ]));
+    section.appendChild(this.buildNudgeButtonRow('VIEW', [
+      { text: 'L', title: 'Move mesh left on screen without moving the attachment pivot', onClick: () => this.nudgeViewMeshOffset('right', -1) },
+      { text: 'R', title: 'Move mesh right on screen without moving the attachment pivot', onClick: () => this.nudgeViewMeshOffset('right', 1) },
+      { text: 'U', title: 'Move mesh up on screen without moving the attachment pivot', onClick: () => this.nudgeViewMeshOffset('up', 1) },
+      { text: 'D', title: 'Move mesh down on screen without moving the attachment pivot', onClick: () => this.nudgeViewMeshOffset('up', -1) },
+      { text: 'IN', title: 'Move mesh into the screen without moving the attachment pivot', onClick: () => this.nudgeViewMeshOffset('forward', 1) },
+      { text: 'OUT', title: 'Move mesh out of the screen without moving the attachment pivot', onClick: () => this.nudgeViewMeshOffset('forward', -1) },
+    ]));
+    section.appendChild(this.buildNudgeButtonRow('WORLD', [
+      { text: 'X-', title: 'Move mesh along world -X without moving the attachment pivot', onClick: () => this.nudgeWorldMeshOffset('x', -1) },
+      { text: 'X+', title: 'Move mesh along world +X without moving the attachment pivot', onClick: () => this.nudgeWorldMeshOffset('x', 1) },
+      { text: 'Y-', title: 'Move mesh along world -Y without moving the attachment pivot', onClick: () => this.nudgeWorldMeshOffset('y', -1) },
+      { text: 'Y+', title: 'Move mesh along world +Y without moving the attachment pivot', onClick: () => this.nudgeWorldMeshOffset('y', 1) },
+      { text: 'Z-', title: 'Move mesh along world -Z without moving the attachment pivot', onClick: () => this.nudgeWorldMeshOffset('z', -1) },
+      { text: 'Z+', title: 'Move mesh along world +Z without moving the attachment pivot', onClick: () => this.nudgeWorldMeshOffset('z', 1) },
+    ]));
+    return section;
+  }
+
+  private buildNudgeSection(): HTMLDivElement {
+    const section = document.createElement('div');
+    Object.assign(section.style, {
+      margin: '4px 0 7px',
+      padding: '6px',
+      background: '#0e0c08',
+      border: '1px solid #242018',
+      borderRadius: '4px',
+    });
+    return section;
+  }
+
+  private buildStepHeader(label: string): HTMLDivElement {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:3px;margin-bottom:4px;';
+    const labelEl = document.createElement('span');
+    labelEl.style.cssText = 'width:62px;flex-shrink:0;color:#777;font-size:9px;font-weight:bold;';
+    labelEl.textContent = label;
+    row.appendChild(labelEl);
+    return row;
+  }
+
+  private buildNudgeButtonRow(label: string, buttons: { text: string; title: string; onClick: () => void }[]): HTMLDivElement {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:3px;margin-top:3px;';
+    const labelEl = document.createElement('span');
+    labelEl.style.cssText = 'width:62px;flex-shrink:0;color:#777;font-size:9px;font-weight:bold;';
+    labelEl.textContent = label;
+    row.appendChild(labelEl);
+    for (const def of buttons) {
+      row.appendChild(this.makeNudgeButton(def.text, def.title, def.onClick));
+    }
+    return row;
+  }
+
+  private makeNudgeButton(text: string, title: string, onClick: () => void): HTMLButtonElement {
+    const btn = this.makeButton(text, '#12100c', '#2f2a20', onClick);
+    btn.title = title;
+    Object.assign(btn.style, {
+      flex: '1 1 0',
+      minWidth: '0',
+      padding: '3px 2px',
+      fontSize: '9px',
+      lineHeight: '13px',
+    });
+    return btn;
+  }
+
+  private updateMoveStepButtons(): void {
+    this.updateStepButtons(this.moveStepButtons, String(this.moveNudgeStep), '#8cf');
+  }
+
+  private updateRotationStepButtons(): void {
+    this.updateStepButtons(this.rotationStepButtons, String(this.rotationNudgeStep), '#cf8');
+  }
+
+  private updateStepButtons(buttons: HTMLButtonElement[], activeStep: string, activeColor: string): void {
+    for (const btn of buttons) {
+      const active = btn.dataset.step === activeStep;
+      btn.style.background = active ? '#2a2a20' : '#12100c';
+      btn.style.color = active ? activeColor : '#777';
+      btn.style.borderColor = active ? activeColor : '#2f2a20';
+      btn.style.fontWeight = active ? 'bold' : 'normal';
+    }
+  }
+
+  private nudgeWorldPosition(axis: 'x' | 'y' | 'z', sign: -1 | 1): void {
+    const delta = Vector3.Zero();
+    if (axis === 'x') delta.x = this.moveNudgeStep * sign;
+    else if (axis === 'y') delta.y = this.moveNudgeStep * sign;
+    else delta.z = this.moveNudgeStep * sign;
+    this.applyWorldPositionDelta(delta);
+  }
+
+  private nudgeViewPosition(axis: 'right' | 'up' | 'forward', sign: -1 | 1): void {
+    const worldDirection = this.getViewDirection(axis);
+    if (!worldDirection) return;
+    this.applyWorldPositionDelta(worldDirection.scaleInPlace(this.moveNudgeStep * sign));
+  }
+
+  private applyWorldPositionDelta(worldDelta: Vector3): void {
+    if (!this.target) return;
+    let localDelta = worldDelta.clone();
+    const parent = this.target.parent as TransformNode | null;
+    if (parent) {
+      parent.computeWorldMatrix(true);
+      const parentInverse = parent.getWorldMatrix().clone();
+      parentInverse.invert();
+      localDelta = Vector3.TransformNormal(worldDelta, parentInverse);
+    }
+    this.setVal('pos.x', this.getVal('pos.x') + localDelta.x);
+    this.setVal('pos.y', this.getVal('pos.y') + localDelta.y);
+    this.setVal('pos.z', this.getVal('pos.z') + localDelta.z);
+    this.applyToTarget();
+    this.updateOverrideStatus();
+  }
+
+  private nudgeWorldMeshOffset(axis: 'x' | 'y' | 'z', sign: -1 | 1): void {
+    const delta = this.worldAxisVector(axis).scaleInPlace(this.moveNudgeStep * sign);
+    this.applyWorldMeshOffsetDelta(delta);
+  }
+
+  private nudgeViewMeshOffset(axis: 'right' | 'up' | 'forward', sign: -1 | 1): void {
+    const worldDirection = this.getViewDirection(axis);
+    if (!worldDirection) return;
+    this.applyWorldMeshOffsetDelta(worldDirection.scaleInPlace(this.moveNudgeStep * sign));
+  }
+
+  private applyWorldMeshOffsetDelta(worldDelta: Vector3): void {
+    if (!this.target) return;
+    this.target.computeWorldMatrix(true);
+    const targetInverse = this.target.getWorldMatrix().clone();
+    targetInverse.invert();
+    const localDelta = Vector3.TransformNormal(worldDelta, targetInverse);
+    this.setVal('mesh.x', this.getVal('mesh.x') + localDelta.x);
+    this.setVal('mesh.y', this.getVal('mesh.y') + localDelta.y);
+    this.setVal('mesh.z', this.getVal('mesh.z') + localDelta.z);
+    this.applyToTarget();
+    this.updateOverrideStatus();
+  }
+
+  private nudgeRotation(axis: 'x' | 'y' | 'z', sign: -1 | 1): void {
+    this.setVal(`rot.${axis}`, this.wrapRadians(this.getVal(`rot.${axis}`) + this.rotationNudgeStep * sign));
+    this.applyToTarget();
+    this.updateOverrideStatus();
+  }
+
+  private nudgeWorldRotation(axis: 'x' | 'y' | 'z', sign: -1 | 1): void {
+    this.applyWorldRotationDelta(this.worldAxisVector(axis), sign);
+  }
+
+  private nudgeViewRotation(axis: 'right' | 'up' | 'forward', sign: -1 | 1): void {
+    const worldDirection = this.getViewDirection(axis);
+    if (!worldDirection) return;
+    this.applyWorldRotationDelta(worldDirection, sign);
+  }
+
+  private applyWorldRotationDelta(worldAxis: Vector3, sign: -1 | 1): void {
+    if (!this.target) return;
+    if (worldAxis.lengthSquared() < 0.000001) return;
+    this.applyToTarget();
+    this.target.computeWorldMatrix(true);
+    this.target.rotate(worldAxis.normalize(), this.rotationNudgeStep * sign, Space.WORLD);
+    this.syncRotationInputsFromTarget();
+    this.applyMeshOffsetToTarget();
+    this.updateOverrideStatus();
+  }
+
+  private syncRotationInputsFromTarget(): void {
+    if (!this.target) return;
+    if (this.target.rotationQuaternion) {
+      const euler = this.target.rotationQuaternion.toEulerAngles();
+      this.target.rotationQuaternion = null;
+      this.target.rotation.copyFrom(euler);
+    }
+    this.setVal('rot.x', this.wrapRadians(this.target.rotation.x));
+    this.setVal('rot.y', this.wrapRadians(this.target.rotation.y));
+    this.setVal('rot.z', this.wrapRadians(this.target.rotation.z));
+  }
+
+  private getViewDirection(axis: 'right' | 'up' | 'forward'): Vector3 | null {
+    if (!this.target) return null;
+    const camera = this.target.getScene().activeCamera;
+    if (!camera) {
+      this.flashStatus('No active camera');
+      return null;
+    }
+    const localAxis = axis === 'right'
+      ? new Vector3(1, 0, 0)
+      : axis === 'up'
+        ? new Vector3(0, 1, 0)
+        : new Vector3(0, 0, 1);
+    const worldDirection = camera.getDirection(localAxis);
+    if (worldDirection.lengthSquared() < 0.000001) return null;
+    return worldDirection.normalize();
+  }
+
+  private worldAxisVector(axis: 'x' | 'y' | 'z'): Vector3 {
+    if (axis === 'x') return new Vector3(1, 0, 0);
+    if (axis === 'y') return new Vector3(0, 1, 0);
+    return new Vector3(0, 0, 1);
+  }
+
+  private currentMeshOffset(): Vector3 {
+    return new Vector3(this.getVal('mesh.x'), this.getVal('mesh.y'), this.getVal('mesh.z'));
+  }
+
+  private captureMeshOffsetBase(target: TransformNode, currentOffset: Vector3): void {
+    this.meshOffsetBaseTarget = target;
+    this.meshOffsetBasePositions.clear();
+    for (const child of target.getChildren()) {
+      if (!(child instanceof TransformNode)) continue;
+      this.meshOffsetBasePositions.set(child, child.position.subtract(currentOffset));
+    }
+  }
+
+  private applyMeshOffsetToTarget(): void {
+    if (!this.target) return;
+    const offset = this.currentMeshOffset();
+    if (this.meshOffsetBaseTarget !== this.target) {
+      this.captureMeshOffsetBase(this.target, offset);
+    }
+    for (const [child, basePosition] of this.meshOffsetBasePositions) {
+      if (child.isDisposed()) continue;
+      child.position.copyFrom(basePosition.add(offset));
+    }
+  }
+
+  private resetMeshOffset(): void {
+    this.setVal('mesh.x', 0);
+    this.setVal('mesh.y', 0);
+    this.setVal('mesh.z', 0);
+    this.applyToTarget();
+    this.updateOverrideStatus();
+  }
+
+  private snapMeshOffsetToBounds(anchor: 'center' | 'bottom'): void {
+    const bounds = this.computeTargetLocalMeshBounds();
+    if (!bounds) return;
+    const anchorLocal = anchor === 'center'
+      ? bounds.min.add(bounds.max).scaleInPlace(0.5)
+      : new Vector3(
+        (bounds.min.x + bounds.max.x) * 0.5,
+        bounds.min.y,
+        (bounds.min.z + bounds.max.z) * 0.5,
+      );
+    const next = this.currentMeshOffset().subtract(anchorLocal);
+    this.setVal('mesh.x', next.x);
+    this.setVal('mesh.y', next.y);
+    this.setVal('mesh.z', next.z);
+    this.applyToTarget();
+    this.updateOverrideStatus();
+    this.flashStatus(anchor === 'center' ? 'Pivot snapped to bounds center' : 'Pivot snapped to lower bounds');
+  }
+
+  private computeTargetLocalMeshBounds(): { min: Vector3; max: Vector3 } | null {
+    if (!this.target) return null;
+    this.target.computeWorldMatrix(true);
+    const inverseTarget = this.target.getWorldMatrix().clone();
+    inverseTarget.invert();
+
+    const min = new Vector3(Infinity, Infinity, Infinity);
+    const max = new Vector3(-Infinity, -Infinity, -Infinity);
+    let found = false;
+    const meshes: AbstractMesh[] = this.target.getChildMeshes(false);
+    for (const mesh of meshes) {
+      if (mesh.getTotalVertices() === 0) continue;
+      mesh.computeWorldMatrix(true);
+      for (const corner of mesh.getBoundingInfo().boundingBox.vectorsWorld) {
+        const local = Vector3.TransformCoordinates(corner, inverseTarget);
+        min.minimizeInPlace(local);
+        max.maximizeInPlace(local);
+        found = true;
+      }
+    }
+
+    if (!found) {
+      this.flashStatus('No mesh bounds');
+      return null;
+    }
+    return { min, max };
+  }
+
+  private wrapRadians(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    let wrapped = value;
+    while (wrapped > Math.PI) wrapped -= Math.PI * 2;
+    while (wrapped < -Math.PI) wrapped += Math.PI * 2;
+    return wrapped;
   }
 
   private buildHeadHairSection(): HTMLDivElement {
@@ -629,6 +1060,15 @@ export class GearDebugPanel {
     const node = this.getSlotNode(slot);
     const bone = this.getSlotBone(slot);
     const item = this.getItemInfo(slot);
+    const existingOverride = item ? this.overrideGetter(item.id) : null;
+    const previewOverride = this.loadedGlbSlot === slot ? this.loadedPreviewOverride : null;
+    const activeOverride = previewOverride ?? existingOverride;
+    if (this.loadedGlbSlot !== slot) {
+      this.loadedGlbSlot = null;
+      this.loadedGlbPath = existingOverride?.file || null;
+      this.loadedGlbItemId = undefined;
+      this.loadedPreviewOverride = null;
+    }
     const color = SLOT_COLORS[slot] || '#888';
 
     if (node && item) {
@@ -656,22 +1096,35 @@ export class GearDebugPanel {
 
     if (node) {
       this.target = node;
+      const meshOffset = activeOverride?.meshOffset ?? { x: 0, y: 0, z: 0 };
       this.setVal('pos.x', node.position.x);
       this.setVal('pos.y', node.position.y);
       this.setVal('pos.z', node.position.z);
       this.setVal('rot.x', node.rotation.x);
       this.setVal('rot.y', node.rotation.y);
       this.setVal('rot.z', node.rotation.z);
+      this.setVal('mesh.x', meshOffset.x);
+      this.setVal('mesh.y', meshOffset.y);
+      this.setVal('mesh.z', meshOffset.z);
       this.setVal('scale', node.scaling.x);
+      this.captureMeshOffsetBase(node, new Vector3(meshOffset.x, meshOffset.y, meshOffset.z));
     } else {
       this.target = null;
+      this.meshOffsetBaseTarget = null;
+      this.meshOffsetBasePositions.clear();
+      this.setVal('mesh.x', 0);
+      this.setVal('mesh.y', 0);
+      this.setVal('mesh.z', 0);
     }
 
-    const existingOverride = item ? this.overrideGetter(item.id) : null;
-    this.loadedGlbPath = existingOverride?.file || null;
+    if (this.centerOriginInput) {
+      const skinned = this.isSkinnedArmor(slot);
+      this.centerOriginInput.disabled = skinned;
+      this.centerOriginInput.checked = skinned ? false : activeOverride?.centerOrigin ?? false;
+    }
     if (this.headHairSection) {
       this.headHairSection.style.display = slot === 'head' && !!item ? 'block' : 'none';
-      this.setHeadHairControls(existingOverride?.headHair ?? null);
+      this.setHeadHairControls(activeOverride?.headHair ?? null);
     }
 
     this.updateOverrideStatus();
@@ -789,8 +1242,10 @@ export class GearDebugPanel {
     if (!this.loadGlbCallback) return;
     this.flashStatus(`Loading ${info.name}...`);
     try {
-      await this.loadGlbCallback(this.activeSlot, info.path, info.itemId > 0 ? info.itemId : undefined);
-      this.loadedGlbPath = info.path;
+      const previewOverride = this.buildCurrentTransformOverride(true);
+      const itemId = info.itemId > 0 ? info.itemId : undefined;
+      await this.loadGlbCallback(this.activeSlot, info.path, itemId, previewOverride);
+      this.setLoadedPreview(this.activeSlot, info.path, itemId, previewOverride);
       // Refresh view after a tick so the attached gear node is available
       setTimeout(() => {
         this.switchSlot(this.activeSlot);
@@ -798,6 +1253,52 @@ export class GearDebugPanel {
       }, 100);
     } catch (e: any) {
       this.flashStatus(`Failed: ${e.message || e}`);
+    }
+  }
+
+  private setLoadedPreview(slot: string, path: string, itemId: number | undefined, override: GearOverride): void {
+    this.loadedGlbSlot = slot;
+    this.loadedGlbPath = path;
+    this.loadedGlbItemId = itemId;
+    this.loadedPreviewOverride = { ...override };
+  }
+
+  private getCurrentPreviewPath(): string {
+    if (this.loadedGlbSlot === this.activeSlot && this.loadedGlbPath) return this.loadedGlbPath;
+    const item = this.getItemInfo(this.activeSlot);
+    if (item?.modelPath) return item.modelPath;
+    if (item) return `/assets/equipment/${this.activeSlot}/${item.id}.glb`;
+    return this.glbInput?.value.trim() || '';
+  }
+
+  private getCurrentPreviewItemId(): number | undefined {
+    if (this.loadedGlbSlot === this.activeSlot) return this.loadedGlbItemId;
+    const item = this.getItemInfo(this.activeSlot);
+    return item && item.id > 0 ? item.id : undefined;
+  }
+
+  private async reloadCurrentPreview(successMessage: string): Promise<void> {
+    if (!this.loadGlbCallback) return;
+    if (this.centerOriginInput?.disabled) return;
+    const path = this.getCurrentPreviewPath();
+    if (!path) return;
+
+    const seq = ++this.previewReloadSeq;
+    const itemId = this.getCurrentPreviewItemId();
+    const previewOverride = this.buildCurrentTransformOverride(true);
+    this.flashStatus('Reloading GLB...');
+    try {
+      await this.loadGlbCallback(this.activeSlot, path, itemId, previewOverride);
+      if (seq !== this.previewReloadSeq) return;
+      this.setLoadedPreview(this.activeSlot, path, itemId, previewOverride);
+      setTimeout(() => {
+        if (seq !== this.previewReloadSeq) return;
+        this.switchSlot(this.activeSlot);
+        this.flashStatus(successMessage);
+      }, 100);
+    } catch (e: any) {
+      if (seq !== this.previewReloadSeq) return;
+      this.flashStatus(`Reload failed: ${e.message || e}`);
     }
   }
 
@@ -823,7 +1324,9 @@ export class GearDebugPanel {
     const saved = override || {
       localPosition: def.localPosition,
       localRotation: def.localRotation,
+      meshOffset: { x: 0, y: 0, z: 0 },
       scale: def.scale,
+      centerOrigin: false,
     };
     const ref = {
       px: saved.localPosition?.x ?? def.localPosition.x,
@@ -832,19 +1335,27 @@ export class GearDebugPanel {
       rx: saved.localRotation?.x ?? def.localRotation.x,
       ry: saved.localRotation?.y ?? def.localRotation.y,
       rz: saved.localRotation?.z ?? def.localRotation.z,
+      mx: saved.meshOffset?.x ?? 0,
+      my: saved.meshOffset?.y ?? 0,
+      mz: saved.meshOffset?.z ?? 0,
       s: saved.scale ?? def.scale,
+      centerOrigin: saved.centerOrigin ?? false,
     };
 
     const cur = {
       px: this.getVal('pos.x'), py: this.getVal('pos.y'), pz: this.getVal('pos.z'),
       rx: this.getVal('rot.x'), ry: this.getVal('rot.y'), rz: this.getVal('rot.z'),
+      mx: this.getVal('mesh.x'), my: this.getVal('mesh.y'), mz: this.getVal('mesh.z'),
       s: this.getVal('scale'),
+      centerOrigin: this.centerOriginInput?.checked ?? false,
     };
 
     const close = (a: number, b: number) => Math.abs(a - b) < 0.001;
     const transformMatches = close(cur.px, ref.px) && close(cur.py, ref.py) && close(cur.pz, ref.pz)
       && close(cur.rx, ref.rx) && close(cur.ry, ref.ry) && close(cur.rz, ref.rz)
-      && close(cur.s, ref.s);
+      && close(cur.mx, ref.mx) && close(cur.my, ref.my) && close(cur.mz, ref.mz)
+      && close(cur.s, ref.s)
+      && cur.centerOrigin === ref.centerOrigin;
     const hairMatches = this.activeSlot !== 'head'
       || this.headHairFitsEqual(this.buildCurrentHeadHairFit(), override?.headHair ?? null);
     const matches = transformMatches && hairMatches;
@@ -861,14 +1372,17 @@ export class GearDebugPanel {
   // --- Values ---
 
   private setVal(key: string, value: number): void {
+    const fallback = PARAM_BY_KEY.get(key)?.value ?? 0;
+    const next = Number.isFinite(value) ? value : fallback;
     const slider = this.sliders.get(key);
     const num = this.numInputs.get(key);
-    if (slider) slider.value = String(value);
-    if (num) num.value = value.toFixed(3);
+    if (slider) slider.value = String(next);
+    if (num) num.value = next.toFixed(3);
   }
 
   private getVal(key: string): number {
-    return parseFloat(this.numInputs.get(key)?.value ?? '0');
+    const value = parseFloat(this.numInputs.get(key)?.value ?? '');
+    return Number.isFinite(value) ? value : (PARAM_BY_KEY.get(key)?.value ?? 0);
   }
 
   private setHeadHairVal(key: HeadHairMorphKey, value: number): void {
@@ -983,12 +1497,14 @@ export class GearDebugPanel {
     this.target.rotation.set(this.getVal('rot.x'), this.getVal('rot.y'), this.getVal('rot.z'));
     const s = this.getVal('scale');
     this.target.scaling.set(s, s, s);
+    this.applyMeshOffsetToTarget();
   }
 
   private resetToDefaults(): void {
     if (this.isSkinnedArmor(this.activeSlot)) {
       this.setVal('pos.x', 0); this.setVal('pos.y', 0); this.setVal('pos.z', 0);
       this.setVal('rot.x', 0); this.setVal('rot.y', 0); this.setVal('rot.z', 0);
+      this.setVal('mesh.x', 0); this.setVal('mesh.y', 0); this.setVal('mesh.z', 0);
       this.setVal('scale', 1);
     } else {
       const defaults = EQUIP_SLOT_BONES[this.activeSlot];
@@ -999,8 +1515,12 @@ export class GearDebugPanel {
       this.setVal('rot.x', defaults.localRotation.x);
       this.setVal('rot.y', defaults.localRotation.y);
       this.setVal('rot.z', defaults.localRotation.z);
+      this.setVal('mesh.x', 0);
+      this.setVal('mesh.y', 0);
+      this.setVal('mesh.z', 0);
       this.setVal('scale', defaults.scale);
     }
+    if (this.centerOriginInput) this.centerOriginInput.checked = false;
     this.applyToTarget();
     this.updateOverrideStatus();
     this.flashStatus('Reset to slot defaults');
@@ -1011,6 +1531,7 @@ export class GearDebugPanel {
       const def = p.group === 'scale' ? 1 : 0;
       this.setVal(p.key, def);
     }
+    if (this.centerOriginInput) this.centerOriginInput.checked = false;
     this.applyToTarget();
     this.updateOverrideStatus();
     this.flashStatus('Reset to zero');
@@ -1019,7 +1540,10 @@ export class GearDebugPanel {
   private unequipSlot(): void {
     if (!this.unequipCallback) return;
     this.unequipCallback(this.activeSlot);
+    this.loadedGlbSlot = null;
     this.loadedGlbPath = null;
+    this.loadedGlbItemId = undefined;
+    this.loadedPreviewOverride = null;
     this.target = null;
     this.switchSlot(this.activeSlot);
     this.flashStatus(`Unequipped ${this.activeSlot}`);
@@ -1051,27 +1575,40 @@ export class GearDebugPanel {
     }
   }
 
+  private buildCurrentTransformOverride(includeFile: boolean): GearOverride {
+    const override: GearOverride = {
+      localPosition: { x: this.getVal('pos.x'), y: this.getVal('pos.y'), z: this.getVal('pos.z') },
+      localRotation: { x: this.getVal('rot.x'), y: this.getVal('rot.y'), z: this.getVal('rot.z') },
+      meshOffset: { x: this.getVal('mesh.x'), y: this.getVal('mesh.y'), z: this.getVal('mesh.z') },
+      scale: this.getVal('scale'),
+      centerOrigin: this.centerOriginInput?.checked ?? false,
+    };
+    if (this.activeSlot === 'head') {
+      const headHair = this.buildCurrentHeadHairFit();
+      if (headHair) override.headHair = headHair;
+    }
+
+    if (includeFile && this.loadedGlbPath) {
+      const item = this.getItemInfo(this.activeSlot);
+      const defaultPath = item?.modelPath ?? (item ? `/assets/equipment/${this.activeSlot}/${item.id}.glb` : '');
+      if (!defaultPath || this.loadedGlbPath !== defaultPath) {
+        override.file = this.loadedGlbPath;
+      }
+    }
+
+    return override;
+  }
+
   private buildCurrentOverride(includeFile: boolean): GearOverride | null {
     const item = this.getItemInfo(this.activeSlot);
     if (!item) return null;
 
-    const override: GearOverride = {
-      localPosition: { x: this.getVal('pos.x'), y: this.getVal('pos.y'), z: this.getVal('pos.z') },
-      localRotation: { x: this.getVal('rot.x'), y: this.getVal('rot.y'), z: this.getVal('rot.z') },
-      scale: this.getVal('scale'),
-    };
+    const override: GearOverride = this.buildCurrentTransformOverride(includeFile);
 
     const defaults = EQUIP_SLOT_BONES[this.activeSlot];
     const currentBone = this.getSlotBone(this.activeSlot);
     if (defaults && currentBone !== defaults.boneName) {
       override.boneName = currentBone;
-    }
-
-    if (includeFile && this.loadedGlbPath) {
-      const defaultPath = item.modelPath ?? `/assets/equipment/${this.activeSlot}/${item.id}.glb`;
-      if (this.loadedGlbPath !== defaultPath) {
-        override.file = this.loadedGlbPath;
-      }
     }
 
     if (this.activeSlot === 'head') {
@@ -1121,16 +1658,19 @@ export class GearDebugPanel {
     const item = this.getItemInfo(slot);
     const px = this.getVal('pos.x'), py = this.getVal('pos.y'), pz = this.getVal('pos.z');
     const rx = this.getVal('rot.x'), ry = this.getVal('rot.y'), rz = this.getVal('rot.z');
+    const mx = this.getVal('mesh.x'), my = this.getVal('mesh.y'), mz = this.getVal('mesh.z');
     const s = this.getVal('scale');
+    const centerOrigin = this.centerOriginInput?.checked ?? false;
+    const pivotSnippet = `, "meshOffset": { "x": ${mx}, "y": ${my}, "z": ${mz} }, "centerOrigin": ${centerOrigin}`;
 
     let code: string;
     if (item) {
       const headHair = this.activeSlot === 'head' ? this.buildCurrentHeadHairFit() : undefined;
       const headHairSnippet = headHair ? `, "headHair": ${JSON.stringify(headHair)}` : '';
-      code = `// ${item.name} (id: ${item.id}${item.toolType ? `, toolType: ${item.toolType}` : ''})\n"${item.id}": { "localPosition": { "x": ${px}, "y": ${py}, "z": ${pz} }, "localRotation": { "x": ${rx}, "y": ${ry}, "z": ${rz} }, "scale": ${s}${headHairSnippet} }`;
+      code = `// ${item.name} (id: ${item.id}${item.toolType ? `, toolType: ${item.toolType}` : ''})\n"${item.id}": { "localPosition": { "x": ${px}, "y": ${py}, "z": ${pz} }, "localRotation": { "x": ${rx}, "y": ${ry}, "z": ${rz} }${pivotSnippet}, "scale": ${s}${headHairSnippet} }`;
     } else {
       const bone = this.getSlotBone(slot);
-      code = `// ${slot}\n${slot}: { boneName: '${bone}', localPosition: { x: ${px}, y: ${py}, z: ${pz} }, localRotation: { x: ${rx}, y: ${ry}, z: ${rz} }, scale: ${s} },`;
+      code = `// ${slot}\n${slot}: { boneName: '${bone}', localPosition: { x: ${px}, y: ${py}, z: ${pz} }, localRotation: { x: ${rx}, y: ${ry}, z: ${rz} }, meshOffset: { x: ${mx}, y: ${my}, z: ${mz} }, centerOrigin: ${centerOrigin}, scale: ${s} },`;
     }
 
     navigator.clipboard.writeText(code).then(() => {
@@ -1153,8 +1693,9 @@ export class GearDebugPanel {
     }
     this.flashStatus('Loading...');
     try {
-      await this.loadGlbCallback(this.activeSlot, path);
-      this.loadedGlbPath = path;
+      const previewOverride = this.buildCurrentTransformOverride(true);
+      await this.loadGlbCallback(this.activeSlot, path, undefined, previewOverride);
+      this.setLoadedPreview(this.activeSlot, path, undefined, previewOverride);
       setTimeout(() => {
         this.switchSlot(this.activeSlot);
         this.flashStatus('Loaded');

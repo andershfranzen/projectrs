@@ -1,4 +1,4 @@
-import { GENERIC_SCENERY_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, RICE_PLANT_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID } from './constants';
+import { BROTHER_MONK_CHEST_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, RICE_PLANT_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID } from './constants';
 
 /**
  * Maps editor-placed asset IDs (GLB model names) to game object definition IDs (objects.json).
@@ -57,6 +57,12 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'SilverRock3': 25,
   'ClayRock2': 33,
   'ClayRock3': 33,
+  // Fishing spots. The three editor aliases use the same bubble GLB but map
+  // to level-1 test object defs with different animation variants.
+  'FishingSpotBubbles': 5,
+  'FishingSpotBubblesNet': 61,
+  'FishingSpotBubblesRod': 62,
+  'FishingSpotBubblesHarpoon': 63,
   // Crafting stations
   'forge': 6,        // Furnace
   'cookingrange': 7, // Cooking Range
@@ -96,6 +102,7 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'tier 4 chest': 35, // Mithril Chest
   'tier 5 chest': 36, // Steel Chest
   'tier 6 chest': 37, // Royal Gold Chest
+  'brother monk chest': BROTHER_MONK_CHEST_OBJECT_DEF_ID,
   // Market stalls (roguery)
   'food stall': 52,
   'crafting stall': 53,

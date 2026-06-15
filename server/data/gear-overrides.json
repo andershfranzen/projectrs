@@ -3604,5 +3604,91 @@
         "scale": 1.28
       }
     }
+  },
+  "552": {
+    "localPosition": {
+      "x": -0.07,
+      "y": 0.1,
+      "z": 0.035
+    },
+    "localRotation": {
+      "x": -1.5,
+      "y": 0.1,
+      "z": -1.58
+    },
+    "scale": 0.9,
+    "bodyTypeOverrides": {
+      "1": {
+        "localPosition": {
+          "x": -0.095,
+          "y": 0.07,
+          "z": 0.05
+        },
+        "localRotation": {
+          "x": -1.5,
+          "y": 0.1,
+          "z": -1.58
+        },
+        "scale": 0.9
+      }
+    }
+  },
+  "553": {
+    "localPosition": {
+      "x": -0.16,
+      "y": 0.075,
+      "z": 0.035
+    },
+    "localRotation": {
+      "x": -0.35,
+      "y": 0.05,
+      "z": -1.6
+    },
+    "scale": 0.8,
+    "bodyTypeOverrides": {
+      "1": {
+        "localPosition": {
+          "x": -0.16,
+          "y": 0.075,
+          "z": 0.035
+        },
+        "localRotation": {
+          "x": -0.35,
+          "y": 0.05,
+          "z": -1.6
+        },
+        "scale": 0.8
+      }
+    }
+  },
+  "554": {
+    "centerOrigin": true,
+    "localPosition": {
+      "x": -0.12,
+      "y": 0.11,
+      "z": 0.025
+    },
+    "localRotation": {
+      "x": -1.5,
+      "y": 0.02,
+      "z": -1.6
+    },
+    "scale": 0.92,
+    "bodyTypeOverrides": {
+      "1": {
+        "centerOrigin": true,
+        "localPosition": {
+          "x": -0.145,
+          "y": 0.08,
+          "z": 0.04
+        },
+        "localRotation": {
+          "x": -1.5,
+          "y": 0.02,
+          "z": -1.6
+        },
+        "scale": 0.92
+      }
+    }
   }
 }

@@ -310,6 +310,21 @@ describe('floor isolation', () => {
     expect(player.inventory.some(slot => slot?.itemId === itemDef.id && slot.quantity === groundItem.quantity)).toBe(true);
   });
 
+  test('adjacent pickup succeeds for an item sitting on a blocked table tile', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('player', 1);
+    const groundItem = makeGroundItem(9005, 6.5, 5.5);
+    player.visibleEntityIds.add(groundItem.id);
+    world.blockedObjectTiles.add(world.blockedKeyFor('kcmap', 6, 5, 0));
+    world.players.set(player.id, player);
+    world.groundItems.set(groundItem.id, groundItem);
+
+    world.handlePlayerPickup(player.id, groundItem.id);
+
+    expect(world.groundItems.has(groundItem.id)).toBe(false);
+    expect(player.inventory.some(slot => slot?.itemId === itemDef.id && slot.quantity === groundItem.quantity)).toBe(true);
+  });
+
   test('adjacent pickup cannot cross a wall edge', () => {
     const { world } = makeWorld();
     const player = makePlayer('player', 1);

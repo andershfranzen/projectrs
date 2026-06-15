@@ -951,289 +951,6 @@
       "name": "Prisoner"
     },
     {
-      "id": 63,
-      "npcId": 122,
-      "x": 170.5,
-      "z": 160.5,
-      "wanderRange": 2,
-      "aggressive": false,
-      "appearance": {
-        "bodyType": 0,
-        "shirtColor": 4,
-        "pantsColor": 3,
-        "shoesColor": 0,
-        "hairColor": 2,
-        "beltColor": 0,
-        "skinColor": 3,
-        "hairStyle": 14
-      },
-      "dialogue": {
-        "root": "borin_start",
-        "rootConditions": [
-          {
-            "condition": {
-              "type": "all",
-              "conditions": [
-                {
-                  "type": "questCompleted",
-                  "questId": "Bad Blood"
-                },
-                {
-                  "type": "questVar",
-                  "questId": "Bad Blood",
-                  "key": "BLOOD_PATH",
-                  "value": 1
-                }
-              ]
-            },
-            "node": "borin_complete_good"
-          },
-          {
-            "condition": {
-              "type": "all",
-              "conditions": [
-                {
-                  "type": "questCompleted",
-                  "questId": "Bad Blood"
-                },
-                {
-                  "type": "questVar",
-                  "questId": "Bad Blood",
-                  "key": "BLOOD_PATH",
-                  "value": 2
-                }
-              ]
-            },
-            "node": "borin_complete_evil"
-          },
-          {
-            "condition": {
-              "type": "questNotStarted",
-              "questId": "Bad Blood"
-            },
-            "node": "borin_start"
-          },
-          {
-            "condition": {
-              "type": "questStage",
-              "questId": "Bad Blood",
-              "minStage": 0,
-              "maxStage": 0
-            },
-            "node": "borin_investigate"
-          },
-          {
-            "condition": {
-              "type": "questStage",
-              "questId": "Bad Blood",
-              "minStage": 1,
-              "maxStage": 3
-            },
-            "node": "borin_progress"
-          },
-          {
-            "condition": {
-              "type": "all",
-              "conditions": [
-                {
-                  "type": "questStage",
-                  "questId": "Bad Blood",
-                  "minStage": 4,
-                  "maxStage": 4
-                },
-                {
-                  "type": "questVar",
-                  "questId": "Bad Blood",
-                  "key": "BLOOD_PATH",
-                  "value": 1
-                }
-              ]
-            },
-            "node": "borin_return_good"
-          },
-          {
-            "condition": {
-              "type": "all",
-              "conditions": [
-                {
-                  "type": "questStage",
-                  "questId": "Bad Blood",
-                  "minStage": 4,
-                  "maxStage": 4
-                },
-                {
-                  "type": "questVar",
-                  "questId": "Bad Blood",
-                  "key": "BLOOD_PATH",
-                  "value": 2
-                }
-              ]
-            },
-            "node": "borin_return_evil"
-          }
-        ],
-        "nodes": {
-          "borin_start": {
-            "id": "borin_start",
-            "lines": [
-              "My cows are dying. Something's draining the blood right out of them, two holes in the neck and nothing left inside."
-            ],
-            "options": [
-              {
-                "label": "I'll find out what's doing it.",
-                "actions": [
-                  {
-                    "type": "setQuestStage",
-                    "questId": "Bad Blood",
-                    "stage": 0
-                  }
-                ],
-                "next": "borin_accept"
-              },
-              {
-                "label": "Not now."
-              }
-            ]
-          },
-          "borin_accept": {
-            "id": "borin_accept",
-            "lines": [
-              "Start at the Cow field. Be careful."
-            ],
-            "options": [
-              {
-                "label": "I'll be careful."
-              }
-            ]
-          },
-          "borin_investigate": {
-            "id": "borin_investigate",
-            "lines": [
-              "The dead ones are out by the Cow Field. Go and look."
-            ],
-            "options": [
-              {
-                "label": "I'm going."
-              }
-            ]
-          },
-          "borin_progress": {
-            "id": "borin_progress",
-            "lines": [
-              "Found what's killing my cattle yet?"
-            ],
-            "options": [
-              {
-                "label": "Still working on it.",
-                "next": "borin_hurry"
-              }
-            ]
-          },
-          "borin_hurry": {
-            "id": "borin_hurry",
-            "lines": [
-              "Hurry up. I'm losing animals."
-            ],
-            "options": [
-              {
-                "label": "Continue."
-              }
-            ]
-          },
-          "borin_return_good": {
-            "id": "borin_return_good",
-            "lines": [
-              "No dead cows this morning. First time in a week. That you?"
-            ],
-            "options": [
-              {
-                "label": "It's handled. Nothing else will touch your livestock.",
-                "actions": [
-                  {
-                    "type": "giveItem",
-                    "itemId": 308,
-                    "qty": 1
-                  },
-                  {
-                    "type": "grantXp",
-                    "skill": "goodmagic",
-                    "amount": 850
-                  },
-                  {
-                    "type": "completeQuest",
-                    "questId": "Bad Blood"
-                  }
-                ],
-                "next": "borin_good_reward"
-              }
-            ]
-          },
-          "borin_good_reward": {
-            "id": "borin_good_reward",
-            "lines": [
-              "Good work. Here, take this charm. It's no use to me."
-            ],
-            "options": [
-              {
-                "label": "Continue."
-              }
-            ]
-          },
-          "borin_return_evil": {
-            "id": "borin_return_evil",
-            "lines": [
-              "Cows are still dying, and now there's two of those things out there. You were no help at all."
-            ],
-            "options": [
-              {
-                "label": "Your problem now, not mine.",
-                "actions": [
-                  {
-                    "type": "completeQuest",
-                    "questId": "Bad Blood"
-                  }
-                ],
-                "next": "borin_evil_done"
-              }
-            ]
-          },
-          "borin_evil_done": {
-            "id": "borin_evil_done",
-            "lines": [
-              "Then clear off my land."
-            ],
-            "options": [
-              {
-                "label": "Continue."
-              }
-            ]
-          },
-          "borin_complete_good": {
-            "id": "borin_complete_good",
-            "lines": [
-              "Quiet nights again. Thanks."
-            ],
-            "options": [
-              {
-                "label": "Continue."
-              }
-            ]
-          },
-          "borin_complete_evil": {
-            "id": "borin_complete_evil",
-            "lines": [
-              "Borin turns away and refuses to speak to you."
-            ],
-            "options": [
-              {
-                "label": "Continue."
-              }
-            ]
-          }
-        }
-      }
-    },
-    {
       "id": 137,
       "npcId": 100,
       "x": 186.5,
@@ -3960,8 +3677,8 @@
     {
       "id": 206,
       "npcId": 122,
-      "x": 133.5,
-      "z": 80.5,
+      "x": 131.5,
+      "z": 68.5,
       "wanderRange": 3,
       "aggressive": false,
       "appearance": {
@@ -4016,7 +3733,7 @@
           "fenn_idle": {
             "id": "fenn_idle",
             "lines": [
-              "(hic) ...lovely day for it. Or night. Hard to say."
+              "(hic) Road's loud today. Even the grass is shouting."
             ],
             "options": [
               {
@@ -4027,7 +3744,7 @@
           "fenn_drunk": {
             "id": "fenn_drunk",
             "lines": [
-              "(hic) ...'s all busted. Stall's busted, I'm busted. Don' tell Aldous."
+              "Stall's cracked. Cart's sideways. I may also be sideways. Don't tell Aldous."
             ],
             "options": [
               {
@@ -4074,7 +3791,7 @@
           "fenn_drink": {
             "id": "fenn_drink",
             "lines": [
-              "...maybe a little. Quality control! (hic)"
+              "I tested one bottle. Then I checked whether the second matched it."
             ],
             "options": [
               {
@@ -4086,8 +3803,8 @@
           "fenn_stall": {
             "id": "fenn_stall",
             "lines": [
-              "Table cracked clean off. Need good timber to mend it, and I'm in no state to cut any.",
-              "Sober me up first, eh? A bucket of water'd do it - there's a well just south."
+              "Leg split where the peg goes. Needs a plain log and hands that don't shake.",
+              "Water first. Well's south. Throw the whole bucket if you must."
             ],
             "options": [
               {
@@ -4099,8 +3816,8 @@
           "fenn_sobered": {
             "id": "fenn_sobered",
             "lines": [
-              "(splutters, blinks) ...by the gods, that's better.",
-              "Now - that stall. Fresh timber and I'm away. A single good log would do it."
+              "(coughs) Cold mercy. That's a cruel cure.",
+              "Right. A log for the stall, then I can face Aldous without lying from the ground."
             ],
             "options": [
               {
@@ -4111,7 +3828,7 @@
           "fenn_needslog": {
             "id": "fenn_needslog",
             "lines": [
-              "Still need that timber for the stall. A good log, if you'd be so kind."
+              "Need a log for the broken leg. Nothing fancy, just straight enough to hold a nail."
             ],
             "options": [
               {
@@ -4145,8 +3862,8 @@
           "fenn_mended_reply": {
             "id": "fenn_mended_reply",
             "lines": [
-              "You're a saint. I'll have her mended and be right behind you.",
-              "Go tell Aldous I'm coming - and that the birthday's saved."
+              "That'll do. I'll wedge it in and limp the stall home.",
+              "Tell Aldous I'm coming. Say the birthday isn't ruined yet."
             ],
             "options": [
               {
@@ -4157,7 +3874,7 @@
           "fenn_mended": {
             "id": "fenn_mended",
             "lines": [
-              "Nearly done here. Go on ahead and tell Aldous I'm coming!"
+              "Almost fixed. Go tell Aldous before he starts praying at me."
             ],
             "options": [
               {
@@ -4168,7 +3885,7 @@
           "fenn_done": {
             "id": "fenn_done",
             "lines": [
-              "Stall's good as new, and Wren had her birthday. Couldn't have done it without you. (hic - happy, this time!)"
+              "Stall stood. Wren laughed. I am never touching village cider again. Well... not before supper."
             ],
             "options": [
               {
@@ -4189,8 +3906,8 @@
       "facing": 3.141592653589793,
       "appearance": {
         "bodyType": 0,
-        "shirtColor": 0,
-        "pantsColor": 0,
+        "shirtColor": 6,
+        "pantsColor": 1,
         "shoesColor": 0,
         "hairColor": 0,
         "beltColor": 1,
@@ -4248,8 +3965,8 @@
           "aldous_start": {
             "id": "aldous_start",
             "lines": [
-              "Oh, traveller - forgive me, I've not slept a wink.",
-              "Little Wren's bear hide was taken by a skeleton in the night, and the poor child hasn't stopped crying since. None of us have rested."
+              "Forgive me. I've had a child crying at my door since cockcrow.",
+              "Little Wren's bear hide is gone. She won't sleep without it, and none of us have been much use."
             ],
             "options": [
               {
@@ -4257,11 +3974,11 @@
                 "next": "aldous_who"
               },
               {
-                "label": "Why does a bear hide matter so much?",
+                "label": "All this for a bear hide?",
                 "next": "aldous_why"
               },
               {
-                "label": "I'll get it back.",
+                "label": "I'll look for it.",
                 "actions": [
                   {
                     "type": "setQuestStage",
@@ -4279,7 +3996,8 @@
           "aldous_who": {
             "id": "aldous_who",
             "lines": [
-              "Skeletons. They keep to a spot North west of here - thank the gods - but it's no place for the faint-hearted. They've locked the hide away in a chest."
+              "That old skeleton warrior west of here. I saw it by the fence before dawn, clutching something bright.",
+              "The chest is beyond it. I would not send you if I had another hand to spare."
             ],
             "options": [
               {
@@ -4291,8 +4009,8 @@
           "aldous_why": {
             "id": "aldous_why",
             "lines": [
-              "To you, a scrap of leather. To a frightened child, the whole world.",
-              "We'd fetch it ourselves, but monks make poor burglars."
+              "Her mother stitched it before she died. Wren knows every tear in it.",
+              "Try taking that from a child and calling it a scrap."
             ],
             "options": [
               {
@@ -4304,7 +4022,7 @@
           "aldous_accept": {
             "id": "aldous_accept",
             "lines": [
-              "Bless you. The chest is west, past the old fence. You'll need a deft hand to pick the lock - a little roguery goes a long way."
+              "Thank you. Head west, past the old fence. If the skeleton has the key, bring the hide straight back."
             ],
             "options": [
               {
@@ -4315,7 +4033,7 @@
           "aldous_chest_wait": {
             "id": "aldous_chest_wait",
             "lines": [
-              "The chest is west of here, guarded by skeletons. Pick the lock and bring back Wren's bear hide, if you would."
+              "West, past the old fence. Get the key from the skeleton, open the chest, and bring the hide back to me."
             ],
             "options": [
               {
@@ -4326,11 +4044,11 @@
           "aldous_return": {
             "id": "aldous_return",
             "lines": [
-              "You're back! Is that...?"
+              "Is that Wren's hide? Let me see it."
             ],
             "options": [
               {
-                "label": "Here's little Wren's bear hide.",
+                "label": "Here's Wren's bear hide.",
                 "conditions": [
                   {
                     "type": "hasItem",
@@ -4360,9 +4078,9 @@
           "aldous_return_thanks": {
             "id": "aldous_return_thanks",
             "lines": [
-              "Oh, the little one will sleep soundly tonight. Bless you for this.",
-              "Could I trouble you with one more thing? It's Wren's first birthday, and we've supplies coming from the next village.",
-              "Brother Fenn was meant to bring them, but he's not returned. Would you find him? He went north, past the well, to his stall."
+              "That's it. She'll know it by the patched corner.",
+              "One more trouble, if you can stand it. Fenn should have brought the birthday things from the village by now.",
+              "He went north past the well with his stall cart. He hasn't come back."
             ],
             "options": [
               {
@@ -4373,7 +4091,7 @@
           "aldous_fenn_wait": {
             "id": "aldous_fenn_wait",
             "lines": [
-              "Any sign of Brother Fenn? He's north, by his stall past the well. I do hope he's not got himself into trouble."
+              "Fenn went north, past the well. If he's at that stall, he's either hurt or hiding from a mistake."
             ],
             "options": [
               {
@@ -4384,8 +4102,8 @@
           "aldous_finish": {
             "id": "aldous_finish",
             "lines": [
-              "Fenn's on his way? The bear hide's home, and Wren's finally settled.",
-              "You've done this house a great kindness. Here - a little something for your trouble."
+              "Fenn's coming? Good. Wren has her hide, and the table may yet have cake on it.",
+              "Take this. You earned more than a monk's thanks today."
             ],
             "options": [
               {
@@ -4403,7 +4121,7 @@
           "aldous_complete_bye": {
             "id": "aldous_complete_bye",
             "lines": [
-              "Go with our blessing, traveller."
+              "Go easy, friend."
             ],
             "options": [
               {
@@ -4414,8 +4132,8 @@
           "aldous_done": {
             "id": "aldous_done",
             "lines": [
-              "Wren carries that bear hide everywhere now. You did a kind thing here.",
-              "Peace be with you, traveller."
+              "Wren's asleep with the hide tucked under one arm.",
+              "You gave us a quiet house again."
             ],
             "options": [
               {
@@ -4507,11 +4225,176 @@
       ],
       "dialogue": {
         "root": "start",
+        "rootConditions": [
+          {
+            "condition": {
+              "type": "questNotStarted",
+              "questId": "quest_8djo2"
+            },
+            "node": "not_started"
+          },
+          {
+            "condition": {
+              "type": "questCompleted",
+              "questId": "quest_8djo2"
+            },
+            "node": "done"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "quest_8djo2",
+              "minStage": 1,
+              "maxStage": 4
+            },
+            "node": "too_late"
+          }
+        ],
         "nodes": {
           "start": {
             "id": "start",
             "lines": [
-              "!"
+              "A skeleton watches you from beside the old fence.",
+              "Its jaw clicks once, like it is deciding whether you are worth the trouble."
+            ],
+            "options": [
+              {
+                "label": "What are you guarding?",
+                "next": "guarding"
+              },
+              {
+                "label": "Do you have the key to that chest?",
+                "next": "key"
+              },
+              {
+                "label": "I'm here for Wren's bear hide.",
+                "next": "wren"
+              },
+              {
+                "label": "Never mind."
+              }
+            ]
+          },
+          "guarding": {
+            "id": "guarding",
+            "lines": [
+              "A chest. A fence. A quiet patch of ground where monks keep leaving their guilt.",
+              "Locked things belong to whoever keeps the key."
+            ],
+            "options": [
+              {
+                "label": "Back.",
+                "next": "start"
+              }
+            ]
+          },
+          "key": {
+            "id": "key",
+            "lines": [
+              "Maybe. Iron, old, and just narrow enough for that chest.",
+              "Keys cost. Bones do not work for blessings."
+            ],
+            "options": [
+              {
+                "label": "I'll pay 100 coins for it.",
+                "action": {
+                  "type": "buyQuestItem",
+                  "itemId": 555,
+                  "coinCost": 100,
+                  "questId": "quest_8djo2",
+                  "minStage": 0,
+                  "maxStage": 0,
+                  "notEnoughCoinsMessage": "The skeleton wants {cost} coins for the key.",
+                  "alreadyHasMessage": "You already have the Brother Monk chest key.",
+                  "wrongStageMessage": "You do not need that key right now.",
+                  "noRoomMessage": "You can't carry the key.",
+                  "successMessage": "The skeleton takes {cost} coins and gives you the chest key."
+                },
+                "next": "paid"
+              },
+              {
+                "label": "I'm not paying a skeleton.",
+                "next": "threat"
+              },
+              {
+                "label": "Back.",
+                "next": "start"
+              }
+            ]
+          },
+          "threat": {
+            "id": "threat",
+            "lines": [
+              "Then take it the old way.",
+              "Break me, and you can pick through what is left."
+            ],
+            "options": [
+              {
+                "label": "Draw your weapon.",
+                "action": {
+                  "type": "startNpcCombat"
+                }
+              },
+              {
+                "label": "Back.",
+                "next": "key"
+              }
+            ]
+          },
+          "wren": {
+            "id": "wren",
+            "lines": [
+              "The little one? She cried loud enough to wake things that should have stayed down.",
+              "Soft hearts make good pockets."
+            ],
+            "options": [
+              {
+                "label": "Then I need that key.",
+                "next": "key"
+              },
+              {
+                "label": "Back.",
+                "next": "start"
+              }
+            ]
+          },
+          "paid": {
+            "id": "paid",
+            "lines": [
+              "Good clink. Take it and leave the chest splinters where they fall."
+            ],
+            "options": [
+              {
+                "label": "Right."
+              }
+            ]
+          },
+          "not_started": {
+            "id": "not_started",
+            "lines": [
+              "No errand, no key. Come back when the monk has made you useful."
+            ],
+            "options": [
+              {
+                "label": "Fine."
+              }
+            ]
+          },
+          "too_late": {
+            "id": "too_late",
+            "lines": [
+              "Chest is done. My key buys you nothing now."
+            ],
+            "options": [
+              {
+                "label": "Right."
+              }
+            ]
+          },
+          "done": {
+            "id": "done",
+            "lines": [
+              "Still rattling around? The child got her hide."
             ],
             "options": [
               {
@@ -4520,16 +4403,320 @@
             ]
           }
         }
+      },
+      "stats": {
+        "health": 32,
+        "attack": 25,
+        "defence": 20,
+        "strength": 23,
+        "combatLevel": 28
       }
+    },
+    {
+      "id": 211,
+      "npcId": 122,
+      "x": 170.5,
+      "z": 160.5,
+      "wanderRange": 2,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 4,
+        "pantsColor": 3,
+        "shoesColor": 0,
+        "hairColor": 2,
+        "beltColor": 0,
+        "skinColor": 3,
+        "hairStyle": 14
+      },
+      "dialogue": {
+        "root": "borin_start",
+        "rootConditions": [
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questCompleted",
+                  "questId": "Bad Blood"
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 1
+                }
+              ]
+            },
+            "node": "borin_complete_good"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questCompleted",
+                  "questId": "Bad Blood"
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 2
+                }
+              ]
+            },
+            "node": "borin_complete_evil"
+          },
+          {
+            "condition": {
+              "type": "questNotStarted",
+              "questId": "Bad Blood"
+            },
+            "node": "borin_start"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "Bad Blood",
+              "minStage": 0,
+              "maxStage": 0
+            },
+            "node": "borin_investigate"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "Bad Blood",
+              "minStage": 1,
+              "maxStage": 3
+            },
+            "node": "borin_progress"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 4,
+                  "maxStage": 4
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 1
+                }
+              ]
+            },
+            "node": "borin_return_good"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 4,
+                  "maxStage": 4
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 2
+                }
+              ]
+            },
+            "node": "borin_return_evil"
+          }
+        ],
+        "nodes": {
+          "borin_start": {
+            "id": "borin_start",
+            "lines": [
+              "My cows are dying. Something's draining the blood right out of them, two holes in the neck and nothing left inside."
+            ],
+            "options": [
+              {
+                "label": "I'll find out what's doing it.",
+                "actions": [
+                  {
+                    "type": "setQuestStage",
+                    "questId": "Bad Blood",
+                    "stage": 0
+                  }
+                ],
+                "next": "borin_accept"
+              },
+              {
+                "label": "Not now."
+              }
+            ]
+          },
+          "borin_accept": {
+            "id": "borin_accept",
+            "lines": [
+              "Start at the Cow field. Be careful."
+            ],
+            "options": [
+              {
+                "label": "I'll be careful."
+              }
+            ]
+          },
+          "borin_investigate": {
+            "id": "borin_investigate",
+            "lines": [
+              "The dead ones are out by the Cow Field. Go and look."
+            ],
+            "options": [
+              {
+                "label": "I'm going."
+              }
+            ]
+          },
+          "borin_progress": {
+            "id": "borin_progress",
+            "lines": [
+              "Found what's killing my cattle yet?"
+            ],
+            "options": [
+              {
+                "label": "Still working on it.",
+                "next": "borin_hurry"
+              }
+            ]
+          },
+          "borin_hurry": {
+            "id": "borin_hurry",
+            "lines": [
+              "Hurry up. I'm losing animals."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "borin_return_good": {
+            "id": "borin_return_good",
+            "lines": [
+              "No dead cows this morning. First time in a week. That you?"
+            ],
+            "options": [
+              {
+                "label": "It's handled. Nothing else will touch your livestock.",
+                "actions": [
+                  {
+                    "type": "giveItem",
+                    "itemId": 308,
+                    "qty": 1
+                  },
+                  {
+                    "type": "grantXp",
+                    "skill": "goodmagic",
+                    "amount": 850
+                  },
+                  {
+                    "type": "completeQuest",
+                    "questId": "Bad Blood"
+                  }
+                ],
+                "next": "borin_good_reward"
+              }
+            ]
+          },
+          "borin_good_reward": {
+            "id": "borin_good_reward",
+            "lines": [
+              "Good work. Here, take this charm. It's no use to me."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "borin_return_evil": {
+            "id": "borin_return_evil",
+            "lines": [
+              "Cows are still dying, and now there's two of those things out there. You were no help at all."
+            ],
+            "options": [
+              {
+                "label": "Your problem now, not mine.",
+                "actions": [
+                  {
+                    "type": "completeQuest",
+                    "questId": "Bad Blood"
+                  }
+                ],
+                "next": "borin_evil_done"
+              }
+            ]
+          },
+          "borin_evil_done": {
+            "id": "borin_evil_done",
+            "lines": [
+              "Then clear off my land."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "borin_complete_good": {
+            "id": "borin_complete_good",
+            "lines": [
+              "Quiet nights again. Thanks."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "borin_complete_evil": {
+            "id": "borin_complete_evil",
+            "lines": [
+              "Borin turns away and refuses to speak to you."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          }
+        }
+      },
+      "name": "Farmer Borin"
     }
   ],
   "objects": [],
   "items": [
     {
       "itemId": 247,
-      "x": 134.5,
-      "z": 79.5,
+      "x": 127.5,
+      "z": 67.5,
       "quantity": 1
+    },
+    {
+      "itemId": 245,
+      "x": 73.5,
+      "z": 48.5,
+      "quantity": 1
+    },
+    {
+      "itemId": 251,
+      "x": 87.5,
+      "z": 36.5,
+      "quantity": 1,
+      "y": 0.8
     }
   ]
 }

@@ -155,6 +155,9 @@ const LOOPING_ANIMS = new Set([
 const SKIP_QUANTIZE: Set<string> = new Set([
   'run',
   'mine',
+  'fish_net',
+  'fish_rod',
+  'fish_harpoon',
 ]);
 
 export function quantizeAnimationGroup(

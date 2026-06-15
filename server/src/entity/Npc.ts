@@ -1,5 +1,5 @@
 import { Entity } from './Entity';
-import { NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_STARTS_COMBAT, effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, normalizeNpcEquipmentFits, normalizeNpcVisualScale, npcCombatLevel } from '@projectrs/shared';
+import { NPC_INTERACTION_DIRECT_ATTACK, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_STARTS_COMBAT, effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, normalizeNpcEquipmentFits, normalizeNpcVisualScale, npcCombatLevel } from '@projectrs/shared';
 import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors, QuestCondition, NpcEquipmentFitOverrides } from '@projectrs/shared';
 import { canTravel, stepTowardNaiveInteraction, type PathingCollision } from '../pathing/Pathing';
 
@@ -51,6 +51,7 @@ export interface NpcOptions {
   statsOverride?: NpcStatOverrides | null;
   customColors?: CustomColors | null;
   attackAnimOverride?: string | null;
+  directAttack?: boolean | null;
   facing?: number | null;
   maxRange?: number | null;
   huntRange?: number | null;
@@ -145,6 +146,8 @@ export class Npc extends Entity {
   readonly effectiveDialogue: DialogueTree | null;
   /** Per-player visibility gate for quest-only NPCs. */
   readonly visibilityCondition: QuestCondition | null;
+  /** Allows direct attack while the NPC also has dialogue. */
+  readonly directAttack: boolean;
   /** Per-spawn name override (`spawn.name`). When null the runtime falls
    *  back to def.name (already set on Entity by the super constructor). */
   readonly nameOverride: string | null;
@@ -251,6 +254,7 @@ export class Npc extends Entity {
     }
     this.effectiveDialogue = opts.effectiveDialogue ?? null;
     this.visibilityCondition = opts.visibilityCondition ?? null;
+    this.directAttack = opts.directAttack === true;
     this.visualScale = normalizeNpcVisualScale(opts.visualScale);
     this.statsOverride = opts.statsOverride ?? null;
     this.attackAnimOverride = (opts.attackAnimOverride && opts.attackAnimOverride.length > 0)
@@ -299,7 +303,8 @@ export class Npc extends Entity {
     return (this.hasDialogue ? NPC_INTERACTION_HAS_DIALOGUE : 0)
       | (this.hasShop ? NPC_INTERACTION_HAS_SHOP : 0)
       | (this.hasBank ? NPC_INTERACTION_HAS_BANK : 0)
-      | (this.hasCombatStartDialogue ? NPC_INTERACTION_STARTS_COMBAT : 0);
+      | (this.hasCombatStartDialogue ? NPC_INTERACTION_STARTS_COMBAT : 0)
+      | (this.directAttack ? NPC_INTERACTION_DIRECT_ATTACK : 0);
   }
 
   /** Effective aggression: spawn-level flag wins if set, otherwise NpcDef. */

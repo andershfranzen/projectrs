@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
+  BROTHER_MONK_CHEST_OBJECT_DEF_ID,
   GENERIC_SCENERY_OBJECT_DEF_ID,
   WELL_OBJECT_DEF_ID,
   isCropPlacedAssetId,
@@ -56,6 +57,17 @@ test('stall assets resolve to roguery stall object definitions', () => {
   expect(objectDefIdForPlacedAsset('relic stall')).toBe(58);
   expect(objectDefIdForPlacedAsset('Gem stall')).toBe(59);
   expect(objectDefIdForPlacedAsset('depleted stall')).toBeUndefined();
+});
+
+test('fishing bubble assets resolve to fishing spot object definitions', () => {
+  expect(objectDefIdForPlacedAsset('FishingSpotBubbles')).toBe(5);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesNet')).toBe(61);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesRod')).toBe(62);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesHarpoon')).toBe(63);
+});
+
+test('quest chest asset resolves to the dedicated Brother Monk chest definition', () => {
+  expect(objectDefIdForPlacedAsset('brother monk chest')).toBe(BROTHER_MONK_CHEST_OBJECT_DEF_ID);
 });
 
 test('crop assets are identified for batched crop rendering', () => {

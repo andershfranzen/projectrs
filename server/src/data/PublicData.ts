@@ -71,6 +71,7 @@ function sanitizeItemDef(item: Record<string, unknown>): Record<string, unknown>
     id,
     name,
     description,
+    questItem,
     stackable,
     noteable,
     noteId,
@@ -101,6 +102,7 @@ function sanitizeItemDef(item: Record<string, unknown>): Record<string, unknown>
   if (noteable !== undefined) out.noteable = noteable;
   if (noteId !== undefined) out.noteId = noteId;
   if (unnotedId !== undefined) out.unnotedId = unnotedId;
+  if (questItem !== undefined) out.questItem = questItem;
   if (equipSlot !== undefined) out.equipSlot = equipSlot;
   if (bodyHideStyle !== undefined) out.bodyHideStyle = bodyHideStyle;
   if (headRenderMode !== undefined) out.headRenderMode = headRenderMode;
@@ -246,6 +248,8 @@ export function sanitizePublicData(filename: string, data: unknown): unknown {
         height,
         color,
         modelAssetId,
+        skillAnimation,
+        visualToolItemId,
         depletedAssetId,
         stallMerchantNpcId,
         recipes,
@@ -261,6 +265,8 @@ export function sanitizePublicData(filename: string, data: unknown): unknown {
         height,
         color,
         ...(modelAssetId !== undefined ? { modelAssetId } : {}),
+        ...(skillAnimation !== undefined ? { skillAnimation } : {}),
+        ...(visualToolItemId !== undefined ? { visualToolItemId } : {}),
         ...(depletedAssetId !== undefined ? { depletedAssetId } : {}),
         ...(stallMerchantNpcId !== undefined ? { stallMerchantNpcId } : {}),
         ...(Array.isArray(recipes) ? { recipes: recipes.map(sanitizeObjectRecipe) } : {}),

@@ -5,7 +5,8 @@ import { getThumbnail, getThumbnailPoseKey, type ThumbnailCamera, type Thumbnail
 /**
  * Central icon resolver for items. Precedence:
  *   1. Pose-matched pre-baked PNG at `/items/3d/{id}.png` (zero runtime cost).
- *   2. Runtime 3D render of `def.model` (IDB-cached across reloads).
+ *   2. Runtime 3D render of `def.thumbnailModel`, stack model, or `def.model`
+ *      (IDB-cached across reloads).
  *   3. `def.sprite` (legacy 2D, only for items without a 3D model).
  *   4. `def.icon` (legacy 2D, only for items without a 3D model).
  *   5. null (caller renders a placeholder).
@@ -510,6 +511,7 @@ function resolveModelPath(def: ItemDef, model: string | undefined): string | nul
 }
 
 export function stackModelScaleForItem(def: ItemDef, quantity: number = 1): number {
+  if (def.thumbnailModel) return 1;
   const scale = resolveStackModelVariant(def, quantity)?.scale;
   return typeof scale === 'number' && Number.isFinite(scale) && scale > 0 ? scale : 1;
 }
@@ -519,9 +521,10 @@ export function stackModelScaleForItem(def: ItemDef, quantity: number = 1): numb
  *  model. Items without a known model return null so they can still use
  *  legacy 2D art. */
 export function resolveItemModelPath(def: ItemDef, quantity: number = 1): string | null {
+  if (def.thumbnailModel) return resolveModelPath(def, def.thumbnailModel);
   const stackModel = resolveStackModelVariant(def, quantity)?.model;
   if (stackModel) return resolveModelPath(def, stackModel);
-  return resolveModelPath(def, def.thumbnailModel ?? def.model);
+  return resolveModelPath(def, def.model);
 }
 
 export function resolveGroundItemModelPath(def: ItemDef, quantity: number = 1): string | null {

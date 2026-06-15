@@ -400,7 +400,7 @@ describe('server-authoritative spell casting', () => {
     expect(world.pendingSpellImpacts).toHaveLength(1);
   });
 
-  test('dialogue NPC magic remains blocked until dialogue starts combat', () => {
+  test('combat-start dialogue NPC magic remains blocked until dialogue starts combat without directAttack', () => {
     const player = new Player('caster', 1.5, 1.5, fakeWs, 1);
     const npc = new Npc(npcDef, 3.5, 1.5, { effectiveDialogue: combatDialogue });
     player.currentMapLevel = 'kcmap';

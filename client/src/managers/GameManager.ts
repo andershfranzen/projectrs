@@ -64,9 +64,9 @@ import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick } from '../ui/popupStyle';
 import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
-import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
+import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, movementTilesPerSecond, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, movementTilesPerSecond, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -102,6 +102,9 @@ const WORLD_OBJECT_PICK_HORIZONTAL_MARGIN = 0.18;
 const WORLD_OBJECT_PICK_VERTICAL_MARGIN = 0.04;
 const WORLD_OBJECT_PICK_MIN_HEIGHT = 0.45;
 const WORLD_OBJECT_PICK_MAX_HEIGHT = 8;
+const FISHING_SPOT_PICK_WIDTH = 1.6;
+const FISHING_SPOT_PICK_DEPTH = 1.6;
+const FISHING_SPOT_PICK_HEIGHT = 1.8;
 const CROP_PICK_MARGIN = 0.04;
 const CROP_PICK_MIN_SIZE = 0.45;
 const CLIENT_FRAME_SPIKE_TELEMETRY_ENABLED = true;
@@ -202,7 +205,8 @@ function isHarvestObjectDef(def: WorldObjectDef): boolean {
   return def.category === 'tree'
     || def.category === 'rock'
     || def.category === 'fishingspot'
-    || def.category === 'stall';
+    || def.category === 'stall'
+    || def.category === 'chest';
 }
 
 function isBatchedObjectPickKind(kind: unknown): boolean {
@@ -618,6 +622,7 @@ export class GameManager {
   // those maps avoids a race where getGearItemId() returns -1 during the
   // async gear-attach window and we'd "restore" the player to unarmed.
   private toolSwappedEntities: Set<number> = new Set();
+  private skillingHiddenShieldEntities: Set<number> = new Set();
 
   // Gear — cached templates so the same GLB isn't loaded twice
   private gearTemplateCache: Map<string, GearTemplate> = new Map();
@@ -3203,6 +3208,9 @@ export class GameManager {
       const anim =
         variant === PlayerSkillAnimationVariant.Chop ? 'chop' :
         variant === PlayerSkillAnimationVariant.Mine ? 'mine' :
+        variant === PlayerSkillAnimationVariant.FishNet ? 'fish_net' :
+        variant === PlayerSkillAnimationVariant.FishRod ? 'fish_rod' :
+        variant === PlayerSkillAnimationVariant.FishHarpoon ? 'fish_harpoon' :
         undefined;
       void (async () => {
         if (toolItemId > 0) await this.applySkillingTool(entityId, remote, toolItemId);
@@ -3684,6 +3692,14 @@ export class GameManager {
   ): DoorPickProxyBounds {
     const bounds = getObjectFootprintBounds(data.x, data.z, def, data.rotY ?? 0);
     const baseY = Number.isFinite(data.y) ? (data.y ?? 0) : 0;
+    if (def.category === 'fishingspot') {
+      return {
+        center: new Vector3(data.x, baseY + FISHING_SPOT_PICK_HEIGHT / 2, data.z),
+        width: FISHING_SPOT_PICK_WIDTH,
+        depth: FISHING_SPOT_PICK_DEPTH,
+        height: FISHING_SPOT_PICK_HEIGHT,
+      };
+    }
     const height = worldObjectPickProxyHeight(def);
     return {
       center: new Vector3(
@@ -3703,6 +3719,7 @@ export class GameManager {
     def: WorldObjectDef,
   ): DoorPickProxyBounds {
     const fallback = this.fallbackWorldObjectPickProxyBounds(data, def);
+    if (def.category === 'fishingspot') return fallback;
     let bounds = this.worldObjectPickProxyBoundsFromMetadata(model.metadata) as ReturnType<TransformNode['getHierarchyBoundingVectors']> | null;
     if (!bounds) {
       model.computeWorldMatrix(true);
@@ -3840,6 +3857,16 @@ export class GameManager {
     interactive: boolean,
     model: TransformNode,
   ): void {
+    if (def.category === 'fishingspot') {
+      this.chunkManager.setPlacedObjectVisualPickId(model, null);
+      this.setWorldObjectPickTarget(objectEntityId, false, model);
+      if (interactive && !this.worldObjectPickProxyRefs.has(objectEntityId)) {
+        this.createWorldObjectPickProxy(objectEntityId, data, def, model);
+      }
+      this.setWorldObjectPickProxyEnabled(objectEntityId, interactive);
+      return;
+    }
+
     if (this.chunkManager.setPlacedObjectVisualPickId(model, interactive ? objectEntityId : null)) {
       this.disposeWorldObjectPickProxy(objectEntityId);
       this.setWorldObjectPickTarget(objectEntityId, false, model);
@@ -3918,6 +3945,7 @@ export class GameManager {
     for (let i = 0; i < EQUIP_SLOT_NAMES.length; i++) {
       const slotName = EQUIP_SLOT_NAMES[i];
       if (entityId !== undefined && slotName === 'weapon' && this.toolSwappedEntities.has(entityId)) continue;
+      if (entityId !== undefined && slotName === 'shield' && this.skillingHiddenShieldEntities.has(entityId)) continue;
       const itemId = slots[i] ?? 0;
       // Fire-and-forget — failures are logged inside loadGearSmart.
       void this.applyGearToCharacter(target, slotName, itemId, /* isLocal */ false, entityId);
@@ -4052,21 +4080,37 @@ export class GameManager {
     const slotName = itemDef?.equipSlot;
     if (!slotName) return;
 
-    const refresh = (character: CharacterEntity): void => {
+    const refresh = (character: CharacterEntity, entityId?: number): void => {
       const equippedItemId = character.getGearItemId(slotName);
       if (equippedItemId !== itemId && this.getGearFitSourceItemId(equippedItemId) !== itemId) return;
+      const override = this.getGearOverrideForCharacter(equippedItemId, character);
+      const needsTemplateReload = !!override
+        && !character.getSkinnedArmorMeshes(slotName)
+        && (override.meshOffset != null || override.centerOrigin != null || override.file != null);
+      if (needsTemplateReload) {
+        this.deleteGearTemplateCacheForItem(slotName, equippedItemId);
+        void this.applyGearToCharacter(
+          character,
+          slotName,
+          equippedItemId,
+          character === this.localPlayer,
+          entityId,
+          true,
+        );
+        return;
+      }
       this.applyGearOverrideTransform(character, slotName, equippedItemId);
     };
 
     if (this.localPlayer) {
-      refresh(this.localPlayer);
+      refresh(this.localPlayer, this.localPlayerId);
     }
-    for (const character of this.entities.remotePlayers.values()) {
-      refresh(character);
+    for (const [entityId, character] of this.entities.remotePlayers) {
+      refresh(character, entityId);
     }
-    for (const npc of this.entities.npcSprites.values()) {
+    for (const [entityId, npc] of this.entities.npcSprites) {
       if (npc instanceof CharacterEntity) {
-        refresh(npc);
+        refresh(npc, entityId);
       }
     }
   }
@@ -4116,6 +4160,7 @@ export class GameManager {
     itemId: number,
     isLocal: boolean,
     entityId?: number,
+    forceReload: boolean = false,
   ): Promise<void> {
     const isCurrentApply = this.nextGearApplyGuard(target, slotName, entityId);
 
@@ -4127,7 +4172,7 @@ export class GameManager {
     }
 
     // Already wearing this item?
-    if (target.getGearItemId(slotName) === itemId) {
+    if (!forceReload && target.getGearItemId(slotName) === itemId) {
       target.setHighQualityGearEffect(slotName, isHighQualityItem(this.itemDefsCache.get(itemId)));
       return;
     }
@@ -4282,6 +4327,17 @@ export class GameManager {
     }
   }
 
+  private isFishingToolItem(itemId: number): boolean {
+    const toolType = this.itemDefsCache.get(itemId)?.toolType;
+    return toolType === 'fishing_net' || toolType === 'fishing_rod' || toolType === 'harpoon';
+  }
+
+  private hideSkillingShield(entityId: number, character: CharacterEntity): void {
+    if (this.skillingHiddenShieldEntities.has(entityId)) return;
+    this.skillingHiddenShieldEntities.add(entityId);
+    void this.applyGearToCharacter(character, 'shield', 0, /* isLocal */ false, entityId);
+  }
+
   /** Swap the weapon slot to the server-picked skilling tool. Passes
    *  isLocal=false so the gear-template cache is reused across repeated
    *  skilling cycles instead of reloading the GLB on each swap. */
@@ -4291,6 +4347,7 @@ export class GameManager {
     toolItemId: number,
   ): Promise<void> {
     if (toolItemId <= 0) return;
+    if (this.isFishingToolItem(toolItemId)) this.hideSkillingShield(entityId, character);
     if (this.toolSwappedEntities.has(entityId)) return;
     if (character.getGearItemId('weapon') === toolItemId) return;
     this.toolSwappedEntities.add(entityId);
@@ -4302,11 +4359,23 @@ export class GameManager {
    *  on packet receipt) — a snapshot taken at swap-time can be -1 inside
    *  the async gear-attach window for a freshly-spawned remote. */
   private restoreSkillingTool(entityId: number, character: CharacterEntity): void {
-    if (!this.toolSwappedEntities.delete(entityId)) return;
-    const realWeapon = entityId === this.localPlayerId
-      ? (this.localEquipment.get(0) ?? 0)
-      : (this.entities.remoteEquipment.get(entityId)?.[0] ?? 0);
-    void this.applyGearToCharacter(character, 'weapon', realWeapon, /* isLocal */ false, entityId);
+    const restoreWeapon = this.toolSwappedEntities.delete(entityId);
+    const restoreShield = this.skillingHiddenShieldEntities.delete(entityId);
+    if (!restoreWeapon && !restoreShield) return;
+
+    const equipment = entityId === this.localPlayerId
+      ? this.localEquipment
+      : this.entities.remoteEquipment.get(entityId);
+    const getItemId = (slotIndex: number): number => equipment instanceof Map
+      ? (equipment.get(slotIndex) ?? 0)
+      : (equipment?.[slotIndex] ?? 0);
+
+    if (restoreWeapon) {
+      void this.applyGearToCharacter(character, 'weapon', getItemId(0), /* isLocal */ false, entityId);
+    }
+    if (restoreShield) {
+      void this.applyGearToCharacter(character, 'shield', getItemId(1), /* isLocal */ false, entityId);
+    }
   }
 
   /**
@@ -5006,6 +5075,7 @@ export class GameManager {
       this.remoteAnimationStates.delete(entityId);
       this.clearRemoteMovementStepStash(entityId);
       this.toolSwappedEntities.delete(entityId);
+      this.skillingHiddenShieldEntities.delete(entityId);
       const deathEffectStarted = isTrueDeath && entityId !== this.localPlayerId
         ? this.entities.startEntityDeathEffect(entityId)
         : false;
@@ -5511,9 +5581,11 @@ export class GameManager {
       // Chests have no skilling animation — the player stands still while
       // the lockpick cycle ticks on the server. Other harvestables get a
       // category-specific looping animation.
-      const variant = objDef?.category === 'tree' ? 'chop'
-        : objDef?.category === 'rock' ? 'mine'
-        : undefined;
+      const variant = objDef?.skillAnimation
+        ?? (objDef?.category === 'fishingspot' ? 'fish_net'
+          : objDef?.category === 'tree' ? 'chop'
+            : objDef?.category === 'rock' ? 'mine'
+              : undefined);
       const skipAnim = objDef?.category === 'chest';
 
       const objectId = v[0];
@@ -6051,10 +6123,11 @@ export class GameManager {
         // Local player persists across map changes — restore any displaced
         // tool first, then clear the sets so a teleport mid-skill doesn't
         // leave the next cycle unable to re-swap.
-        if (this.localPlayer && this.toolSwappedEntities.has(this.localPlayerId)) {
+        if (this.localPlayer && (this.toolSwappedEntities.has(this.localPlayerId) || this.skillingHiddenShieldEntities.has(this.localPlayerId))) {
           this.restoreSkillingTool(this.localPlayerId, this.localPlayer);
         }
         this.toolSwappedEntities.clear();
+        this.skillingHiddenShieldEntities.clear();
 
         // Only dispose models that GameManager created, not linked placed objects from ChunkManager
         for (const [objectEntityId, model] of this.worldObjectModels) {
@@ -6885,7 +6958,7 @@ export class GameManager {
     // Prefer the server-sent interaction flags (NPC_INTERACTIONS) over the
     // hardcoded isNonAttackableNpc allow-list — that list pre-dates the
     // server telling us, and would mislabel any new editor-authored NPC.
-    // Flags: bit 0 = dialogue, bit 1 = shop, bit 2 = bank, bit 3 = dialogue can start combat.
+    // Flags: bit 0 = dialogue, bit 1 = shop, bit 2 = bank, bit 3 = dialogue can start combat, bit 4 = direct attack.
     const flags = this.entities.npcInteractions.get(entityId) ?? 0;
     if (this.isNonCombatNpc(entityId, npcDefId)) {
       // Talk-to handles all three (dialogue → priority on server, else
@@ -6910,6 +6983,7 @@ export class GameManager {
     };
     if ((flags & NPC_INTERACTION_HAS_DIALOGUE) !== 0) {
       const engaged = this.isLocalNpcCombatTarget(entityId);
+      const canDirectAttack = (flags & NPC_INTERACTION_DIRECT_ATTACK) !== 0;
       const talkOption: InteractionOption = {
         label: `Talk-to ${name}`,
         action: () => this.talkToNpc(entityId),
@@ -6923,6 +6997,7 @@ export class GameManager {
           ]
         : [
             talkOption,
+            ...(canDirectAttack ? [{ ...attackOption, primary: false }] : []),
             { label: `Examine ${name}`, action: () => this.examineNpc(entityId), primary: false },
           ];
     }
@@ -7321,8 +7396,9 @@ export class GameManager {
     const flags = this.entities.npcInteractions.get(entityId) ?? 0;
     const hasDialogue = (flags & NPC_INTERACTION_HAS_DIALOGUE) !== 0;
     const hasProtectedUi = (flags & (NPC_INTERACTION_HAS_SHOP | NPC_INTERACTION_HAS_BANK)) !== 0;
+    const hasDirectAttack = (flags & NPC_INTERACTION_DIRECT_ATTACK) !== 0;
     const dialogueBlocksCombat = hasDialogue
-      && (flags & NPC_INTERACTION_STARTS_COMBAT) === 0
+      && !hasDirectAttack
       && !this.isLocalNpcCombatTarget(entityId);
     return hasProtectedUi
       || dialogueBlocksCombat
@@ -7666,7 +7742,7 @@ export class GameManager {
   private tryUseInventoryItemOn(kind: 'npc' | 'object', entityId: number): boolean {
     const using = this.sidePanel?.getUsing();
     if (!using) return false;
-    this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffd060');
+    this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, kind === 'object' ? '#ff3030' : '#ffd060');
     this.sidePanel!.clearUsingInvItem();
 
     if (kind === 'npc') {
@@ -8601,6 +8677,13 @@ export class GameManager {
     def: WorldObjectDef,
   ): { x: number; z: number }[] {
     if (data.interactionTiles?.length) return data.interactionTiles;
+    return this.generatedObjectInteractionTiles(data, def);
+  }
+
+  private generatedObjectInteractionTiles(
+    data: { x: number; z: number; interactionSides?: number; rotY?: number },
+    def: WorldObjectDef,
+  ): { x: number; z: number }[] {
     return getObjectInteractionTiles(data.x, data.z, def, this.objectInteractionTileOptions(data, def));
   }
 
@@ -8636,10 +8719,33 @@ export class GameManager {
     data: { x: number; z: number; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] },
     def: WorldObjectDef,
   ): boolean {
-    const adjacent = data.interactionTiles?.length
-      ? data.interactionTiles.some(tile => tile.x === ptx && tile.z === ptz)
-      : isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, this.objectInteractionTileOptions(data, def));
-    return adjacent && this.hasClearObjectInteractionEdge(data, def, ptx, ptz, !!data.interactionTiles?.length);
+    if (data.interactionTiles?.length) {
+      if (data.interactionTiles.some(tile => tile.x === ptx && tile.z === ptz)) {
+        return this.hasClearObjectInteractionEdge(data, def, ptx, ptz, true);
+      }
+      if (this.hasReachableAuthoredObjectInteractionTile(data, def)) return false;
+    }
+    const adjacent = isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, this.objectInteractionTileOptions(data, def));
+    return adjacent && this.hasClearObjectInteractionEdge(data, def, ptx, ptz, false);
+  }
+
+  private hasReachableAuthoredObjectInteractionTile(
+    data: { x: number; z: number; interactionTiles?: { x: number; z: number }[]; rotY?: number },
+    def: WorldObjectDef,
+  ): boolean {
+    if (!data.interactionTiles?.length) return false;
+    const candidates = data.interactionTiles.filter(tile =>
+      !this.isTileBlocked(tile.x, tile.z)
+      && this.hasClearObjectInteractionEdge(data, def, tile.x, tile.z, true)
+    );
+    if (candidates.length === 0) return false;
+    const ptx = Math.floor(this.playerX);
+    const ptz = Math.floor(this.playerZ);
+    if (candidates.some(tile => tile.x === ptx && tile.z === ptz)) return true;
+    return candidates.some(tile => {
+      const { path } = this.findPathFromMovementAnchor(tile.x + 0.5, tile.z + 0.5, 500);
+      return this.pathReachesGoal(path, tile.x + 0.5, tile.z + 0.5);
+    });
   }
 
   /** Find the closest reachable adjacent tile of an object and start the
@@ -8648,25 +8754,34 @@ export class GameManager {
   private walkToAdjacentTileOf(data: { x: number; z: number; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] }, def: WorldObjectDef): boolean {
     const hasAuthoredTiles = !!data.interactionTiles?.length;
     const start = this.getActiveUnitStep()?.from ?? { x: this.playerX, z: this.playerZ };
-    const candidates = this.objectInteractionTiles(data, def)
-      .filter(tile => !this.isTileBlocked(tile.x, tile.z))
-      .filter(tile => this.hasClearObjectInteractionEdge(data, def, tile.x, tile.z, hasAuthoredTiles))
-      .map(tile => ({
-        ax: tile.x,
-        az: tile.z,
-        dist: Math.hypot(this.playerX - (tile.x + 0.5), this.playerZ - (tile.z + 0.5)),
-      }));
+    const findBest = (
+      tiles: readonly { x: number; z: number }[],
+      allowAuthoredNonAdjacentTile: boolean,
+    ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean; steps: number; dist: number } | null => {
+      const candidates = tiles
+        .filter(tile => !this.isTileBlocked(tile.x, tile.z))
+        .filter(tile => this.hasClearObjectInteractionEdge(data, def, tile.x, tile.z, allowAuthoredNonAdjacentTile))
+        .map(tile => ({
+          ax: tile.x,
+          az: tile.z,
+          dist: Math.hypot(this.playerX - (tile.x + 0.5), this.playerZ - (tile.z + 0.5)),
+        }));
 
-    let best: { path: { x: number; z: number }[]; preserveCurrentStep: boolean; steps: number; dist: number } | null = null;
-    for (const { ax, az, dist } of candidates) {
-      const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(ax + 0.5, az + 0.5, 500);
-      if (this.pathReachesGoal(path, ax + 0.5, az + 0.5)) {
-        const steps = compressedPathTileSteps(start, path);
-        if (!best || steps < best.steps || (steps === best.steps && dist < best.dist)) {
-          best = { path, preserveCurrentStep, steps, dist };
+      let best: { path: { x: number; z: number }[]; preserveCurrentStep: boolean; steps: number; dist: number } | null = null;
+      for (const { ax, az, dist } of candidates) {
+        const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(ax + 0.5, az + 0.5, 500);
+        if (this.pathReachesGoal(path, ax + 0.5, az + 0.5)) {
+          const steps = compressedPathTileSteps(start, path);
+          if (!best || steps < best.steps || (steps === best.steps && dist < best.dist)) {
+            best = { path, preserveCurrentStep, steps, dist };
+          }
         }
       }
-    }
+      return best;
+    };
+
+    const best = findBest(this.objectInteractionTiles(data, def), hasAuthoredTiles)
+      ?? (hasAuthoredTiles ? findBest(this.generatedObjectInteractionTiles(data, def), false) : null);
     if (best) {
       this.startPredictedPath(best.path, best.preserveCurrentStep);
       return true;
@@ -8679,7 +8794,7 @@ export class GameManager {
     const item = this.entities.groundItems.get(groundItemId);
     if (item) {
       if (item.floor !== this.currentFloor) return;
-      const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(item.x, item.z);
+      const { path, preserveCurrentStep } = this.findPathToGroundItem(item);
       if (path.length > 0) {
         this.startPredictedPath(path, preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
@@ -8687,6 +8802,64 @@ export class GameManager {
       }
     }
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_PICKUP_ITEM, groundItemId));
+  }
+
+  private canReachGroundItemTileFrom(fromTileX: number, fromTileZ: number, itemTileX: number, itemTileZ: number): boolean {
+    const dx = itemTileX - fromTileX;
+    const dz = itemTileZ - fromTileZ;
+    if (dx === 0 && dz === 0) return true;
+    if (Math.abs(dx) > 1 || Math.abs(dz) > 1) return false;
+    if (dx === 0 || dz === 0) {
+      return !this.isWallBlockedForPath(fromTileX, fromTileZ, itemTileX, itemTileZ);
+    }
+
+    const horizontalTileX = fromTileX + dx;
+    const verticalTileZ = fromTileZ + dz;
+    if (this.isTileBlocked(horizontalTileX, fromTileZ)) return false;
+    if (this.isTileBlocked(fromTileX, verticalTileZ)) return false;
+    if (this.isWallBlockedForPath(fromTileX, fromTileZ, horizontalTileX, fromTileZ)) return false;
+    if (this.isWallBlockedForPath(fromTileX, fromTileZ, fromTileX, verticalTileZ)) return false;
+    if (this.isWallBlockedForPath(horizontalTileX, fromTileZ, itemTileX, itemTileZ)) return false;
+    if (this.isWallBlockedForPath(fromTileX, verticalTileZ, itemTileX, itemTileZ)) return false;
+    return true;
+  }
+
+  private findPathToGroundItem(item: GroundItemData): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
+    const itemTileX = Math.floor(item.x);
+    const itemTileZ = Math.floor(item.z);
+    if (!this.isTileBlocked(itemTileX, itemTileZ)) {
+      const direct = this.findPathFromMovementAnchor(item.x, item.z);
+      if (direct.path.length === 0 || this.pathReachesGoal(direct.path, item.x, item.z)) return direct;
+    }
+
+    const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
+    const start = activeStep?.target ?? { x: this.playerX, z: this.playerZ };
+    const reached = (tileX: number, tileZ: number): boolean =>
+      this.canReachGroundItemTileFrom(tileX, tileZ, itemTileX, itemTileZ);
+
+    if (!activeStep && reached(Math.floor(this.playerX), Math.floor(this.playerZ))) {
+      return { path: [], preserveCurrentStep: false };
+    }
+
+    const path = findPathToReach({
+      startX: start.x,
+      startZ: start.z,
+      collision: {
+        width: this.chunkManager.getMapWidth(),
+        height: this.chunkManager.getMapHeight(),
+        isTileBlocked: this.isTileBlocked,
+        isWallBlocked: this.isWallBlockedForPath,
+      },
+      maxSearchTiles: 500,
+      compress: true,
+      reached,
+    });
+
+    if (!activeStep) return { path, preserveCurrentStep: false };
+    if (reached(Math.floor(activeStep.target.x), Math.floor(activeStep.target.z))) {
+      return { path: [activeStep.target], preserveCurrentStep: true };
+    }
+    return { path: path.length > 0 ? [activeStep.target, ...path] : [], preserveCurrentStep: path.length > 0 };
   }
 
   private handleObjectClick(objectEntityId: number): void {
@@ -8702,8 +8875,8 @@ export class GameManager {
     if (!this.isWorldObjectInteractable(def, data.depleted)) return;
     if (this.tryUseInventoryItemOn('object', objectEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
-    // Auto-interact with harvestable objects (trees, rocks), doors, ladders,
-    // and crafting stations (furnace, anvil, range).
+    // Auto-interact with skilling objects, doors, ladders, banks, and
+    // crafting stations (furnace, anvil, range).
     if (isHarvestObjectDef(def) || def.category === 'crop' || def.category === 'door' || def.category === 'ladder' || def.category === 'bank' || (def.recipes && def.recipes.length > 0)) {
       const actionIndex = def.category === 'ladder'
         ? this.primaryLadderActionIndex(def, data)
@@ -9116,6 +9289,7 @@ export class GameManager {
                 boneName: override.boneName,
                 localPosition: override.localPosition,
                 localRotation: override.localRotation,
+                meshOffset: override.meshOffset,
                 scale: override.scale,
                 centerOrigin: override.centerOrigin,
               };
@@ -9154,7 +9328,9 @@ export class GameManager {
                 boneName: override.boneName,
                 localPosition: override.localPosition,
                 localRotation: override.localRotation,
+                meshOffset: override.meshOffset,
                 scale: override.scale,
+                centerOrigin: override.centerOrigin,
               };
               if (slot === 'head' && override.headHair) patch.headHair = override.headHair;
               this.gearOverrides.set(def.id, mergeGearOverrideForBodyType(this.gearOverrides.get(def.id), bodyType, patch));
@@ -9167,7 +9343,7 @@ export class GameManager {
             }
             return targets.length;
           });
-          this.gearDebugPanel.setLoadGlbCallback(async (slot, path, itemId) => {
+          this.gearDebugPanel.setLoadGlbCallback(async (slot, path, itemId, previewOverride) => {
             const target = this.getGearDebugCharacter();
             if (!target) throw new Error(this.gearDebugTargetMode === 'npc' ? 'No humanoid NPC target' : 'No local player');
             const boneConfig = EQUIP_SLOT_BONES[slot];
@@ -9175,7 +9351,31 @@ export class GameManager {
 
             const def = itemId != null && itemId > 0 ? this.itemDefsCache.get(itemId) : null;
             if (def?.equipSlot === slot) {
-              await this.applyGearToCharacter(target, slot, itemId!, false);
+              const previewItemId = itemId!;
+              const gearDef: GearDef = {
+                itemId: previewItemId,
+                file: path,
+                boneName: previewOverride?.boneName ?? boneConfig.boneName,
+                localPosition: previewOverride?.localPosition ?? boneConfig.localPosition,
+                localRotation: previewOverride?.localRotation ?? boneConfig.localRotation,
+                meshOffset: previewOverride?.meshOffset,
+                scale: previewOverride?.scale ?? boneConfig.scale,
+                centerOrigin: previewOverride?.centerOrigin ?? false,
+                metalColor: TOOL_TIER_METAL_COLOR[previewItemId],
+                headRenderMode: def.headRenderMode,
+                headHairFit: previewOverride?.headHair,
+              };
+              const template = await loadCharacterGearSmart(
+                this.scene,
+                target,
+                slot,
+                previewItemId,
+                gearDef,
+                def,
+                previewOverride ?? null,
+              );
+              if (template) target.attachGear(slot, previewItemId, template);
+              target.setHighQualityGearEffect(slot, isHighQualityItem(def));
               return;
             }
 
@@ -9189,6 +9389,7 @@ export class GameManager {
               target.detachGear(slot);
 
               target.attachSkinnedArmor(slot, result.meshes, result.skeletons[0]);
+              if (previewOverride) target.applySkinnedArmorTransform(slot, previewOverride);
               const loaderRoot = result.meshes.find(m => m.name === '__root__');
               if (loaderRoot) loaderRoot.dispose();
             } else {
@@ -9196,10 +9397,11 @@ export class GameManager {
                 itemId: -999,
                 file: path,
                 boneName: boneConfig.boneName,
-                localPosition: boneConfig.localPosition,
-                localRotation: boneConfig.localRotation,
-                scale: boneConfig.scale,
-                centerOrigin: false,
+                localPosition: previewOverride?.localPosition ?? boneConfig.localPosition,
+                localRotation: previewOverride?.localRotation ?? boneConfig.localRotation,
+                meshOffset: previewOverride?.meshOffset,
+                scale: previewOverride?.scale ?? boneConfig.scale,
+                centerOrigin: previewOverride?.centerOrigin ?? false,
               };
               const tmpl = await loadGearTemplate(this.scene, gearDef);
               if (!tmpl) throw new Error('Failed to load ' + path);
@@ -9219,13 +9421,15 @@ export class GameManager {
               target.stopWalking();
               target.stopSkillAnimation();
             } else if (anim === 'walk') {
+              target.stopSkillAnimation();
               target.startWalking();
             } else if (anim === 'attack') {
+              target.stopWalking();
+              target.stopSkillAnimation();
               target.playAttackAnimation();
-            } else if (anim === 'chop') {
-              target.startSkillAnimation('chop');
-            } else if (anim === 'mine') {
-              target.startSkillAnimation('mine');
+            } else if (anim === 'chop' || anim === 'mine' || anim.startsWith('fish_')) {
+              target.stopWalking();
+              target.startSkillAnimation(anim);
             }
           });
         }
@@ -10080,13 +10284,36 @@ export class GameManager {
     return this.chunkManager.isWallBlocked(fx, fz, tx, tz, playerY);
   };
 
+  private finishPredictedObjectInteractionArrival(objectId: number): boolean {
+    if (this.pathIndex >= this.path.length) return false;
+    const objData = this.worldObjectDefs.get(objectId);
+    const objDef = objData ? this.objectDefsCache.get(objData.defId) : null;
+    if (!objData || !objDef) return false;
+
+    const destination = this.path[this.path.length - 1];
+    if (!destination) return false;
+    if (!this.isOnObjectInteractionTile(Math.floor(destination.x), Math.floor(destination.z), objData, objDef)) {
+      return false;
+    }
+
+    this.playerX = destination.x;
+    this.playerZ = destination.z;
+    this.pathIndex = this.path.length;
+    this.renderLocalPlayerAtLogicalPosition();
+    this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
+    this.finishPredictedPathArrival();
+    return true;
+  }
+
   /** Stop any in-flight path and face the given object. Shared setup for
-   *  animated and stationary skilling starts. Do not round/snap the local
-   *  player here: the server already delayed non-door object execution until
-   *  after arrival, and any remaining visual correction should come through
-   *  normal PLAYER_SYNC reconciliation. */
+   *  animated and stationary skilling starts. Server-side skilling only starts
+   *  after it has reached the object, so complete the matching local predicted
+   *  arrival instead of freezing mid-step and waiting for PLAYER_SYNC to catch
+   *  the model up. */
   private prepareSkillingAtObject(objectId: number): void {
-    this.clearPredictedPath(false, false);
+    if (!this.finishPredictedObjectInteractionArrival(objectId)) {
+      this.clearPredictedPath(false, false);
+    }
     this.setTileFrom(this.playerX, this.playerZ);
     if (!this.localPlayer) return;
     this.localPlayer.stopWalking();

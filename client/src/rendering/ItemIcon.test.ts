@@ -18,6 +18,7 @@ import {
   resolveBakedThumbnailUrl,
   resolveGroundItemModelPath,
   resolveItemModelPath,
+  stackModelScaleForItem,
   type ThumbnailOverride,
 } from './ItemIcon';
 import { getThumbnailPoseKey } from './ThumbnailRenderer';
@@ -272,6 +273,31 @@ describe('item thumbnail families', () => {
       expect(modelPath).toBeTruthy();
       expect(modelPath?.startsWith('/assets/models/')).toBe(true);
       expect(existsSync(`client/public${modelPath}`)).toBe(true);
+    }
+  });
+
+  test('arrowhead inventory thumbnails use the editable single head while ground drops keep stack models', () => {
+    const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
+    const tiers = new Map<number, string>([
+      [264, 'Bronze'],
+      [265, 'Iron'],
+      [266, 'Steel'],
+      [267, 'Mithril'],
+      [268, 'BlackBronze'],
+    ]);
+
+    for (const [id, tier] of tiers) {
+      const def = defs.get(id);
+      if (!def) throw new Error(`missing arrowhead item ${id}`);
+
+      const singleModel = `/assets/models/arrowheads/${tier}Arrowhead.glb`;
+      expect(def.thumbnailModel).toBe(singleModel);
+      expect(resolveItemModelPath(def, 1)).toBe(singleModel);
+      expect(resolveItemModelPath(def, 6)).toBe(singleModel);
+      expect(stackModelScaleForItem(def, 6)).toBe(1);
+      expect(resolveGroundItemModelPath(def, 1)).toBe(`/assets/models/arrowheads/stacks/${tier}ArrowheadStack1.glb`);
+      expect(resolveGroundItemModelPath(def, 6)).toBe(`/assets/models/arrowheads/stacks/${tier}ArrowheadStack6Plus.glb`);
+      expect(existsSync(`client/public${singleModel}`)).toBe(true);
     }
   });
 

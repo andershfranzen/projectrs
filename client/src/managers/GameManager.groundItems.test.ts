@@ -84,4 +84,17 @@ describe('GameManager ground item picking', () => {
 
     expect(options.map(option => option.label)).toEqual(['Pick up Bronze dagger (4)']);
   });
+
+  test('ground item reach allows table-top items but still respects wall edges', () => {
+    const manager = Object.create(GameManager.prototype) as GameManager;
+    (manager as any).isTileBlocked = (x: number, z: number) => x === 6 && z === 5;
+    (manager as any).isWallBlockedForPath = () => false;
+
+    expect((manager as any).canReachGroundItemTileFrom(5, 5, 6, 5)).toBe(true);
+
+    (manager as any).isWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number) =>
+      fx === 5 && fz === 5 && tx === 6 && tz === 5;
+
+    expect((manager as any).canReachGroundItemTileFrom(5, 5, 6, 5)).toBe(false);
+  });
 });

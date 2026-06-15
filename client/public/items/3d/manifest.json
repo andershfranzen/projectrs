@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedAt": "2026-06-11T17:13:50.561Z",
+  "generatedAt": "2026-06-14T01:04:05.353Z",
   "ids": [
     1,
     8,
@@ -1094,27 +1094,27 @@
     },
     "264": {
       "file": "/items/3d/264.png",
-      "poseKey": "thumb:v19|/assets/models/arrowheads/stacks/BronzeArrowheadStack1.glb|id:item:264|cam:-0.78540,1.20830,0.75000|scale:0.50000",
+      "poseKey": "thumb:v19|/assets/models/arrowheads/BronzeArrowhead.glb|id:item:264|cam:-0.78540,1.04720,0.72000",
       "rendererVersion": 19
     },
     "265": {
       "file": "/items/3d/265.png",
-      "poseKey": "thumb:v19|/assets/models/arrowheads/stacks/IronArrowheadStack1.glb|id:item:265|cam:-0.78540,1.20830,0.75000|scale:0.50000",
+      "poseKey": "thumb:v19|/assets/models/arrowheads/IronArrowhead.glb|id:item:265|cam:-0.78540,1.04720,0.72000",
       "rendererVersion": 19
     },
     "266": {
       "file": "/items/3d/266.png",
-      "poseKey": "thumb:v19|/assets/models/arrowheads/stacks/SteelArrowheadStack1.glb|id:item:266|cam:-0.78540,1.20830,0.75000|scale:0.50000",
+      "poseKey": "thumb:v19|/assets/models/arrowheads/SteelArrowhead.glb|id:item:266|cam:-0.78540,1.04720,0.72000",
       "rendererVersion": 19
     },
     "267": {
       "file": "/items/3d/267.png",
-      "poseKey": "thumb:v19|/assets/models/arrowheads/stacks/MithrilArrowheadStack1.glb|id:item:267|cam:-0.78540,1.20830,0.75000|scale:0.50000",
+      "poseKey": "thumb:v19|/assets/models/arrowheads/MithrilArrowhead.glb|id:item:267|cam:-0.78540,1.04720,0.72000",
       "rendererVersion": 19
     },
     "268": {
       "file": "/items/3d/268.png",
-      "poseKey": "thumb:v19|/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack1.glb|id:item:268|cam:-0.78540,1.20830,0.75000|scale:0.50000",
+      "poseKey": "thumb:v19|/assets/models/arrowheads/BlackBronzeArrowhead.glb|id:item:268|cam:-0.78540,1.04720,0.72000",
       "rendererVersion": 19
     },
     "269": {

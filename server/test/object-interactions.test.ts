@@ -142,4 +142,43 @@ describe('placed object interactions', () => {
     expect(messages).toEqual(['You fill the bucket with water.']);
     expect(inventorySends).toBe(1);
   });
+
+  test('using a bucket on a distant well queues movement then fills on arrival', () => {
+    const player = new Player('walking_water_carrier', 10.5, 9.5, fakeWs, 1);
+    player.inventory[0] = { itemId: BUCKET_ITEM_ID, quantity: 1 };
+    const obj = new WorldObject(wellDef, 10.5, 11.5, 'kcmap');
+    const messages: string[] = [];
+    let inventorySends = 0;
+    let adjacent = false;
+
+    const world = Object.create(World.prototype) as any;
+    world.worldObjects = new Map([[obj.id, obj]]);
+    world.validateInvUse = () => player;
+    world.canPlayerTargetObject = () => true;
+    world.isAdjacentToObject = () => adjacent;
+    world.findPathToObjectInteraction = () => [{ x: 10.5, z: 10.5 }];
+    world.interruptPlayerAction = () => {};
+    world.sendInventory = () => { inventorySends++; };
+    world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
+
+    world.handlePlayerUseItemOnObject(player.id, 0, BUCKET_ITEM_ID, obj.id);
+
+    expect(player.inventory[0]).toEqual({ itemId: BUCKET_ITEM_ID, quantity: 1 });
+    expect(player.pendingUseItemOnObject).toEqual({ invSlot: 0, itemId: BUCKET_ITEM_ID, objectEntityId: obj.id });
+    expect(player.hasMoveQueue()).toBe(true);
+    expect(messages).toEqual([]);
+
+    player.movementCredit = 1;
+    expect(player.processMovement(1)).toBe(true);
+    adjacent = true;
+    const pending = player.pendingUseItemOnObject!;
+    player.pendingUseItemOnObject = null;
+    player.pendingActionRevision = -1;
+
+    world.handlePlayerUseItemOnObject(player.id, pending.invSlot, pending.itemId, pending.objectEntityId);
+
+    expect(player.inventory[0]).toEqual({ itemId: BUCKET_OF_WATER_ITEM_ID, quantity: 1 });
+    expect(messages).toEqual(['You fill the bucket with water.']);
+    expect(inventorySends).toBe(1);
+  });
 });

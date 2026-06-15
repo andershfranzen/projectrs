@@ -2754,6 +2754,7 @@
     "equippable": false,
     "value": 1,
     "model": "/assets/models/arrowheads/stacks/BronzeArrowheadStack1.glb",
+    "thumbnailModel": "/assets/models/arrowheads/BronzeArrowhead.glb",
     "stackModels": [
       {
         "minQuantity": 1,
@@ -2789,6 +2790,7 @@
     "equippable": false,
     "value": 2,
     "model": "/assets/models/arrowheads/stacks/IronArrowheadStack1.glb",
+    "thumbnailModel": "/assets/models/arrowheads/IronArrowhead.glb",
     "stackModels": [
       {
         "minQuantity": 1,
@@ -2824,6 +2826,7 @@
     "equippable": false,
     "value": 4,
     "model": "/assets/models/arrowheads/stacks/SteelArrowheadStack1.glb",
+    "thumbnailModel": "/assets/models/arrowheads/SteelArrowhead.glb",
     "stackModels": [
       {
         "minQuantity": 1,
@@ -2859,6 +2862,7 @@
     "equippable": false,
     "value": 16,
     "model": "/assets/models/arrowheads/stacks/MithrilArrowheadStack1.glb",
+    "thumbnailModel": "/assets/models/arrowheads/MithrilArrowhead.glb",
     "stackModels": [
       {
         "minQuantity": 1,
@@ -2894,6 +2898,7 @@
     "equippable": false,
     "value": 8,
     "model": "/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack1.glb",
+    "thumbnailModel": "/assets/models/arrowheads/BlackBronzeArrowhead.glb",
     "stackModels": [
       {
         "minQuantity": 1,
@@ -6209,5 +6214,58 @@
     "equippable": false,
     "value": 2,
     "model": "/assets/models/Ashes.glb"
+  },
+  {
+    "id": 552,
+    "name": "Fishing Net",
+    "description": "A small net for shallow fishing.",
+    "stackable": false,
+    "equippable": false,
+    "equipSlot": "weapon",
+    "toolType": "fishing_net",
+    "toolLevel": 1,
+    "toolBonus": 0,
+    "value": 5,
+    "icon": "/items/Net_376.png",
+    "model": "/assets/models/FishingNet.glb"
+  },
+  {
+    "id": 553,
+    "name": "Fishing Rod",
+    "description": "A simple rod for river and lake fishing.",
+    "stackable": false,
+    "equippable": false,
+    "equipSlot": "weapon",
+    "toolType": "fishing_rod",
+    "toolLevel": 1,
+    "toolBonus": 0,
+    "value": 8,
+    "icon": "/items/Fishing_Rod_377.png",
+    "model": "/assets/models/FishingRod.glb"
+  },
+  {
+    "id": 554,
+    "name": "Harpoon",
+    "description": "A pointed fishing tool for large fish.",
+    "stackable": false,
+    "equippable": false,
+    "equipSlot": "weapon",
+    "toolType": "harpoon",
+    "toolLevel": 1,
+    "toolBonus": 0,
+    "value": 12,
+    "icon": "/items/Harpoon_379.png",
+    "model": "/assets/models/Harpoon.glb"
+  },
+  {
+    "id": 555,
+    "name": "Brother Monk Chest Key",
+    "description": "A quest key taken from the skeleton guarding Wren's bear hide.",
+    "questItem": true,
+    "stackable": false,
+    "equippable": false,
+    "value": 0,
+    "icon": "Chest_key_382.png",
+    "model": "/assets/models/keys/IronKey.glb"
   }
 ]

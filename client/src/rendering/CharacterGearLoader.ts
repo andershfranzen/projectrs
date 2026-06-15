@@ -59,6 +59,7 @@ export function buildCharacterGearDef(
       boneName: override?.boneName ?? boneConfig.boneName,
       localPosition: override?.localPosition ?? boneConfig.localPosition,
       localRotation: override?.localRotation ?? boneConfig.localRotation,
+      meshOffset: override?.meshOffset,
       scale: override?.scale ?? boneConfig.scale,
       centerOrigin: override?.centerOrigin ?? false,
       metalColor: TOOL_TIER_METAL_COLOR[itemId],
@@ -148,6 +149,12 @@ export function buildCharacterGearTemplateFromResult(
     }
     for (const child of root.getChildren()) {
       (child as TransformNode).position.y -= Number.isFinite(minY) ? minY : 0;
+    }
+  }
+  if (def.meshOffset) {
+    const offset = new Vector3(def.meshOffset.x, def.meshOffset.y, def.meshOffset.z);
+    for (const child of root.getChildren()) {
+      (child as TransformNode).position.addInPlace(offset);
     }
   }
 

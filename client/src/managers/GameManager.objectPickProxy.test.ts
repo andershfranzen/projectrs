@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { GENERIC_SCENERY_OBJECT_DEF_ID } from '@projectrs/shared';
+import { BROTHER_MONK_CHEST_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID } from '@projectrs/shared';
 import { GameManager } from './GameManager';
 
 function makeManager(): any {
@@ -31,6 +31,24 @@ const CROP_DEF = {
   width: 0.6,
   height: 0.6,
   actions: ['Pick', 'Examine'],
+};
+
+const FISHING_SPOT_DEF = {
+  id: 61,
+  name: 'Net Fishing Test Spot',
+  category: 'fishingspot',
+  width: 0.6,
+  height: 0.6,
+  actions: ['Fish', 'Examine'],
+};
+
+const BROTHER_MONK_CHEST_DEF = {
+  id: BROTHER_MONK_CHEST_OBJECT_DEF_ID,
+  name: 'Brother Monk Chest',
+  category: 'chest',
+  width: 1,
+  height: 1,
+  actions: ['Unlock', 'Examine'],
 };
 
 const SCENERY_DEF = {
@@ -135,6 +153,25 @@ describe('GameManager world object pick proxies', () => {
     expect(config.y).toBeCloseTo(0.32);
   });
 
+  test('fishing spot proxies use an oversized click hitbox', () => {
+    const manager = makeManager();
+
+    const bounds = manager.computeWorldObjectPickProxyBounds(
+      { metadata: {}, computeWorldMatrix: () => {}, getHierarchyBoundingVectors: () => {
+        throw new Error('fishing spots should ignore tiny visual bounds');
+      } },
+      { x: 10.5, z: 20.5, y: 0, rotY: 0 },
+      FISHING_SPOT_DEF,
+    );
+
+    expect(bounds.center.x).toBeCloseTo(10.5);
+    expect(bounds.center.y).toBeCloseTo(0.9);
+    expect(bounds.center.z).toBeCloseTo(20.5);
+    expect(bounds.width).toBeCloseTo(1.6);
+    expect(bounds.depth).toBeCloseTo(1.6);
+    expect(bounds.height).toBeCloseTo(1.8);
+  });
+
   test('generic batched interactables use visual thin-instance picking instead of box proxies', () => {
     const manager = makeManager();
     const model = { getChildMeshes: () => [] };
@@ -164,6 +201,40 @@ describe('GameManager world object pick proxies', () => {
     expect(visualPickCalls).toEqual([{ model, objectEntityId: 12345 }]);
     expect(disposedProxyIds).toEqual([12345]);
     expect(pickTargetCalls).toEqual([{ objectEntityId: 12345, interactive: false, model }]);
+  });
+
+  test('fishing spots use box proxies even when the visual is batched', () => {
+    const manager = makeManager();
+    const model = { getChildMeshes: () => [] };
+    const visualPickCalls: Array<{ model: unknown; objectEntityId: number | null }> = [];
+    const pickTargetCalls: Array<{ objectEntityId: number; interactive: boolean; model: unknown }> = [];
+    const createdProxyIds: number[] = [];
+    const toggledProxyIds: Array<{ objectEntityId: number; enabled: boolean }> = [];
+
+    manager.worldObjectPickProxyRefs = new Map();
+    manager.chunkManager = {
+      setPlacedObjectVisualPickId: (node: unknown, objectEntityId: number | null) => {
+        visualPickCalls.push({ model: node, objectEntityId });
+        return true;
+      },
+    };
+    manager.setWorldObjectPickTarget = (objectEntityId: number, interactive: boolean, root: unknown) => {
+      pickTargetCalls.push({ objectEntityId, interactive, model: root });
+    };
+    manager.createWorldObjectPickProxy = (objectEntityId: number) => createdProxyIds.push(objectEntityId);
+    manager.setWorldObjectPickProxyEnabled = (objectEntityId: number, enabled: boolean) => {
+      toggledProxyIds.push({ objectEntityId, enabled });
+    };
+    manager.disposeWorldObjectPickProxy = () => {
+      throw new Error('should keep the box proxy for fishing spots');
+    };
+
+    manager.setGenericWorldObjectPickTarget(34567, { x: 10.5, z: 20.5 }, FISHING_SPOT_DEF, true, model);
+
+    expect(visualPickCalls).toEqual([{ model, objectEntityId: null }]);
+    expect(pickTargetCalls).toEqual([{ objectEntityId: 34567, interactive: false, model }]);
+    expect(createdProxyIds).toEqual([34567]);
+    expect(toggledProxyIds).toEqual([{ objectEntityId: 34567, enabled: true }]);
   });
 
   test('generic unbatched interactables use their real mesh geometry when available', () => {
@@ -230,5 +301,178 @@ describe('GameManager world object pick proxies', () => {
     const fallbackOptions = manager.getWorldObjectInteractionOptions(12345);
     expect(fallbackOptions[0].label).toBe('Walk here');
     expect(fallbackOptions[0].primary).not.toBe(false);
+  });
+
+  test('left-clicking the brother monk chest uses primary object interaction', () => {
+    const manager = makeManager();
+    const interactions: Array<{ objectEntityId: number; actionIndex: number }> = [];
+    const clickEffects: Array<{ x: number; y: number; color?: string }> = [];
+
+    manager.castingUntil = 0;
+    manager.skillCancelTime = -1000;
+    manager.lastClickX = 12;
+    manager.lastClickY = 34;
+    manager.worldObjectDefs = new Map([
+      [45678, { defId: BROTHER_MONK_CHEST_OBJECT_DEF_ID, x: 107.5, z: 94.5, y: 0, floor: 0, depleted: false }],
+    ]);
+    manager.objectDefsCache = new Map([[BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_DEF]]);
+    manager.isWorldObjectOnCurrentInteractionFloor = () => true;
+    manager.isWorldObjectInteractable = () => true;
+    manager.tryUseInventoryItemOn = () => false;
+    manager.spawnCursorClickEffect = (x: number, y: number, color?: string) => {
+      clickEffects.push({ x, y, color });
+    };
+    manager.interactMarker = null;
+    manager.destMarker = null;
+    manager.interactObject = (objectEntityId: number, actionIndex: number) => {
+      interactions.push({ objectEntityId, actionIndex });
+    };
+
+    manager.handleObjectClick(45678);
+
+    expect(clickEffects).toEqual([{ x: 12, y: 34, color: '#ff3030' }]);
+    expect(interactions).toEqual([{ objectEntityId: 45678, actionIndex: 0 }]);
+  });
+
+  test('skilling start completes a matching predicted object-arrival path', () => {
+    const manager = makeManager();
+    let rendered = 0;
+    let finishedArrival = 0;
+    let clearedPath = 0;
+    let stoppedWalking = 0;
+    let facedToward: { x: number; z: number } = { x: Number.NaN, z: Number.NaN };
+    let tileFrom: { x: number; z: number } = { x: Number.NaN, z: Number.NaN };
+    let playerY = 0;
+
+    manager.path = [{ x: 107.5, z: 95.5 }];
+    manager.pathIndex = 0;
+    manager.playerX = 106.5;
+    manager.playerZ = 95.5;
+    manager.worldObjectDefs = new Map([
+      [
+        45678,
+        {
+          defId: BROTHER_MONK_CHEST_OBJECT_DEF_ID,
+          x: 107.5,
+          z: 94.5,
+          y: 0,
+          floor: 0,
+          depleted: false,
+          interactionTiles: [{ x: 107, z: 95 }],
+        },
+      ],
+    ]);
+    manager.objectDefsCache = new Map([[BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_DEF]]);
+    manager.isOnObjectInteractionTile = () => true;
+    manager.renderLocalPlayerAtLogicalPosition = () => { rendered += 1; };
+    manager.inputManager = { setPlayerY: (y: number) => { playerY = y; } };
+    manager.getHeight = () => 0.25;
+    manager.finishPredictedPathArrival = () => { finishedArrival += 1; };
+    manager.clearPredictedPath = () => { clearedPath += 1; };
+    manager.setTileFrom = (x: number, z: number) => { tileFrom = { x, z }; };
+    manager.localPlayer = {
+      stopWalking: () => { stoppedWalking += 1; },
+      faceToward: (target: { x: number; z: number }) => { facedToward = { x: target.x, z: target.z }; },
+    };
+
+    manager.prepareSkillingAtObject(45678);
+
+    expect(manager.playerX).toBe(107.5);
+    expect(manager.playerZ).toBe(95.5);
+    expect(manager.pathIndex).toBe(1);
+    expect(rendered).toBe(1);
+    expect(finishedArrival).toBe(1);
+    expect(clearedPath).toBe(0);
+    expect(playerY).toBe(0.25);
+    expect(tileFrom).toEqual({ x: 107.5, z: 95.5 });
+    expect(stoppedWalking).toBe(1);
+    expect(facedToward).toEqual({ x: 107.5, z: 94.5 });
+  });
+
+  test('skilling start does not snap to an unrelated predicted path destination', () => {
+    const manager = makeManager();
+    let rendered = 0;
+    let finishedArrival = 0;
+    let clearedPath = 0;
+
+    manager.path = [{ x: 88.5, z: 88.5 }];
+    manager.pathIndex = 0;
+    manager.playerX = 106.5;
+    manager.playerZ = 95.5;
+    manager.worldObjectDefs = new Map([
+      [45678, { defId: BROTHER_MONK_CHEST_OBJECT_DEF_ID, x: 107.5, z: 94.5, y: 0, floor: 0, depleted: false }],
+    ]);
+    manager.objectDefsCache = new Map([[BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_DEF]]);
+    manager.isOnObjectInteractionTile = () => false;
+    manager.renderLocalPlayerAtLogicalPosition = () => { rendered += 1; };
+    manager.finishPredictedPathArrival = () => { finishedArrival += 1; };
+    manager.clearPredictedPath = () => { clearedPath += 1; };
+    manager.setTileFrom = () => {};
+    manager.localPlayer = {
+      stopWalking: () => {},
+      faceToward: () => {},
+    };
+
+    manager.prepareSkillingAtObject(45678);
+
+    expect(manager.playerX).toBe(106.5);
+    expect(manager.playerZ).toBe(95.5);
+    expect(rendered).toBe(0);
+    expect(finishedArrival).toBe(0);
+    expect(clearedPath).toBe(1);
+  });
+
+  test('object walking falls back when an authored chest use tile is blocked', () => {
+    const manager = makeManager();
+    let startedPath: Array<{ x: number; z: number }> = [];
+    const data = {
+      defId: BROTHER_MONK_CHEST_OBJECT_DEF_ID,
+      x: 107.5,
+      z: 94.5,
+      y: 0,
+      floor: 0,
+      depleted: false,
+      interactionTiles: [{ x: 107, z: 95 }],
+    };
+
+    manager.playerX = 106.5;
+    manager.playerZ = 92.5;
+    manager.path = [];
+    manager.pathIndex = 0;
+    manager.tileProgress = 0;
+    manager.getActiveUnitStep = () => null;
+    manager.isTileBlocked = (x: number, z: number) => x === 107 && z === 95;
+    manager.isWallBlockedForPath = () => false;
+    manager.findPathFromMovementAnchor = (goalX: number, goalZ: number) => ({
+      path: [{ x: goalX, z: goalZ }],
+      preserveCurrentStep: false,
+    });
+    manager.startPredictedPath = (path: Array<{ x: number; z: number }>) => {
+      startedPath = path;
+    };
+
+    expect(manager.walkToAdjacentTileOf(data, BROTHER_MONK_CHEST_DEF)).toBe(true);
+    expect(startedPath).toEqual([{ x: 107.5, z: 93.5 }]);
+  });
+
+  test('fallback object tile counts as usable when authored chest tile is unreachable', () => {
+    const manager = makeManager();
+    const data = {
+      defId: BROTHER_MONK_CHEST_OBJECT_DEF_ID,
+      x: 107.5,
+      z: 94.5,
+      y: 0,
+      floor: 0,
+      depleted: false,
+      interactionTiles: [{ x: 107, z: 95 }],
+    };
+
+    manager.playerX = 108.5;
+    manager.playerZ = 94.5;
+    manager.isTileBlocked = () => false;
+    manager.isWallBlockedForPath = () => false;
+    manager.findPathFromMovementAnchor = () => ({ path: [], preserveCurrentStep: false });
+
+    expect(manager.isOnObjectInteractionTile(108, 94, data, BROTHER_MONK_CHEST_DEF)).toBe(true);
   });
 });

@@ -9,7 +9,7 @@ export interface DialogueNodePayload {
   lines: string[];
   /** Just the labels — the server validates the chosen index against its
    *  own copy of the node, so the client doesn't need actions or next ids. */
-  options: { label: string; terminal?: boolean }[];
+  options: { label: string; terminal?: boolean; silent?: boolean }[];
   /** Transient server-owned line, e.g. banker acknowledgement before opening UI. */
   autoClose?: boolean;
 }
@@ -92,7 +92,7 @@ export class DialoguePanel {
     this.currentNode = node;
     this.lineIndex = 0;
     this.visible = true;
-    if (this.waitingForNpcReply) {
+    if (this.waitingForNpcReply && node.lines.length > 0) {
       this.waitingForNpcReply = false;
       this.setOptionsVisible(false);
       this.npcReplyDelayTimer = window.setTimeout(() => {
@@ -102,6 +102,7 @@ export class DialoguePanel {
         }
       }, 1000);
     } else {
+      this.waitingForNpcReply = false;
       this.render();
     }
   }
@@ -199,7 +200,7 @@ export class DialoguePanel {
     const npcEntityId = this.npcEntityId;
     const sessionId = this.sessionId;
 
-    if (!/^continue\.?$/i.test(option.label.trim())) this.hooks.showPlayerBubble(option.label);
+    if (!option.silent && !/^continue\.?$/i.test(option.label.trim())) this.hooks.showPlayerBubble(option.label);
     this.clearNpcBubble();
     this.setOptionsVisible(false);
     this.network.sendRaw(encodePacket(

@@ -13,6 +13,7 @@ import { MorphTargetManager } from '@babylonjs/core/Morph/morphTargetManager';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
+import type { Observer } from '@babylonjs/core/Misc/observable';
 import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '../../../shared/appearance';
 import type { MovementMode } from '../../../shared/movement';
 import { getObjectFootprintContinuousCenterCoord } from '../../../shared/objectFootprint';
@@ -188,8 +189,22 @@ const ANIM_SPEED_RATIO: Record<string, number> = {
   // Authored run.glb is 0.8s. Run movement covers two tiles in one 600ms
   // server tick, so play the authored cycle at 0.8 / 0.6 = 1.333x.
   run: 1.333,
+  fish_rod: 0.6,
 };
 const MOVEMENT_BLEND_SPEED = 0.12;
+
+type SkillLoopWindow = {
+  from: number;
+  to: number;
+  sourceFps?: number;
+};
+
+const BLENDER_ANIMATION_FPS = 30;
+
+const SKILL_LOOP_WINDOWS: Record<string, SkillLoopWindow> = {
+  fish_rod: { from: 30, to: 142, sourceFps: BLENDER_ANIMATION_FPS },
+};
+
 
 /**
  * Animation state priority (higher = takes precedence).
@@ -240,6 +255,7 @@ export interface GearDef {
   boneName: string;
   localPosition?: { x: number; y: number; z: number };
   localRotation?: { x: number; y: number; z: number };
+  meshOffset?: { x: number; y: number; z: number };
   scale?: number;
   /** If true, keep the model's origin as-is (centered grip). Default: shift bottom to Y=0 (swords). */
   centerOrigin?: boolean;
@@ -332,6 +348,9 @@ export class CharacterEntity {
   private currentAnimLoop: boolean = true;
   private queuedState: AnimState = AnimState.Idle;
   private queuedAnimName: string = '';
+  private skillLoopWindowObserver: Observer<Scene> | null = null;
+  private activeSkillLoopWindowName = '';
+
   // 7-slot RS2 movement set. Slot fields hold the animGroups key for each
   // movement direction; missing slots fall back to walkanim so a partial
   // set still plays (moonwalking sideways/back until the strafes exist).
@@ -396,6 +415,7 @@ export class CharacterEntity {
   private skinnedArmorMeshes: Map<string, AbstractMesh[]> = new Map();
   private skinnedArmorRoots: Map<string, TransformNode> = new Map();
   private skinnedArmorItemIds: Map<string, number> = new Map();
+  private skinnedArmorMeshBasePositions: Map<string, Map<TransformNode, Vector3>> = new Map();
   private highQualityGearEffects: Map<string, HighQualityGearEffect> = new Map();
 
   // Head meshes — collected during load for hide/show under full helmets
@@ -920,6 +940,7 @@ export class CharacterEntity {
     this.renderEnabled = enabled;
     if (this.root) this.root.setEnabled(enabled && this._ready && this.currentAnimName !== '');
     if (!enabled) {
+      this.clearSkillLoopWindow();
       for (const [, group] of this.animGroups) group.stop();
       if (this.labelEl) this.labelEl.style.opacity = '0';
       if (this.healthBarEl) {
@@ -937,6 +958,7 @@ export class CharacterEntity {
     const name = this.currentAnimName;
     const loop = this.currentAnimLoop;
     this.currentAnimName = '';
+    if (this.currentState === AnimState.Skill && this.playSkillLoopWindow(name)) return;
     this.playAnim(name, loop);
   }
 
@@ -1030,6 +1052,7 @@ export class CharacterEntity {
       case AnimState.Walk:
         return ['walk'];
       case AnimState.Skill:
+        if (variant?.startsWith('fish_')) return [variant, 'fish_rod', 'fish_net', 'idle'];
         return variant ? [variant, 'skill', 'chop', 'idle'] : ['skill', 'chop', 'mine', 'idle'];
       case AnimState.Attack:
         return variant ? [variant, 'attack_slash', 'attack'] : ['attack_punch', 'attack', 'attack_slash'];
@@ -1084,6 +1107,7 @@ export class CharacterEntity {
     const oldGroup = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
     if (oldGroup && oldGroup !== group) oldGroup.stop();
 
+    this.clearSkillLoopWindow();
     this.currentAnimName = walkName;
     this.currentAnimLoop = true;
     this.oneShotCallback = null;
@@ -1106,6 +1130,10 @@ export class CharacterEntity {
     for (const name of names) {
       const group = this.animGroups.get(name);
       if (group) {
+        if (state === AnimState.Skill && this.playSkillLoopWindow(name)) {
+          this.currentState = state;
+          return;
+        }
         this.playAnim(name, loop ?? (state <= AnimState.Skill), () => {
           if (state === AnimState.Attack) this.activeOneShotCanLayerOnWalk = false;
           // One-shot finished — return to idle or walk
@@ -1182,6 +1210,14 @@ export class CharacterEntity {
     this.activeWalkLowerGroup = null;
   }
 
+  private clearSkillLoopWindow(): void {
+    if (this.skillLoopWindowObserver) {
+      this.scene.onBeforeRenderObservable.remove(this.skillLoopWindowObserver);
+      this.skillLoopWindowObserver = null;
+    }
+    this.activeSkillLoopWindowName = '';
+  }
+
   /** Low-level: play a named animation group. */
   private playAnim(name: string, loop: boolean, onEnd?: () => void): void {
     if (name === this.currentAnimName && loop) {
@@ -1199,6 +1235,7 @@ export class CharacterEntity {
       return;
     }
 
+    this.clearSkillLoopWindow();
     if (oldGroup) oldGroup.stop();
     this.currentAnimName = name;
     this.currentAnimLoop = loop;
@@ -1217,6 +1254,96 @@ export class CharacterEntity {
         }
       });
     }
+  }
+
+  private playSkillLoopWindow(name: string): boolean {
+    const window = SKILL_LOOP_WINDOWS[name];
+    if (!window) return false;
+
+    const group = this.animGroups.get(name);
+    if (!group) return false;
+    if (name === this.currentAnimName && this.currentState === AnimState.Skill) {
+      if (!this.renderEnabled) return true;
+      if (group.isPlaying && this.activeSkillLoopWindowName === name) return true;
+    }
+
+    const oldGroup = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
+    if (oldGroup && oldGroup !== group) oldGroup.stop();
+    this.clearSkillLoopWindow();
+    this.currentAnimName = name;
+    this.currentAnimLoop = true;
+    this.oneShotCallback = null;
+    if (!this.renderEnabled) return true;
+
+    const runtimeWindow = this.resolveSkillLoopRuntimeWindow(group, window);
+    const from = Math.max(group.from, runtimeWindow.from);
+    const to = Math.min(group.to, runtimeWindow.to);
+    const loopFrom = to > from ? from : group.from;
+    const loopTo = to > from ? to : group.to;
+    const speed = this.getAnimationSpeed(name);
+    group.start(false, speed, group.from, loopTo, false);
+    this.installSkillLoopWindow(name, group, loopFrom, loopTo, speed);
+    return true;
+  }
+
+  private resolveSkillLoopRuntimeWindow(
+    group: AnimationGroup,
+    window: SkillLoopWindow,
+  ): { from: number; to: number } {
+    if (!window.sourceFps) return window;
+
+    const runtimeFps = this.animationGroupFramePerSecond(group, window.sourceFps);
+    const scale = runtimeFps / window.sourceFps;
+    return {
+      from: window.from * scale,
+      to: window.to * scale,
+    };
+  }
+
+  private animationGroupFramePerSecond(group: AnimationGroup, fallback: number): number {
+    for (const ta of group.targetedAnimations) {
+      const fps = ta.animation.framePerSecond;
+      if (Number.isFinite(fps) && fps > 0) return fps;
+    }
+    return fallback;
+  }
+
+  private installSkillLoopWindow(
+    name: string,
+    group: AnimationGroup,
+    loopFrom: number,
+    loopTo: number,
+    speed: number,
+  ): void {
+    this.clearSkillLoopWindow();
+    this.activeSkillLoopWindowName = name;
+    let loopStarted = false;
+    const startLoop = () => {
+      loopStarted = true;
+      group.start(true, speed, loopFrom, loopTo, false);
+      group.goToFrame(loopFrom);
+    };
+    this.skillLoopWindowObserver = this.scene.onBeforeRenderObservable.add(() => {
+      if (
+        this.disposed
+        || this.currentState !== AnimState.Skill
+        || this.currentAnimName !== name
+        || this.activeSkillLoopWindowName !== name
+      ) {
+        this.clearSkillLoopWindow();
+        return;
+      }
+
+      const frame = group.getCurrentFrame();
+      if (!loopStarted) {
+        if (!group.isPlaying || frame >= loopTo - 0.01) startLoop();
+        return;
+      }
+
+      if (!group.isPlaying || frame < loopFrom - 0.5 || frame > loopTo + 0.5) {
+        startLoop();
+      }
+    });
   }
 
   private getAnimationSpeed(name: string): number {
@@ -1533,6 +1660,7 @@ export class CharacterEntity {
 
   /** Stop skill animation, return to idle. */
   stopSkillAnimation(): void {
+    this.clearSkillLoopWindow();
     if (this.currentState === AnimState.Skill) {
       this.playAnimByState(AnimState.Idle);
     }
@@ -1941,6 +2069,7 @@ export class CharacterEntity {
     this.skinnedArmorMeshes.set(slot, kept);
     this.skinnedArmorRoots.set(slot, root);
     this.skinnedArmorItemIds.set(slot, itemId);
+    this.captureSkinnedArmorMeshBasePositions(slot, root);
     if (slot === 'head') this.setHeadVisible(false);
     if (slot === 'body') this.setBodyVisible(false, bodyHideStyle);
     if (slot === 'legs') this.setLegsVisible(false);
@@ -1955,6 +2084,7 @@ export class CharacterEntity {
       for (const mesh of meshes) mesh.dispose();
       this.skinnedArmorMeshes.delete(slot);
       this.skinnedArmorItemIds.delete(slot);
+      this.skinnedArmorMeshBasePositions.delete(slot);
     }
     const root = this.skinnedArmorRoots.get(slot);
     if (root) {
@@ -2132,6 +2262,7 @@ export class CharacterEntity {
       this.skinnedArmorMeshes.set(slot, kept);
       this.skinnedArmorRoots.set(slot, root);
       this.skinnedArmorItemIds.set(slot, itemId);
+      this.captureSkinnedArmorMeshBasePositions(slot, root);
       if (slot === 'head') this.setHeadVisible(false);
       if (slot === 'body') this.setBodyVisible(false, bodyHideStyle);
       if (slot === 'legs') this.setLegsVisible(false);
@@ -2144,7 +2275,38 @@ export class CharacterEntity {
     }
   }
 
-  applySkinnedArmorTransform(slot: string, override: { localPosition?: { x: number; y: number; z: number }; localRotation?: { x: number; y: number; z: number }; scale?: number }): void {
+  private captureSkinnedArmorMeshBasePositions(slot: string, root: TransformNode): void {
+    const positions = new Map<TransformNode, Vector3>();
+    for (const child of root.getChildren()) {
+      if (child instanceof TransformNode) {
+        positions.set(child, child.position.clone());
+      }
+    }
+    this.skinnedArmorMeshBasePositions.set(slot, positions);
+  }
+
+  private applySkinnedArmorMeshOffset(slot: string, meshOffset?: { x: number; y: number; z: number }): void {
+    const root = this.skinnedArmorRoots.get(slot);
+    if (!root) return;
+    let basePositions = this.skinnedArmorMeshBasePositions.get(slot);
+    if (!basePositions) {
+      this.captureSkinnedArmorMeshBasePositions(slot, root);
+      basePositions = this.skinnedArmorMeshBasePositions.get(slot);
+    }
+    if (!basePositions) return;
+    const offset = meshOffset ? new Vector3(meshOffset.x, meshOffset.y, meshOffset.z) : Vector3.Zero();
+    for (const [child, basePosition] of basePositions) {
+      if (child.isDisposed()) continue;
+      child.position.copyFrom(basePosition).addInPlace(offset);
+    }
+  }
+
+  applySkinnedArmorTransform(slot: string, override: {
+    localPosition?: { x: number; y: number; z: number };
+    localRotation?: { x: number; y: number; z: number };
+    meshOffset?: { x: number; y: number; z: number };
+    scale?: number;
+  }): void {
     const root = this.skinnedArmorRoots.get(slot);
     if (!root) return;
     if (override.localPosition) {
@@ -2156,6 +2318,7 @@ export class CharacterEntity {
     if (override.scale != null) {
       root.scaling.set(override.scale, override.scale, override.scale);
     }
+    this.applySkinnedArmorMeshOffset(slot, override.meshOffset);
   }
 
   /** Get the transform node for gear in a slot (for debug panel). */
@@ -2884,6 +3047,7 @@ export class CharacterEntity {
     if (this.disposed) return;
     this.disposed = true;
     this._resolveReady();
+    this.clearSkillLoopWindow();
     this.hideChatBubble();
     this.hideHealthBar();
     this.setLabel('');
@@ -3019,7 +3183,13 @@ export async function loadGearTemplate(
         if (bb.minimumWorld.y < minY) minY = bb.minimumWorld.y;
       }
       for (const child of root.getChildren()) {
-        (child as TransformNode).position.y -= minY;
+        (child as TransformNode).position.y -= Number.isFinite(minY) ? minY : 0;
+      }
+    }
+    if (def.meshOffset) {
+      const offset = new Vector3(def.meshOffset.x, def.meshOffset.y, def.meshOffset.z);
+      for (const child of root.getChildren()) {
+        (child as TransformNode).position.addInPlace(offset);
       }
     }
 

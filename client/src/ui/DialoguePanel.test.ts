@@ -68,6 +68,57 @@ describe('DialoguePanel', () => {
     });
   });
 
+  test('silent options do not show a player dialogue bubble', () => {
+    const sent: Uint8Array[] = [];
+    const playerBubbles: string[] = [];
+    const panel = Object.create(DialoguePanel.prototype) as any;
+    panel.visible = true;
+    panel.currentNode = {
+      sessionId: 90,
+      speaker: 'Guide',
+      lines: ['Pick one.'],
+      options: [{ label: 'Back.', silent: true }],
+    };
+    panel.npcEntityId = 321;
+    panel.sessionId = 90;
+    panel.waitingForNpcReply = false;
+    panel.network = { sendRaw: (packet: Uint8Array) => sent.push(packet) };
+    panel.hooks = {
+      showPlayerBubble: (message: string) => playerBubbles.push(message),
+      showNpcBubble: () => {},
+      hideNpcBubble: () => {},
+    };
+    panel.clearNpcBubble = () => {};
+    panel.setOptionsVisible = () => {};
+
+    panel.chooseOption(0);
+
+    expect(playerBubbles).toEqual([]);
+    expect(panel.waitingForNpcReply).toBe(true);
+    expect(sent).toHaveLength(1);
+  });
+
+  test('choices-only replies render immediately without waiting for NPC text', () => {
+    const panel = Object.create(DialoguePanel.prototype) as any;
+    let rendered = false;
+    let optionsHidden = false;
+    panel.npcReplyDelayTimer = null;
+    panel.waitingForNpcReply = true;
+    panel.render = () => { rendered = true; };
+    panel.setOptionsVisible = (visible: boolean) => { if (!visible) optionsHidden = true; };
+
+    panel.show(777, {
+      sessionId: 91,
+      speaker: 'Guide',
+      lines: [],
+      options: [{ label: 'Ask something else.' }],
+    });
+
+    expect(panel.waitingForNpcReply).toBe(false);
+    expect(rendered).toBe(true);
+    expect(optionsHidden).toBe(false);
+  });
+
   test('fallback continue on optionless nodes closes the server dialogue session', () => {
     const sent: Uint8Array[] = [];
     const panel = Object.create(DialoguePanel.prototype) as any;

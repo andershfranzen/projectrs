@@ -12,7 +12,7 @@ export interface ItemDefValidationOptions {
 
 const EQUIP_SKILLS = new Set<string>(ALL_SKILLS);
 const WEAPON_STYLES = new Set(['stab', 'slash', 'crush', 'bow', 'crossbow']);
-const TOOL_TYPES = new Set(['axe', 'pickaxe', 'hammer']);
+const TOOL_TYPES = new Set(['axe', 'pickaxe', 'hammer', 'fishing_net', 'fishing_rod', 'harpoon']);
 const HEAD_RENDER_MODE_SET: ReadonlySet<string> = new Set(HEAD_RENDER_MODES);
 const FINITE_NUMBER_FIELDS = [
   'value', 'attackSpeed', 'attackRange', 'stabAttack', 'slashAttack', 'crushAttack',
@@ -34,6 +34,7 @@ export function validateItemDefs(items: unknown, options: ItemDefValidationOptio
     seen.add(item.id as number);
     if (typeof item.name !== 'string' || item.name.trim().length === 0) return { ok: false, error: `Item ${item.id} is missing a name` };
     if (typeof item.description !== 'string') return { ok: false, error: `Item ${item.id} is missing a description` };
+    if (item.questItem !== undefined && typeof item.questItem !== 'boolean') return { ok: false, error: `Item ${item.id} has invalid questItem` };
     if (typeof item.stackable !== 'boolean') return { ok: false, error: `Item ${item.id} has invalid stackable` };
     if (typeof item.equippable !== 'boolean') return { ok: false, error: `Item ${item.id} has invalid equippable` };
     if (item.equipSlot !== undefined && !isEquipSlot(item.equipSlot)) return { ok: false, error: `Item ${item.id} has invalid equipSlot` };

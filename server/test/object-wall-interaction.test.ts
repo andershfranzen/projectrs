@@ -574,6 +574,26 @@ describe('wall-gated station interaction', () => {
     expect(world.canUseObjectFromTile(player, obj, 11, 10, map)).toBe(false);
   });
 
+  test('blocked authored interaction tiles fall back to normal object adjacency', () => {
+    const world = Object.create(World.prototype) as any;
+    world.blockedObjectTiles = new Set();
+    const player = makePlayer();
+    player.currentMapLevel = 'kcmap';
+    player.currentFloor = 0;
+    const obj = makeObject(64, 'Brother Monk Chest', 'chest');
+    obj.interactionTiles = [{ x: 0, z: -1 }];
+    const map = {
+      width: 64,
+      height: 64,
+      isBlocked: (x: number, z: number) => x === 10 && z === 9,
+      isTileBlockedOnFloor: (x: number, z: number) => x === 10 && z === 9,
+      isWallBlocked: () => false,
+      isWallBlockedOnFloor: () => false,
+    };
+
+    expect(world.canUseObjectFromTile(player, obj, 11, 10, map)).toBe(true);
+  });
+
   test('authored crafting station tiles can use their station across a blocked footprint edge', () => {
     const world = Object.create(World.prototype) as any;
     const player = makePlayer();
@@ -698,5 +718,52 @@ describe('wall-gated station interaction', () => {
 
     expect(Math.floor(last.x)).toBe(10);
     expect(Math.floor(last.z)).toBe(9);
+  });
+
+  test('object interaction pathing falls back when authored tile is blocked', () => {
+    const world = Object.create(World.prototype) as any;
+    world.blockedObjectTiles = new Set();
+    const player = new Player('blocked_authored_tile_test', 10.5, 7.5, fakeWs, 1);
+    player.currentMapLevel = 'kcmap';
+    player.currentFloor = 0;
+    const chestDef: WorldObjectDef = {
+      id: 64,
+      name: 'Brother Monk Chest',
+      category: 'chest',
+      actions: ['Unlock', 'Examine'],
+      blocking: true,
+      width: 1,
+      height: 1,
+      color: [140, 90, 50],
+    };
+    const chest = {
+      id: 10064,
+      defId: 64,
+      mapLevel: 'kcmap',
+      floor: 0,
+      x: 10.5,
+      z: 10.5,
+      rotationY: 0,
+      interactionSides: undefined,
+      interactionTiles: [{ x: 0, z: -1 }],
+      def: chestDef,
+    };
+    const map = {
+      width: 64,
+      height: 64,
+      isBlocked: (x: number, z: number) => x === 10 && z === 9,
+      isTileBlockedOnFloor: (x: number, z: number) => x === 10 && z === 9,
+      isWallBlocked: () => false,
+      isWallBlockedOnFloor: () => false,
+    };
+    world.getPlayerMap = () => map;
+
+    const path = world.findPathToObjectInteraction(player, chest);
+    const last = path[path.length - 1]!;
+
+    expect(path.length).toBeGreaterThan(0);
+    expect(Math.floor(last.x)).not.toBe(10);
+    expect(Math.floor(last.z)).not.toBe(9);
+    expect(world.canUseObjectFromTile(player, chest, Math.floor(last.x), Math.floor(last.z), map)).toBe(true);
   });
 });

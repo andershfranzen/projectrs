@@ -1736,7 +1736,7 @@ function tuneModelLighting(model, assetOrPath = null) {
   }
 
   // --- Item Spawn system ---
-  let itemSpawns = []         // { id, itemId, x, z, quantity }
+  let itemSpawns = []         // { id, itemId, x, z, quantity, y? }
   let _itemSpawnNextId = 1
   let itemDefs = []            // loaded from server
   let questObjectDefs = []      // loaded for quest authoring item/object pickers
@@ -1783,8 +1783,67 @@ function tuneModelLighting(model, assetOrPath = null) {
   }
   loadEditorObjectDefs()
 
-  function addItemSpawn(itemId, x, z, quantity = 1, id) {
+  function serializeOptionalNumber(value, decimals = 3) {
+    if (!Number.isFinite(value)) return undefined
+    const factor = 10 ** decimals
+    return Math.round(value * factor) / factor
+  }
+
+  function itemSpawnTerrainY(x, z) {
+    return map.getAverageTileHeight(Math.floor(x), Math.floor(z))
+  }
+
+  function itemSpawnWorldY(spawn) {
+    return Number.isFinite(spawn?.y) ? spawn.y : itemSpawnTerrainY(spawn.x, spawn.z)
+  }
+
+  function itemSpawnHeightOffset(spawn) {
+    return itemSpawnWorldY(spawn) - itemSpawnTerrainY(spawn.x, spawn.z)
+  }
+
+  function currentItemSpawnHeightOffset() {
+    const raw = Number(sidebar.querySelector('#itemSpawnHeightOffset')?.value)
+    return Number.isFinite(raw) ? raw : 0
+  }
+
+  function pickPlacedObjectSurfacePoint(event) {
+    updateMouse(event)
+    const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera)
+    const pick = scene.pickWithRay(ray, (mesh) => {
+      return mesh.isDescendantOf(placedGroup) && mesh.isVisible && mesh.isEnabled()
+    })
+    if (!pick?.hit || !pick.pickedPoint) return null
+    const point = pick.pickedPoint.clone()
+    const top = findObjectTopAt(point.x, point.z)
+    if (top != null && top > point.y) point.y = top
+    return point
+  }
+
+  function itemSpawnPlacementPoint(tile, event) {
+    const offset = currentItemSpawnHeightOffset()
+    if (shouldUseStackedPlacementSurface(event)) {
+      const surface = pickPlacedObjectSurfacePoint(event) ?? pickSurfacePoint(event)
+      if (surface) {
+        const y = surface.y + offset
+        return { x: surface.x, z: surface.z, y, authoredY: y }
+      }
+    }
+
+    const x = tile.x + 0.5
+    const z = tile.z + 0.5
+    const y = itemSpawnTerrainY(x, z) + offset
+    return {
+      x,
+      z,
+      y,
+      authoredY: Math.abs(offset) > 0.001 ? y : undefined
+    }
+  }
+
+  function addItemSpawn(itemId, x, z, quantity = 1, id, y, floor) {
     const spawn = { id: id || _itemSpawnNextId++, itemId, x, z, quantity }
+    if (Number.isFinite(y)) spawn.y = y
+    if (Number.isFinite(floor)) spawn.floor = Math.max(0, Math.floor(floor))
     if (id && id >= _itemSpawnNextId) _itemSpawnNextId = id + 1
     itemSpawns.push(spawn)
     return spawn
@@ -1796,14 +1855,25 @@ function tuneModelLighting(model, assetOrPath = null) {
   }
 
   function serializeItemSpawns() {
-    return itemSpawns.map(s => ({ id: s.id, itemId: s.itemId, x: s.x, z: s.z, quantity: s.quantity }))
+    return itemSpawns.map(s => {
+      const out = {
+        id: s.id,
+        itemId: s.itemId,
+        x: serializeOptionalNumber(s.x, 3),
+        z: serializeOptionalNumber(s.z, 3),
+        quantity: s.quantity
+      }
+      if (Number.isFinite(s.y)) out.y = serializeOptionalNumber(s.y, 3)
+      if (Number.isFinite(s.floor)) out.floor = Math.max(0, Math.floor(s.floor))
+      return out
+    })
   }
 
   function loadItemSpawns(data) {
     itemSpawns = []
     _itemSpawnNextId = 1
     for (const s of data || []) {
-      addItemSpawn(s.itemId, s.x, s.z, s.quantity ?? 1, s.id)
+      addItemSpawn(s.itemId, s.x, s.z, s.quantity ?? 1, s.id, s.y, s.floor)
     }
     rebuildItemSpawnMeshes()
     refreshItemSpawnList()
@@ -1820,7 +1890,7 @@ function tuneModelLighting(model, assetOrPath = null) {
       mat.emissiveColor = new Color3(0.4, 0.35, 0.1)
       mat.specularColor = new Color3(0, 0, 0)
       marker.material = mat
-      const y = map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z))
+      const y = itemSpawnWorldY(spawn)
       marker.position = new Vector3(spawn.x, y + 0.15, spawn.z)
       marker.metadata = { itemSpawn: spawn }
       marker.parent = itemSpawnGroup
@@ -1837,11 +1907,15 @@ function tuneModelLighting(model, assetOrPath = null) {
     for (const spawn of itemSpawns) {
       const def = itemDefs.find(d => d.id === spawn.itemId)
       const name = def?.name || `Item ${spawn.itemId}`
+      const offset = itemSpawnHeightOffset(spawn)
+      const yText = Number.isFinite(spawn.y) && Math.abs(offset) > 0.001
+        ? ` · y ${spawn.y.toFixed(2)} (${offset >= 0 ? '+' : ''}${offset.toFixed(2)})`
+        : ''
       const row = document.createElement('div')
       row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:3px 5px;font-size:11px;cursor:pointer;border-radius:3px;margin-bottom:2px;background:#222;'
-      row.innerHTML = `<span>${name} <span style="opacity:0.5;">(${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)})</span></span>`
+      row.innerHTML = `<span>${name} <span style="opacity:0.5;">(${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}${yText})</span></span>`
       row.addEventListener('click', () => {
-        camera.target = new Vector3(spawn.x, map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z)), spawn.z)
+        camera.target = new Vector3(spawn.x, itemSpawnWorldY(spawn), spawn.z)
       })
       listEl.appendChild(row)
     }
@@ -3516,7 +3590,13 @@ let selectedWaterFlowChunk = null
     <div class="ctx-panel" id="ctx-item-spawn" style="display:none">
       <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px;">Item Type</div>
       <select id="itemTypeSelect" style="width:100%;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;"></select>
-      <div class="hint" style="margin-top:6px;">Click to place · Shift+Click to remove</div>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:end;margin-top:8px;">
+        <label style="font-size:11px;color:rgba(255,255,255,0.45);">Height Offset
+          <input id="itemSpawnHeightOffset" type="number" step="0.05" value="0" style="width:100%;margin-top:3px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;box-sizing:border-box;" />
+        </label>
+        <button id="itemSpawnHeightReset" style="height:29px;font-size:11px;padding:4px 7px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;cursor:pointer;">Ground</button>
+      </div>
+      <div class="hint" style="margin-top:6px;">Click to place · Ctrl/Cmd+Click uses the top surface · Shift+Click to remove</div>
       <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:10px;border-top:1px solid #444;padding-top:8px;">Item Spawns <span id="itemSpawnCount">0</span></div>
       <div id="itemSpawnList" style="max-height:200px;overflow-y:auto;margin-top:4px;"></div>
     </div>
@@ -3690,6 +3770,10 @@ let selectedWaterFlowChunk = null
   toolButtons[ToolMode.MINIMAP_MARKER]?.addEventListener('click', () => setTool(ToolMode.MINIMAP_MARKER))
   toolButtons[ToolMode.BIOME]?.addEventListener('click', () => setTool(ToolMode.BIOME))
 
+  sidebar.querySelector('#itemSpawnHeightReset')?.addEventListener('click', () => {
+    const input = sidebar.querySelector('#itemSpawnHeightOffset')
+    if (input) input.value = '0'
+  })
   sidebar.querySelector('#minimapMarkerDeleteBtn')?.addEventListener('click', () => deleteMinimapMarker())
   sidebar.querySelector('#minimapMarkerApplyIconBtn')?.addEventListener('click', () => applyActiveIconToSelectedMinimapMarker())
   sidebar.querySelector('#minimapMarkerLabel')?.addEventListener('change', () => updateSelectedMinimapMarkerFromControls())
@@ -6251,7 +6335,7 @@ let selectedWaterFlowChunk = null
     const hint = document.createElement('div')
     hint.className = 'hint'
     hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.4);margin-bottom:4px;'
-    hint.innerHTML = `JSON view. Tree must have a <code>root</code> node id and a <code>nodes</code> map.<br>Actions: use <code>action</code> for one effect or <code>actions</code> for a list. Supported: <code>openShop</code>, <code>openBank</code>, <code>openAppearance</code>, <code>giveItem</code>, <code>takeItem</code>, <code>bankInventoryItemsForCoins</code>, <code>closeDialogue</code>, <code>setQuestStage</code>, <code>completeQuest</code>.<br>Option gating: legacy <code>requires</code>, or generic <code>condition</code>/<code>conditions</code>. Conditions: <code>questStage</code>, <code>questStarted</code>, <code>questNotStarted</code>, <code>questCompleted</code>, <code>hasItem</code>, <code>hasEquippedItem</code>, <code>skillLevel</code>, <code>combatLevel</code>, <code>all</code>, <code>any</code>, <code>not</code>.`
+    hint.innerHTML = `JSON view. Tree must have a <code>root</code> node id and a <code>nodes</code> map.<br>Actions: use <code>action</code> for one effect or <code>actions</code> for a list. Supported: <code>openShop</code>, <code>openBank</code>, <code>openAppearance</code>, <code>giveItem</code>, <code>takeItem</code>, <code>bankInventoryItemsForCoins</code>, <code>buyQuestItem</code>, <code>closeDialogue</code>, <code>setQuestStage</code>, <code>completeQuest</code>, <code>startNpcCombat</code>.<br>Option gating: legacy <code>requires</code>, or generic <code>condition</code>/<code>conditions</code>. Conditions: <code>questStage</code>, <code>questStarted</code>, <code>questNotStarted</code>, <code>questCompleted</code>, <code>hasItem</code>, <code>hasEquippedItem</code>, <code>skillLevel</code>, <code>combatLevel</code>, <code>all</code>, <code>any</code>, <code>not</code>.`
     root.appendChild(hint)
 
     const ta = document.createElement('textarea')
@@ -13127,7 +13211,7 @@ function applyToolAtTile(tile, eventLike = null) {
       spawns: {
         npcs: serializeNpcSpawns(),
         objects: [],
-        items: itemSpawns.map(s => ({ itemId: s.itemId, x: s.x, z: s.z, quantity: s.quantity }))
+        items: serializeItemSpawns().map(({ id: _id, ...spawn }) => spawn)
       },
       mapData: {
         map: saveData.map,
@@ -14144,6 +14228,8 @@ function applyToolAtTile(tile, eventLike = null) {
               ['giveItem', 'Give item'],
               ['takeItem', 'Take item'],
               ['bankInventoryItemsForCoins', 'Bank items for coins'],
+              ['buyQuestItem', 'Buy quest item'],
+              ['startNpcCombat', 'Start NPC combat'],
               ['openShop', 'Open shop'],
               ['openBank', 'Open bank'],
               ['openAppearance', 'Open appearance'],
@@ -14189,6 +14275,12 @@ function applyToolAtTile(tile, eventLike = null) {
             else if (typeSel.value === 'giveItem' || typeSel.value === 'takeItem') addItemQty()
             else if (typeSel.value === 'bankInventoryItemsForCoins') {
               form.appendChild(field('Fallback coin cost', numberInput(values.coinCost ?? 10, 0, v => { values.coinCost = v; update() }, { width: '100%' })))
+            } else if (typeSel.value === 'buyQuestItem') {
+              addItemQty()
+              form.appendChild(field('Coin cost', numberInput(values.coinCost ?? 100, 1, v => { values.coinCost = v; update() }, { width: '100%' })))
+              addQuest()
+              form.appendChild(field('Min stage', numberInput(values.minStage ?? 0, 0, v => { values.minStage = v; update() }, { width: '100%' })))
+              form.appendChild(field('Max stage', numberInput(values.maxStage ?? 0, 0, v => { values.maxStage = v; update() }, { width: '100%' })))
             }
           } else {
             if (['questStage', 'questStarted', 'questNotStarted', 'questCompleted'].includes(typeSel.value)) addQuest()
@@ -14224,6 +14316,18 @@ function applyToolAtTile(tile, eventLike = null) {
             coinCost: values.coinCost ?? 10,
             coinCostByItemId: { 25: 1, 34: 1, 26: 2, 35: 3, 44: 4, 142: 4, 45: 6, 407: 8, 408: 8 },
             itemLabel: 'ore',
+          }
+        }
+        if (type === 'buyQuestItem') {
+          return {
+            type,
+            itemId: values.itemId || 0,
+            qty: values.qty || 1,
+            coinCost: values.coinCost ?? 100,
+            questId: values.questId || selectedQuestId || '',
+            minStage: values.minStage ?? 0,
+            maxStage: values.maxStage ?? 0,
+            successMessage: 'You buy {item} for {cost} coins.',
           }
         }
         return { type }
@@ -14370,6 +14474,14 @@ function applyToolAtTile(tile, eventLike = null) {
               })
             }
           }
+        } else if (action.type === 'buyQuestItem') {
+          validateItemRef(action.itemId, questId, `${path}.itemId`, issue)
+          if (action.qty !== undefined && (!Number.isInteger(action.qty) || action.qty <= 0)) issue('error', questId, `${path}.qty`, 'Quantity must be a positive whole number.')
+          if (!Number.isInteger(action.coinCost) || action.coinCost <= 0) issue('error', questId, `${path}.coinCost`, 'Coin cost must be a positive whole number.')
+          if (action.questId !== undefined && action.questId !== '') validateQuestRef(action.questId, questId, `${path}.questId`, issue)
+          if (action.minStage !== undefined && (!Number.isInteger(action.minStage) || action.minStage < 0)) issue('error', questId, `${path}.minStage`, 'Minimum stage must be a non-negative whole number.')
+          if (action.maxStage !== undefined && (!Number.isInteger(action.maxStage) || action.maxStage < 0)) issue('error', questId, `${path}.maxStage`, 'Maximum stage must be a non-negative whole number.')
+          if (Number.isInteger(action.minStage) && Number.isInteger(action.maxStage) && action.minStage > action.maxStage) issue('error', questId, `${path}.maxStage`, 'Maximum stage must be at least the minimum stage.')
         } else if (!['openShop', 'openBank', 'openAppearance', 'closeDialogue', 'grantXp', 'setQuestVar', 'startNpcCombat'].includes(action.type)) issue('error', questId, path, `Unknown action type "${action.type}".`)
       }
 
@@ -14864,7 +14976,15 @@ function applyToolAtTile(tile, eventLike = null) {
         // here was projecting onto a 6-field shape and silently wiping
         // per-spawn overrides on every server-load → save round trip.
         npcSpawns: spawns.npcs ?? [],
-        itemSpawns: (spawns.items || []).map((s, i) => ({ id: i + 1, itemId: s.itemId, x: s.x, z: s.z, quantity: s.quantity ?? 1 })),
+        itemSpawns: (spawns.items || []).map((s, i) => ({
+          id: s.id ?? i + 1,
+          itemId: s.itemId,
+          x: s.x,
+          z: s.z,
+          quantity: s.quantity ?? 1,
+          y: s.y,
+          floor: s.floor
+        })),
         collisionData: walls,
         biomesData: biomes
       }
@@ -16246,8 +16366,9 @@ function applyToolAtTile(tile, eventLike = null) {
       }
       const itemId = parseInt(sidebar.querySelector('#itemTypeSelect')?.value)
       if (!itemId) return
+      const placement = itemSpawnPlacementPoint(tile, event)
       pushUndoState('spawns')
-      addItemSpawn(itemId, tile.x + 0.5, tile.z + 0.5)
+      addItemSpawn(itemId, placement.x, placement.z, 1, undefined, placement.authoredY)
       rebuildItemSpawnMeshes()
       refreshItemSpawnList()
       return

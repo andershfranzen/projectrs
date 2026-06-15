@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  NPC_INTERACTION_DIRECT_ATTACK,
   NPC_INTERACTION_HAS_DIALOGUE,
   NPC_INTERACTION_HAS_SHOP,
   NPC_INTERACTION_STARTS_COMBAT,
@@ -51,14 +52,28 @@ describe('GameManager NPC interaction classification', () => {
     expect(manager.isNonCombatNpc(1, npcDef.id)).toBe(true);
   });
 
-  test('combat-start dialogue NPCs are not cleared as non-combat targets', () => {
+  test('combat-start dialogue NPCs without direct attack stay talk-first protected', () => {
     const manager = makeManager(NPC_INTERACTION_HAS_DIALOGUE | NPC_INTERACTION_STARTS_COMBAT);
 
-    expect(manager.isNonCombatNpc(1, npcDef.id)).toBe(false);
+    expect(manager.isNonCombatNpc(1, npcDef.id)).toBe(true);
     expect(manager.getNpcInteractionOptions(1).map((option: any) => option.label)).toEqual([
       'Talk-to Mortrek',
       'Examine Mortrek',
     ]);
+  });
+
+  test('direct-attack dialogue NPCs expose Attack as a secondary option', () => {
+    const manager = makeManager(NPC_INTERACTION_HAS_DIALOGUE | NPC_INTERACTION_STARTS_COMBAT | NPC_INTERACTION_DIRECT_ATTACK);
+
+    expect(manager.isNonCombatNpc(1, npcDef.id)).toBe(false);
+    const options = manager.getNpcInteractionOptions(1);
+    expect(options.map((option: any) => option.label)).toEqual([
+      'Talk-to Mortrek',
+      'Attack Mortrek (level-7)',
+      'Examine Mortrek',
+    ]);
+    expect(options[0].primary).toBeUndefined();
+    expect(options[1].primary).toBe(false);
   });
 
   test('active dialogue-started combat makes attack the primary option', () => {
@@ -112,11 +127,10 @@ describe('GameManager NPC interaction classification', () => {
 
   test('hover action label uses the same primary option as left-click', () => {
     const manager = makeManager(NPC_INTERACTION_HAS_DIALOGUE | NPC_INTERACTION_STARTS_COMBAT);
-    manager.entities.npcCombatTargets.set(1, manager.localPlayerId);
 
     const option = manager.defaultHoverActionOption(manager.getNpcInteractionOptions(1));
 
-    expect(option?.label).toBe('Attack Mortrek (level-7)');
+    expect(option?.label).toBe('Talk-to Mortrek');
   });
 
   test('hover action readout includes total option count', () => {

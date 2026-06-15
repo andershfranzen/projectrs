@@ -24,6 +24,7 @@ export interface GearOverridePose {
   boneName?: string;
   localPosition?: { x: number; y: number; z: number };
   localRotation?: { x: number; y: number; z: number };
+  meshOffset?: { x: number; y: number; z: number };
   scale?: number;
   centerOrigin?: boolean;
   file?: string;
@@ -41,6 +42,7 @@ export function gearOverridePose(override?: GearOverridePose | null): GearOverri
   if (typeof override.boneName === 'string') pose.boneName = override.boneName;
   if (override.localPosition) pose.localPosition = { ...override.localPosition };
   if (override.localRotation) pose.localRotation = { ...override.localRotation };
+  if (override.meshOffset) pose.meshOffset = { ...override.meshOffset };
   if (typeof override.scale === 'number') pose.scale = override.scale;
   if (typeof override.centerOrigin === 'boolean') pose.centerOrigin = override.centerOrigin;
   if (typeof override.file === 'string') pose.file = override.file;
@@ -73,11 +75,13 @@ function sameVec3(
 export function gearOverridePoseEquals(a?: GearOverridePose | null, b?: GearOverridePose | null): boolean {
   const left = gearOverridePose(a);
   const right = gearOverridePose(b);
+  const zero = { x: 0, y: 0, z: 0 };
   return left.boneName === right.boneName
     && sameVec3(left.localPosition, right.localPosition)
     && sameVec3(left.localRotation, right.localRotation)
+    && sameVec3(left.meshOffset ?? zero, right.meshOffset ?? zero)
     && left.scale === right.scale
-    && left.centerOrigin === right.centerOrigin
+    && (left.centerOrigin ?? false) === (right.centerOrigin ?? false)
     && left.file === right.file
     && JSON.stringify(left.headHair ?? null) === JSON.stringify(right.headHair ?? null);
 }
