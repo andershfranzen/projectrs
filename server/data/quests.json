@@ -178,31 +178,36 @@
   {
     "id": "quest_8djo2",
     "name": "Brother Monk",
-    "blurb": "The monks have had a hard night, and a frightened child needs her bear hide back.",
+    "blurb": "A child's missing keepsake has the monastery on edge.",
     "stages": [
       {
         "id": 0,
-        "description": "Brother Aldous asked me to recover little Wren's bear hide from the skeleton-guarded chest, North west of the monastery. I'll need some roguery to pick the lock."
+        "description": "Brother Aldous needs Wren's bear hide from a locked chest west of the monastery. He saw the skeleton west of him holding something bright."
       },
       {
         "id": 1,
-        "description": "I have little Wren's bear hide. I should return it to Brother Aldous at the monastery."
+        "description": "I have Wren's bear hide. I should return it to Brother Aldous at the monastery."
       },
       {
         "id": 2,
-        "description": "Brother Aldous asked me to find Brother Fenn, who went north past the well to fetch supplies and never returned. I found him slumped by his broken stall, dead drunk. I should sober him up - fill a bucket at the well and pour the water over him."
+        "description": "Brother Fenn is north past the well, drunk beside a broken stall. I need to fill a bucket at the well and wake him up with it."
       },
       {
         "id": 3,
-        "description": "Brother Fenn is sober, but his stall is broken. He needs fresh timber. I should bring him a log."
+        "description": "Fenn is sober enough to fix the stall, but he needs a log."
       },
       {
         "id": 4,
-        "description": "Fenn will mend his stall and follow on. I should return to Brother Aldous to finish up."
+        "description": "Fenn can manage the stall now. I should tell Aldous."
       }
     ],
     "rewards": {
-      "items": [],
+      "items": [
+        {
+          "itemId": 10,
+          "quantity": 50
+        }
+      ],
       "xp": {
         "woodcutting": 1000,
         "roguery": 500
