@@ -6768,7 +6768,7 @@ export class GameManager {
     const point = this.canvasPointFromClient(clientX, clientY);
     if (!point) return [];
     const pickResult = this.scene.pick(point.x, point.y);
-    const groundPoint = this.inputManager.pickGround(point.x, point.y);
+    const groundPoint = this.inputManager.pickGround(point.x, point.y, { allowSkyClamp: true });
     if ((!pickResult?.hit || !pickResult.pickedMesh) && !groundPoint) return [];
 
     const meshName = pickResult?.pickedMesh?.name ?? '';

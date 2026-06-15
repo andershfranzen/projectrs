@@ -10,6 +10,9 @@ import { SAME_PLANE_PICK_Y_TOLERANCE } from '../rendering/pickingConstants';
 export type GroundClickCallback = (worldX: number, worldZ: number) => void;
 export type TeleportClickCallback = (worldX: number, worldZ: number) => void;
 export type ObjectClickCallback = (objectEntityId: number) => void;
+export interface GroundPickOptions {
+  allowSkyClamp?: boolean;
+}
 
 function isBatchedObjectPickKind(kind: unknown): boolean {
   return kind === 'cropPickProxyBatch'
@@ -46,6 +49,9 @@ function hasActiveBatchedPickInstances(metadata: unknown): boolean {
  * Pathfinding handles obstacle avoidance.
  */
 export class InputManager {
+  private static readonly SKY_GROUND_CLAMP_EPSILON = 1e-4;
+  private static readonly SKY_GROUND_CLAMP_STEPS = 14;
+
   private scene: Scene;
   private chunkManager: ChunkManager;
   private onGroundClick: GroundClickCallback | null = null;
@@ -160,7 +166,11 @@ export class InputManager {
    * surface would resolve to the floor 0 X/Z behind/below it (RS2's "your
    * click only counts on your own plane" rule). Snapped to tile centre.
    */
-  pickGround(pointerX: number = this.scene.pointerX, pointerY: number = this.scene.pointerY): { x: number; z: number } | null {
+  pickGround(
+    pointerX: number = this.scene.pointerX,
+    pointerY: number = this.scene.pointerY,
+    options: GroundPickOptions = {},
+  ): { x: number; z: number } | null {
     if (!this.scene.activeCamera) return null;
 
     // Accept any pickable visible mesh — the Y-match check below handles
@@ -277,15 +287,61 @@ export class InputManager {
     const singlePickResult = pick?.hit ? validHit(pick) : null;
     if (singlePickResult) return singlePickResult;
 
-    if (ray.direction.y === 0) return null;
+    const projectedGround = this.projectRayToPlayerPlane(ray);
+    if (projectedGround) return projectedGround;
+
+    return options.allowSkyClamp ? this.pickNearestGroundBelow(pointerX, pointerY) : null;
+  }
+
+  private projectRayToPlayerPlane(ray: { origin: Vector3; direction: Vector3 }): { x: number; z: number } | null {
+    if (Math.abs(ray.direction.y) <= InputManager.SKY_GROUND_CLAMP_EPSILON) return null;
 
     const t = (this.playerY - ray.origin.y) / ray.direction.y;
     if (t <= 0) return null;
 
-    return {
-      x: Math.floor(ray.origin.x + ray.direction.x * t) + 0.5,
-      z: Math.floor(ray.origin.z + ray.direction.z * t) + 0.5,
-    };
+    return this.snapProjectedGroundPoint(
+      ray.origin.x + ray.direction.x * t,
+      ray.origin.z + ray.direction.z * t,
+    );
+  }
+
+  private snapProjectedGroundPoint(worldX: number, worldZ: number): { x: number; z: number } | null {
+    if (!Number.isFinite(worldX) || !Number.isFinite(worldZ)) return null;
+
+    const tileX = Math.floor(worldX);
+    const tileZ = Math.floor(worldZ);
+    const width = this.chunkManager.getMapWidth();
+    const height = this.chunkManager.getMapHeight();
+    if (
+      width > 0
+      && height > 0
+      && (tileX < 0 || tileX >= width || tileZ < 0 || tileZ >= height)
+    ) {
+      return null;
+    }
+
+    return { x: tileX + 0.5, z: tileZ + 0.5 };
+  }
+
+  private pickNearestGroundBelow(pointerX: number, pointerY: number): { x: number; z: number } | null {
+    const canvas = this.scene.getEngine().getRenderingCanvas();
+    const height = canvas?.getBoundingClientRect().height ?? 0;
+    if (height <= 0 || pointerY >= height - 1) return null;
+
+    let low = Math.max(0, pointerY);
+    let high = height - 1;
+    const highRay = this.scene.createPickingRay(pointerX, high, null, this.scene.activeCamera!);
+    if (!this.projectRayToPlayerPlane(highRay)) return null;
+
+    for (let i = 0; i < InputManager.SKY_GROUND_CLAMP_STEPS; i++) {
+      const mid = (low + high) / 2;
+      const midRay = this.scene.createPickingRay(pointerX, mid, null, this.scene.activeCamera!);
+      if (this.projectRayToPlayerPlane(midRay)) high = mid;
+      else low = mid;
+    }
+
+    const clampedRay = this.scene.createPickingRay(pointerX, high, null, this.scene.activeCamera!);
+    return this.projectRayToPlayerPlane(clampedRay);
   }
 
   setGroundClickHandler(callback: GroundClickCallback): void {

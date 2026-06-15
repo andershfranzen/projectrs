@@ -46,6 +46,41 @@ describe('InputManager object picking', () => {
     expect(calls).toEqual([{ x: 200, y: 400, shiftKey: true }]);
   });
 
+  test('sky-band ground picks clamp down only when requested by menu picking', () => {
+    const pickedRayYs: number[] = [];
+    const scene = {
+      activeCamera: {},
+      onPointerObservable: { add: () => {} },
+      getEngine: () => ({
+        getRenderingCanvas: () => ({
+          getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+        }),
+      }),
+      createPickingRay: (_x: number, y: number) => {
+        pickedRayYs.push(y);
+        return {
+          origin: { x: 10, y: 5, z: 20 },
+          direction: { x: 0.1, y: y < 100 ? 0.05 : -0.5, z: -0.1 },
+        };
+      },
+      multiPick: () => [],
+      pick: () => ({ hit: false, pickedMesh: null }),
+    };
+    const chunkManager = {
+      pickAuthoredFlatTexturePlane: () => null,
+      getCurrentFloor: () => 0,
+      getEffectiveHeight: () => 0,
+      getWalkableHeightsAt: () => [0],
+      getMapWidth: () => 1000,
+      getMapHeight: () => 1000,
+    };
+    const manager = new InputManager(scene as any, chunkManager as any);
+
+    expect(manager.pickGround(300, 20)).toBeNull();
+    expect(manager.pickGround(300, 20, { allowSkyClamp: true })).toEqual({ x: 11.5, z: 19.5 });
+    expect(pickedRayYs.some(y => y > 100)).toBe(true);
+  });
+
   test('routes batched crop proxy thin-instance picks to object clicks', () => {
     const batchMesh = {
       metadata: {
