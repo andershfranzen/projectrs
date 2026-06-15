@@ -72,25 +72,50 @@ const UNSTUCK_COOLDOWN_MS = 10 * 60 * 1000;
 const UNSTUCK_TARGET_MAP = 'kcmap';
 const DEFAULT_MUTE_DURATION_SECONDS = 60 * 60;
 const MAX_MUTE_DURATION_SECONDS = 366 * 24 * 60 * 60;
+const AUTO_SCRAMBLE_CHAT_PATTERN = /(?:^|[^a-z0-9])(?:niggers?|faggots?|trann(?:y|ies))(?=$|[^a-z0-9])/i;
 const MUTED_CHAT_ADJECTIVES = [
   'wobbly', 'sparkly', 'dramatic', 'tiny', 'soggy', 'polite', 'mysterious', 'crunchy',
   'fancy', 'sleepy', 'suspicious', 'velvet', 'baffled', 'shiny', 'leftover', 'heroic',
+  'mithril', 'banknote', 'altar-blessed', 'muddy', 'questy', 'rune-polished', 'sultan-approved',
 ];
 const MUTED_CHAT_NOUNS = [
   'spoon', 'pancake', 'mailbox', 'teapot', 'pickle', 'sock', 'noodle', 'button',
   'waffle', 'cactus', 'turnip', 'doorknob', 'cupcake', 'lampshade', 'muffin', 'biscuit',
 ];
+const MUTED_CHAT_GAME_NOUNS = [
+  'goblin', 'banker', 'monk', 'relic', 'pickaxe', 'anvil', 'carpet', 'lobster',
+  'rune', 'skeleton', 'cow', 'tree', 'ore', 'chest', 'ladder', 'fishing spot',
+];
 const MUTED_CHAT_VERBS = [
   'juggles', 'audits', 'tickles', 'polishes', 'misplaces', 'summons', 'folds', 'questions',
   'balances', 'launches', 'befriends', 'reboots', 'measures', 'argues', 'decorates', 'reheats',
+  'banks', 'smiths', 'mines', 'fishes', 'chops', 'teleports', 'prays', 'examines',
+  'high-alchs', 'respawns', 'pathfinds', 'auto-closes',
 ];
 const MUTED_CHAT_ADVERBS = [
   'boldly', 'quietly', 'sideways', 'politely', 'wildly', 'almost', 'briefly', 'probably',
+  'northwest', 'underground', 'aggressively', 'defensively', 'suspiciously',
 ];
 const MUTED_CHAT_OBJECTS = [
   'moon cheese', 'pocket thunder', 'invisible soup', 'accordion dust', 'bubble paperwork',
   'waffle logic', 'velvet confetti', 'pickle math', 'noodle weather', 'emergency glitter',
 ];
+const MUTED_CHAT_GAME_OBJECTS = [
+  'tier 3 relic', 'black bronze spoon', 'mithril pancake', 'Brother Monk key',
+  'bank booth receipt', 'Sultan mine dust', 'goodmagic paperwork', 'evilmagic noodles',
+  'walk-here carpet', 'knife on a table', 'fishing bubble soup', 'door edge logic',
+];
+const MUTED_CHAT_PLACES = [
+  'the bank', 'Aldous', 'the Sultan mine', 'the altar', 'the cooking range',
+  'the anvil', 'the fishing bubbles', 'the ladder tile', 'the carpet room',
+];
+const MUTED_CHAT_GAME_SENTINELS = [
+  ...MUTED_CHAT_GAME_NOUNS,
+  ...MUTED_CHAT_GAME_OBJECTS,
+  ...MUTED_CHAT_PLACES,
+];
+const MUTED_CHAT_ALL_NOUNS = [...MUTED_CHAT_NOUNS, ...MUTED_CHAT_GAME_NOUNS];
+const MUTED_CHAT_ALL_OBJECTS = [...MUTED_CHAT_OBJECTS, ...MUTED_CHAT_GAME_OBJECTS];
 const commandCooldowns = new Map<string, number>();
 const unstuckCooldowns = new Map<number, number>();
 
@@ -223,6 +248,8 @@ function sendPrivateMessage(
     return;
   }
 
+  const autoScrambled = shouldAutoScrambleMessage(msg);
+  const targetMessage = autoScrambled ? randomMutedMessage(msg, world) : msg;
   const speaker = ws.data.playerId != null ? world.getPlayer(ws.data.playerId) : null;
   speaker?.botStats?.recordChat();
   if (ws.data.playerId != null) world.recordPlayerActivity(ws.data.playerId);
@@ -232,7 +259,7 @@ function sendPrivateMessage(
       type: 'private',
       from: ws.data.username,
       fromAccountId: ws.data.accountId,
-      message: msg,
+      message: targetMessage,
     }));
   } catch {
     sendSystem(ws, `${targetUsername} is not online.`);
@@ -261,6 +288,7 @@ function sendPrivateMessage(
       channel: 'private',
       message: msg,
       fromPlayerId: speaker?.id ?? null,
+      autoScrambled,
     },
   });
 }
@@ -297,9 +325,9 @@ function broadcastLocalPayload(payload: string, fromAccountId?: number, excludeA
   }
 }
 
-function sendMutedLocalMessage(ws: ServerWebSocket<ChatSocketData>, from: string, message: string): void {
+function sendMutedLocalMessage(ws: ServerWebSocket<ChatSocketData>, from: string, message: string, world: World): void {
   const original = message.substring(0, 1000);
-  const scrambled = randomMutedMessage(original);
+  const scrambled = randomMutedMessage(original, world);
   sendLocalEchoToAccount(ws.data.accountId, from, original, ws.data.isAdmin, ws.data.isModerator);
   broadcastLocalPayload(
     localChatPayload(from, scrambled, ws.data.accountId, ws.data.isAdmin, ws.data.isModerator),
@@ -345,29 +373,73 @@ function sendMutedPrivateMessage(
       type: 'private',
       from: ws.data.username,
       fromAccountId: ws.data.accountId,
-      message: randomMutedMessage(message),
+      message: randomMutedMessage(message, world),
     }));
   } catch { /* target socket is closing */ }
 }
 
-function randomMutedMessage(message: string): string {
+function shouldAutoScrambleMessage(message: string): boolean {
+  return AUTO_SCRAMBLE_CHAT_PATTERN.test(message.normalize('NFKC'));
+}
+
+function randomMutedMessage(message: string, world?: World): string {
   const words = message.trim().split(/\s+/).filter(Boolean);
   const fallbackCount = Math.max(1, Math.ceil(message.trim().length / 8));
-  const count = Math.max(1, Math.min(12, words.length || fallbackCount));
+  const count = Math.max(3, Math.min(14, words.length || fallbackCount));
   const rng = seededMutedChatRng(`${message}:${Date.now()}:${Math.random()}`);
   const pick = (list: string[]): string => list[Math.floor(rng() * list.length)] ?? list[0] ?? 'waffle';
+  const emojiTokens = mutedDiscordEmojiTokens(world);
+  const maybeEmoji = (): string[] => emojiTokens.length > 0 && rng() < 0.28 ? [pick(emojiTokens)] : [];
   const patterns: Array<() => string[]> = [
-    () => [pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_NOUNS), pick(MUTED_CHAT_VERBS), pick(MUTED_CHAT_OBJECTS)],
-    () => [pick(MUTED_CHAT_ADVERBS), pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_NOUNS), pick(MUTED_CHAT_VERBS), pick(MUTED_CHAT_OBJECTS)],
-    () => [pick(MUTED_CHAT_NOUNS), pick(MUTED_CHAT_VERBS), pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_OBJECTS)],
-    () => [pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_NOUNS), 'with', pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_NOUNS)],
+    () => [pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_ALL_NOUNS), pick(MUTED_CHAT_VERBS), pick(MUTED_CHAT_ALL_OBJECTS), ...maybeEmoji()],
+    () => [pick(MUTED_CHAT_ADVERBS), pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_ALL_NOUNS), pick(MUTED_CHAT_VERBS), pick(MUTED_CHAT_PLACES), ...maybeEmoji()],
+    () => [pick(MUTED_CHAT_ALL_NOUNS), pick(MUTED_CHAT_VERBS), pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_ALL_OBJECTS), ...maybeEmoji()],
+    () => [pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_ALL_NOUNS), 'with', pick(MUTED_CHAT_ADJECTIVES), pick(MUTED_CHAT_ALL_NOUNS), 'near', pick(MUTED_CHAT_PLACES)],
+    () => ['absolutely', pick(MUTED_CHAT_ADVERBS), pick(MUTED_CHAT_VERBS), pick(MUTED_CHAT_ALL_OBJECTS), ...maybeEmoji()],
   ];
 
   const output: string[] = [];
   while (output.length < count) {
     output.push(...patterns[Math.floor(rng() * patterns.length)]());
   }
-  return output.slice(0, count).join(' ');
+  const result = output.slice(0, count);
+  if (!containsMutedGameTerm(result)) {
+    result[Math.floor(rng() * result.length)] = pick(MUTED_CHAT_GAME_SENTINELS);
+  }
+  if (emojiTokens.length > 0 && !result.some(isDiscordEmojiToken)) {
+    if (result.length >= 14) result[result.length - 1] = pick(emojiTokens);
+    else result.push(pick(emojiTokens));
+  }
+  return result.join(' ');
+}
+
+function mutedDiscordEmojiTokens(world?: World): string[] {
+  const db = world?.db as { listForumDiscordEmojis?: () => Array<{ name: string; available?: boolean }> } | undefined;
+  const listEmojis = db?.listForumDiscordEmojis;
+  if (typeof listEmojis !== 'function') return [];
+  try {
+    return listEmojis.call(db)
+      .map((emoji) => discordEmojiTokenForName(emoji.available === false ? '' : emoji.name))
+      .filter((token): token is string => token !== null)
+      .slice(0, 80);
+  } catch {
+    return [];
+  }
+}
+
+function discordEmojiTokenForName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!/^[a-z0-9_-]{1,64}$/i.test(trimmed)) return null;
+  return `:${trimmed}:`;
+}
+
+function isDiscordEmojiToken(value: string): boolean {
+  return /^:[a-z0-9_-]{1,64}:$/i.test(value);
+}
+
+function containsMutedGameTerm(tokens: string[]): boolean {
+  const lowered = tokens.join(' ').toLowerCase();
+  return MUTED_CHAT_GAME_SENTINELS.some(term => lowered.includes(term.toLowerCase()));
 }
 
 function seededMutedChatRng(seedText: string): () => number {
@@ -467,8 +539,8 @@ export function handleChatSocketMessage(
       }
 
       const mute = world.db.isAccountMuted(ws.data.accountId);
-      if (mute) {
-        sendMutedLocalMessage(ws, from, msg);
+      if (mute || shouldAutoScrambleMessage(msg)) {
+        sendMutedLocalMessage(ws, from, msg, world);
         return;
       }
 

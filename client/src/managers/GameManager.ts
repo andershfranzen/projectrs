@@ -6807,13 +6807,29 @@ export class GameManager {
       }
     }
 
+    if (groundPoint) {
+      options.push(...this.getGroundItemInteractionOptionsAtTile(groundPoint.x, groundPoint.z, addedGroundItemIds));
+    }
+
+    let pickedObjectEntityId: number | null = null;
     if (pickResult?.pickedMesh) {
-      const pickedObjectEntityId = this.findWorldObjectIdFromPick(
-        pickResult.pickedMesh as unknown as TransformNode,
+      const pickedNode = pickResult.pickedMesh as unknown as TransformNode;
+      pickedObjectEntityId = this.findWorldObjectIdFromPick(
+        pickedNode,
         pickResult.thinInstanceIndex ?? -1,
       );
       if (pickedObjectEntityId != null) {
+        options.push(...this.getGroundItemInteractionOptionsForObject(pickedObjectEntityId, addedGroundItemIds));
         options.push(...this.getWorldObjectInteractionOptions(pickedObjectEntityId, groundPoint));
+      } else {
+        const pickedPoint = pickResult.pickedPoint
+          ? { x: pickResult.pickedPoint.x, z: pickResult.pickedPoint.z }
+          : null;
+        options.push(...this.getGroundItemInteractionOptionsForPlacedObjectPick(
+          pickedNode,
+          pickedPoint,
+          addedGroundItemIds,
+        ));
       }
     }
 
@@ -7063,6 +7079,47 @@ export class GameManager {
     );
   }
 
+  private getGroundItemInteractionOptionsForObject(
+    objectEntityId: number,
+    addedGroundItemIds: Set<number>,
+  ): InteractionOption[] {
+    const data = this.worldObjectDefs.get(objectEntityId);
+    if (!data) return [];
+    const def = this.objectDefsCache.get(data.defId);
+    if (!def || !this.isWorldObjectOnCurrentInteractionFloor(data, def)) return [];
+
+    const options: InteractionOption[] = [];
+    for (const tile of getObjectFootprintTiles(data.x, data.z, def, data.rotY ?? 0)) {
+      options.push(...this.getGroundItemInteractionOptionsAtTile(tile.x + 0.5, tile.z + 0.5, addedGroundItemIds));
+    }
+    return options;
+  }
+
+  private getGroundItemInteractionOptionsForPlacedObjectPick(
+    pickedMesh: TransformNode,
+    pickedPoint: { x: number; z: number } | null,
+    addedGroundItemIds: Set<number>,
+  ): InteractionOption[] {
+    const root = this.findPlacedObjectRootFromPick(pickedMesh);
+    if (!root) return [];
+
+    const options: InteractionOption[] = [];
+    const seenTiles = new Set<string>();
+    const addTile = (x: number, z: number): void => {
+      const tileX = Math.floor(x);
+      const tileZ = Math.floor(z);
+      const key = `${tileX},${tileZ}`;
+      if (seenTiles.has(key)) return;
+      seenTiles.add(key);
+      options.push(...this.getGroundItemInteractionOptionsAtTile(tileX + 0.5, tileZ + 0.5, addedGroundItemIds));
+    };
+
+    if (pickedPoint) addTile(pickedPoint.x, pickedPoint.z);
+    const placed = this.chunkManager.getPlacedObjectAuthoredPosition(root);
+    addTile(placed.x, placed.z);
+    return options;
+  }
+
   private getGroundItemInteractionOptionsForStack(
     stack: GroundItemData[],
     addedGroundItemIds: Set<number>,
@@ -7115,13 +7172,8 @@ export class GameManager {
     // If no objectEntityId found, check if this is a placed object near a
     // world object. The editor-authored model nodes are render-only; this
     // links the clicked asset back to the server-side object instance.
-    let rootNode: TransformNode = pickedMesh;
-    while (rootNode.parent) {
-      if (this.chunkManager.isPlacedObjectNode(rootNode)) break;
-      rootNode = rootNode.parent as TransformNode;
-    }
-
-    if (!this.chunkManager.isPlacedObjectNode(rootNode)) return null;
+    const rootNode = this.findPlacedObjectRootFromPick(pickedMesh);
+    if (!rootNode) return null;
 
     const rootAssetId = rootNode.metadata?.assetId;
     if (!rootAssetId) return null;
@@ -7146,6 +7198,18 @@ export class GameManager {
     if (bestEid < 0) return null;
     this.setWorldObjectModel(bestEid, rootNode);
     return bestEid;
+  }
+
+  private findPlacedObjectRootFromPick(pickedMesh: TransformNode): TransformNode | null {
+    const chunkManager = this.chunkManager;
+    if (!chunkManager || typeof chunkManager.isPlacedObjectNode !== 'function') return null;
+
+    let rootNode: TransformNode | null = pickedMesh;
+    while (rootNode) {
+      if (chunkManager.isPlacedObjectNode(rootNode)) return rootNode;
+      rootNode = rootNode.parent as TransformNode | null;
+    }
+    return null;
   }
 
   private getWorldObjectInteractionOptions(

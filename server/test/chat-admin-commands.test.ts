@@ -75,6 +75,12 @@ describe('admin chat teleport commands', () => {
       isAccountMuted(accountId: number) {
         return accountId === 42 ? { reason: 'spam', mutedAt: 1000, expiresAt: null } : null;
       },
+      listForumDiscordEmojis() {
+        return [
+          { name: 'relicdance', available: true },
+          { name: 'banknote', available: true },
+        ];
+      },
     });
 
     try {
@@ -95,12 +101,99 @@ describe('admin chat teleport commands', () => {
       expect(otherLocal?.type).toBe('local');
       expect(otherLocal?.from).toBe('Muted');
       expect(otherLocal?.message).not.toBe('meet me at bank');
-      expect(otherLocal?.message).toMatch(/^[a-z ]+$/);
+      expect(otherLocal?.message).toMatch(/:(relicdance|banknote):/);
+      expect(otherLocal?.message).toMatch(/relic|bank|mithril|bronze|monk|sultan|altar|anvil|goblin|carpet|knife|fishing|ladder|mine/i);
       expect(otherLocal?.message.split(/\s+/).length).toBeGreaterThanOrEqual(3);
     } finally {
       handleChatSocketClose(sender.ws, world);
       handleChatSocketClose(senderOtherTab.ws, world);
       handleChatSocketClose(other.ws, world);
+    }
+  });
+
+  test('listed slurs shadow-scramble local chat without muting the account', () => {
+    const sender = makeCollectingSocket('Speaker', 52);
+    const other = makeCollectingSocket('Other', 53);
+    const muteCalls: any[] = [];
+    const blockedMessage = `you are a ${'ni'}${'gger'}`;
+    const world = makeSocialWorld({
+      isAccountMuted() {
+        return null;
+      },
+      muteAccount(...args: any[]) {
+        muteCalls.push(args);
+      },
+      listForumDiscordEmojis() {
+        return [{ name: 'banknote', available: true }];
+      },
+    });
+
+    try {
+      handleChatSocketOpen(sender.ws, world);
+      handleChatSocketOpen(other.ws, world);
+      sender.payloads.length = 0;
+      other.payloads.length = 0;
+
+      handleChatSocketMessage(sender.ws, JSON.stringify({ type: 'local', message: blockedMessage }), world);
+
+      const senderLocal = sender.payloads.find(payload => payload.type === 'local');
+      const otherLocal = other.payloads.find(payload => payload.type === 'local');
+      expect(senderLocal).toMatchObject({ type: 'local', from: 'Speaker', message: blockedMessage });
+      expect(otherLocal?.type).toBe('local');
+      expect(otherLocal?.message).not.toBe(blockedMessage);
+      expect(otherLocal?.message).toContain(':banknote:');
+      expect(otherLocal?.message).toMatch(/relic|bank|mithril|bronze|monk|sultan|altar|anvil|goblin|carpet|knife|fishing|ladder|mine/i);
+      expect(muteCalls).toHaveLength(0);
+    } finally {
+      handleChatSocketClose(sender.ws, world);
+      handleChatSocketClose(other.ws, world);
+    }
+  });
+
+  test('listed slurs shadow-scramble private chat after normal target validation', () => {
+    const sender = makeCollectingSocket('Speaker', 62);
+    const target = makeCollectingSocket('Target', 63);
+    const muteCalls: any[] = [];
+    const blockedMessage = `what a ${'fa'}${'ggot'}`;
+    const world = makeSocialWorld({
+      isAccountMuted() {
+        return null;
+      },
+      muteAccount(...args: any[]) {
+        muteCalls.push(args);
+      },
+      getAccountIdByUsername(username: string) {
+        return username.toLowerCase() === 'target' ? 63 : null;
+      },
+      getUsernameByAccountId(accountId: number) {
+        return accountId === 63 ? 'Target' : null;
+      },
+      isIgnoring() {
+        return false;
+      },
+      listForumDiscordEmojis() {
+        return [{ name: 'relicdance', available: true }];
+      },
+    });
+
+    try {
+      handleChatSocketOpen(sender.ws, world);
+      handleChatSocketOpen(target.ws, world);
+      sender.payloads.length = 0;
+      target.payloads.length = 0;
+
+      handleChatSocketMessage(sender.ws, JSON.stringify({ type: 'private', to: 'Target', message: blockedMessage }), world);
+
+      const senderPrivate = sender.payloads.find(payload => payload.type === 'private_sent');
+      const targetPrivate = target.payloads.find(payload => payload.type === 'private');
+      expect(senderPrivate).toMatchObject({ type: 'private_sent', to: 'Target', message: blockedMessage });
+      expect(targetPrivate?.type).toBe('private');
+      expect(targetPrivate?.message).not.toBe(blockedMessage);
+      expect(targetPrivate?.message).toContain(':relicdance:');
+      expect(muteCalls).toHaveLength(0);
+    } finally {
+      handleChatSocketClose(sender.ws, world);
+      handleChatSocketClose(target.ws, world);
     }
   });
 
