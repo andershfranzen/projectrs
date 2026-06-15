@@ -204,7 +204,16 @@ describe('GameManager world object pick proxies', () => {
     manager.worldObjectModels = new Map([[12345, { metadata: { assetId: 'Carpet1x4' } }]]);
     manager.worldObjectInteractionActions = () => [];
     manager.interactObject = () => {};
-    manager.handleGroundClick = () => {};
+    manager.lastClickX = 321;
+    manager.lastClickY = 654;
+    const clickEffects: Array<{ x: number; y: number; color?: string }> = [];
+    const groundClicks: Array<{ x: number; z: number }> = [];
+    manager.spawnCursorClickEffect = (x: number, y: number, color?: string) => {
+      clickEffects.push({ x, y, color });
+    };
+    manager.handleGroundClick = (x: number, z: number) => {
+      groundClicks.push({ x, z });
+    };
 
     const options = manager.getWorldObjectInteractionOptions(12345, { x: 10.5, z: 20.5 });
 
@@ -214,6 +223,9 @@ describe('GameManager world object pick proxies', () => {
     ]);
     expect(options[0].primary).not.toBe(false);
     expect(options[1].primary).not.toBe(false);
+    options[0].action();
+    expect(clickEffects).toEqual([{ x: 321, y: 654, color: '#ffe040' }]);
+    expect(groundClicks).toEqual([{ x: 10.5, z: 20.5 }]);
 
     const fallbackOptions = manager.getWorldObjectInteractionOptions(12345);
     expect(fallbackOptions[0].label).toBe('Walk here');

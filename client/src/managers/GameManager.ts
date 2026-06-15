@@ -6763,7 +6763,10 @@ export class GameManager {
     return {
       label: 'Walk here',
       primary: primary ? undefined : false,
-      action: () => this.handleGroundClick(x, z),
+      action: () => {
+        this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffe040');
+        this.handleGroundClick(x, z);
+      },
     };
   }
 
