@@ -973,7 +973,9 @@
             "stage": 1
           }
         ],
-        "message": "You pick the lock. Tucked beneath a few coins is little Wren's bear hide!"
+        "message": "You pick the lock. Tucked beneath a few coins is little Wren's bear hide!",
+        "depleteObject": true,
+        "depleteRespawnTicks": 33
       }
     ],
     "interactionTiles": [
