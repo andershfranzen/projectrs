@@ -2,7 +2,7 @@ import { Database as SQLiteDB } from 'bun:sqlite';
 import { createHash, randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
 import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance, QuestState, EquipSlot } from '@projectrs/shared';
-import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, RUN_ENERGY_MAX, STANCE_KEYS, DEFAULT_APPEARANCE, clampRunEnergy, combatLevel, initSkills, isEquipSlot, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, RUN_ENERGY_MAX, STANCE_KEYS, DEFAULT_APPEARANCE, QUEST_STAGE_COMPLETED, clampRunEnergy, combatLevel, initSkills, isEquipSlot, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const OAUTH_ACCESS_TOKEN_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
@@ -14,12 +14,14 @@ const RESET_BOBS_BURIAL_MIGRATION_ID = 'reset_bobs_burial_2026_05_18';
 const MOVE_STACKED_RELICS_TO_BANK_MIGRATION_ID = 'move_stacked_relics_to_bank_2026_05_24';
 const RESET_BOT_METRICS_MIGRATION_ID = 'reset_bot_metrics_2026_05_24_calibration';
 const REMOVE_RETIRED_RESOURCE_ITEMS_MIGRATION_ID = 'remove_retired_resource_items_2026_05_24';
+const RESET_COMPLETED_BROTHER_MONK_MIGRATION_ID = 'reset_completed_brother_monk_2026_06_15';
 const GAME_EVENT_LOG_FLUSH_INTERVAL_MS = envBoundedInteger('GAME_EVENT_LOG_FLUSH_INTERVAL_MS', 1_000, 100, 30_000);
 const GAME_EVENT_LOG_BATCH_SIZE = envBoundedInteger('GAME_EVENT_LOG_BATCH_SIZE', 250, 1, 2_000);
 const GAME_EVENT_LOG_MAX_QUEUE_SIZE = envBoundedInteger('GAME_EVENT_LOG_MAX_QUEUE_SIZE', 5_000, 100, 100_000);
 const GAME_EVENT_LOG_RETENTION_DAYS = envBoundedInteger('GAME_EVENT_LOG_RETENTION_DAYS', 90, 0, 3_650);
 const GAME_EVENT_LOG_PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 const BOBS_BURIAL_QUEST_ID = "Bob's Burial";
+const BROTHER_MONK_QUEST_ID = 'quest_8djo2';
 const SUSPECT_SKETCH_ITEM_ID = 236;
 const RETIRED_RESOURCE_ITEM_IDS = [46, 47, 57] as const;
 const RETIRED_RESOURCE_OBJECT_IDS = [17, 18] as const;
@@ -781,6 +783,23 @@ function removeQuestFromSavedState(rawJson: string | null, questId: string): { j
   try {
     const parsed = rawJson ? JSON.parse(rawJson) as Record<string, unknown> : {};
     if (!parsed || typeof parsed !== 'object' || !Object.prototype.hasOwnProperty.call(parsed, questId)) {
+      return { json: rawJson || '{}', changed: false };
+    }
+    delete parsed[questId];
+    return { json: JSON.stringify(parsed), changed: true };
+  } catch {
+    return { json: rawJson || '{}', changed: false };
+  }
+}
+
+function removeCompletedQuestFromSavedState(rawJson: string | null, questId: string): { json: string; changed: boolean } {
+  try {
+    const parsed = rawJson ? JSON.parse(rawJson) as Record<string, unknown> : {};
+    if (!parsed || typeof parsed !== 'object' || !Object.prototype.hasOwnProperty.call(parsed, questId)) {
+      return { json: rawJson || '{}', changed: false };
+    }
+    const quest = parsed[questId] as { stage?: unknown } | null;
+    if (!quest || typeof quest !== 'object' || quest.stage !== QUEST_STAGE_COMPLETED) {
       return { json: rawJson || '{}', changed: false };
     }
     delete parsed[questId];
@@ -1742,6 +1761,7 @@ export class GameDatabase {
     runOnce(RESET_BOBS_BURIAL_MIGRATION_ID, () => this.resetBobBurialSavedState());
     runOnce(MOVE_STACKED_RELICS_TO_BANK_MIGRATION_ID, () => this.moveStackedRelicsToBankSavedState());
     runOnce(REMOVE_RETIRED_RESOURCE_ITEMS_MIGRATION_ID, () => this.removeRetiredResourceSavedState());
+    runOnce(RESET_COMPLETED_BROTHER_MONK_MIGRATION_ID, () => this.resetCompletedBrotherMonkSavedState());
   }
 
   private runOneTimeBotStatsMigrations(): void {
@@ -1775,6 +1795,31 @@ export class GameDatabase {
       const stmt = this.db.query('UPDATE player_state SET inventory = ?, bank = ?, quests = ?, updated_at = unixepoch() WHERE account_id = ?');
       for (const update of rowsToUpdate) {
         stmt.run(update.inventory, update.bank, update.quests, update.accountId);
+      }
+    });
+    tx(updates);
+    return updates.length;
+  }
+
+  private resetCompletedBrotherMonkSavedState(): number {
+    const rows = this.db.query('SELECT account_id, quests FROM player_state')
+      .all() as Array<{ account_id: number; quests: string | null }>;
+    const updates: Array<{ accountId: number; quests: string }> = [];
+
+    for (const row of rows) {
+      const quests = removeCompletedQuestFromSavedState(row.quests, BROTHER_MONK_QUEST_ID);
+      if (!quests.changed) continue;
+      updates.push({
+        accountId: row.account_id,
+        quests: quests.json,
+      });
+    }
+
+    if (updates.length === 0) return 0;
+    const tx = this.db.transaction((rowsToUpdate: typeof updates) => {
+      const stmt = this.db.query('UPDATE player_state SET quests = ?, updated_at = unixepoch() WHERE account_id = ?');
+      for (const update of rowsToUpdate) {
+        stmt.run(update.quests, update.accountId);
       }
     });
     tx(updates);
