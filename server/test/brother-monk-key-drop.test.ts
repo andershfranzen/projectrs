@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { BROTHER_MONK_CHEST_KEY_ITEM_ID } from '@projectrs/shared';
+import { BEAR_HIDE_ITEM_ID, BROTHER_MONK_BEAR_HIDE_ITEM_ID, BROTHER_MONK_CHEST_KEY_ITEM_ID, BROTHER_MONK_CHEST_OBJECT_DEF_ID } from '@projectrs/shared';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import type { Npc } from '../src/entity/Npc';
@@ -50,10 +50,18 @@ function makeWorld() {
   const itemDefs = new Map([
     [10, { id: 10, name: 'Coins', description: '', stackable: true, equippable: false, value: 1 }],
     [BROTHER_MONK_CHEST_KEY_ITEM_ID, { id: BROTHER_MONK_CHEST_KEY_ITEM_ID, name: 'Brother Monk Chest Key', description: '', stackable: false, equippable: false, questItem: true, value: 0 }],
+    [BROTHER_MONK_BEAR_HIDE_ITEM_ID, { id: BROTHER_MONK_BEAR_HIDE_ITEM_ID, name: "Wren's Bear Hide", description: '', stackable: false, equippable: false, questItem: true, value: 0 }],
   ]);
   const world = Object.create(World.prototype) as any;
   world.groundItems = new Map();
   world.data = { itemDefs };
+  world.quests = {
+    setPlayerQuestStage: (player: Player, questId: string, stage: number) => {
+      player.quests[questId] = { stage, triggerProgress: 0 };
+      return true;
+    },
+    notifyQuestEvent: () => {},
+  };
   world.spawnPrivateGroundItemFor = (
     _owner: Player,
     mapLevel: string,
@@ -64,6 +72,7 @@ function makeWorld() {
   ) => drops.push({ itemId, mapLevel, x, z });
   world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
   world.sendInventory = (player: Player) => inventories.push(player.inventory.map(slot => slot ? { ...slot } : null));
+  world.depleteObjectFromInteractionEffect = () => {};
   return { world, drops, messages, inventories };
 }
 
@@ -125,5 +134,37 @@ describe('Brother Monk key drop', () => {
     expect(sold).toBe(false);
     expect(player.inventory[0]).toEqual({ itemId: 10, quantity: 100 });
     expect(messages).toEqual(['You do not need that key right now.']);
+  });
+
+  test('Brother Monk chest grants Wren hide instead of generic bear hide', () => {
+    const player = makePlayer();
+    player.inventory[0] = { itemId: BROTHER_MONK_CHEST_KEY_ITEM_ID, quantity: 1 };
+    const { world, messages } = makeWorld();
+    const events: Array<{ type: string; itemId: number; quantity: number; source: string }> = [];
+    world.quests.notifyQuestEvent = (_player: Player, event: { type: string; itemId: number; quantity: number; source: string }) => events.push(event);
+    const chest = {
+      defId: BROTHER_MONK_CHEST_OBJECT_DEF_ID,
+      def: { id: BROTHER_MONK_CHEST_OBJECT_DEF_ID, name: 'Brother Monk Chest', category: 'chest' },
+    };
+
+    world.handleBrotherMonkChestInteraction(player, chest, 'Unlock');
+
+    expect(player.inventory.some(slot => slot?.itemId === BROTHER_MONK_CHEST_KEY_ITEM_ID)).toBe(false);
+    expect(player.inventory.some(slot => slot?.itemId === BEAR_HIDE_ITEM_ID)).toBe(false);
+    expect(player.inventory.some(slot => slot?.itemId === BROTHER_MONK_BEAR_HIDE_ITEM_ID)).toBe(true);
+    expect(player.quests[BROTHER_MONK_QUEST_ID]?.stage).toBe(1);
+    expect(events).toEqual([{ type: 'itemPickup', itemId: BROTHER_MONK_BEAR_HIDE_ITEM_ID, quantity: 1, source: 'object' }]);
+    expect(messages).toContain("You unlock the chest and take Wren's bear hide.");
+  });
+
+  test('Brother Aldous hand-in requires Wren hide instead of generic bear hide', async () => {
+    const spawns = await Bun.file('server/data/maps/kcmap/spawns.json').json() as { npcs: Array<{ name?: string; dialogue?: any }> };
+    const aldous = spawns.npcs.find(spawn => spawn.name === 'Brother Aldous');
+    const option = aldous?.dialogue?.nodes?.aldous_return?.options?.find((candidate: any) => candidate.label === "Here's Wren's bear hide.");
+
+    expect(option?.conditions).toContainEqual({ type: 'hasItem', itemId: BROTHER_MONK_BEAR_HIDE_ITEM_ID, quantity: 1 });
+    expect(option?.actions).toContainEqual({ type: 'takeItem', itemId: BROTHER_MONK_BEAR_HIDE_ITEM_ID, qty: 1 });
+    expect(option?.conditions).not.toContainEqual({ type: 'hasItem', itemId: BEAR_HIDE_ITEM_ID, quantity: 1 });
+    expect(option?.actions).not.toContainEqual({ type: 'takeItem', itemId: BEAR_HIDE_ITEM_ID, qty: 1 });
   });
 });

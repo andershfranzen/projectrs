@@ -4052,14 +4052,14 @@
                 "conditions": [
                   {
                     "type": "hasItem",
-                    "itemId": 297,
+                    "itemId": 556,
                     "quantity": 1
                   }
                 ],
                 "actions": [
                   {
                     "type": "takeItem",
-                    "itemId": 297,
+                    "itemId": 556,
                     "qty": 1
                   },
                   {

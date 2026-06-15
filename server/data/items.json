@@ -6267,5 +6267,15 @@
     "value": 0,
     "icon": "Chest_key_382.png",
     "model": "/assets/models/keys/IronKey.glb"
+  },
+  {
+    "id": 556,
+    "name": "Wren's Bear Hide",
+    "description": "A patched bear hide that belongs to Wren.",
+    "questItem": true,
+    "stackable": false,
+    "equippable": false,
+    "value": 0,
+    "model": "/assets/models/hides/BearHide.glb"
   }
 ]

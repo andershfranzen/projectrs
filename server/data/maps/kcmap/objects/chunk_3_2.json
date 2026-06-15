@@ -949,7 +949,7 @@
       "z": 1.1
     },
     "name": "Brother Monk Chest",
-    "examineText": "A locked chest watched by a vampire.",
+    "examineText": "A locked chest watched by a skeleton.",
     "interactionTiles": [
       {
         "x": 0,
