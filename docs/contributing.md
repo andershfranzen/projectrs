@@ -65,6 +65,15 @@ The protocol is index-based, so adding a field shifts all subsequent indices —
 
 Run `bun run dev:editor` and open http://localhost:5174. Pick a map, edit, save. Saves go through `/api/maps/<id>` to disk; the dev server has anti-corruption guards (snapshots in `backups/`, refuses to overwrite chunked tile files with empty payloads). For destructive flat-the-map operations, delete the relevant `tiles/` or `heights/` directory manually.
 
+### Authoring NPCs
+
+NPC authoring has two layers:
+
+1. `server/data/npcs.json` defines reusable NPC types: name, stats, default look, default gear, drops, shop, and dialogue.
+2. `server/data/maps/<map>/spawns.json` places those types in the world and can override only that spawn's name, position, floor, appearance, equipment, shop, dialogue, aggression, or stats.
+
+In the editor, use **Create new NPC type** before changing shared stats, drops, shop, or dialogue for a new mob. Use **Clone spawn** when you only want another placement of the same type. The NPC panel's preflight box is authoritative for save readiness: red errors block save, yellow warnings are allowed but should be intentional. The server runs the same validation, so bad NPC IDs, duplicate spawn ids, out-of-map positions, invalid ranges/floors, malformed equipment, and unsafe bank-enabled spawns cannot be persisted by accident.
+
 ### Debugging
 
 - Browser console first — most issues log there. Particularly `[CharacterEntity]`, `[Gear]`, `[ChunkManager]`, `[SkinnedArmor]`.

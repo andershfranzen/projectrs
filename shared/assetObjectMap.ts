@@ -305,8 +305,20 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
 
 export const EXAMINABLE_SCENERY_ASSETS: ReadonlySet<string> = new Set(Object.keys(EXAMINABLE_SCENERY_META));
 
+export const WALK_HERE_PRIMARY_SCENERY_ASSETS: ReadonlySet<string> = new Set([
+  'Carpet1x2',
+  'Carpet1x3',
+  'Carpet1x4',
+  'Carpet2x3',
+  'Carpet2x4',
+]);
+
 export function sceneryExamineMetaForAsset(assetId: string): SceneryExamineMeta | undefined {
   return EXAMINABLE_SCENERY_META[assetId];
+}
+
+export function isWalkHerePrimarySceneryAssetId(assetId: string): boolean {
+  return WALK_HERE_PRIMARY_SCENERY_ASSETS.has(assetId);
 }
 
 export function objectDefIdForPlacedAsset(assetId: string): number | undefined {

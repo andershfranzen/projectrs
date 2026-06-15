@@ -63,7 +63,9 @@ import {
   resolveGearFitSourceItemId,
   BANK_ACCESS_SPAWN_NAME,
   isAllowedBankAccessSpawn,
-  validateBankAccessSpawns,
+  validateNpcDefsForAuthoring,
+  validateNpcSpawnsForAuthoring,
+  formatNpcAuthoringIssues,
   DEFAULT_WATER_FLOW,
   normalizeWaterFlow,
   npcCombatLevel,
@@ -662,16 +664,114 @@ function tuneModelLighting(model, assetOrPath = null) {
     for (const spawn of npcSpawns) applyNpcDefSpawnDefaults(spawn, npcDefById(spawn.npcId))
   }
 
-  function bankAccessSaveErrors(mapId, spawns = npcSpawns) {
-    return validateBankAccessSpawns(mapId, spawns, npcDefById)
-  }
-
   function ensureBankAccessSpawnName(spawn, def) {
     if (def?.bankAccess && !spawn.name) spawn.name = BANK_ACCESS_SPAWN_NAME
   }
 
   function bankAccessSpawnHint(def) {
     return `${def?.name || 'This NPC'} opens the bank. Bank-enabled spawns must be explicitly named "${BANK_ACCESS_SPAWN_NAME}".`
+  }
+
+  function nextAvailableNpcSpawnId() {
+    while (npcSpawns.some(spawn => spawn.id === _npcSpawnNextId)) _npcSpawnNextId++
+    return _npcSpawnNextId++
+  }
+
+  function allocateNpcSpawnId(inputId) {
+    const id = Number(inputId)
+    if (Number.isInteger(id) && id > 0 && !npcSpawns.some(spawn => spawn.id === id)) {
+      if (id >= _npcSpawnNextId) _npcSpawnNextId = id + 1
+      return id
+    }
+    return nextAvailableNpcSpawnId()
+  }
+
+  function currentNpcAuthoringMapId() {
+    return currentServerMapId || 'current-map'
+  }
+
+  function selectedNpcIssueMatches(issue, spawn = selectedNpcSpawn) {
+    if (!spawn) return false
+    if (issue.spawnId !== undefined) return issue.spawnId === spawn.id
+    return npcSpawns[issue.spawnIndex] === spawn
+  }
+
+  function npcAuthoringIssues(spawns = npcSpawns, { includeDefErrors = true } = {}) {
+    const issues = validateNpcSpawnsForAuthoring({
+      mapId: currentNpcAuthoringMapId(),
+      width: map.width,
+      height: map.height,
+      spawns,
+      resolveNpcDef: npcDefById,
+    })
+
+    if (spawns.some(spawn => spawn && typeof spawn === 'object' && npcSpawnFloor(spawn) > 0)) {
+      const visualMaps = buildCollisionFloorVisualMaps()
+      spawns.forEach((spawn, index) => {
+        if (!spawn || typeof spawn !== 'object') return
+        const floor = npcSpawnFloor(spawn)
+        if (floor > 0 && npcSpawnAuthoredFloorHeight(spawn, visualMaps) == null) {
+          issues.push({
+            severity: 'warning',
+            code: 'spawn.floorNoSurface',
+            message: `Spawn ${spawn.id ?? index + 1} is assigned to F${floor}, but this tile has no upper-floor surface.`,
+            field: 'floor',
+            npcId: Number.isInteger(spawn.npcId) ? spawn.npcId : undefined,
+            spawnId: Number.isInteger(spawn.id) ? spawn.id : undefined,
+            spawnIndex: index,
+          })
+        }
+      })
+    }
+
+    if (includeDefErrors) {
+      issues.push(...validateNpcDefsForAuthoring(npcDefs).filter(issue => issue.severity === 'error'))
+    }
+    return issues
+  }
+
+  function npcAuthoringErrorIssues(spawns = npcSpawns) {
+    return npcAuthoringIssues(spawns).filter(issue => issue.severity === 'error')
+  }
+
+  function refreshNpcAuthoringStatus() {
+    const root = sidebar?.querySelector?.('#npcAuthoringStatus')
+    if (!root) return
+    const issues = npcAuthoringIssues()
+    const errors = issues.filter(issue => issue.severity === 'error')
+    const warnings = issues.filter(issue => issue.severity === 'warning')
+    const selectedIssues = selectedNpcSpawn ? issues.filter(issue => selectedNpcIssueMatches(issue)) : []
+    const visibleIssues = (selectedIssues.length ? selectedIssues : issues).slice(0, 4)
+    const border = errors.length ? '#7a3434' : warnings.length ? '#7d6731' : '#365c3c'
+    const bg = errors.length ? '#241414' : warnings.length ? '#231f12' : '#142016'
+    const color = errors.length ? '#ffb0a8' : warnings.length ? '#ffe08a' : '#a8e8b0'
+    const label = errors.length
+      ? `${errors.length} NPC preflight error${errors.length === 1 ? '' : 's'}`
+      : warnings.length
+        ? `${warnings.length} NPC warning${warnings.length === 1 ? '' : 's'}`
+        : `NPC preflight OK · ${npcSpawns.length} spawn${npcSpawns.length === 1 ? '' : 's'}`
+    root.style.cssText = `margin-top:6px;padding:6px;background:${bg};border:1px solid ${border};border-radius:4px;font-size:10px;line-height:1.35;color:${color};`
+    root.innerHTML = ''
+    const title = document.createElement('div')
+    title.style.cssText = 'font-weight:bold;margin-bottom:3px;'
+    title.textContent = label
+    root.appendChild(title)
+    if (visibleIssues.length > 0) {
+      const list = document.createElement('div')
+      list.style.cssText = 'display:grid;gap:2px;color:rgba(255,255,255,0.72);'
+      for (const issue of visibleIssues) {
+        const row = document.createElement('div')
+        row.textContent = `${issue.severity === 'error' ? 'Error' : 'Warn'}: ${issue.message}`
+        list.appendChild(row)
+      }
+      if (issues.length > visibleIssues.length) {
+        const more = document.createElement('div')
+        more.style.cssText = 'color:rgba(255,255,255,0.45);'
+        more.textContent = `+${issues.length - visibleIssues.length} more in this map`
+        list.appendChild(more)
+      }
+      root.appendChild(list)
+    }
   }
 
   function normalizeNpcFacing(value) {
@@ -844,7 +944,7 @@ function tuneModelLighting(model, assetOrPath = null) {
     const { npcId, x, z, wanderRange, id } = input
     // `aggressive` is always present on the in-memory spawn (possibly null)
     // because some UI code reads it without a `in spawn` guard.
-    const spawn = { id: id || _npcSpawnNextId++, npcId, x, z, wanderRange, aggressive: input.aggressive ?? null }
+    const spawn = { id: allocateNpcSpawnId(id), npcId, x, z, wanderRange, aggressive: input.aggressive ?? null }
     applyNpcDefSpawnDefaults(spawn, npcDefById(npcId))
     // Other override fields: only set if their save predicate accepts the
     // value so a fresh spawn doesn't carry empty values.
@@ -857,7 +957,6 @@ function tuneModelLighting(model, assetOrPath = null) {
         else spawn[field] = cloneNpcSpawnValue(input[field])
       }
     }
-    if (id && id >= _npcSpawnNextId) _npcSpawnNextId = id + 1
     npcSpawns.push(spawn)
     return spawn
   }
@@ -1554,6 +1653,7 @@ function tuneModelLighting(model, assetOrPath = null) {
     if (delBtn) delBtn.disabled = !selectedNpcSpawn
     const variantBtn = panel.querySelector('#npcCreateVariantBtn')
     if (variantBtn) variantBtn.disabled = !selectedOrCurrentNpcDef()
+    refreshNpcAuthoringStatus()
   }
 
   function refreshNpcSpawnList() {
@@ -3388,6 +3488,7 @@ let selectedWaterFlowChunk = null
         <button id="npcDeleteSelectedBtn" style="flex:1;font-size:11px;padding:5px;background:#4a2222;color:#fff;cursor:pointer;border:1px solid #744;border-radius:3px;">Delete spawn</button>
       </div>
       <div id="npcSelectedLabel" style="font-size:10px;color:rgba(255,255,255,0.55);margin-top:5px;min-height:13px;"></div>
+      <div id="npcAuthoringStatus"></div>
       <!-- Tab bar — switches the content area below. Spawn tab shows
            per-instance controls (wander, aggression); the others edit the
            shared NpcDef or per-spawn overrides for the selected spawn. -->
@@ -6448,6 +6549,7 @@ let selectedWaterFlowChunk = null
     const colors = {
       info: ['rgba(20,24,30,0.96)', 'rgba(255,255,255,0.18)'],
       success: ['rgba(18,55,34,0.96)', 'rgba(95,210,130,0.55)'],
+      warning: ['rgba(68,53,18,0.97)', 'rgba(255,204,80,0.62)'],
       error: ['rgba(72,22,22,0.97)', 'rgba(255,96,96,0.6)'],
     }
     const [bg, border] = colors[kind] || colors.info
@@ -12980,6 +13082,11 @@ function applyToolAtTile(tile, eventLike = null) {
   }
 
   async function saveNpcDefsToServer() {
+    const npcDefIssues = validateNpcDefsForAuthoring(npcDefs)
+    const npcDefErrors = npcDefIssues.filter(issue => issue.severity === 'error')
+    if (npcDefErrors.length > 0) {
+      throw new Error(`NPC defs preflight failed:\n${formatNpcAuthoringIssues(npcDefErrors)}`)
+    }
     if (!confirmBuiltInNpcDefSave()) {
       const err = new Error('NPC defs save cancelled')
       err.cancelled = true
@@ -13073,9 +13180,10 @@ function applyToolAtTile(tile, eventLike = null) {
 
   async function saveCurrentMapToServer(mapId) {
     const payload = buildCurrentMapServerPayload(mapId)
-    const bankAccessErrors = bankAccessSaveErrors(mapId, payload.spawns.npcs)
-    if (bankAccessErrors.length > 0) {
-      throw new Error(`Bank-enabled NPC spawn blocked:\n${bankAccessErrors.join('\n')}`)
+    const npcSpawnErrors = npcAuthoringErrorIssues(payload.spawns.npcs)
+    if (npcSpawnErrors.length > 0) {
+      refreshNpcAuthoringStatus()
+      throw new Error(`NPC spawn preflight failed:\n${formatNpcAuthoringIssues(npcSpawnErrors)}`)
     }
     const payloadText = JSON.stringify(payload)
     const bytes = new TextEncoder().encode(payloadText).length

@@ -3,6 +3,7 @@ import {
   GENERIC_SCENERY_OBJECT_DEF_ID,
   WELL_OBJECT_DEF_ID,
   isCropPlacedAssetId,
+  isWalkHerePrimarySceneryAssetId,
   objectDefIdForPlacedAsset,
   sceneryExamineMetaForAsset,
 } from './index';
@@ -30,6 +31,14 @@ test('filler scenery has clean display names and authored examine text', () => {
     name: 'Fountain',
     examineText: 'The water reflects someone who should probably get back to work.',
   });
+});
+
+test('carpet scenery keeps examine metadata but defaults to walk here', () => {
+  expect(objectDefIdForPlacedAsset('Carpet1x4')).toBe(GENERIC_SCENERY_OBJECT_DEF_ID);
+  expect(sceneryExamineMetaForAsset('Carpet1x4')?.name).toBe('Carpet');
+  expect(isWalkHerePrimarySceneryAssetId('Carpet1x4')).toBe(true);
+  expect(isWalkHerePrimarySceneryAssetId('Carpet2x3')).toBe(true);
+  expect(isWalkHerePrimarySceneryAssetId('bookcase2')).toBe(false);
 });
 
 test('tree assets resolve to the right harvestable object definitions', () => {

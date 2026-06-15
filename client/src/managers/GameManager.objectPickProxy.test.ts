@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { GENERIC_SCENERY_OBJECT_DEF_ID } from '@projectrs/shared';
 import { GameManager } from './GameManager';
 
 function makeManager(): any {
@@ -30,6 +31,15 @@ const CROP_DEF = {
   width: 0.6,
   height: 0.6,
   actions: ['Pick', 'Examine'],
+};
+
+const SCENERY_DEF = {
+  id: GENERIC_SCENERY_OBJECT_DEF_ID,
+  name: 'Scenery',
+  category: 'scenery',
+  width: 1,
+  height: 1,
+  actions: ['Examine'],
 };
 
 describe('GameManager world object pick proxies', () => {
@@ -182,5 +192,31 @@ describe('GameManager world object pick proxies', () => {
 
     expect(disposedProxyIds).toEqual([23456]);
     expect(pickTargetCalls).toEqual([{ objectEntityId: 23456, interactive: true, model }]);
+  });
+
+  test('carpet scenery defaults to walk here while keeping examine in the menu', () => {
+    const manager = makeManager();
+    manager.currentFloor = 0;
+    manager.worldObjectDefs = new Map([
+      [12345, { defId: GENERIC_SCENERY_OBJECT_DEF_ID, x: 10.5, z: 20.5, floor: 0, depleted: false }],
+    ]);
+    manager.objectDefsCache = new Map([[GENERIC_SCENERY_OBJECT_DEF_ID, SCENERY_DEF]]);
+    manager.worldObjectModels = new Map([[12345, { metadata: { assetId: 'Carpet1x4' } }]]);
+    manager.worldObjectInteractionActions = () => [];
+    manager.interactObject = () => {};
+    manager.handleGroundClick = () => {};
+
+    const options = manager.getWorldObjectInteractionOptions(12345, { x: 10.5, z: 20.5 });
+
+    expect(options.map((option: { label: string }) => option.label)).toEqual([
+      'Walk here',
+      'Examine Carpet',
+    ]);
+    expect(options[0].primary).not.toBe(false);
+    expect(options[1].primary).not.toBe(false);
+
+    const fallbackOptions = manager.getWorldObjectInteractionOptions(12345);
+    expect(fallbackOptions[0].label).toBe('Walk here');
+    expect(fallbackOptions[0].primary).not.toBe(false);
   });
 });

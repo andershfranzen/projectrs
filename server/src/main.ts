@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS, isValidMinimapIconFilename, normalizeMinimapMarkers, diagnosticFlagsFromPayload, diagnosticRecordField, measuredFpsFromDiagnosticPayload, rendererFromWebGlDiagnostics, validateItemDefs } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateNpcDefsForAuthoring, validateNpcSpawnsForAuthoring, formatNpcAuthoringIssues, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS, isValidMinimapIconFilename, normalizeMinimapMarkers, diagnosticFlagsFromPayload, diagnosticRecordField, measuredFpsFromDiagnosticPayload, rendererFromWebGlDiagnostics, validateItemDefs } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -4478,11 +4478,20 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
           objects: spawns?.objects ?? [],
           items: spawns?.items ?? [],
         };
-        const bankAccessErrors = validateBankAccessSpawns(mapId, mergedSpawns.npcs, npcId => world.data.getNpc(npcId));
-        if (bankAccessErrors.length > 0) {
+        const mapWidth = mapData.map?.width ?? meta.width;
+        const mapHeight = mapData.map?.height ?? meta.height;
+        const npcSpawnIssues = validateNpcSpawnsForAuthoring({
+          mapId,
+          width: mapWidth,
+          height: mapHeight,
+          spawns: mergedSpawns.npcs,
+          resolveNpcDef: npcId => world.data.getNpc(npcId),
+        });
+        const npcSpawnErrors = npcSpawnIssues.filter(issue => issue.severity === 'error');
+        if (npcSpawnErrors.length > 0) {
           return jsonResponse({
             ok: false,
-            error: `Refusing to save bank-enabled NPC spawn(s): ${bankAccessErrors.join(' ')}`,
+            error: `Refusing to save NPC spawns:\n${formatNpcAuthoringIssues(npcSpawnErrors)}`,
           }, 409);
         }
         const bulkNpcOffset = detectUniformNpcSpawnOffset(existingSpawns, mergedSpawns);
@@ -4503,9 +4512,6 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
             if (existingMap) objectsToSave = existingMap.placedObjects ?? [];
           }
         }
-
-        const mapWidth = mapData.map?.width ?? meta.width;
-        const mapHeight = mapData.map?.height ?? meta.height;
 
         // Preserve existing metadata fields if editor didn't include them
         // (partial-payload protection).
@@ -4668,6 +4674,14 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         const body = await req.json() as { npcs: any[] };
         if (!body || !Array.isArray(body.npcs)) {
           return jsonResponse({ ok: false, error: 'Body must be { npcs: NpcDef[] }' }, 400);
+        }
+        const npcDefIssues = validateNpcDefsForAuthoring(body.npcs);
+        const npcDefErrors = npcDefIssues.filter(issue => issue.severity === 'error');
+        if (npcDefErrors.length > 0) {
+          return jsonResponse({
+            ok: false,
+            error: `Refusing to save NPC defs:\n${formatNpcAuthoringIssues(npcDefErrors)}`,
+          }, 400);
         }
         // Shrinkage guard mirrors the gear-overrides save: refuse a payload
         // that's lost more than half the entries — an editor bug or stale
