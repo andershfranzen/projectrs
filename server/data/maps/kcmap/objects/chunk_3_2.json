@@ -950,12 +950,6 @@
     },
     "name": "Brother Monk Chest",
     "examineText": "Chest guarded by a Skeleton.",
-    "interactionTiles": [
-      {
-        "x": 0,
-        "z": 1
-      }
-    ],
     "interactions": [
       {
         "action": "Lockpick",
@@ -980,6 +974,12 @@
           }
         ],
         "message": "You pick the lock. Tucked beneath a few coins is little Wren's bear hide!"
+      }
+    ],
+    "interactionTiles": [
+      {
+        "x": 0,
+        "z": 1
       }
     ]
   },

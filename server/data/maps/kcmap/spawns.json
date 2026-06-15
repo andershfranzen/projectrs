@@ -491,7 +491,7 @@
     },
     {
       "id": 62,
-      "npcId": 107,
+      "npcId": 101,
       "x": 310.5,
       "z": 129.5,
       "wanderRange": 0,
@@ -3974,7 +3974,6 @@
         "skinColor": 6,
         "hairStyle": 1
       },
-      "name": "Brother Fenn",
       "dialogue": {
         "root": "fenn_idle",
         "rootConditions": [
@@ -4178,7 +4177,8 @@
             ]
           }
         }
-      }
+      },
+      "name": "Brother Fenn"
     },
     {
       "id": 207,
