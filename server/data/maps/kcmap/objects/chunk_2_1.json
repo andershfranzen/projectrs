@@ -8343,26 +8343,6 @@
     }
   },
   {
-    "assetId": "sign post",
-    "layerId": "layer_0",
-    "position": {
-      "x": 88.73307128004816,
-      "y": 2.24,
-      "z": 34
-    },
-    "rotation": {
-      "x": 0,
-      "y": 1.5707963267948966,
-      "z": 0
-    },
-    "scale": {
-      "x": 0.6499999999999997,
-      "y": 0.8499999999999999,
-      "z": 0.8499999999999999
-    },
-    "signText": "\"STOP WALKING ON MY ROOF!\"... hmm..."
-  },
-  {
     "assetId": "roof",
     "layerId": "layer_0",
     "position": {

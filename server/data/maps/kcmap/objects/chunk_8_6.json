@@ -775,5 +775,31 @@
       "y": 1,
       "z": 1
     }
+  },
+  {
+    "assetId": "sign post",
+    "layerId": "layer_0",
+    "position": {
+      "x": 278.5,
+      "y": 2.6605838166527445,
+      "z": 192.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.7,
+      "y": 0.7,
+      "z": 0.7
+    },
+    "signText": "Ahead is the desert of Khadarim.\nBeware of Bandits and Camels.",
+    "interactionTiles": [
+      {
+        "x": 0,
+        "z": 1
+      }
+    ]
   }
 ]
