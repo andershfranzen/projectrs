@@ -184,15 +184,15 @@ export function groundColor(type: GroundType, shade: number): RGB {
   let r: number, g: number, b: number;
   switch (type) {
     case 'dirt':          r = 0.45; g = 0.31; b = 0.14; break;
-    case 'sand':          r = 0.72; g = 0.60; b = 0.24; break;
+    case 'sand':          r = 0.72; g = 0.54; b = 0.30; break;
     case 'path':          r = 0.42; g = 0.30; b = 0.13; break;
     case 'road':          r = 0.47; g = 0.46; b = 0.43; break;
     // Editor label: Mud. Actual rendered water is controlled by waterPainted / waterLevel.
     case 'water':         r = 0.35; g = 0.24; b = 0.10; break;
-    case 'desert':        r = 0.82; g = 0.72; b = 0.50; break;
-    case 'sandstone':     r = 0.68; g = 0.48; b = 0.28; break;
+    case 'desert':        r = 0.78; g = 0.64; b = 0.42; break;
+    case 'sandstone':     r = 0.62; g = 0.43; b = 0.27; break;
     case 'rock':          r = 0.42; g = 0.40; b = 0.36; break;
-    case 'drysand':       r = 0.62; g = 0.42; b = 0.22; break;
+    case 'drysand':       r = 0.56; g = 0.35; b = 0.20; break;
     case 'dungeon-floor': r = 0.22; g = 0.17; b = 0.11; break;
     case 'dungeon-stone': r = 0.36; g = 0.36; b = 0.34; break;
     case 'dungeon-slate': r = 0.24; g = 0.29; b = 0.32; break;
@@ -226,13 +226,13 @@ export function groundColor(type: GroundType, shade: number): RGB {
 const GROUND_NOISE_AMPLITUDES: Record<GroundType, readonly [number, number, number]> = {
   grass:                [0.090, 0.040, 0.020],
   dirt:                 [0.055, 0.030, 0.018],
-  sand:                 [0.045, 0.026, 0.015],
+  sand:                 [0.030, 0.010, 0.000],
   path:                 [0.045, 0.024, 0.014],
   road:                 [0.024, 0.018, 0.012],
-  desert:               [0.050, 0.028, 0.016],
-  sandstone:            [0.048, 0.028, 0.018],
+  desert:               [0.028, 0.010, 0.000],
+  sandstone:            [0.026, 0.012, 0.000],
   rock:                 [0.044, 0.032, 0.022],
-  drysand:              [0.050, 0.028, 0.016],
+  drysand:              [0.028, 0.010, 0.000],
   'dungeon-floor':      [0.032, 0.024, 0.018],
   'dungeon-stone':      [0.028, 0.024, 0.016],
   'dungeon-slate':      [0.030, 0.024, 0.016],
@@ -257,7 +257,7 @@ export function getNoiseExtra(type: GroundType, vx: number, vz: number): number 
 
 /** Detail-pattern family for the procedural ground shader. The fragment shader
  *  picks a micro-pattern per family: 0 grass/moss (organic speckle), 1 dirt/path
- *  (clumps), 2 sand/desert (fine grain), 3 stone/rock/road/dungeon (cracked cells).
+ *  (clumps), 2 sand/desert (soft mottle), 3 stone/rock/road/dungeon (cracked cells).
  *  -1 means "no detail" (water/void) and the shader leaves those untouched. */
 export function groundDetailFamily(type: GroundType): number {
   switch (type) {

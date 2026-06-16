@@ -9361,13 +9361,13 @@ let selectedWaterFlowChunk = null
   const GROUND_TYPES_OVERWORLD = [
     { id: 'grass', label: 'Grass', color: '#3d8a20' },
     { id: 'dirt',  label: 'Dirt',  color: '#7a5030' },
-    { id: 'sand',  label: 'Sand',  color: '#c4a245' },
+    { id: 'sand',  label: 'Sand',  color: '#b88a4d' },
     { id: 'path',  label: 'Path',  color: '#8a7860' },
     { id: 'road',  label: 'Road',  color: '#7a7870' },
-    { id: 'desert',    label: 'Desert',    color: '#d4b880' },
-    { id: 'sandstone', label: 'Sandstone', color: '#b07a48' },
+    { id: 'desert',    label: 'Desert',    color: '#c7a36b' },
+    { id: 'sandstone', label: 'Sandstone', color: '#9e6e45' },
     { id: 'rock',      label: 'Rock',      color: '#6b6860' },
-    { id: 'drysand',   label: 'Dry Sand',  color: '#9e6b38' },
+    { id: 'drysand',   label: 'Dry Sand',  color: '#8f5933' },
     { id: 'water', label: 'Mud', color: '#5a3d1a' },
     { id: 'surface-water', label: 'Water', color: '#7ab8c8' },
   ]
