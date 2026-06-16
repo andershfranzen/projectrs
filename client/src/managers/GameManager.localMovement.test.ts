@@ -182,7 +182,7 @@ describe('GameManager local movement prediction', () => {
     expect(manager.shouldIgnoreVisibleLocalAuthority(6.25, 6.0, true)).toBe(false);
   });
 
-  test('local authoritative move steps rewind an ahead run prediction to the server accepted tile', () => {
+  test('local authoritative move steps do not rewind an active on-route prediction', () => {
     const { manager, player } = makeManager([
       { x: 10.5, z: 0.5 },
     ], 10);
@@ -196,54 +196,50 @@ describe('GameManager local movement prediction', () => {
     ]);
 
     expect(manager.pathIndex).toBe(0);
-    expect(manager.tileProgress).toBe(0);
-    expect(manager.tileFrom).toEqual({ x: 2.5, z: 0.5 });
-    expect(manager.playerX).toBe(2.5);
+    expect(manager.tileProgress).toBe(0.575);
+    expect(manager.tileFrom).toEqual({ x: 0.5, z: 0.5 });
+    expect(manager.playerX).toBe(6.25);
     expect(manager.playerZ).toBe(0.5);
-    expect(manager.predictedPathUnitSteps).toBe(8);
+    expect(manager.predictedPathUnitSteps).toBe(10);
     expect(player.modes.at(-1)).toBe('run');
     expect(player.walking).toBe(true);
-    expect(player.positions.at(-1)).toEqual({ x: 2.5, y: 0, z: 0.5 });
+    expect(player.positions).toEqual([]);
   });
 
-  test('local authoritative move steps advance to the next waypoint when the server reaches it', () => {
-    const { manager } = makeManager([
-      { x: 1.5, z: 0.5 },
-      { x: 2.5, z: 0.5 },
-      { x: 3.5, z: 0.5 },
-    ], 3);
+  test('local authoritative move steps still reset an off-route prediction', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
     manager.playerX = 2.25;
     manager.playerZ = 0.5;
-    manager.pathIndex = 1;
 
     manager.applyLocalAuthoritativeMoveSteps([
-      { x: 1.5, z: 0.5, floor: 0, y: 0, mode: 'walk' },
+      { x: 1.5, z: 1.5, floor: 0, y: 0, mode: 'walk' },
     ]);
 
-    expect(manager.pathIndex).toBe(1);
-    expect(manager.tileFrom).toEqual({ x: 1.5, z: 0.5 });
-    expect(manager.predictedPathUnitSteps).toBe(2);
+    expect(manager.path).toEqual([]);
+    expect(manager.pathIndex).toBe(0);
+    expect(manager.playerX).toBe(1.5);
+    expect(manager.playerZ).toBe(1.5);
+    expect(player.positions.at(-1)).toEqual({ x: 1.5, y: 0, z: 1.5 });
   });
 
-  test('local authoritative move steps apply server floor and height', () => {
-    const { manager, player, floorUpdates } = makeManager([
-      { x: 1.5, z: 0.5 },
-    ], 1);
+  test('local authoritative move steps apply server floor and height when correcting position', () => {
+    const { manager, player, floorUpdates } = makeManager([], 0);
 
     manager.applyLocalAuthoritativeMoveSteps([
       { x: 1.5, z: 0.5, floor: 2, y: 4.25, mode: 'walk' },
     ]);
 
+    expect(manager.playerX).toBe(1.5);
+    expect(manager.playerZ).toBe(0.5);
     expect(manager.currentFloor).toBe(2);
     expect(floorUpdates).toEqual([2]);
     expect(player.positions.at(-1)).toEqual({ x: 1.5, y: 4.25, z: 0.5 });
   });
 
   test('queued local authoritative move steps wait for their matching self-sync tick', () => {
-    const { manager, player } = makeManager([
-      { x: 1.5, z: 0.5 },
-      { x: 2.5, z: 0.5 },
-    ], 2);
+    const { manager, player } = makeManager([], 0);
 
     manager.queuePendingSelfMoveSteps(12, [
       { x: 1.5, z: 0.5, floor: 0, y: 0, mode: 'walk' },

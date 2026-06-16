@@ -8319,6 +8319,25 @@ export class GameManager {
     return maxAxisDelta <= GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
   }
 
+  private isTileOnPredictedRoute(x: number, z: number): boolean {
+    if (this.pathIndex >= this.path.length) return false;
+    return this.findPredictedRouteSegmentContainingTile(Math.floor(x), Math.floor(z)) >= 0;
+  }
+
+  private isCurrentLocalTile(x: number, z: number): boolean {
+    return Math.floor(this.playerX) === Math.floor(x) && Math.floor(this.playerZ) === Math.floor(z);
+  }
+
+  private shouldTreatSelfMoveStepAsConfirmation(step: RemoteMovementStep): boolean {
+    return this.isTileOnPredictedRoute(step.x, step.z)
+      && this.shouldIgnoreVisibleLocalAuthority(step.x, step.z, true);
+  }
+
+  private applyLocalAuthoritativeStepVerticalIfCurrent(step: RemoteMovementStep): void {
+    if (!this.isCurrentLocalTile(step.x, step.z)) return;
+    this.applyLocalVerticalAuthority(step.floor, step.y);
+  }
+
   private clearRecentPredictedArrival(): void {
     this.recentPredictedArrivalUntil = 0;
     this.recentPredictedArrivalDestination = null;
@@ -11859,6 +11878,15 @@ export class GameManager {
     this.clearSpellMovementLockOnSelfSync();
     this.clearRecentPredictedArrival();
     this.localPlayer?.setMovementMode(final.mode);
+
+    // Visible local movement is already predicting along this exact route.
+    // Treat nearby self step packets as authoritative confirmation, not a
+    // render command, so late packets cannot rubber-band the camera backward.
+    if (this.shouldTreatSelfMoveStepAsConfirmation(final)) {
+      this.applyLocalAuthoritativeStepVerticalIfCurrent(final);
+      if (this.pathIndex < this.path.length && !this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
+      return;
+    }
 
     const reanchored = this.reanchorPredictedPathToAuthority(final.x, final.z, true);
     if (!reanchored) {
