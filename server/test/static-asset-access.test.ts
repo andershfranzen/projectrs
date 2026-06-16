@@ -21,7 +21,9 @@ describe('static game asset access', () => {
 
   test('protects the admin panel chunk separately from normal game auth', () => {
     expect(requiresAdminStaticAsset('/assets/admin-panel-AbC_123.js')).toBe(true);
+    expect(requiresAdminStaticAsset('/assets/AdminPanel-AbC_123.js')).toBe(true);
     expect(requiresAuthenticatedGameStaticAsset('/assets/admin-panel-AbC_123.js')).toBe(false);
+    expect(requiresAuthenticatedGameStaticAsset('/assets/AdminPanel-AbC_123.js')).toBe(false);
     expect(requiresAdminStaticAsset('/assets/GameManager-Kg0KN_Zj.js')).toBe(false);
   });
 

@@ -53,7 +53,6 @@ export default defineConfig(({ command, mode }) => {
           // bust Babylon's cache, and so the (large) glTF loader is its own
           // chunk that can be fetched in parallel with the engine.
           manualChunks(id: string) {
-            if (id.replace(/\\/g, '/').endsWith('/client/src/ui/AdminPanel.ts')) return 'admin-panel';
             if (id.includes('node_modules/@babylonjs/loaders')) return 'babylon-loaders';
             if (id.includes('node_modules/@babylonjs/gui')) return 'babylon-gui';
             if (id.includes('node_modules/@babylonjs/core')) return 'babylon-core';
