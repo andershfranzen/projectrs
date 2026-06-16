@@ -181,9 +181,9 @@ interface DiagnosticBrowserGap {
 }
 
 const TEXT_SHADOW = '1px 1px 0 #000';
-const BOT_GRID_COLUMNS = 'minmax(142px, 1.25fr) 54px 74px minmax(158px, 1.45fr) minmax(116px, 0.95fr) 106px';
-const EVENT_GRID_COLUMNS = '76px 88px minmax(112px, 0.9fr) minmax(210px, 2fr) 116px';
-const DIAGNOSTIC_GRID_COLUMNS = '78px 106px minmax(96px, 0.8fr) minmax(190px, 2fr) 64px';
+const BOT_GRID_COLUMNS = 'minmax(132px, 1.2fr) 44px 66px minmax(150px, 1.4fr) minmax(82px, 0.75fr) 86px';
+const EVENT_GRID_COLUMNS = '72px 92px minmax(104px, 0.85fr) minmax(220px, 2fr) 106px';
+const DIAGNOSTIC_GRID_COLUMNS = '74px 110px minmax(96px, 0.75fr) minmax(220px, 2fr) 58px';
 const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
   { type: 'chat', label: 'Chat' },
   { type: 'private_chat', label: 'Private' },
@@ -284,7 +284,7 @@ export class AdminPanel {
       subtitle: 'Bot review',
       geometry: {
         kind: 'game-canvas',
-        width: 'min(1040px, calc(100% - var(--right-rail-width, 300px) - 18px))',
+        width: 'min(1260px, calc(100% - var(--right-rail-width, 300px) - 18px))',
         maxHeight: 'calc(100% - var(--chat-height, 220px) - 14px)',
       },
       chrome: 'dialogue',
@@ -298,13 +298,13 @@ export class AdminPanel {
     body.style.cssText = `
       display: flex;
       flex-direction: column;
-      gap: 9px;
-      padding: 10px 11px 11px;
+      gap: 10px;
+      padding: 10px 12px 12px;
       flex: 1 1 auto;
       min-height: 0;
       overflow: hidden;
       color: #f1d6b6;
-      font-family: Arial, Helvetica, sans-serif;
+      font: 11px/1.35 Arial, Helvetica, sans-serif;
       text-shadow: ${TEXT_SHADOW};
       box-sizing: border-box;
     `;
@@ -337,10 +337,13 @@ export class AdminPanel {
     const toolbar = document.createElement('div');
     toolbar.style.cssText = `
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(140px, 180px) auto;
+      grid-template-columns: minmax(0, 1fr) minmax(170px, 220px) 84px;
       align-items: center;
       gap: 8px;
       min-width: 0;
+      padding: 6px;
+      border: 1px solid rgba(74, 64, 53, 0.52);
+      background: rgba(10, 7, 5, 0.34);
     `;
 
     this.summaryEl = document.createElement('div');
@@ -532,12 +535,12 @@ export class AdminPanel {
     this.gridHeaderEl.style.cssText = `
       display: grid;
       grid-template-columns: ${BOT_GRID_COLUMNS};
-      gap: 6px;
-      padding: 4px 7px;
-      color: #a99573;
+      gap: 8px;
+      padding: 6px 8px;
+      color: #b8a17d;
       font-size: 10px;
       border: 1px solid rgba(74, 64, 53, 0.72);
-      background: rgba(18, 13, 10, 0.64);
+      background: rgba(18, 13, 10, 0.84);
     `;
     for (const label of ['Account', 'Score', 'Risk', 'Signals', 'Network', 'Last login']) {
       const cell = document.createElement('div');
@@ -547,8 +550,8 @@ export class AdminPanel {
     const mainLayout = document.createElement('div');
     mainLayout.style.cssText = `
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr));
-      gap: 8px;
+      grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+      gap: 10px;
       min-height: 0;
       overflow: hidden;
     `;
@@ -565,23 +568,23 @@ export class AdminPanel {
     this.rowsEl = document.createElement('div');
     this.rowsEl.style.cssText = `
       flex: 1 1 auto;
-      min-height: 220px;
-      max-height: min(48vh, 430px);
+      min-height: 300px;
+      max-height: min(58vh, 560px);
       overflow: auto;
       border: 1px solid rgba(74, 64, 53, 0.72);
       border-top: 0;
-      background: rgba(8, 6, 5, 0.4);
+      background: rgba(8, 6, 5, 0.52);
     `;
     listPane.appendChild(this.rowsEl);
 
     this.detailEl = document.createElement('div');
     this.detailEl.style.cssText = `
       min-height: 260px;
-      max-height: min(56vh, 540px);
+      max-height: min(58vh, 560px);
       overflow: auto;
       border: 1px solid rgba(74, 64, 53, 0.72);
-      background: rgba(14, 10, 8, 0.56);
-      padding: 9px;
+      background: rgba(14, 10, 8, 0.64);
+      padding: 10px;
       box-sizing: border-box;
     `;
     mainLayout.append(listPane, this.detailEl);
@@ -1106,8 +1109,8 @@ export class AdminPanel {
       width: 100%;
       display: grid;
       grid-template-columns: ${DIAGNOSTIC_GRID_COLUMNS};
-      gap: 6px;
-      padding: 6px 7px;
+      gap: 8px;
+      padding: 7px 8px;
       border: 0;
       border-bottom: 1px solid rgba(74, 64, 53, 0.55);
       background: ${this.diagnosticRowBackground(flags, selected)};
@@ -1116,7 +1119,9 @@ export class AdminPanel {
       text-align: left;
       cursor: pointer;
       text-shadow: ${TEXT_SHADOW};
+      transition: background 120ms ease, filter 120ms ease;
     `;
+    this.installRowHover(row, this.diagnosticRowBackground(flags, selected));
     row.addEventListener('click', () => {
       this.selectedDiagnosticKey = this.diagnosticKey(entry);
       this.renderClientDiagnostics();
@@ -1143,7 +1148,7 @@ export class AdminPanel {
     const flags = this.diagnosticFlags(entry);
 
     const root = document.createElement('div');
-    root.style.cssText = `display: flex; flex-direction: column; gap: 9px;`;
+    root.style.cssText = `display: flex; flex-direction: column; gap: 10px;`;
 
     const title = document.createElement('div');
     title.style.cssText = `display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13px; font-weight: bold; color: #f4ded5;`;
@@ -1172,7 +1177,7 @@ export class AdminPanel {
     const metrics = document.createElement('div');
     metrics.style.cssText = `
       display: grid;
-      grid-template-columns: repeat(4, minmax(100px, 1fr));
+      grid-template-columns: repeat(3, minmax(118px, 1fr));
       gap: 6px;
     `;
     metrics.append(
@@ -1238,8 +1243,8 @@ export class AdminPanel {
       width: 100%;
       display: grid;
       grid-template-columns: ${EVENT_GRID_COLUMNS};
-      gap: 6px;
-      padding: 6px 7px;
+      gap: 8px;
+      padding: 7px 8px;
       border: 0;
       border-bottom: 1px solid rgba(74, 64, 53, 0.55);
       background: ${selected ? 'rgba(122, 50, 40, 0.48)' : 'rgba(22, 16, 12, 0.38)'};
@@ -1248,7 +1253,9 @@ export class AdminPanel {
       text-align: left;
       cursor: pointer;
       text-shadow: ${TEXT_SHADOW};
+      transition: background 120ms ease, filter 120ms ease;
     `;
+    this.installRowHover(row, selected ? 'rgba(122, 50, 40, 0.48)' : 'rgba(22, 16, 12, 0.38)');
     row.addEventListener('click', () => {
       this.selectedEventId = event.id;
       this.renderGameEvents();
@@ -1342,8 +1349,8 @@ export class AdminPanel {
       width: 100%;
       display: grid;
       grid-template-columns: ${BOT_GRID_COLUMNS};
-      gap: 6px;
-      padding: 6px 7px;
+      gap: 8px;
+      padding: 7px 8px;
       border: 0;
       border-bottom: 1px solid rgba(74, 64, 53, 0.55);
       background: ${rowBackground};
@@ -1353,7 +1360,9 @@ export class AdminPanel {
       cursor: pointer;
       text-shadow: ${TEXT_SHADOW};
       box-shadow: ${rowInset ? `inset 3px 0 0 ${rowInset}` : 'none'};
+      transition: background 120ms ease, filter 120ms ease;
     `;
+    this.installRowHover(row, rowBackground);
     row.addEventListener('click', () => {
       this.selectedAccountId = account.accountId;
       this.renderBotReview();
@@ -1658,7 +1667,7 @@ export class AdminPanel {
     const activeActions = actions + account.totalMovements;
 
     const root = document.createElement('div');
-    root.style.cssText = `display: flex; flex-direction: column; gap: 8px;`;
+    root.style.cssText = `display: flex; flex-direction: column; gap: 10px;`;
 
     const title = document.createElement('div');
     title.style.cssText = `display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13px; font-weight: bold; color: #f4ded5;`;
@@ -1716,7 +1725,7 @@ export class AdminPanel {
     const metrics = document.createElement('div');
     metrics.style.cssText = `
       display: grid;
-      grid-template-columns: repeat(4, minmax(100px, 1fr));
+      grid-template-columns: repeat(3, minmax(118px, 1fr));
       gap: 6px;
     `;
     const metricRows: Array<[string, string]> = [
@@ -1747,7 +1756,7 @@ export class AdminPanel {
       const session = document.createElement('div');
       session.style.cssText = `
         display: grid;
-        grid-template-columns: repeat(4, minmax(100px, 1fr));
+        grid-template-columns: repeat(3, minmax(118px, 1fr));
         gap: 6px;
       `;
       const sessionRows: Array<[string, string]> = [
@@ -1828,7 +1837,12 @@ export class AdminPanel {
       root.appendChild(this.detailSection('Recent sessions', this.sessionHistoryTable(account.sessionHistory)));
     }
 
-    root.appendChild(this.detailSection('Actions', this.moderationControls(account)));
+    const actionSection = this.detailSection('Actions', this.moderationControls(account));
+    actionSection.style.position = 'sticky';
+    actionSection.style.bottom = '0';
+    actionSection.style.zIndex = '1';
+    actionSection.style.boxShadow = '0 -10px 18px rgba(0, 0, 0, 0.22)';
+    root.appendChild(actionSection);
 
     // The flat reasons line is superseded by the ranked "Why flagged" breakdown
     // rendered near the top of the pane (see renderWhyFlagged).
@@ -2121,7 +2135,7 @@ export class AdminPanel {
     const TIER_NAME: Record<AdminBotSignal['tier'], string> = { hard: 'hard evidence', soft: 'supporting', context: 'combo' };
 
     const box = document.createElement('div');
-    box.style.cssText = `border: 1px solid #4a3f33; border-radius: 6px; padding: 8px 9px; display: flex; flex-direction: column; gap: 6px; background: #241d16;`;
+    box.style.cssText = `border: 1px solid rgba(128, 104, 72, 0.72); border-radius: 4px; padding: 9px 10px; display: flex; flex-direction: column; gap: 8px; background: rgba(36, 29, 22, 0.86);`;
 
     const head = document.createElement('div');
     head.style.cssText = `display: flex; align-items: center; gap: 7px; flex-wrap: wrap;`;
@@ -2165,12 +2179,12 @@ export class AdminPanel {
 
     for (const sig of signals) {
       const row = document.createElement('div');
-      row.style.cssText = `display: grid; grid-template-columns: 44px 1fr; gap: 8px; align-items: start;`;
+      row.style.cssText = `display: grid; grid-template-columns: 44px 1fr; gap: 9px; align-items: start; padding-top: 7px; border-top: 1px solid rgba(84, 70, 50, 0.4);`;
 
       const pts = document.createElement('div');
       pts.textContent = `+${sig.points}`;
       pts.title = TIER_NAME[sig.tier];
-      pts.style.cssText = `font-size: 12px; font-weight: bold; text-align: center; color: #fff; background: ${TIER_COLOR[sig.tier]}; border-radius: 4px; padding: 2px 0; align-self: center;`;
+      pts.style.cssText = `font-size: 12px; font-weight: bold; text-align: center; color: #fff; background: ${TIER_COLOR[sig.tier]}; border-radius: 3px; padding: 3px 0; align-self: center;`;
       row.appendChild(pts);
 
       const text = document.createElement('div');
@@ -2488,12 +2502,12 @@ export class AdminPanel {
     pill.title = text;
     pill.style.cssText = `
       max-width: 210px;
-      padding: 3px 7px;
-      border: 1px solid rgba(220, 190, 140, 0.2);
+      padding: 3px 6px;
+      border: 1px solid rgba(220, 190, 140, 0.16);
       border-radius: 3px;
       background: ${color};
       color: #f4ded5;
-      font-size: 10px;
+      font-size: 9px;
       font-weight: bold;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -2507,9 +2521,9 @@ export class AdminPanel {
     const cell = document.createElement('div');
     cell.style.cssText = `
       min-width: 0;
-      padding: 5px 6px;
-      background: rgba(34, 25, 18, 0.62);
-      border: 1px solid rgba(84, 70, 50, 0.6);
+      padding: 6px 7px;
+      background: rgba(10, 7, 5, 0.38);
+      border: 1px solid rgba(84, 70, 50, 0.46);
       box-sizing: border-box;
     `;
     const labelEl = document.createElement('div');
@@ -2518,7 +2532,7 @@ export class AdminPanel {
     const valueEl = document.createElement('div');
     valueEl.textContent = value;
     valueEl.title = value;
-    valueEl.style.cssText = `font-size: 11px; color: #f4ded5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`;
+    valueEl.style.cssText = `font-size: 11px; color: #f4ded5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums;`;
     cell.append(labelEl, valueEl);
     return cell;
   }
@@ -2530,17 +2544,17 @@ export class AdminPanel {
       display: flex;
       flex-direction: column;
       gap: 6px;
-      padding: 7px;
-      border: 1px solid rgba(84, 70, 50, 0.58);
-      background: rgba(20, 14, 10, 0.44);
+      padding: 8px;
+      border: 1px solid rgba(84, 70, 50, 0.5);
+      border-left: 3px solid rgba(154, 108, 63, 0.62);
+      background: rgba(20, 14, 10, 0.5);
       box-sizing: border-box;
     `;
     const heading = document.createElement('div');
     heading.textContent = title;
     heading.style.cssText = `
       color: #c9b48f;
-      font: 700 10px Arial, Helvetica, sans-serif;
-      text-transform: uppercase;
+      font: 700 11px Arial, Helvetica, sans-serif;
       letter-spacing: 0;
     `;
     section.append(heading, content);
@@ -2554,15 +2568,15 @@ export class AdminPanel {
       display: flex;
       flex-direction: column;
       gap: 5px;
-      padding: 6px;
+      padding: 7px;
       border: 1px solid rgba(84, 70, 50, 0.5);
-      background: rgba(8, 6, 5, 0.24);
+      background: rgba(8, 6, 5, 0.32);
     `;
     const heading = document.createElement('div');
     heading.textContent = title;
     heading.style.cssText = `font: 700 10px Arial, Helvetica, sans-serif; color: #a99573;`;
     const row = document.createElement('div');
-    row.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px;`;
+    row.style.cssText = `display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 5px;`;
     row.append(...controls);
     group.append(heading, row);
     return group;
@@ -2651,6 +2665,14 @@ export class AdminPanel {
     const normal = button.style.background;
     button.addEventListener('mouseenter', () => { button.style.background = 'rgba(78, 18, 14, 0.95)'; });
     button.addEventListener('mouseleave', () => { button.style.background = normal; });
+  }
+
+  private installRowHover(row: HTMLElement, normalBackground: string): void {
+    row.addEventListener('mouseenter', () => { row.style.filter = 'brightness(1.14)'; });
+    row.addEventListener('mouseleave', () => {
+      row.style.background = normalBackground;
+      row.style.filter = '';
+    });
   }
 
   private formatTime(unixSeconds: number | null): string {
