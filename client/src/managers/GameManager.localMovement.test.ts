@@ -153,6 +153,22 @@ describe('GameManager local movement prediction', () => {
     });
   });
 
+  test('keeps travel facing updated while skilling is queued during movement', () => {
+    const { manager, player } = makeManager([
+      { x: 1.5, z: 0.5 },
+      { x: 1.5, z: 1.5 },
+    ], 2);
+    manager.isSkilling = true;
+
+    advanceLocalMovement(manager, 0.31, {} as any);
+
+    expect(manager.pathIndex).toBe(1);
+    expect(player.directions.at(-1)).toEqual({
+      dx: 0,
+      dz: 1.5 - manager.playerZ,
+    });
+  });
+
   test('does not repay a long frame as a burst of visual movement', () => {
     const { manager } = makeManager([
       { x: 10.5, z: 0.5 },
@@ -233,6 +249,35 @@ describe('GameManager local movement prediction', () => {
     ]);
     expect(manager.tileProgress).toBe(0.25);
     expect(manager.playerX).toBe(0.75);
+  });
+
+  test('active interaction redirects can replace a route with the same destination tile', () => {
+    const { manager, sentMoves } = makeManager([
+      { x: 1.5, z: 0.5 },
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.predictedPathDestination = { x: 10.5, z: 0.5 };
+    manager.tileProgress = 0.25;
+    manager.playerX = 0.75;
+
+    const started = manager.startPredictedPath([
+      { x: 1.5, z: 1.5 },
+      { x: 10.5, z: 0.5 },
+    ], true, { coalesceDuplicateDestination: false });
+
+    expect(started).toBe(true);
+    expect(sentMoves).toEqual([{
+      path: [
+        { x: 1.5, z: 1.5 },
+        { x: 10.5, z: 0.5 },
+      ],
+      mode: 'run',
+    }]);
+    expect(manager.path).toEqual([
+      { x: 1.5, z: 0.5 },
+      { x: 1.5, z: 1.5 },
+      { x: 10.5, z: 0.5 },
+    ]);
   });
 
   test('repeated duplicate destination clicks leave the active run route untouched', () => {

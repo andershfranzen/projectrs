@@ -593,10 +593,95 @@ describe('GameManager world object pick proxies', () => {
     });
     manager.startPredictedPath = (path: Array<{ x: number; z: number }>) => {
       startedPath = path;
+      return true;
     };
 
     expect(manager.walkToAdjacentTileOf(data, BROTHER_MONK_CHEST_DEF)).toBe(true);
     expect(startedPath).toEqual([{ x: 107.5, z: 93.5 }]);
+  });
+
+  test('active object walking redirects bypass destination-only coalescing', () => {
+    const manager = makeManager();
+    const data = {
+      defId: BROTHER_MONK_CHEST_OBJECT_DEF_ID,
+      x: 10.5,
+      z: 1.5,
+      y: 0,
+      floor: 0,
+      depleted: false,
+      interactionTiles: [{ x: 10, z: 0 }],
+    };
+    let startArgs: {
+      path: Array<{ x: number; z: number }>;
+      preserveCurrentStep: boolean;
+      coalesceDuplicateDestination: boolean | undefined;
+    } | null = null;
+
+    manager.playerX = 0.5;
+    manager.playerZ = 0.5;
+    manager.path = [{ x: 10.5, z: 0.5 }];
+    manager.pathIndex = 0;
+    manager.tileProgress = 0;
+    manager.getActiveUnitStep = () => null;
+    manager.isTileBlocked = () => false;
+    manager.isWallBlockedForPath = () => false;
+    manager.findPathFromMovementAnchor = (goalX: number, goalZ: number) => ({
+      path: [{ x: goalX, z: goalZ }],
+      preserveCurrentStep: false,
+    });
+    manager.startPredictedPath = (
+      path: Array<{ x: number; z: number }>,
+      preserveCurrentStep: boolean,
+      options?: { coalesceDuplicateDestination?: boolean },
+    ) => {
+      startArgs = {
+        path,
+        preserveCurrentStep,
+        coalesceDuplicateDestination: options?.coalesceDuplicateDestination,
+      };
+      return true;
+    };
+
+    expect(manager.walkToAdjacentTileOf(data, BROTHER_MONK_CHEST_DEF)).toBe(true);
+    expect(startArgs).not.toBeNull();
+    expect(startArgs as unknown as {
+      path: Array<{ x: number; z: number }>;
+      preserveCurrentStep: boolean;
+      coalesceDuplicateDestination: boolean | undefined;
+    }).toEqual({
+      path: [{ x: 10.5, z: 0.5 }],
+      preserveCurrentStep: false,
+      coalesceDuplicateDestination: false,
+    });
+  });
+
+  test('object walking reports false when prediction refuses the route', () => {
+    const manager = makeManager();
+    const data = {
+      defId: BROTHER_MONK_CHEST_OBJECT_DEF_ID,
+      x: 10.5,
+      z: 1.5,
+      y: 0,
+      floor: 0,
+      depleted: false,
+      interactionTiles: [{ x: 10, z: 0 }],
+    };
+
+    manager.playerX = 0.5;
+    manager.playerZ = 0.5;
+    manager.path = [{ x: 10.5, z: 0.5 }];
+    manager.pathIndex = 0;
+    manager.tileProgress = 0;
+    manager.getActiveUnitStep = () => null;
+    manager.isTileBlocked = () => false;
+    manager.isWallBlockedForPath = () => false;
+    manager.findPathFromMovementAnchor = (goalX: number, goalZ: number) => ({
+      path: [{ x: goalX, z: goalZ }],
+      preserveCurrentStep: false,
+    });
+    manager.startPredictedPath = () => false;
+
+    expect(manager.walkToAdjacentTileOf(data, BROTHER_MONK_CHEST_DEF)).toBe(false);
   });
 
   test('fallback object tile counts as usable when authored chest tile is unreachable', () => {

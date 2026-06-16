@@ -9112,16 +9112,31 @@ export class GameManager {
     return this.predictedPathDestination ?? this.path[this.path.length - 1] ?? null;
   }
 
-  private shouldCoalesceDuplicatePredictedPath(path: { x: number; z: number }[]): boolean {
-    const destination = path[path.length - 1];
-    const activeDestination = this.activePredictedDestination();
-    return !!destination && !!activeDestination && this.sameTile(destination, activeDestination);
+  private activePredictedPathMatches(path: { x: number; z: number }[]): boolean {
+    if (this.pathIndex >= this.path.length) return false;
+    const activePath = this.pathIndex > 0 ? this.path.slice(this.pathIndex) : this.path;
+    return activePath.length === path.length
+      && activePath.every((point, index) => this.sameTile(point, path[index]));
   }
 
-  private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): boolean {
+  private shouldCoalesceDuplicatePredictedPath(
+    path: { x: number; z: number }[],
+    coalesceByDestination: boolean = true,
+  ): boolean {
+    const destination = path[path.length - 1];
+    const activeDestination = this.activePredictedDestination();
+    if (!destination || !activeDestination || !this.sameTile(destination, activeDestination)) return false;
+    return coalesceByDestination || this.activePredictedPathMatches(path);
+  }
+
+  private startPredictedPath(
+    path: { x: number; z: number }[],
+    preserveCurrentStep: boolean = false,
+    options: { coalesceDuplicateDestination?: boolean } = {},
+  ): boolean {
     if (path.length === 0) return false;
     if (this.isControlledMoveActive()) return false;
-    if (this.shouldCoalesceDuplicatePredictedPath(path)) return false;
+    if (this.shouldCoalesceDuplicatePredictedPath(path, options.coalesceDuplicateDestination ?? true)) return false;
     this.followTargetPlayerId = -1;
     if (!this.network.sendMove(path, this.movementMode)) return false;
     this.noteLocalMoveCommandSent();
@@ -9317,8 +9332,9 @@ export class GameManager {
     const best = findBest(this.objectInteractionTiles(data, def), hasAuthoredTiles)
       ?? (hasAuthoredTiles ? findBest(this.generatedObjectInteractionTiles(data, def), false) : null);
     if (best) {
-      this.startPredictedPath(best.path, best.preserveCurrentStep);
-      return true;
+      return this.startPredictedPath(best.path, best.preserveCurrentStep, {
+        coalesceDuplicateDestination: this.pathIndex >= this.path.length,
+      });
     }
     return false;
   }
@@ -9685,7 +9701,10 @@ export class GameManager {
         }
         const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(tx + 0.5, tz + 0.5, 500);
         if (path.length > 0) {
-          this.startPredictedPath(path, preserveCurrentStep);
+          const started = this.startPredictedPath(path, preserveCurrentStep, {
+            coalesceDuplicateDestination: this.pathIndex >= this.path.length,
+          });
+          if (!started && alreadyAdj) shouldSendInteraction = this.pathIndex >= this.path.length;
         } else if (alreadyAdj) {
           shouldSendInteraction = this.pathIndex >= this.path.length;
         }
@@ -12453,17 +12472,15 @@ export class GameManager {
       this.playerZ = this.tileFrom.z + activeDz * this.tileProgress;
     }
 
-    if (!this.isSkilling) {
-      if (camPos && this.pathIndex < this.path.length) {
-        const nextTarget = this.getActiveUnitStep()?.target ?? this.path[this.pathIndex];
-        this.localPlayer.updateMovementDirection(nextTarget.x - this.playerX, nextTarget.z - this.playerZ, camPos);
-      }
-
-      // Do not face-lock to NPCs while pathing. Keeping the body aimed at a
-      // far target makes the walk animation turn into strafing/backpedaling,
-      // which reads as sliding. Arrival handling faces the NPC once movement
-      // has actually finished.
+    if (camPos && this.pathIndex < this.path.length) {
+      const nextTarget = this.getActiveUnitStep()?.target ?? this.path[this.pathIndex];
+      this.localPlayer.updateMovementDirection(nextTarget.x - this.playerX, nextTarget.z - this.playerZ, camPos);
     }
+
+    // Do not face-lock to NPCs while pathing. Keeping the body aimed at a
+    // far target makes the walk animation turn into strafing/backpedaling,
+    // which reads as sliding. Arrival handling faces the NPC once movement
+    // has actually finished.
 
     // Render exactly where local prediction says we are. InputManager.playerY
     // uses the same logical height so interaction picks resolve at gameplay
