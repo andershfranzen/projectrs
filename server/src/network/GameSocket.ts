@@ -1,5 +1,6 @@
 import {
   BANK_SIZE,
+  ActionCapabilityKind,
   ClientActivityKind,
   ClientOpcode,
   HAIR_STYLE_COUNT,
@@ -10,6 +11,7 @@ import {
   PROTOCOL_VERSION,
   decodePacket,
   decodeQuantityValues,
+  stripCommandProof,
   encodePacket,
   decodeStringPacket,
   encodeStringPacket,
@@ -39,6 +41,7 @@ import {
 } from '@projectrs/shared';
 import { World } from '../World';
 import { Player } from '../entity/Player';
+import type { InputTicketRecord } from '../entity/Player';
 import { WORLD_RESPAWN_VERSION } from '../Database';
 import { audit } from '../Audit';
 import { randomBytes } from 'crypto';
@@ -96,6 +99,7 @@ const EQUIP_SLOT_COUNT = 11;
 const INVALID_PACKET_CLOSE_THRESHOLD = 50;
 const INVALID_PACKET_AUDIT_COUNTS = new Set([1, 5, 10, 25, INVALID_PACKET_CLOSE_THRESHOLD]);
 const BROWSER_INPUT_MAX_AGE_MS = 15_000;
+const COMMAND_INPUT_TICKET_MAX_AGE_MS = 5_000;
 const OPCODE_MAPPING_ROTATE_MS = 60_000;
 // Bot telemetry is review-only by default. Set this explicitly for a hardened
 // test shard; the live game should not reject normal play because browser input
@@ -250,6 +254,14 @@ function validateClientActivityValues(values: number[]): PacketValidationResult 
   return OK_PACKET;
 }
 
+function validateClientInputValues(values: number[]): PacketValidationResult {
+  if (values.length !== 4) return invalid('bad-client-input-shape');
+  const validation = validateClientActivityValues(values);
+  if (!validation.ok) return validation;
+  if (!Number.isInteger(values[1]) || values[1] <= 0 || values[1] > 0x7fff) return invalid('bad-client-input-seq');
+  return OK_PACKET;
+}
+
 function isSlot(slot: number, size: number): boolean {
   return Number.isInteger(slot) && slot >= 0 && slot < size;
 }
@@ -331,6 +343,73 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
       return true;
     default:
       return false;
+  }
+}
+
+function opcodeRequiresPointerInputTicket(opcode: number, values: number[] = [], player?: Player): boolean {
+  switch (opcode) {
+    case ClientOpcode.PLAYER_MOVE:
+    case ClientOpcode.PLAYER_EXAMINE_NPC:
+    case ClientOpcode.PLAYER_TALK_NPC:
+    case ClientOpcode.PLAYER_FOLLOW:
+    case ClientOpcode.PLAYER_PICKUP_ITEM:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_NPC:
+    case ClientOpcode.PLAYER_CAST_SPELL:
+      return true;
+    case ClientOpcode.PLAYER_INTERACT_OBJECT:
+      return !Number.isInteger(values[2]) || values[2] < 0;
+    case ClientOpcode.PLAYER_ATTACK_NPC:
+      return !hasValues(values, 1) || player?.attackTarget?.id !== values[0];
+    default:
+      return false;
+  }
+}
+
+interface ActionCapabilityExpectation {
+  kind: ActionCapabilityKind;
+  targetEntityId: number;
+  actionIndex: number;
+}
+
+function expectedActionCapabilityForOpcode(
+  opcode: number,
+  values: number[],
+  player: Player,
+): ActionCapabilityExpectation | null {
+  switch (opcode) {
+    case ClientOpcode.PLAYER_ATTACK_NPC:
+      if (hasValues(values, 1) && player.attackTarget?.id === values[0]) return null;
+      return hasValues(values, 1)
+        ? { kind: ActionCapabilityKind.Npc, targetEntityId: values[0], actionIndex: 0 }
+        : null;
+    case ClientOpcode.PLAYER_EXAMINE_NPC:
+    case ClientOpcode.PLAYER_TALK_NPC:
+      return hasValues(values, 1)
+        ? { kind: ActionCapabilityKind.Npc, targetEntityId: values[0], actionIndex: 0 }
+        : null;
+    case ClientOpcode.PLAYER_CAST_SPELL:
+      return hasValues(values, 2)
+        ? { kind: ActionCapabilityKind.Npc, targetEntityId: values[1], actionIndex: 0 }
+        : null;
+    case ClientOpcode.PLAYER_USE_ITEM_ON_NPC:
+      return hasValues(values, 3)
+        ? { kind: ActionCapabilityKind.Npc, targetEntityId: values[2], actionIndex: 0 }
+        : null;
+    case ClientOpcode.PLAYER_PICKUP_ITEM:
+      return hasValues(values, 1)
+        ? { kind: ActionCapabilityKind.GroundItem, targetEntityId: values[0], actionIndex: 0 }
+        : null;
+    case ClientOpcode.PLAYER_INTERACT_OBJECT:
+      return hasValues(values, 1)
+        ? { kind: ActionCapabilityKind.WorldObject, targetEntityId: values[0], actionIndex: values[1] ?? 0 }
+        : null;
+    case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
+      return hasValues(values, 3)
+        ? { kind: ActionCapabilityKind.WorldObject, targetEntityId: values[2], actionIndex: 0 }
+        : null;
+    default:
+      return null;
   }
 }
 
@@ -470,6 +549,8 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
       return { bucket: 'heartbeat', maxMessages: 4, windowMs: 10_000 };
     case ClientOpcode.CLIENT_ACTIVITY:
       return { bucket: 'activity', maxMessages: 12, windowMs: 60_000 };
+    case ClientOpcode.CLIENT_INPUT:
+      return { bucket: 'input-ticket', maxMessages: 30, windowMs: 1000 };
     case ClientOpcode.CURSOR_POSITION:
       return { bucket: 'cursor', maxMessages: 8, windowMs: 10_000 };
     case ClientOpcode.CLIENT_POSITION_Y:
@@ -484,6 +565,7 @@ export function rateLimitOverflowIsSuspicious(opcode: number): boolean {
     case ClientOpcode.CLIENT_ACTIVITY:
     case ClientOpcode.CURSOR_POSITION:
     case ClientOpcode.CLIENT_POSITION_Y:
+    case ClientOpcode.CLIENT_INPUT:
       return false;
     default:
       return true;
@@ -491,7 +573,12 @@ export function rateLimitOverflowIsSuspicious(opcode: number): boolean {
 }
 
 export function suspiciousPacketCloseEligible(reason: string): boolean {
-  if (reason.startsWith('rate-limit:')) return true;
+  if (reason.startsWith('rate-limit:')) return false;
+  if (
+    reason === 'missing-action-capability'
+    || reason === 'stale-action-capability'
+    || reason === 'bad-action-capability'
+  ) return false;
   if (
     reason === 'malformed-frame'
     || reason === 'unknown-opcode'
@@ -499,6 +586,7 @@ export function suspiciousPacketCloseEligible(reason: string): boolean {
     || reason === 'truncated-move-path'
     || reason === 'bad-cursor-x'
     || reason === 'bad-cursor-y'
+    || reason === 'honeypot-action-capability'
   ) return true;
   if (
     reason.startsWith('bad-')
@@ -628,6 +716,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       const target = world.npcs.get(values[1]);
       if (!target || target.dead) return invalid('stale-spell-target');
       if (!world.canPlayerTargetNpc(player, target)) return invalid('unreachable-spell-target');
+      if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[1])) return invalid('unseen-spell-target');
       return OK_PACKET;
     }
 
@@ -702,6 +791,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       const npc = world.npcs.get(values[0]);
       if (!npc || npc.dead) return invalid('stale-talk-npc');
       if (!world.canPlayerTargetNpc(player, npc)) return invalid('unreachable-talk-npc');
+      if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[0])) return invalid('unseen-talk-npc');
       return OK_PACKET;
     }
 
@@ -895,6 +985,9 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
 
     case ClientOpcode.CLIENT_ACTIVITY:
       return validateClientActivityValues(values);
+
+    case ClientOpcode.CLIENT_INPUT:
+      return validateClientInputValues(values);
 
     default:
       return invalid('unknown-opcode');
@@ -1247,6 +1340,18 @@ function handleDecryptedGameSocketMessage(
   }
 
   if (!checkOpcodeRateLimit(player, opcode, ws, world)) return;
+  const commandProofResult = stripCommandProof(values);
+  values = commandProofResult.values;
+  const commandProof = commandProofResult.proof;
+  if (
+    commandProof
+    && commandProof.capabilityId > 0
+    && commandProof.capabilityCode > 0
+    && player.consumeHoneypotActionCapability(commandProof.capabilityId, commandProof.capabilityCode, world.getCurrentTick())
+  ) {
+    reportSuspiciousPacket(player, opcode, 'honeypot-action-capability', values, ws, world);
+    return;
+  }
   magicOpcodeDebug(player, opcode, values, 'received');
   const validation = validateClientPacket(player, opcode, values, world);
   if (!validation.ok) {
@@ -1254,13 +1359,62 @@ function handleDecryptedGameSocketMessage(
     reportSuspiciousPacket(player, opcode, validation.reason ?? 'invalid-packet', values, ws, world);
     return;
   }
-  if (opcodeRequiresBrowserInputTelemetry(opcode, values, player) && player.botStats) {
+  const requiresInputProof = opcodeRequiresBrowserInputTelemetry(opcode, values, player);
+  const now = performance.now();
+  let hasValidInputTicket = false;
+  let inputTicket: InputTicketRecord | null = null;
+  if (requiresInputProof) {
+    if (!commandProof) {
+      reportSuspiciousPacket(player, opcode, 'missing-input-ticket', values, ws, world);
+      return;
+    }
+    inputTicket = player.consumeInputTicket(commandProof.inputSeq, now, COMMAND_INPUT_TICKET_MAX_AGE_MS);
+    if (inputTicket === null) {
+      reportSuspiciousPacket(player, opcode, 'stale-input-ticket', values, ws, world);
+      return;
+    }
+    hasValidInputTicket = true;
+    if (
+      opcodeRequiresPointerInputTicket(opcode, values, player)
+      && inputTicket.kind !== ClientActivityKind.Pointer
+      && inputTicket.kind !== ClientActivityKind.Touch
+    ) {
+      reportSuspiciousPacket(player, opcode, 'bad-input-ticket-kind', values, ws, world);
+      return;
+    }
+  }
+
+  const expectedCapability = expectedActionCapabilityForOpcode(opcode, values, player);
+  if (expectedCapability) {
+    if (!commandProof || commandProof.capabilityId <= 0 || commandProof.capabilityCode <= 0) {
+      reportSuspiciousPacket(player, opcode, 'missing-action-capability', values, ws, world);
+      return;
+    }
+    const capResult = player.consumeActionCapability(
+      commandProof.capabilityId,
+      commandProof.capabilityCode,
+      expectedCapability.kind,
+      expectedCapability.targetEntityId,
+      expectedCapability.actionIndex,
+      world.getCurrentTick(),
+    );
+    if (capResult !== 'ok') {
+      const reason = capResult === 'honeypot'
+        ? 'honeypot-action-capability'
+        : capResult === 'expired'
+          ? 'stale-action-capability'
+          : 'bad-action-capability';
+      reportSuspiciousPacket(player, opcode, reason, values, ws, world);
+      return;
+    }
+  }
+
+  if (player.botStats && requiresInputProof) {
     const now = performance.now();
-    const hasRecentInput = player.botStats.hasRecentBrowserInput(now, BROWSER_INPUT_MAX_AGE_MS);
     const hasRecentActivity = player.botStats.hasRecentClientActivity(now, BROWSER_INPUT_MAX_AGE_MS);
-    player.botStats.recordGameplayCommandInputCheck(hasRecentInput, hasRecentActivity);
+    player.botStats.recordGameplayCommandInputCheck(hasValidInputTicket, hasRecentActivity);
     player.botStats.recordGameplayCommandTiming(gameplayCommandTimingSignature(opcode, values), now);
-    if (!hasRecentInput && BLOCK_INPUTLESS_GAMEPLAY) {
+    if (!hasValidInputTicket && BLOCK_INPUTLESS_GAMEPLAY) {
       magicOpcodeDebug(player, opcode, values, 'input-telemetry-failed');
       reportSuspiciousPacket(player, opcode, 'missing-input-telemetry', values, ws, world);
       return;
@@ -1640,6 +1794,15 @@ function handleDecryptedGameSocketMessage(
         player.botStats?.recordClientActivity();
       } else {
         player.botStats?.recordClientActivity(values[0] as ClientActivityKind, values[1], values[2], values[3]);
+      }
+      break;
+    }
+
+    case ClientOpcode.CLIENT_INPUT: {
+      player.registerInputTicket(values[0] as ClientActivityKind, values[1] ?? 0, values[2] ?? -1, values[3] ?? -1, performance.now());
+      player.botStats?.recordClientActivity(values[0] as ClientActivityKind, values[1], values[2], values[3]);
+      if (values[0] === ClientActivityKind.Pointer || values[0] === ClientActivityKind.Touch) {
+        player.botStats?.recordCursorPosition(values[2], values[3]);
       }
       break;
     }

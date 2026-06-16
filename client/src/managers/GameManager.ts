@@ -57,7 +57,6 @@ import { BankPanel } from '../ui/BankPanel';
 import { TradePanel } from '../ui/TradePanel';
 import { DuelPanel } from '../ui/DuelPanel';
 import { QuantityInputPanel, type QuantityInputRequest } from '../ui/QuantityInputPanel';
-import { AdminPanel } from '../ui/AdminPanel';
 import { CharacterCreator } from '../ui/CharacterCreator';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
@@ -66,7 +65,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, ActionCapabilityKind, ACTION_CAPABILITY_HONEYPOT_FLAG, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode, type ActionCapabilityWire, type ActionCapabilityProof } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -121,6 +120,10 @@ const FRAME_PACE_MIN_PACED_FPS = 45;
 const FRAME_PACE_MIN_PACED_FPS_TOLERANCE = 0.25;
 const FRAME_PACE_NATIVE_REFRESH_CUTOFF_FPS = 80;
 const FRAME_PACE_ESTIMATE_SAMPLE_COUNT = 90;
+
+export function isTrustedBrowserInputEvent(event?: Event): boolean {
+  return event === undefined || event.isTrusted !== false;
+}
 
 export function targetRenderFpsForFramePace(displayHz: number): number | null {
   if (!Number.isFinite(displayHz) || displayHz <= FRAME_PACE_NATIVE_REFRESH_CUTOFF_FPS) return null;
@@ -692,6 +695,7 @@ export class GameManager {
   private objectDefsCache: Map<number, WorldObjectDef> = new Map();
   private itemDefsCache: Map<number, ItemDef> = new Map();
   private npcDefsCache: Map<number, NpcDef> = new Map();
+  private actionCapabilities: Map<string, ActionCapabilityProof> = new Map();
   private questDefsCache: Map<string, QuestDef> = new Map();
   /** Per-player quest state, populated on QUEST_STATE_SYNC at login and
    *  patched per QUEST_STAGE_ADVANCED delta. Mirrored into SidePanel's
@@ -788,7 +792,7 @@ export class GameManager {
   private currentDuelPartnerName: string = '';
   private currentDuelOpponentEntityId: number = -1;
   private duelActive = false;
-  private adminPanel: AdminPanel | null = null;
+  private adminPanel: import('../ui/AdminPanel').AdminPanel | null = null;
 
   // Spell effect runtime. Catalogue is lazy-loaded from /api/spells on first /spell command.
   // spellsByIndex mirrors the server's alphabetical order so binary protocol
@@ -1011,6 +1015,7 @@ export class GameManager {
     // if a token was passed to the ctor — legacy path used by direct
     // boot-with-known-token tests).
     this.network = new NetworkManager();
+    this.network.setActionCapabilityResolver((opcode, values) => this.resolveActionCapability(opcode, values));
     this.setupNetworkHandlers();
     this.network.onDisconnect((event) => this.handleConnectionLost(event));
     if (token) {
@@ -4489,6 +4494,73 @@ export class GameManager {
     this.ensureLocalCharacterModel(appearance);
   }
 
+  private actionCapabilityKey(kind: ActionCapabilityKind, targetEntityId: number, actionIndex: number = 0): string {
+    return `${kind}:${targetEntityId}:${actionIndex}`;
+  }
+
+  private resolveActionCapability(opcode: ClientOpcode, values: number[]): ActionCapabilityProof | null {
+    let kind: ActionCapabilityKind | null = null;
+    let targetEntityId: number | null = null;
+    let actionIndex = 0;
+
+    switch (opcode) {
+      case ClientOpcode.PLAYER_ATTACK_NPC:
+      case ClientOpcode.PLAYER_EXAMINE_NPC:
+      case ClientOpcode.PLAYER_TALK_NPC:
+        kind = ActionCapabilityKind.Npc;
+        targetEntityId = values[0];
+        break;
+      case ClientOpcode.PLAYER_CAST_SPELL:
+        kind = ActionCapabilityKind.Npc;
+        targetEntityId = values[1];
+        break;
+      case ClientOpcode.PLAYER_USE_ITEM_ON_NPC:
+        kind = ActionCapabilityKind.Npc;
+        targetEntityId = values[2];
+        break;
+      case ClientOpcode.PLAYER_PICKUP_ITEM:
+        kind = ActionCapabilityKind.GroundItem;
+        targetEntityId = values[0];
+        break;
+      case ClientOpcode.PLAYER_INTERACT_OBJECT:
+        kind = ActionCapabilityKind.WorldObject;
+        targetEntityId = values[0];
+        actionIndex = values[1] ?? 0;
+        break;
+      case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
+        kind = ActionCapabilityKind.WorldObject;
+        targetEntityId = values[2];
+        break;
+      default:
+        return null;
+    }
+    if (kind === null || !Number.isInteger(targetEntityId)) return null;
+    const key = this.actionCapabilityKey(kind, targetEntityId, actionIndex);
+    const cap = this.actionCapabilities.get(key) ?? null;
+    if (cap) this.actionCapabilities.delete(key);
+    return cap;
+  }
+
+  private applyActionCapabilities(caps: ActionCapabilityWire[]): void {
+    this.actionCapabilities.clear();
+    for (const cap of caps) {
+      const [kind, targetEntityId, actionIndex, id, code, flags] = cap;
+      if ((flags & ACTION_CAPABILITY_HONEYPOT_FLAG) !== 0) continue;
+      if (
+        kind !== ActionCapabilityKind.Npc
+        && kind !== ActionCapabilityKind.WorldObject
+        && kind !== ActionCapabilityKind.GroundItem
+      ) continue;
+      if (!Number.isInteger(targetEntityId) || !Number.isInteger(actionIndex)) continue;
+      if (!Number.isInteger(id) || id <= 0 || id > 0x7fff) continue;
+      if (!Number.isInteger(code) || code <= 0 || code > 0x7fff) continue;
+      this.actionCapabilities.set(
+        this.actionCapabilityKey(kind, targetEntityId, actionIndex),
+        { id, code },
+      );
+    }
+  }
+
   private setupNetworkHandlers(): void {
     this.setupAuthHandlers();
     this.setupEntitySyncHandlers();
@@ -6079,6 +6151,14 @@ export class GameManager {
             }
           }
         }
+      } else if (opcode === ServerOpcode.ACTION_CAPABILITIES) {
+        const { str } = decodeStringPacket(data);
+        try {
+          const caps = JSON.parse(str) as ActionCapabilityWire[];
+          if (Array.isArray(caps)) this.applyActionCapabilities(caps);
+        } catch (e) {
+          console.warn('[security] failed to parse action capabilities', e);
+        }
       }
     });
   }
@@ -6450,7 +6530,7 @@ export class GameManager {
     button.title = 'Admin';
     button.addEventListener('click', (event) => {
       event.preventDefault();
-      this.openAdminPanel();
+      void this.openAdminPanel();
     });
 
     frame.appendChild(button);
@@ -6465,7 +6545,7 @@ export class GameManager {
       this.sidePanel?.setAdminControls(false, () => {});
       this.sidePanel?.setAdminItemDeletionEnabled(true);
       this.bankPanel?.setAdminItemDeletionEnabled(true);
-      this.chatPanel?.setAdminControls(true, () => this.openAdminPanel());
+      this.chatPanel?.setAdminControls(true, () => void this.openAdminPanel());
       this.mobileAdminButton?.remove();
       this.mobileAdminButton = null;
       return;
@@ -6481,9 +6561,13 @@ export class GameManager {
     this.adminPanel?.hide();
   }
 
-  private openAdminPanel(): void {
+  private async openAdminPanel(): Promise<void> {
     if (!this.isAdmin) return;
-    if (!this.adminPanel) this.adminPanel = new AdminPanel(this.token);
+    if (!this.adminPanel) {
+      const { AdminPanel } = await import('../ui/AdminPanel');
+      if (!this.isAdmin || this.destroyed) return;
+      this.adminPanel = new AdminPanel(this.token);
+    }
     this.adminPanel.show();
   }
 
@@ -11602,16 +11686,18 @@ export class GameManager {
 
   private setupActivityTracking(): void {
     const handler = (event?: Event) => {
+      if (!isTrustedBrowserInputEvent(event)) return;
       if (event instanceof PointerEvent) {
-        this.network.sendActivity(ClientActivityKind.Pointer, event.clientX, event.clientY);
+        this.network.sendInputActivity(ClientActivityKind.Pointer, event.clientX, event.clientY);
         // CLIENT_ACTIVITY records the click itself; cursor telemetry stays
         // low-rate so rapid UI clicking cannot trip server packet guardrails.
         this.network.sendCursorPosition(event.clientX, event.clientY);
       } else if (event instanceof KeyboardEvent) {
-        this.network.sendActivity(ClientActivityKind.Keyboard);
+        if (event.repeat) return;
+        this.network.sendInputActivity(ClientActivityKind.Keyboard);
       } else if (typeof TouchEvent !== 'undefined' && event instanceof TouchEvent) {
         const touch = event.changedTouches[0] ?? event.touches[0];
-        this.network.sendActivity(
+        this.network.sendInputActivity(
           ClientActivityKind.Touch,
           touch?.clientX,
           touch?.clientY,
@@ -11621,6 +11707,7 @@ export class GameManager {
       }
     };
     const cursorHandler = (event: PointerEvent) => {
+      if (!isTrustedBrowserInputEvent(event)) return;
       this.network.sendCursorPosition(event.clientX, event.clientY);
     };
     window.addEventListener('pointerdown', handler, true);

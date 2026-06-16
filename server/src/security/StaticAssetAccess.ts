@@ -10,8 +10,14 @@ function isPublicBundle(pathname: string): boolean {
   return /\.(?:js|css)$/i.test(pathname);
 }
 
+export function requiresAdminStaticAsset(pathname: string): boolean {
+  const decoded = decodePathname(pathname);
+  return /^\/assets\/admin-panel-[\w.-]+\.(?:js|css)$/i.test(decoded);
+}
+
 export function requiresAuthenticatedGameStaticAsset(pathname: string): boolean {
   const decoded = decodePathname(pathname);
+  if (requiresAdminStaticAsset(decoded)) return false;
   if (decoded.startsWith('/models/')) return true;
   if (decoded.startsWith('/Character models/')) return true;
   if (decoded.startsWith('/items/3d/')) return true;

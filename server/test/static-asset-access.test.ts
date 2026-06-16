@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { hasForbiddenStaticSourceExtension, requiresAuthenticatedGameStaticAsset } from '../src/security/StaticAssetAccess';
+import { hasForbiddenStaticSourceExtension, requiresAdminStaticAsset, requiresAuthenticatedGameStaticAsset } from '../src/security/StaticAssetAccess';
 
 describe('static game asset access', () => {
   test('protects game model and thumbnail assets but not public bundles', () => {
@@ -17,6 +17,12 @@ describe('static game asset access', () => {
     expect(requiresAuthenticatedGameStaticAsset('/assets/index-DACAJEQL.css')).toBe(false);
     expect(requiresAuthenticatedGameStaticAsset('/sprites/items/coins.png')).toBe(false);
     expect(requiresAuthenticatedGameStaticAsset('/favicon.ico')).toBe(false);
+  });
+
+  test('protects the admin panel chunk separately from normal game auth', () => {
+    expect(requiresAdminStaticAsset('/assets/admin-panel-AbC_123.js')).toBe(true);
+    expect(requiresAuthenticatedGameStaticAsset('/assets/admin-panel-AbC_123.js')).toBe(false);
+    expect(requiresAdminStaticAsset('/assets/GameManager-Kg0KN_Zj.js')).toBe(false);
   });
 
   test('blocks source asset formats regardless of URL encoding', () => {

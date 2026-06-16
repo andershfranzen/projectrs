@@ -11,7 +11,7 @@ import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } fr
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
 import { requestClientIp } from './network/clientIp';
-import { hasForbiddenStaticSourceExtension, requiresAuthenticatedGameStaticAsset, staticGameAssetCacheControl } from './security/StaticAssetAccess';
+import { hasForbiddenStaticSourceExtension, requiresAdminStaticAsset, requiresAuthenticatedGameStaticAsset, staticGameAssetCacheControl } from './security/StaticAssetAccess';
 import { maybeCompressResponse } from './network/compress';
 import type { Server } from 'bun';
 import { audit } from './Audit';
@@ -1409,6 +1409,7 @@ function getMimeType(path: string): string {
 }
 
 function gameStaticAssetCacheControl(decodedPath: string): string {
+  if (requiresAdminStaticAsset(decodedPath)) return 'private, no-store';
   return staticGameAssetCacheControl(decodedPath, isProductionLike());
 }
 
@@ -1449,6 +1450,9 @@ function shouldServeWebsiteNotFound(req: Request, pathname: string): boolean {
 
 function serveStatic(req: Request, pathname: string, allowIndexFallback = false): Response | null {
   const decoded = decodeURIComponent(pathname);
+  if (isProductionLike() && requiresAdminStaticAsset(decoded) && !getStaticAssetAdminSession(req)) {
+    return new Response('Not Found', { status: 404 });
+  }
   let filePath = resolvePossiblyMissingWithinBase(CLIENT_DIST, decoded.startsWith('/') ? decoded.slice(1) : decoded);
   if (!filePath) return null;
   let isIndexFallback = false;
@@ -2545,6 +2549,13 @@ function getStaticAssetSessionForScope(req: Request, scope: string) {
   const cookieSession = getBoundCookieSession(req);
   if (!cookieSession || !boundSessionHasAnyScope(cookieSession, [scope])) return null;
   return cookieSession;
+}
+
+function getStaticAssetAdminSession(req: Request) {
+  const bearerSession = getBoundBearerSession(req);
+  if (bearerSession?.isAdmin) return bearerSession;
+  const cookieSession = getBoundCookieSession(req);
+  return cookieSession?.isAdmin ? cookieSession : null;
 }
 
 function getForumSession(req: Request, srv: { requestIP(req: Request): { address: string } | null }) {
@@ -5212,6 +5223,9 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
       if (hasForbiddenStaticSourceExtension(decodedPath)) {
         return new Response('Not Found', { status: 404 });
       }
+      if (isProductionLike() && requiresAdminStaticAsset(decodedPath) && !getStaticAssetAdminSession(req)) {
+        return new Response('Not Found', { status: 404 });
+      }
       if (isProductionLike() && requiresAuthenticatedGameStaticAsset(decodedPath) && !getStaticAssetSessionForScope(req, 'game')) {
         return new Response('Unauthorized', { status: 401 });
       }
@@ -5284,6 +5298,9 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
     const websiteResponse = serveWebsite(req, url.pathname);
     if (websiteResponse) return websiteResponse;
 
+    if (isProductionLike() && requiresAdminStaticAsset(url.pathname) && !getStaticAssetAdminSession(req)) {
+      return new Response('Not Found', { status: 404 });
+    }
     if (isProductionLike() && requiresAuthenticatedGameStaticAsset(url.pathname) && !getStaticAssetSessionForScope(req, 'game')) {
       return new Response('Unauthorized', { status: 401 });
     }

@@ -46,6 +46,7 @@ describe('anti-bot guardrails', () => {
   test('low-risk telemetry overflow is dropped without suspicious strikes', () => {
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.CURSOR_POSITION)).toBe(false);
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.CLIENT_ACTIVITY)).toBe(false);
+    expect(rateLimitOverflowIsSuspicious(ClientOpcode.CLIENT_INPUT)).toBe(false);
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.CLIENT_POSITION_Y)).toBe(false);
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.PLAYER_MOVE)).toBe(true);
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.TRADE_OFFER_ITEM)).toBe(true);
@@ -59,7 +60,10 @@ describe('anti-bot guardrails', () => {
     expect(suspiciousPacketCloseEligible('malformed-frame')).toBe(true);
     expect(suspiciousPacketCloseEligible('bad-move-path-length')).toBe(true);
     expect(suspiciousPacketCloseEligible('missing-bank-deposit-values')).toBe(true);
-    expect(suspiciousPacketCloseEligible('rate-limit:inventory-ui')).toBe(true);
+    expect(suspiciousPacketCloseEligible('missing-action-capability')).toBe(false);
+    expect(suspiciousPacketCloseEligible('stale-action-capability')).toBe(false);
+    expect(suspiciousPacketCloseEligible('bad-action-capability')).toBe(false);
+    expect(suspiciousPacketCloseEligible('rate-limit:inventory-ui')).toBe(false);
   });
 
   test('per-action rate limits are independent from the global socket limit', () => {
@@ -273,11 +277,15 @@ describe('anti-bot guardrails', () => {
     stats.onLogin({});
 
     for (let i = 0; i < 25; i++) stats.recordSuspiciousPacket('stale-npc-target');
+    for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket('missing-action-capability');
+    for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket('bad-action-capability');
 
     const summary = stats.computeSummary({});
-    expect(summary.sessionSuspiciousPacketClasses.stale).toBe(25);
+    expect(summary.sessionSuspiciousPacketClasses.stale).toBe(35);
+    expect(summary.sessionSuspiciousPacketClasses.automation).toBe(0);
     expect(summary.flags).not.toContain('protocolPackets');
     expect(summary.flags).not.toContain('rateLimitPackets');
+    expect(summary.flags).not.toContain('automationInvalidPackets');
     expect(summary.riskLevel).toBe('low');
   });
 

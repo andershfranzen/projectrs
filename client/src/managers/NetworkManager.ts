@@ -10,6 +10,9 @@ import {
   decodePacketBatch,
   decodeStringPacket,
   encodeStringPacket,
+  appendCommandProof,
+  clientOpcodeRequiresActionCapability,
+  clientOpcodeRequiresInputProof,
   ENCRYPTED_GAME_FRAME_V2,
   GAME_CRYPTO_VERSION,
   PROTOCOL_VERSION,
@@ -32,6 +35,7 @@ import {
   type GameCryptoResponse,
   type OpcodeMappingTables,
   type MovementMode,
+  type ActionCapabilityProof,
 } from '@projectrs/shared';
 import { ensureDeviceKeyRegistered } from '../deviceKey';
 
@@ -64,6 +68,8 @@ export type DisconnectHandler = (event: CloseEvent) => void;
 const GAME_HEARTBEAT_INTERVAL_MS = 5_000;
 const GAME_HEARTBEAT_JITTER_MS = 1_200;
 const GAME_HEARTBEAT_TIMEOUT_MS = 60_000;
+const INPUT_TICKET_BURST_WINDOW_MS = 350;
+const INPUT_TICKET_BURST_EXTRA_TICKETS = 3;
 
 /** Opcodes whose payload is `[strLen (2 bytes), utf8 bytes, trailing int16s]`
  *  instead of the int16-array layout. Handled exclusively by raw handlers;
@@ -72,6 +78,7 @@ const GAME_HEARTBEAT_TIMEOUT_MS = 60_000;
 const STRING_PACKET_OPCODES = new Set<number>([
   ServerOpcode.CRYPTO_CHALLENGE,
   ServerOpcode.OPCODE_MAPPING,
+  ServerOpcode.ACTION_CAPABILITIES,
   ServerOpcode.MAP_CHANGE,
   ServerOpcode.DIALOGUE_OPEN,
   ServerOpcode.NPC_OVERHEAD_MESSAGE,
@@ -125,6 +132,15 @@ export class NetworkManager {
   private static readonly MAX_RECV_QUEUE_BYTES = 16 * (1 << 20); // 16 MiB
   private lastActivitySentAt: number = -Infinity;
   private lastCursorSentAt: number = -Infinity;
+  private pendingInputTicketSeq: number | null = null;
+  private inputTicketBurst: {
+    kind: ClientActivityKind;
+    x: number;
+    y: number;
+    remaining: number;
+    expiresAt: number;
+  } | null = null;
+  private actionCapabilityResolver: ((opcode: ClientOpcode, values: number[]) => ActionCapabilityProof | null) | null = null;
 
   private closeQuietly(socket: WebSocket | null): void {
     if (!socket) return;
@@ -215,6 +231,8 @@ export class NetworkManager {
     this.recvCipherQueue = Promise.resolve();
     this.recvQueueBytes = 0;
     this.lastCursorSentAt = -Infinity;
+    this.pendingInputTicketSeq = null;
+    this.inputTicketBurst = null;
 
     void ensureDeviceKeyRegistered(token)
       .then((identity) => {
@@ -487,6 +505,12 @@ export class NetworkManager {
     return this.sendCipherQueue;
   }
 
+  setActionCapabilityResolver(
+    resolver: ((opcode: ClientOpcode, values: number[]) => ActionCapabilityProof | null) | null,
+  ): void {
+    this.actionCapabilityResolver = resolver;
+  }
+
   onDisconnect(handler: DisconnectHandler): void {
     this.disconnectHandler = handler;
   }
@@ -555,34 +579,17 @@ export class NetworkManager {
       values.push(Math.round(path[i].x * 10));
       values.push(Math.round(path[i].z * 10));
     }
-    try {
-      void this.sendFrame(this.gameSocket, encodePacket(ClientOpcode.PLAYER_MOVE, ...values));
-      return true;
-    } catch {
-      this.failGameSocket(this.gameSocket, 4003, 'move send failed');
-      return false;
-    }
+    return this.sendRaw(encodePacket(ClientOpcode.PLAYER_MOVE, ...values));
   }
 
   sendMovementMode(mode: MovementMode): boolean {
-    if (!this.gameSocket) return false;
-    if (!this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
-      this.failGameSocket(this.gameSocket, 4002, 'movement mode send while disconnected');
-      return false;
-    }
-    try {
-      void this.sendFrame(this.gameSocket, encodePacket(ClientOpcode.PLAYER_SET_MOVEMENT_MODE, movementModeIndex(mode)));
-      return true;
-    } catch {
-      this.failGameSocket(this.gameSocket, 4003, 'movement mode send failed');
-      return false;
-    }
+    return this.sendRaw(encodePacket(ClientOpcode.PLAYER_SET_MOVEMENT_MODE, movementModeIndex(mode)));
   }
 
-  sendRaw(data: Uint8Array): boolean {
+  private sendRawUnprotected(data: Uint8Array, failCode: number, failReason: string): boolean {
     if (!this.gameSocket) return false;
     if (!this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
-      this.failGameSocket(this.gameSocket, 4004, 'packet send while disconnected');
+      this.failGameSocket(this.gameSocket, failCode, 'packet send while disconnected');
       return false;
     }
     if (this.gameSocket.bufferedAmount > NetworkManager.MAX_SEND_BUFFER_BYTES) {
@@ -593,22 +600,98 @@ export class NetworkManager {
       void this.sendFrame(this.gameSocket, data);
       return true;
     } catch {
-      this.failGameSocket(this.gameSocket, 4005, 'packet send failed');
+      this.failGameSocket(this.gameSocket, failCode, failReason);
       return false;
     }
   }
 
+  sendRaw(data: Uint8Array): boolean {
+    const protectedData = this.protectOutgoingPacket(data);
+    return this.sendRawUnprotected(protectedData, 4005, 'packet send failed');
+  }
+
+  private protectOutgoingPacket(data: Uint8Array): Uint8Array {
+    let opcode: number;
+    let values: number[];
+    try {
+      const buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+      ({ opcode, values } = decodePacket(buffer));
+    } catch {
+      return data;
+    }
+    if (!clientOpcodeRequiresInputProof(opcode)) return data;
+
+    const inputSeq = this.consumePendingInputTicket();
+    const capability = clientOpcodeRequiresActionCapability(opcode)
+      ? this.actionCapabilityResolver?.(opcode as ClientOpcode, values)
+      : null;
+    return appendCommandProof(data, {
+      inputSeq,
+      capabilityId: capability?.id ?? 0,
+      capabilityCode: capability?.code ?? 0,
+    });
+  }
+
+  private consumePendingInputTicket(): number {
+    const pending = this.pendingInputTicketSeq;
+    if (pending !== null) {
+      this.pendingInputTicketSeq = null;
+      return pending;
+    }
+    const burst = this.inputTicketBurst;
+    if (!burst || burst.remaining <= 0 || performance.now() > burst.expiresAt) {
+      this.inputTicketBurst = null;
+      return 0;
+    }
+    burst.remaining--;
+    const minted = this.sendInputTicket(burst.kind, burst.x, burst.y, false);
+    if (minted !== null) return minted;
+    this.inputTicketBurst = null;
+    return 0;
+  }
+
+  private sendInputTicket(kind: ClientActivityKind, x: number, y: number, keepForNextCommand: boolean): number | null {
+    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return null;
+    this.activitySeq = (this.activitySeq % 0x7fff) + 1;
+    const seq = this.activitySeq;
+    if (keepForNextCommand) this.pendingInputTicketSeq = seq;
+    if (!this.sendRawUnprotected(
+      encodePacket(ClientOpcode.CLIENT_INPUT, kind, seq, x, y),
+      4005,
+      'input ticket send failed',
+    )) {
+      if (this.pendingInputTicketSeq === seq) this.pendingInputTicketSeq = null;
+      return null;
+    }
+    return seq;
+  }
+
+  sendInputActivity(kind: ClientActivityKind, clientX?: number, clientY?: number): boolean {
+    const [x, y] = kind === ClientActivityKind.Keyboard
+      ? [-1, -1]
+      : clientX === undefined || clientY === undefined
+        ? [500, 500]
+        : this.normalizeViewportPoint(clientX, clientY);
+    const sent = this.sendInputTicket(kind, x, y, true) !== null;
+    this.inputTicketBurst = sent
+      ? {
+          kind,
+          x,
+          y,
+          remaining: INPUT_TICKET_BURST_EXTRA_TICKETS,
+          expiresAt: performance.now() + INPUT_TICKET_BURST_WINDOW_MS,
+        }
+      : null;
+    return sent;
+  }
+
   sendActivity(kind: ClientActivityKind = ClientActivityKind.Legacy, clientX?: number, clientY?: number): boolean {
     if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return false;
+    if (kind !== ClientActivityKind.Legacy) return this.sendInputActivity(kind, clientX, clientY);
     const now = performance.now();
     if (now - this.lastActivitySentAt < 5_000) return true;
     this.lastActivitySentAt = now;
-    if (kind === ClientActivityKind.Legacy) return this.sendRaw(encodePacket(ClientOpcode.CLIENT_ACTIVITY));
-    this.activitySeq = (this.activitySeq + 1) & 0x7fff;
-    const [x, y] = clientX === undefined || clientY === undefined
-      ? [-1, -1]
-      : this.normalizeViewportPoint(clientX, clientY);
-    return this.sendRaw(encodePacket(ClientOpcode.CLIENT_ACTIVITY, kind, this.activitySeq, x, y));
+    return this.sendRawUnprotected(encodePacket(ClientOpcode.CLIENT_ACTIVITY), 4005, 'activity send failed');
   }
 
   sendCursorPosition(clientX: number, clientY: number): boolean {
@@ -617,7 +700,7 @@ export class NetworkManager {
     if (now - this.lastCursorSentAt < 1_500) return true;
     this.lastCursorSentAt = now;
     const [x, y] = this.normalizeViewportPoint(clientX, clientY);
-    return this.sendRaw(encodePacket(ClientOpcode.CURSOR_POSITION, x, y));
+    return this.sendRawUnprotected(encodePacket(ClientOpcode.CURSOR_POSITION, x, y), 4005, 'cursor send failed');
   }
 
   private normalizeViewportPoint(clientX: number, clientY: number): [number, number] {

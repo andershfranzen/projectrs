@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { GameManager } from './GameManager';
+import { GameManager, isTrustedBrowserInputEvent } from './GameManager';
 
 function makeManager(): any {
   const manager = Object.create(GameManager.prototype) as any;
@@ -32,6 +32,12 @@ function makeMouseEvent(x: number, y: number): MouseEvent & { prevented: boolean
 }
 
 describe('GameManager world context-menu input', () => {
+  test('does not treat script-dispatched DOM events as browser input', () => {
+    expect(isTrustedBrowserInputEvent({ isTrusted: false } as Event)).toBe(false);
+    expect(isTrustedBrowserInputEvent({ isTrusted: true } as Event)).toBe(true);
+    expect(isTrustedBrowserInputEvent()).toBe(true);
+  });
+
   test('dedupes the pointerdown/mousedown/contextmenu chain for one right-click', () => {
     const manager = makeManager();
     const canvas = {} as HTMLCanvasElement;

@@ -5,6 +5,7 @@ import {
   initSkills, combatLevel, zeroBonuses, bowAttackSpeedForStance,
   normalizeRangedAttackDistance,
   PlayerAnimationKind, PlayerSkillAnimationVariant,
+  ActionCapabilityKind, ClientActivityKind,
   BRONZE_ARROWS_ITEM_ID, IRON_ARROWS_ITEM_ID, STEEL_ARROWS_ITEM_ID,
   MITHRIL_ARROWS_ITEM_ID, BLACK_BRONZE_ARROWS_ITEM_ID,
   SHORTBOW_ITEM_ID, OAK_SHORTBOW_ITEM_ID, WILLOW_SHORTBOW_ITEM_ID,
@@ -38,6 +39,24 @@ export interface DungeonReturnTarget {
   z: number;
   y?: number;
   floor?: number;
+}
+
+export interface ActionCapabilityRecord {
+  id: number;
+  code: number;
+  kind: ActionCapabilityKind;
+  targetEntityId: number;
+  actionIndex: number;
+  expiresTick: number;
+  honeypot: boolean;
+}
+
+export interface InputTicketRecord {
+  kind: ClientActivityKind;
+  seq: number;
+  x: number;
+  y: number;
+  issuedAt: number;
 }
 
 const ARROW_TIER_BY_ITEM_ID: Record<number, number> = {
@@ -236,6 +255,11 @@ export class Player extends Entity {
   /** Scratch buffer swapped with visibleEntityIds during broadcastSync to
    *  avoid allocating a new Set for every player on every sync tick. */
   nextVisibleEntityIds: Set<number> = new Set();
+  /** Last tick where this player received a server-issued action capability
+   *  snapshot. Refreshes are throttled; chunk transitions still send
+   *  immediately so newly visible targets are usable. */
+  lastActionCapabilitySyncTick: number = -9999;
+  lastActionCapabilitySyncHadCaps: boolean = false;
 
   // Combat
   attackTarget: Entity | null = null;
@@ -367,6 +391,10 @@ export class Player extends Entity {
   private _actionRlBuckets: Map<string, { count: number; windowStart: number }> = new Map();
   private _suspiciousPacketCount: number = 0;
   private _suspiciousPacketWindowStart: number = 0;
+  private _inputTickets: Map<number, InputTicketRecord> = new Map();
+  private _actionCapabilitiesById: Map<number, ActionCapabilityRecord> = new Map();
+  private _actionCapabilityIdByKey: Map<string, number> = new Map();
+  private _nextActionCapabilityId: number = 1;
   private static RL_MAX_MESSAGES = 30;   // max messages per window
   private static RL_WINDOW_MS = 1000;    // 1-second window
   private static SUSPICIOUS_PACKET_WINDOW_MS = 60_000;
@@ -405,6 +433,126 @@ export class Player extends Entity {
     }
     this._suspiciousPacketCount++;
     return this._suspiciousPacketCount;
+  }
+
+  registerInputTicket(kind: ClientActivityKind, seq: number, x: number, y: number, nowMs: number): void {
+    if (!Number.isInteger(seq) || seq <= 0 || seq > 0x7fff) return;
+    if (
+      kind !== ClientActivityKind.Pointer
+      && kind !== ClientActivityKind.Keyboard
+      && kind !== ClientActivityKind.Touch
+    ) return;
+    if (kind === ClientActivityKind.Keyboard) {
+      if (x !== -1 || y !== -1) return;
+    } else if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || x > 1000 || y < 0 || y > 1000) {
+      return;
+    }
+    this._inputTickets.set(seq, { kind, seq, x, y, issuedAt: nowMs });
+    if (this._inputTickets.size <= 128) return;
+    const cutoff = nowMs - 10_000;
+    for (const [ticketSeq, ticket] of this._inputTickets) {
+      if (ticket.issuedAt < cutoff || this._inputTickets.size > 128) this._inputTickets.delete(ticketSeq);
+    }
+  }
+
+  consumeInputTicket(seq: number, nowMs: number, maxAgeMs: number): InputTicketRecord | null {
+    const ticket = this._inputTickets.get(seq);
+    if (ticket === undefined) return null;
+    this._inputTickets.delete(seq);
+    return nowMs - ticket.issuedAt >= 0 && nowMs - ticket.issuedAt <= maxAgeMs ? ticket : null;
+  }
+
+  private actionCapabilityKey(kind: ActionCapabilityKind, targetEntityId: number, actionIndex: number): string {
+    return `${kind}:${targetEntityId}:${actionIndex}`;
+  }
+
+  private nextActionCapabilityId(): number {
+    for (let attempts = 0; attempts < 0x7fff; attempts++) {
+      const id = this._nextActionCapabilityId++;
+      if (this._nextActionCapabilityId > 0x7fff) this._nextActionCapabilityId = 1;
+      if (!this._actionCapabilitiesById.has(id)) return id;
+    }
+    return 1;
+  }
+
+  private pruneActionCapabilities(currentTick: number): void {
+    for (const [id, cap] of this._actionCapabilitiesById) {
+      if (cap.expiresTick >= currentTick) continue;
+      this._actionCapabilitiesById.delete(id);
+      const key = this.actionCapabilityKey(cap.kind, cap.targetEntityId, cap.actionIndex);
+      if (this._actionCapabilityIdByKey.get(key) === id) this._actionCapabilityIdByKey.delete(key);
+    }
+  }
+
+  private deleteActionCapability(id: number, cap: ActionCapabilityRecord): void {
+    this._actionCapabilitiesById.delete(id);
+    const key = this.actionCapabilityKey(cap.kind, cap.targetEntityId, cap.actionIndex);
+    if (this._actionCapabilityIdByKey.get(key) === id) this._actionCapabilityIdByKey.delete(key);
+  }
+
+  issueActionCapability(
+    kind: ActionCapabilityKind,
+    targetEntityId: number,
+    actionIndex: number,
+    expiresTick: number,
+    honeypot: boolean = false,
+    currentTick: number = expiresTick,
+  ): ActionCapabilityRecord {
+    this.pruneActionCapabilities(currentTick);
+    const key = this.actionCapabilityKey(kind, targetEntityId, actionIndex);
+
+    const id = this.nextActionCapabilityId();
+    const cap: ActionCapabilityRecord = {
+      id,
+      code: 1 + Math.floor(Math.random() * 0x7ffe),
+      kind,
+      targetEntityId,
+      actionIndex,
+      expiresTick,
+      honeypot,
+    };
+    this._actionCapabilitiesById.set(id, cap);
+    if (!honeypot) this._actionCapabilityIdByKey.set(key, id);
+    return cap;
+  }
+
+  consumeActionCapability(
+    id: number,
+    code: number,
+    kind: ActionCapabilityKind,
+    targetEntityId: number,
+    actionIndex: number,
+    currentTick: number,
+  ): 'ok' | 'missing' | 'expired' | 'mismatch' | 'honeypot' {
+    const cap = this._actionCapabilitiesById.get(id);
+    if (!cap || cap.code !== code) return 'missing';
+    if (cap.expiresTick < currentTick) {
+      this.deleteActionCapability(id, cap);
+      return 'expired';
+    }
+    this.pruneActionCapabilities(currentTick);
+    if (cap.honeypot) {
+      this.deleteActionCapability(id, cap);
+      return 'honeypot';
+    }
+    if (cap.kind !== kind || cap.targetEntityId !== targetEntityId || cap.actionIndex !== actionIndex) {
+      this.deleteActionCapability(id, cap);
+      return 'mismatch';
+    }
+    this.deleteActionCapability(id, cap);
+    return 'ok';
+  }
+
+  consumeHoneypotActionCapability(id: number, code: number, currentTick: number): boolean {
+    const cap = this._actionCapabilitiesById.get(id);
+    if (!cap || cap.code !== code) return false;
+    if (cap.expiresTick < currentTick) {
+      this.deleteActionCapability(id, cap);
+      return false;
+    }
+    if (!cap.honeypot) return false;
+    this.deleteActionCapability(id, cap);
+    return true;
   }
 
   constructor(

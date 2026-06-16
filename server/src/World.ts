@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_KEY_ITEM_ID, BROTHER_MONK_BEAR_HIDE_ITEM_ID, BEAR_HIDE_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, storageSurfaceProfileForPlacedAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, placedObjectInteractionsWithSignText, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, EQUIPMENT_SLOT_NAMES, occupiedEquipmentSlotsForDef, equipmentSlotSetsConflict, movementModeFromIndex, movementModeIndex, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe, type EquipSlot, type InventorySlot } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_KEY_ITEM_ID, BROTHER_MONK_BEAR_HIDE_ITEM_ID, BEAR_HIDE_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ActionCapabilityKind, ACTION_CAPABILITY_HONEYPOT_FLAG, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, storageSurfaceProfileForPlacedAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, placedObjectInteractionsWithSignText, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, EQUIPMENT_SLOT_NAMES, occupiedEquipmentSlotsForDef, equipmentSlotSetsConflict, movementModeFromIndex, movementModeIndex, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, type ActionCapabilityWire, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe, type EquipSlot, type InventorySlot } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -577,6 +577,8 @@ const GROUND_ITEM_ENTITY_ID_MIN = 20000;
 const GROUND_ITEM_ENTITY_ID_MAX = 32760;
 const DEFAULT_SHOP_RESTOCK_TICKS = 100;
 const MAX_SHOP_WIRE_VALUE = 0x7FFF;
+const ACTION_CAPABILITY_SYNC_INTERVAL_TICKS = 3;
+const ACTION_CAPABILITY_EXPIRES_TICKS = 8;
 let nextGroundItemId = GROUND_ITEM_ENTITY_ID_MIN;
 
 export type WorldOptions = {
@@ -995,22 +997,31 @@ export class World {
 
     // Use chunk manager to get all nearby entities (players, NPCs, world objects, ground items)
     const nearbyIds = cm.getEntitiesNear(player.position.x, player.position.y);
+    const visibleIds = new Set<number>();
     for (const eid of nearbyIds) {
       if (eid === player.id) continue;
       const other = this.players.get(eid);
-      if (other && other.currentFloor === player.currentFloor) { this.sendPlayerPresence(player, other); continue; }
+      if (other && other.currentFloor === player.currentFloor) { this.sendPlayerPresence(player, other); visibleIds.add(eid); continue; }
       const npc = this.npcs.get(eid);
       if (npc && this.canPlayerSyncNpc(player, npc)) {
         // Static data first — the client uses cached appearance to decide
         // whether to render as sprite or CharacterEntity on NPC_SYNC.
         this.sendNpcStaticData(player, npc);
         this.sendNpcUpdate(player, npc);
+        visibleIds.add(eid);
         continue;
       }
       const obj = this.worldObjects.get(eid);
-      if (obj && this.canPlayerTargetObject(player, obj)) { this.sendWorldObjectUpdate(player, obj); continue; }
+      if (obj && this.canPlayerTargetObject(player, obj)) { this.sendWorldObjectUpdate(player, obj); visibleIds.add(eid); continue; }
       const item = this.groundItems.get(eid);
-      if (item && this.canPlayerTargetGroundItem(player, item)) { this.sendGroundItemUpdate(player, item); continue; }
+      if (item && this.canPlayerTargetGroundItem(player, item)) { this.sendGroundItemUpdate(player, item); visibleIds.add(eid); continue; }
+    }
+    player.visibleEntityIds.clear();
+    for (const eid of visibleIds) player.visibleEntityIds.add(eid);
+    const capabilityPackets: SyncPacket[] = [];
+    this.queueActionCapabilities(capabilityPackets, player, visibleIds, new Set(), true);
+    for (const packet of capabilityPackets) {
+      try { player.ws.sendBinary(packet.data); } catch { /* connection closed */ }
     }
     this.sendSkills(player);
     this.sendInventory(player);
@@ -11984,6 +11995,97 @@ export class World {
     out.push({ data });
   }
 
+  private hasNewCapabilityTarget(visibleEntityIds: Set<number>, previousVisibleEntityIds: Set<number>): boolean {
+    for (const eid of visibleEntityIds) {
+      if (previousVisibleEntityIds.has(eid)) continue;
+      if (this.npcs.has(eid) || this.worldObjects.has(eid) || this.groundItems.has(eid)) return true;
+    }
+    return false;
+  }
+
+  private queueActionCapabilities(
+    out: SyncPacket[],
+    viewer: Player,
+    visibleEntityIds: Set<number>,
+    previousVisibleEntityIds: Set<number> = viewer.visibleEntityIds,
+    force: boolean = false,
+  ): void {
+    const chunkChanged = viewer.currentChunkX !== viewer.lastBroadcastChunkX
+      || viewer.currentChunkZ !== viewer.lastBroadcastChunkZ;
+    const hasNewCapabilityTarget = this.hasNewCapabilityTarget(visibleEntityIds, previousVisibleEntityIds);
+    if (
+      !force
+      && !chunkChanged
+      && !hasNewCapabilityTarget
+      && this.currentTick - viewer.lastActionCapabilitySyncTick < ACTION_CAPABILITY_SYNC_INTERVAL_TICKS
+    ) return;
+    viewer.lastActionCapabilitySyncTick = this.currentTick;
+
+    const caps: ActionCapabilityWire[] = [];
+    const expiresTick = this.currentTick + ACTION_CAPABILITY_EXPIRES_TICKS;
+    const pushCap = (kind: ActionCapabilityKind, targetEntityId: number, actionIndex: number, honeypot = false) => {
+      const cap = viewer.issueActionCapability(kind, targetEntityId, actionIndex, expiresTick, honeypot, this.currentTick);
+      caps.push([
+        kind,
+        targetEntityId,
+        actionIndex,
+        cap.id,
+        cap.code,
+        honeypot ? ACTION_CAPABILITY_HONEYPOT_FLAG : 0,
+      ]);
+    };
+
+    for (const eid of visibleEntityIds) {
+      const npc = this.npcs.get(eid);
+      if (npc && this.canPlayerSyncNpc(viewer, npc)) {
+        pushCap(ActionCapabilityKind.Npc, eid, 0);
+        continue;
+      }
+      const obj = this.worldObjects.get(eid);
+      if (obj && this.canPlayerTargetObject(viewer, obj)) {
+        const actions = obj.def.category === 'ladder'
+          ? obj.def.actions
+          : this.currentObjectActionsForPlayer(viewer, obj);
+        const count = Math.min(actions.length, 21);
+        for (let actionIndex = 0; actionIndex < count; actionIndex++) {
+          if (actions[actionIndex]) pushCap(ActionCapabilityKind.WorldObject, eid, actionIndex);
+        }
+        continue;
+      }
+      const item = this.groundItems.get(eid);
+      if (item && this.canPlayerTargetGroundItem(viewer, item)) {
+        pushCap(ActionCapabilityKind.GroundItem, eid, 0);
+      }
+    }
+
+    if (caps.length === 0) {
+      if (viewer.lastActionCapabilitySyncHadCaps) {
+        viewer.lastActionCapabilitySyncHadCaps = false;
+        this.queueEncodedSyncPacket(out, encodeStringPacket(ServerOpcode.ACTION_CAPABILITIES, '[]'));
+      }
+      return;
+    }
+
+    viewer.lastActionCapabilitySyncHadCaps = true;
+    const honey = viewer.issueActionCapability(
+      ActionCapabilityKind.WorldObject,
+      32760,
+      13,
+      expiresTick,
+      true,
+      this.currentTick,
+    );
+    caps.push([
+      ActionCapabilityKind.WorldObject,
+      32760,
+      13,
+      honey.id,
+      honey.code,
+      ACTION_CAPABILITY_HONEYPOT_FLAG,
+    ]);
+    this.queueEncodedSyncPacket(out, encodeStringPacket(ServerOpcode.ACTION_CAPABILITIES, JSON.stringify(caps)));
+  }
+
   private canBatchSyncPackets(player: Player): boolean {
     const wsData = (player.ws as unknown as { data?: { crypto?: { encryptEnabled?: boolean; handshakeComplete?: boolean; opcodeMappingEnabled?: boolean } } }).data;
     const crypto = wsData?.crypto;
@@ -12203,6 +12305,7 @@ export class World {
           }
         });
 
+        this.queueActionCapabilities(syncPackets, viewer, nextVisible, previousVisible);
         viewer.visibleEntityIds = nextVisible;
         viewer.nextVisibleEntityIds = previousVisible;
         viewer.lastBroadcastChunkX = viewer.currentChunkX;

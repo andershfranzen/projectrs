@@ -43,9 +43,11 @@ const MAX_SUSPICIOUS_REASONS = 80;
 const MAX_SESSION_HISTORY = 12;
 const ACTION_ROUTE_MEMORY_MS = 10_000;
 const HEARTBEAT_ACTIVITY_COUPLING_MS = 350;
+const MIN_RAPID_COMMAND_TIMING_INTERVAL_MS = 50;
 const MIN_COMMAND_TIMING_INTERVAL_MS = 250;
 const MAX_COMMAND_TIMING_INTERVAL_MS = 60_000;
 const COMMAND_INTERVAL_PATTERN_BIN_MS = 100;
+const MIN_RAPID_COMMAND_INTERVAL_SAMPLES = 16;
 const MIN_MEANINGFUL_SESSION_MINUTES = 5;
 const MIN_ROUTE_ACTION_LOOP_SIGNATURES = 20;
 const MIN_XP_VELOCITY_SESSION_MINUTES = 5;
@@ -142,6 +144,8 @@ export interface SessionSummary {
   gameplayCommandIntervalSamples: number;
   gameplayCommandIntervalStdDevMs: number | null;
   gameplayCommandIntervalMedianMs: number | null;
+  rapidCommandIntervalSamples: number;
+  rapidCommandIntervalMedianMs: number | null;
   /** Coefficient of variation (stddev/mean) of command intervals; low-but-nonzero = mechanical jitter. */
   commandIntervalCv: number | null;
   /** p90/median of command intervals; ~1 = no human heavy tail. */
@@ -255,6 +259,9 @@ export class BotStats {
   pingIntervalSamples: number[] = [];
   activityIntervalSamples: number[] = [];
   gameplayCommandIntervalSamples: number[] = [];
+  rapidCommandIntervalSamples: number[] = [];
+  private rapidCommandIntervalRun: number = 0;
+  private longestRapidCommandIntervalRun: number = 0;
   sameCommandIntervalSamples: number[] = [];
   gameplayCommandPatternSignatures: string[] = [];
   gameplayCommandIntervalBins: number[] = [];
@@ -321,6 +328,7 @@ export class BotStats {
   private mapDataWindowFiles: Set<string> = new Set();
   private mapDataWindowBurstRecorded: boolean = false;
   private activityHeartbeatCoupledEvents: number = 0;
+  private sessionLatchedEvidenceFlags: Set<string> = new Set();
   /** When the last NPC died near this player — feeds the next attack's
    *  reaction time delta if it lands within 5 seconds. */
   pendingReactionStart: number | null = null;
@@ -462,9 +470,13 @@ export class BotStats {
     this.lastGameplayCommandAt = null;
     this.commandTimingSignatures.clear();
     this.gameplayCommandIntervalSamples = [];
+    this.rapidCommandIntervalSamples = [];
+    this.rapidCommandIntervalRun = 0;
+    this.longestRapidCommandIntervalRun = 0;
     this.sameCommandIntervalSamples = [];
     this.gameplayCommandPatternSignatures = [];
     this.gameplayCommandIntervalBins = [];
+    this.sessionLatchedEvidenceFlags.clear();
     this.lastCoupledActivityAt = null;
     this.lastActiveGameplayAt = null;
     this.awaitingPostDeathMovement = false;
@@ -722,7 +734,14 @@ export class BotStats {
     if (this.lastGameplayCommandAt !== null) {
       const interval = now - this.lastGameplayCommandAt;
       if (this.recordCommandInterval(this.gameplayCommandIntervalSamples, interval)) {
+        this.rapidCommandIntervalRun = 0;
         this.pushCommandIntervalPatternBin(interval);
+      } else if (interval >= MIN_RAPID_COMMAND_TIMING_INTERVAL_MS && interval < MIN_COMMAND_TIMING_INTERVAL_MS) {
+        this.pushSample(this.rapidCommandIntervalSamples, interval, MAX_GAMEPLAY_COMMAND_INTERVAL_SAMPLES);
+        this.rapidCommandIntervalRun++;
+        this.longestRapidCommandIntervalRun = Math.max(this.longestRapidCommandIntervalRun, this.rapidCommandIntervalRun);
+      } else if (interval >= MIN_COMMAND_TIMING_INTERVAL_MS) {
+        this.rapidCommandIntervalRun = 0;
       }
     }
     this.lastGameplayCommandAt = now;
@@ -740,6 +759,19 @@ export class BotStats {
       if (oldest !== undefined) this.commandTimingSignatures.delete(oldest);
     }
     this.commandTimingSignatures.set(cleanSignature, now);
+    this.latchTimingEvidence();
+  }
+
+  private latchTimingEvidence(): void {
+    const gameplayStdDev = stdDev(this.gameplayCommandIntervalSamples);
+    const sameStdDev = stdDev(this.sameCommandIntervalSamples);
+    const intervalPatternRatio = maxLagMatchRatio(this.gameplayCommandIntervalBins, 2, 8);
+    const mechanicalJitter = analyzeMechanicalJitter(this.gameplayCommandIntervalSamples);
+    if (this.longestRapidCommandIntervalRun >= MIN_RAPID_COMMAND_INTERVAL_SAMPLES) this.sessionLatchedEvidenceFlags.add('rapidGameplayCommandCadence');
+    if (this.gameplayCommandIntervalSamples.length >= 24 && gameplayStdDev !== null && gameplayStdDev < 65) this.sessionLatchedEvidenceFlags.add('gameplayCommandCadenceRegular');
+    if (this.sameCommandIntervalSamples.length >= 12 && sameStdDev !== null && sameStdDev < 75) this.sessionLatchedEvidenceFlags.add('sameCommandCadenceRegular');
+    if (this.gameplayCommandIntervalBins.length >= 24 && intervalPatternRatio !== null && intervalPatternRatio >= 0.85) this.sessionLatchedEvidenceFlags.add('gameplayCommandIntervalPattern');
+    if (mechanicalJitter.isMechanical) this.sessionLatchedEvidenceFlags.add('mechanicalJitter');
   }
 
   private recordCommandInterval(samples: number[], interval: number): boolean {
@@ -803,6 +835,7 @@ export class BotStats {
     const activityIntervalMedianMs = median(this.activityIntervalSamples);
     const gameplayCommandIntervalStdDevMs = stdDev(this.gameplayCommandIntervalSamples);
     const gameplayCommandIntervalMedianMs = median(this.gameplayCommandIntervalSamples);
+    const rapidCommandIntervalMedianMs = median(this.rapidCommandIntervalSamples);
     const sameCommandIntervalStdDevMs = stdDev(this.sameCommandIntervalSamples);
     const sameCommandIntervalMedianMs = median(this.sameCommandIntervalSamples);
     const gameplayCommandSequencePatternRatio = maxLagMatchRatio(this.gameplayCommandPatternSignatures, 2, 8);
@@ -910,6 +943,9 @@ export class BotStats {
     ) {
       flags.push('gameplayCommandCadenceRegular');
     }
+    if (this.longestRapidCommandIntervalRun >= MIN_RAPID_COMMAND_INTERVAL_SAMPLES) {
+      flags.push('rapidGameplayCommandCadence');
+    }
     // Computer "humanized" jitter: nonzero variance (slips past the cadence gate)
     // but a tight, tail-less distribution no human sustains. Distinct from the
     // metronome case above.
@@ -957,6 +993,9 @@ export class BotStats {
     }
     if (sessionSuspiciousPacketClasses.automation >= 10) {
       flags.push('automationInvalidPackets');
+    }
+    if ((this.sessionSuspiciousPacketReasons.get('honeypot-action-capability') ?? 0) > 0) {
+      flags.push('honeypotActionCapability');
     }
     const lifetimeHardInvalidPackets = totalSuspiciousPacketClasses.protocol + totalSuspiciousPacketClasses.rateLimit;
     if (lifetimeHardInvalidPackets >= 25) {
@@ -1082,6 +1121,20 @@ export class BotStats {
     if (!isLikelyMobile && this.sessionCursorEvents >= 20 && topCursorCellRepetition !== null && topCursorCellRepetition > 0.95) {
       flags.push('cursorStatic');
     }
+    const moderateMechanicalJitter = analyzeModerateMechanicalJitter(this.gameplayCommandIntervalSamples);
+    if (
+      moderateMechanicalJitter.isMechanical
+      && (
+        flags.includes('routeActionLoop')
+        || flags.includes('cursorStatic')
+        || flags.includes('gameplayCommandSequencePattern')
+      )
+    ) {
+      flags.push('moderateMechanicalJitter');
+    }
+    for (const flag of this.sessionLatchedEvidenceFlags) {
+      if (!flags.includes(flag)) flags.push(flag);
+    }
     // marathonSession: > 8hr session
     if (sessionMinutes >= 480) {
       flags.push('marathonSession');
@@ -1151,6 +1204,8 @@ export class BotStats {
       activityIntervalStdDevMs,
       gameplayCommandIntervalSamples: this.gameplayCommandIntervalSamples.length,
       gameplayCommandIntervalStdDevMs,
+      rapidCommandIntervalSamples: this.rapidCommandIntervalSamples.length,
+      rapidCommandIntervalMedianMs,
       commandIntervalCv: mechanicalJitter.coefficientOfVariation,
       commandIntervalTailRatio: mechanicalJitter.tailRatio,
       sameCommandIntervalSamples: this.sameCommandIntervalSamples.length,
@@ -1229,6 +1284,8 @@ export class BotStats {
       gameplayCommandIntervalSamples: this.gameplayCommandIntervalSamples.length,
       gameplayCommandIntervalStdDevMs,
       gameplayCommandIntervalMedianMs,
+      rapidCommandIntervalSamples: this.rapidCommandIntervalSamples.length,
+      rapidCommandIntervalMedianMs,
       commandIntervalCv: mechanicalJitter.coefficientOfVariation,
       commandIntervalTailRatio: mechanicalJitter.tailRatio,
       isLikelyMobile,
@@ -1410,6 +1467,9 @@ const MECHANICAL_JITTER_MIN_SAMPLES = 40;
 const MECHANICAL_JITTER_MIN_CV = 0.02;
 const MECHANICAL_JITTER_MAX_CV = 0.15;
 const MECHANICAL_JITTER_MAX_TAIL_RATIO = 1.5;
+const MODERATE_JITTER_MIN_SAMPLES = 50;
+const MODERATE_JITTER_MAX_CV = 0.30;
+const MODERATE_JITTER_MAX_TAIL_RATIO = 1.65;
 export function analyzeMechanicalJitter(intervals: number[]): MechanicalJitterMetrics {
   if (intervals.length < MECHANICAL_JITTER_MIN_SAMPLES) {
     return { coefficientOfVariation: null, tailRatio: null, isMechanical: false };
@@ -1423,6 +1483,22 @@ export function analyzeMechanicalJitter(intervals: number[]): MechanicalJitterMe
   const isMechanical = cv !== null && tailRatio !== null
     && cv >= MECHANICAL_JITTER_MIN_CV && cv <= MECHANICAL_JITTER_MAX_CV
     && tailRatio <= MECHANICAL_JITTER_MAX_TAIL_RATIO;
+  return { coefficientOfVariation: cv, tailRatio, isMechanical };
+}
+
+function analyzeModerateMechanicalJitter(intervals: number[]): MechanicalJitterMetrics {
+  if (intervals.length < MODERATE_JITTER_MIN_SAMPLES) {
+    return { coefficientOfVariation: null, tailRatio: null, isMechanical: false };
+  }
+  const sd = stdDev(intervals);
+  const med = median(intervals);
+  const p90 = percentile(intervals, 0.9);
+  const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+  const cv = sd !== null && mean > 0 ? sd / mean : null;
+  const tailRatio = p90 !== null && med !== null && med > 0 ? p90 / med : null;
+  const isMechanical = cv !== null && tailRatio !== null
+    && cv > MECHANICAL_JITTER_MAX_CV && cv <= MODERATE_JITTER_MAX_CV
+    && tailRatio <= MODERATE_JITTER_MAX_TAIL_RATIO;
   return { coefficientOfVariation: cv, tailRatio, isMechanical };
 }
 
@@ -1465,12 +1541,15 @@ const EVIDENCE_SIGNAL_FLAGS = new Set([
   'gameplayCommandCadenceRegular',
   'sameCommandCadenceRegular',
   'gameplayCommandIntervalPattern',
+  'rapidGameplayCommandCadence',
   'mechanicalJitter',
+  'moderateMechanicalJitter',
   'mapDataScrape',
   'browserlessActiveGameplay',
   'commandsWithoutRecentInput',
   'commandsWithoutRecentActivity',
   'fastReaction',
+  'honeypotActionCapability',
 ]);
 
 const DIAGNOSTIC_SIGNAL_FLAGS = new Set([
@@ -1552,6 +1631,8 @@ interface BotRiskInput {
   activityIntervalStdDevMs: number | null;
   gameplayCommandIntervalSamples: number;
   gameplayCommandIntervalStdDevMs: number | null;
+  rapidCommandIntervalSamples: number;
+  rapidCommandIntervalMedianMs: number | null;
   commandIntervalCv: number | null;
   commandIntervalTailRatio: number | null;
   sameCommandIntervalSamples: number;
@@ -1602,7 +1683,9 @@ const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
   sameCommandCadenceRegular: { label: 'Robotic repeated-click cadence', description: 'The same command repeats on a near-perfect interval.', threshold: '≥12 repeats, <75ms stddev', tier: 'hard' },
   gameplayCommandSequencePattern: { label: 'Repeated command order', description: 'Commands repeat in a fixed order (e.g. ABAB) regardless of timing.', threshold: '≥30 commands, ≥85% lag-match', tier: 'soft' },
   gameplayCommandIntervalPattern: { label: 'Repeated interval pattern', description: 'Command intervals repeat in a fixed pattern even with added jitter.', threshold: '≥24 intervals, ≥85% lag-match', tier: 'hard' },
+  rapidGameplayCommandCadence: { label: 'Rapid click stream', description: 'Gameplay commands arrive in a sustained sub-human rapid stream.', threshold: '≥16 intervals between 50ms and 249ms', tier: 'hard' },
   mechanicalJitter: { label: 'Computer-generated timing jitter', description: 'Command timing has small randomization but a tight, tail-less spread no human sustains — the "humanize" setting of an auto-clicker. Catches jitter that slips past the regular-cadence gate.', threshold: '≥40 commands, CV 0.02–0.15, p90/median ≤1.5', tier: 'hard' },
+  moderateMechanicalJitter: { label: 'Tail-less randomized clicking', description: 'Command timing uses wider randomization but still lacks human pauses, paired with another automation-shaped signal.', threshold: '≥50 commands, CV 0.15–0.30, p90/median ≤1.65 plus route/cursor/order context', tier: 'hard' },
   legacyActivityTelemetry: { label: 'Legacy-only activity telemetry', description: 'Client sends only old-format activity packets (no kind/seq) — common for spoofed telemetry.', threshold: '≥10 events, ≤20% detailed', tier: 'soft' },
   browserlessActiveGameplay: { label: 'No browser input telemetry', description: 'Active gameplay with zero activity and cursor packets — a headless/raw-socket client.', threshold: '≥2min, ≥25 actions, 0 activity + 0 cursor', tier: 'hard' },
   inputlessCommandBurst: { label: 'Commands before any input', description: 'Gameplay commands fired before the client reported any browser input.', threshold: '≥5 commands', tier: 'soft' },
@@ -1631,6 +1714,7 @@ const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
   protocolPackets: { label: 'Malformed protocol packets', description: 'Repeated protocol-invalid packets this session.', threshold: '≥3 this session', tier: 'hard' },
   rateLimitPackets: { label: 'Rate-limit automation', description: 'Repeated rate-limit-tripping packets — faster-than-human request rate.', threshold: '≥3 this session', tier: 'hard' },
   automationInvalidPackets: { label: 'Automation-shaped packets', description: 'Many automation-shaped invalid packets.', threshold: '≥10 this session', tier: 'hard' },
+  honeypotActionCapability: { label: 'Honeypot action replayed', description: 'Client used an action capability that the official UI deliberately ignores.', threshold: '≥1 replayed honeypot capability', tier: 'hard' },
   lifetimeHardInvalidPackets: { label: 'Lifetime invalid packets', description: 'Large lifetime volume of protocol / rate-limit packets.', threshold: '≥25 lifetime', tier: 'hard' },
   lifetimeLowSocialHighActivity: { label: 'Low-social high-activity (lifetime)', description: 'Very high lifetime activity with almost no chat.', threshold: '≥600min, ≥10000 actions, <2 chats/hr', tier: 'soft' },
   lifetimeExtremeLowSocialHighActivity: { label: 'Extreme low-social high-activity (lifetime)', description: 'Extreme lifetime activity with virtually no chat.', threshold: '≥1200min, ≥25000 actions, <1 chat/hr', tier: 'soft' },
@@ -1638,31 +1722,11 @@ const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
   lifetimeHardEvidence: { label: 'Repeat hard-evidence offender', description: 'Multiple prior sessions ended with hard bot evidence — convicts bots that reconnect often to dodge per-session thresholds.', threshold: '≥3 prior hard-evidence sessions', tier: 'hard' },
 };
 
-/** Automation-MECHANISM signals (how a script behaves), deliberately excluding
- *  lifestyle/grinder signals (noChat, marathon*, pathRepetitive, lifetime-social)
- *  that a dedicated *human* also trips. Several of these co-occurring is strong
- *  evidence on its own — it's how we catch a careful bot that spoofs input
- *  telemetry and jitters its timing to dodge every single-signal hard flag, yet
- *  still loops routes, never misclicks, paths max-length, etc. `pingRegular` is
- *  excluded: a stable network produces low heartbeat jitter for legit clients. */
-const BEHAVIORAL_EVIDENCE_FLAGS = new Set([
-  'activityHeartbeatCoupled',
-  'activityRegular',
-  'gameplayCommandSequencePattern',
-  'routeActionLoop',
-  'lifetimeRouteActionLoop',
-  'noMoveRedirects',
-  'maxPathCommandRatio',
-  'pathTruncationPattern',
-  'postDeathRouteLoop',
-  'cursorStatic',
-  'inputlessCommandRatio',
-  'activitylessCommandRatio',
-  'inputlessCommandBurst',
-  'legacyActivityTelemetry',
-  'noClientActivityTelemetry',
-  'noCursorTelemetry',
-]);
+/** Review-only context flags. This used to let several soft automation tells
+ *  uncap the score as a cluster, but that made legitimate grinders too easy to
+ *  convict. Keep the function/API for admin review and tests; hard evidence now
+ *  comes only from EVIDENCE_SIGNAL_FLAGS. */
+const BEHAVIORAL_EVIDENCE_FLAGS = new Set<string>();
 /** Distinct behavioral signals that together count as hard evidence (lifting the
  *  soft-score cap). Conservative: 4 independent automation tells. */
 export const BEHAVIORAL_EVIDENCE_THRESHOLD = 4;
@@ -1685,11 +1749,15 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   const signals: BotSignalDetail[] = [];
   const flagSet = new Set(input.flags.map(normalizeSignalFlag));
   const evidenceFlagSet = new Set(input.evidenceFlags.map(normalizeSignalFlag));
+  const canScoreSignal = (flag: string): boolean =>
+    evidenceFlagSet.has(normalizeSignalFlag(flag))
+    || flag === 'lifetimeHardEvidence';
   // Record a scored signal. `measured` is the player's formatted value for this
   // signal (e.g. "14ms stddev"); label/description/threshold come from the
   // registry so the admin panel can show exactly what tripped and by how much.
   const add = (flag: string, points: number, measured: string) => {
     if (points <= 0) return;
+    if (!canScoreSignal(flag)) return;
     score += points;
     const meta = BOT_SIGNAL_META[flag];
     const label = meta?.label ?? flag;
@@ -1704,13 +1772,11 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     });
     reasons.push(`${label}${measured ? ` — ${measured}` : ''} (+${points})`);
   };
-  // Combo bonus: two or more signals reinforcing each other. No single
-  // threshold — emitted as a `context` signal so admins see the stacking.
+  // Combos are review context only. Direct hard signals stack naturally; soft
+  // context must not add hidden points or turn lifestyle patterns into a ban.
   const addCombo = (points: number, label: string) => {
     if (points <= 0) return;
-    score += points;
-    signals.push({ flag: `combo:${label}`, label, description: 'Multiple signals reinforcing each other.', threshold: 'combination', measured: '', points, tier: 'context' });
-    reasons.push(`${label} (+${points})`);
+    void label;
   };
 
   // NOTE: `tickAligned` is intentionally not scored. Skilling/combat actions
@@ -1722,11 +1788,18 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   // diagnostic flags, but do not score them directly.
   if (flagSet.has('activityHeartbeatCoupled')) add('activityHeartbeatCoupled', 20, `${ratioLabel(input.heartbeatActivityCouplingRatio)} coupled`);
   if (flagSet.has('activityRegular')) add('activityRegular', 18, `${input.activityIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev`);
-  if (flagSet.has('gameplayCommandCadenceRegular')) add('gameplayCommandCadenceRegular', 16, `${input.gameplayCommandIntervalSamples} samples, ${input.gameplayCommandIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev`);
-  if (flagSet.has('sameCommandCadenceRegular')) add('sameCommandCadenceRegular', 32, `${input.sameCommandIntervalSamples} samples, ${input.sameCommandIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev`);
+  const timingSignals: Array<[string, number, string]> = [];
+  if (flagSet.has('rapidGameplayCommandCadence')) timingSignals.push(['rapidGameplayCommandCadence', 60, `${input.rapidCommandIntervalSamples} rapid intervals, ${input.rapidCommandIntervalMedianMs?.toFixed(0) ?? '?'}ms median`]);
+  if (flagSet.has('sameCommandCadenceRegular')) timingSignals.push(['sameCommandCadenceRegular', 60, `${input.sameCommandIntervalSamples} samples, ${input.sameCommandIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev`]);
+  if (flagSet.has('gameplayCommandIntervalPattern')) timingSignals.push(['gameplayCommandIntervalPattern', 60, `${input.gameplayCommandIntervalPatternEvents} intervals, ${ratioLabel(input.gameplayCommandIntervalPatternRatio)} lag-match`]);
+  if (flagSet.has('mechanicalJitter')) timingSignals.push(['mechanicalJitter', 60, `CV ${input.commandIntervalCv?.toFixed(2) ?? '?'}, tail ${input.commandIntervalTailRatio?.toFixed(2) ?? '?'}`]);
+  if (flagSet.has('moderateMechanicalJitter')) timingSignals.push(['moderateMechanicalJitter', 60, `CV ${input.commandIntervalCv?.toFixed(2) ?? '?'}, tail ${input.commandIntervalTailRatio?.toFixed(2) ?? '?'}`]);
+  if (flagSet.has('gameplayCommandCadenceRegular')) timingSignals.push(['gameplayCommandCadenceRegular', 45, `${input.gameplayCommandIntervalSamples} samples, ${input.gameplayCommandIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev`]);
+  if (timingSignals.length > 0) {
+    timingSignals.sort((a, b) => b[1] - a[1]);
+    add(...timingSignals[0]);
+  }
   if (flagSet.has('gameplayCommandSequencePattern')) add('gameplayCommandSequencePattern', 10, `${input.gameplayCommandPatternEvents} commands, ${ratioLabel(input.gameplayCommandSequencePatternRatio)} lag-match`);
-  if (flagSet.has('gameplayCommandIntervalPattern')) add('gameplayCommandIntervalPattern', 30, `${input.gameplayCommandIntervalPatternEvents} intervals, ${ratioLabel(input.gameplayCommandIntervalPatternRatio)} lag-match`);
-  if (flagSet.has('mechanicalJitter')) add('mechanicalJitter', 26, `CV ${input.commandIntervalCv?.toFixed(2) ?? '?'}, tail ${input.commandIntervalTailRatio?.toFixed(2) ?? '?'}`);
   if (flagSet.has('legacyActivityTelemetry')) add('legacyActivityTelemetry', 10, `${input.sessionDetailedActivityEvents}/${input.sessionActivityEvents} detailed`);
   if (flagSet.has('browserlessActiveGameplay')) add('browserlessActiveGameplay', 46, `${input.sessionSkillingActions + input.sessionCombatSwings + input.sessionMovements} actions, 0 telemetry`);
   if (flagSet.has('inputlessCommandBurst') && !flagSet.has('commandsWithoutRecentInput')) {
@@ -1765,6 +1838,7 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('protocolPackets')) add('protocolPackets', 18, `${input.sessionSuspiciousPacketClasses.protocol} this session`);
   if (flagSet.has('rateLimitPackets')) add('rateLimitPackets', 18, `${input.sessionSuspiciousPacketClasses.rateLimit} this session`);
   if (flagSet.has('automationInvalidPackets')) add('automationInvalidPackets', 10, `${input.sessionSuspiciousPacketClasses.automation} this session`);
+  if (flagSet.has('honeypotActionCapability')) add('honeypotActionCapability', 70, 'replayed');
   if (flagSet.has('lifetimeHardInvalidPackets')) add(
     'lifetimeHardInvalidPackets',
     input.totalSuspiciousPacketClasses.protocol + input.totalSuspiciousPacketClasses.rateLimit >= 100 ? 22 : 14,
@@ -1839,6 +1913,7 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
       score = Math.min(score, 29);
     }
   }
+  if (hardEvidence) score = Math.max(score, 30);
 
   const capped = Math.min(100, Math.round(score));
   signals.sort((a, b) => b.points - a.points);
@@ -1855,10 +1930,13 @@ function hasHardBotEvidence(flagSet: Set<string>): boolean {
   return flagSet.has('gameplayCommandCadenceRegular')
     || flagSet.has('sameCommandCadenceRegular')
     || flagSet.has('gameplayCommandIntervalPattern')
+    || flagSet.has('rapidGameplayCommandCadence')
     || flagSet.has('mechanicalJitter')
+    || flagSet.has('moderateMechanicalJitter')
     || flagSet.has('browserlessActiveGameplay')
     || flagSet.has('commandsWithoutRecentInput')
     || flagSet.has('commandsWithoutRecentActivity')
+    || flagSet.has('honeypotActionCapability')
     || flagSet.has('deviceRotating')
     || flagSet.has('protocolPackets')
     || flagSet.has('rateLimitPackets')
@@ -1917,6 +1995,11 @@ function classifyReasonCounts(reasons: Map<string, number>): SuspiciousPacketCla
 function classifySuspiciousReason(reason: string): SuspiciousPacketClass {
   if (reason.startsWith('rate-limit:')) return 'rateLimit';
   if (
+    reason === 'missing-action-capability'
+    || reason === 'stale-action-capability'
+    || reason === 'bad-action-capability'
+  ) return 'stale';
+  if (
     reason === 'malformed-frame'
     || reason === 'unknown-opcode'
     || reason === 'bad-move-path-length'
@@ -1927,9 +2010,11 @@ function classifySuspiciousReason(reason: string): SuspiciousPacketClass {
   if (
     reason.startsWith('bad-')
     || reason.startsWith('missing-')
+    || reason === 'stale-input-ticket'
+    || reason === 'stale-action-capability'
+    || reason === 'honeypot-action-capability'
     || reason === 'self-use-item'
     || reason === 'self-move-inventory'
-    || reason === 'appearance-editor-not-open'
   ) return 'automation';
   if (
     reason.startsWith('stale-')
@@ -1961,7 +2046,8 @@ function isMeaningfulSession(summary: SessionSummary): boolean {
     || activeEvents >= 50
     || summary.sessionSuspiciousPackets >= 5
     || summary.sessionInputlessCommands >= 5
-    || evidenceFlags.includes('browserlessActiveGameplay');
+    || summary.riskHardEvidence
+    || evidenceFlags.length > 0;
 }
 
 function parseSessionSummary(raw: string | null | undefined): SessionSummary | null {

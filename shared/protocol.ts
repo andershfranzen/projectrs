@@ -1,6 +1,8 @@
 // Binary protocol helpers for game socket
 // All game packets: [opcode (1 byte), ...payload]
 
+import { ClientOpcode } from './opcodes';
+
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -41,6 +43,144 @@ export function encodePacket(opcode: number, ...values: number[]): Uint8Array {
     _encView.setInt16(1 + i * 2, value);
   }
   return _encU8.slice(0, len);
+}
+
+export const COMMAND_PROOF_TRAILER = -32768;
+export const COMMAND_PROOF_VERSION = 1;
+
+export interface CommandProof {
+  inputSeq: number;
+  capabilityId: number;
+  capabilityCode: number;
+}
+
+export interface ActionCapabilityProof {
+  id: number;
+  code: number;
+}
+
+export type ActionCapabilityWire = [
+  kind: number,
+  targetEntityId: number,
+  actionIndex: number,
+  capabilityId: number,
+  capabilityCode: number,
+  flags: number,
+];
+
+export const ACTION_CAPABILITY_HONEYPOT_FLAG = 1;
+
+export function appendCommandProof(packet: Uint8Array, proof: CommandProof): Uint8Array {
+  const buffer = packet.buffer.slice(packet.byteOffset, packet.byteOffset + packet.byteLength) as ArrayBuffer;
+  const { opcode, values } = decodePacket(buffer);
+  return encodePacket(
+    opcode,
+    ...values,
+    COMMAND_PROOF_TRAILER,
+    COMMAND_PROOF_VERSION,
+    proof.inputSeq,
+    proof.capabilityId,
+    proof.capabilityCode,
+  );
+}
+
+export function stripCommandProof(values: number[]): { values: number[]; proof: CommandProof | null } {
+  const trailerStart = values.length - 5;
+  if (trailerStart < 0 || values[trailerStart] !== COMMAND_PROOF_TRAILER) {
+    return { values, proof: null };
+  }
+  if (values[trailerStart + 1] !== COMMAND_PROOF_VERSION) {
+    return { values: values.slice(0, trailerStart), proof: null };
+  }
+  const inputSeq = values[trailerStart + 2];
+  const capabilityId = values[trailerStart + 3];
+  const capabilityCode = values[trailerStart + 4];
+  if (
+    !Number.isInteger(inputSeq)
+    || inputSeq <= 0
+    || inputSeq > 0x7fff
+    || !Number.isInteger(capabilityId)
+    || capabilityId < 0
+    || capabilityId > 0x7fff
+    || !Number.isInteger(capabilityCode)
+    || capabilityCode < 0
+    || capabilityCode > 0x7fff
+  ) {
+    return { values: values.slice(0, trailerStart), proof: null };
+  }
+  return {
+    values: values.slice(0, trailerStart),
+    proof: { inputSeq, capabilityId, capabilityCode },
+  };
+}
+
+export function clientOpcodeRequiresInputProof(opcode: number): boolean {
+  switch (opcode) {
+    case ClientOpcode.PLAYER_MOVE:
+    case ClientOpcode.PLAYER_ATTACK_NPC:
+    case ClientOpcode.PLAYER_EXAMINE_NPC:
+    case ClientOpcode.PLAYER_TALK_NPC:
+    case ClientOpcode.PLAYER_FOLLOW:
+    case ClientOpcode.PLAYER_PICKUP_ITEM:
+    case ClientOpcode.PLAYER_DROP_ITEM:
+    case ClientOpcode.PLAYER_DELETE_ITEM:
+    case ClientOpcode.PLAYER_EQUIP_ITEM:
+    case ClientOpcode.PLAYER_UNEQUIP_ITEM:
+    case ClientOpcode.PLAYER_EAT_ITEM:
+    case ClientOpcode.PLAYER_SET_STANCE:
+    case ClientOpcode.PLAYER_SET_MAGIC_STANCE:
+    case ClientOpcode.PLAYER_SET_AUTO_RETALIATE:
+    case ClientOpcode.PLAYER_BUY_ITEM:
+    case ClientOpcode.PLAYER_SELL_ITEM:
+    case ClientOpcode.PLAYER_MOVE_INV_ITEM:
+    case ClientOpcode.DIALOGUE_CHOOSE:
+    case ClientOpcode.DIALOGUE_CLOSE:
+    case ClientOpcode.PLAYER_INTERACT_OBJECT:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_ITEM:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_NPC:
+    case ClientOpcode.PLAYER_CAST_SPELL:
+    case ClientOpcode.PLAYER_SET_AUTOCAST:
+    case ClientOpcode.BANK_REQUEST_OPEN:
+    case ClientOpcode.BANK_DEPOSIT:
+    case ClientOpcode.BANK_WITHDRAW:
+    case ClientOpcode.BANK_DELETE:
+    case ClientOpcode.BANK_MOVE_ITEM:
+    case ClientOpcode.BANK_SET_WITHDRAW_MODE:
+    case ClientOpcode.BANK_CLOSE:
+    case ClientOpcode.APPEARANCE_CLOSE:
+    case ClientOpcode.TRADE_REQUEST:
+    case ClientOpcode.TRADE_ACCEPT_REQUEST:
+    case ClientOpcode.TRADE_DECLINE:
+    case ClientOpcode.TRADE_OFFER_ITEM:
+    case ClientOpcode.TRADE_REMOVE_OFFERED:
+    case ClientOpcode.TRADE_ACCEPT:
+    case ClientOpcode.DUEL_REQUEST:
+    case ClientOpcode.DUEL_ACCEPT_REQUEST:
+    case ClientOpcode.DUEL_DECLINE:
+    case ClientOpcode.DUEL_STAKE_ITEM:
+    case ClientOpcode.DUEL_REMOVE_STAKE:
+    case ClientOpcode.DUEL_ACCEPT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+export function clientOpcodeRequiresActionCapability(opcode: number): boolean {
+  switch (opcode) {
+    case ClientOpcode.PLAYER_ATTACK_NPC:
+    case ClientOpcode.PLAYER_EXAMINE_NPC:
+    case ClientOpcode.PLAYER_TALK_NPC:
+    case ClientOpcode.PLAYER_PICKUP_ITEM:
+    case ClientOpcode.PLAYER_INTERACT_OBJECT:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_NPC:
+    case ClientOpcode.PLAYER_CAST_SPELL:
+      return true;
+    default:
+      return false;
+  }
 }
 
 export function encodeQuantityPacket(opcode: number, slot: number, expectedItemId: number, quantity: number): Uint8Array {

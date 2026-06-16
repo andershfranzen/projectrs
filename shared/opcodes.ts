@@ -162,6 +162,12 @@ export enum ClientOpcode {
    *  coordinate is normalized to the viewport (0..1000). Used only for
    *  server-side bot review signals; it does not reset AFK state. */
   CURSOR_POSITION = 122,
+  /** One-shot browser input ticket. Values:
+   *  [kind, seq, xPermille, yPermille]. Every protected gameplay command must
+   *  carry one fresh nonzero seq in its protected-command trailer. The server consumes
+   *  each seq once, so old "one click buys a 15s command window" spoofing is no
+   *  longer enough. */
+  CLIENT_INPUT = 123,
 }
 
 export enum ClientActivityKind {
@@ -169,6 +175,12 @@ export enum ClientActivityKind {
   Pointer = 1,
   Keyboard = 2,
   Touch = 3,
+}
+
+export enum ActionCapabilityKind {
+  Npc = 1,
+  WorldObject = 2,
+  GroundItem = 3,
 }
 
 export const NPC_INTERACTION_HAS_DIALOGUE = 1 << 0;
@@ -190,6 +202,11 @@ export enum ServerOpcode {
    *  logical↔wire opcode tables. All normal game packets after this use the
    *  shuffled wire values instead of the enum constants below. */
   OPCODE_MAPPING = 3,
+  /** Server-issued short-lived action capabilities. String packet: JSON array of
+   *  [kind, targetEntityId, actionIndex, capabilityId, capabilityCode, flags].
+   *  The official client ignores entries with the honeypot flag; raw clients
+   *  that replay them prove they are not using the rendered UI. */
+  ACTION_CAPABILITIES = 4,
   PLAYER_SYNC = 10,
   /** NPC state. Layout:
    *  [entityId, npcDefId, x10, z10, health, maxHealth, floor, y10,

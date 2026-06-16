@@ -1,12 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  appendCommandProof,
   decodePacket,
   decodeQuantityValues,
   decodeStringPacket,
   encodePacket,
   encodeQuantityPacket,
   encodeStringPacket,
+  stripCommandProof,
 } from './protocol';
+import { ClientOpcode } from './opcodes';
 
 const MAX_STACK = 0x7FFFFFFF;
 
@@ -67,5 +70,38 @@ describe('decodeStringPacket bounds', () => {
     // Hostile client claims a long string in a short packet.
     const buf = new Uint8Array([60, 0xFF, 0xFF, 0x41]); // declares 65535 bytes, has 1
     expect(() => decodeStringPacket(buf.buffer as ArrayBuffer)).toThrow(RangeError);
+  });
+});
+
+describe('protected command proof trailer', () => {
+  test('appends and strips one-shot input and action capability proof', () => {
+    const packet = appendCommandProof(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, 10042, 2), {
+      inputSeq: 17,
+      capabilityId: 91,
+      capabilityCode: 1234,
+    });
+    const decoded = decodePacket(packet.buffer as ArrayBuffer);
+    expect(decoded.opcode).toBe(ClientOpcode.PLAYER_INTERACT_OBJECT);
+    const stripped = stripCommandProof(decoded.values);
+    expect(stripped.values).toEqual([10042, 2]);
+    expect(stripped.proof).toEqual({ inputSeq: 17, capabilityId: 91, capabilityCode: 1234 });
+  });
+
+  test('leaves ordinary values untouched when no trailer marker exists', () => {
+    const stripped = stripCommandProof([3, 10, 1, 2]);
+    expect(stripped.values).toEqual([3, 10, 1, 2]);
+    expect(stripped.proof).toBeNull();
+  });
+
+  test('rejects zero as a command input proof seq', () => {
+    const packet = appendCommandProof(encodePacket(ClientOpcode.PLAYER_MOVE, 0), {
+      inputSeq: 0,
+      capabilityId: 0,
+      capabilityCode: 0,
+    });
+    const decoded = decodePacket(packet.buffer as ArrayBuffer);
+    const stripped = stripCommandProof(decoded.values);
+    expect(stripped.values).toEqual([0]);
+    expect(stripped.proof).toBeNull();
   });
 });
