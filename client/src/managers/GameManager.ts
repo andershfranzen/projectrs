@@ -7995,7 +7995,7 @@ export class GameManager {
         if (shouldPredictWalk) {
           const pathResult = this.findPathToNpcInteraction(entityId, target);
           if (pathResult.path.length > 0) {
-            this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+            this.startInteractionPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
             if (this.destMarker) this.destMarker.isVisible = false;
             this.minimap?.clearDestination();
           } else {
@@ -8080,7 +8080,7 @@ export class GameManager {
         if (walkingToTile) {
           const pathResult = this.findPathToNpcInteraction(npcEntityId, target, attackRange, rangeMode, requireRangedLineOfSight);
           if (pathResult.path.length > 0) {
-            this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+            this.startInteractionPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
             if (this.destMarker) this.destMarker.isVisible = false;
             this.minimap?.clearDestination();
           } else {
@@ -8095,7 +8095,7 @@ export class GameManager {
         const pathResult = this.findPathToNpcInteraction(npcEntityId, target, attackRange, rangeMode, requireRangedLineOfSight);
         const path = pathResult.path;
         if (path.length > 0) {
-          this.startPredictedPath(path, pathResult.preserveCurrentStep);
+          this.startInteractionPredictedPath(path, pathResult.preserveCurrentStep);
           if (this.destMarker) this.destMarker.isVisible = false;
           this.minimap?.clearDestination();
         } else {
@@ -8140,7 +8140,7 @@ export class GameManager {
       if (shouldPredictWalk) {
         const pathResult = this.findPathToNpcInteraction(npcEntityId, target, SPELL_CAST_DISTANCE, 'chebyshev');
         if (pathResult.path.length > 0) {
-          this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+          this.startInteractionPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
           if (this.destMarker) this.destMarker.isVisible = false;
           this.minimap?.clearDestination();
           return;
@@ -8274,14 +8274,14 @@ export class GameManager {
       this.faceLocalPlayerTowardNpc(npcEntityId, target);
       this.pendingFaceTargetEntityId = -1;
     } else if (bankerBoothPath) {
-      this.startPredictedPath(bankerBoothPath.path, bankerBoothPath.preserveCurrentStep);
+      this.startInteractionPredictedPath(bankerBoothPath.path, bankerBoothPath.preserveCurrentStep);
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
     } else if (!this.isPlayerOnNpcInteractionTile(npcEntityId, target)) {
       const pathResult = this.findPathToNpcInteraction(npcEntityId, target);
       const path = pathResult.path;
       if (path.length > 0) {
-        this.startPredictedPath(path, pathResult.preserveCurrentStep);
+        this.startInteractionPredictedPath(path, pathResult.preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
       }
@@ -8292,7 +8292,7 @@ export class GameManager {
       if (this.pathIndex < this.path.length) {
         const pathResult = this.findPathToNpcInteraction(npcEntityId, target);
         if (pathResult.path.length > 0) {
-          this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+          this.startInteractionPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
           if (this.destMarker) this.destMarker.isVisible = false;
           this.minimap?.clearDestination();
         } else {
@@ -9144,6 +9144,12 @@ export class GameManager {
     return true;
   }
 
+  private startInteractionPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): boolean {
+    return this.startPredictedPath(path, preserveCurrentStep, {
+      coalesceDuplicateDestination: this.pathIndex >= this.path.length,
+    });
+  }
+
   private startLocalPredictedPath(
     path: { x: number; z: number }[],
     preserveCurrentStep: boolean = false,
@@ -9332,9 +9338,7 @@ export class GameManager {
     const best = findBest(this.objectInteractionTiles(data, def), hasAuthoredTiles)
       ?? (hasAuthoredTiles ? findBest(this.generatedObjectInteractionTiles(data, def), false) : null);
     if (best) {
-      return this.startPredictedPath(best.path, best.preserveCurrentStep, {
-        coalesceDuplicateDestination: this.pathIndex >= this.path.length,
-      });
+      return this.startInteractionPredictedPath(best.path, best.preserveCurrentStep);
     }
     return false;
   }
@@ -9346,7 +9350,7 @@ export class GameManager {
       if (item.floor !== this.currentFloor) return;
       const { path, preserveCurrentStep } = this.findPathToGroundItem(item);
       if (path.length > 0) {
-        this.startPredictedPath(path, preserveCurrentStep);
+        this.startInteractionPredictedPath(path, preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
       }
@@ -9701,9 +9705,7 @@ export class GameManager {
         }
         const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(tx + 0.5, tz + 0.5, 500);
         if (path.length > 0) {
-          const started = this.startPredictedPath(path, preserveCurrentStep, {
-            coalesceDuplicateDestination: this.pathIndex >= this.path.length,
-          });
+          const started = this.startInteractionPredictedPath(path, preserveCurrentStep);
           if (!started && alreadyAdj) shouldSendInteraction = this.pathIndex >= this.path.length;
         } else if (alreadyAdj) {
           shouldSendInteraction = this.pathIndex >= this.path.length;
@@ -11904,7 +11906,7 @@ export class GameManager {
       this._combatPathTimer = 0.6;
       const pathResult = this.findPathToNpcInteraction(this.magicTargetId, npcTarget, SPELL_CAST_DISTANCE, 'chebyshev');
       if (pathResult.path.length > 0) {
-        this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+        this.startInteractionPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
         this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.magicTargetId));
@@ -11935,7 +11937,7 @@ export class GameManager {
     const pathResult = this.findPathToNpcInteraction(this.combatTargetId, npcTarget, attackRange, rangeMode, requireRangedLineOfSight);
     const newPath = pathResult.path;
     if (newPath.length > 0) {
-      this.startPredictedPath(newPath, pathResult.preserveCurrentStep);
+      this.startInteractionPredictedPath(newPath, pathResult.preserveCurrentStep);
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
     }

@@ -260,10 +260,10 @@ describe('GameManager local movement prediction', () => {
     manager.tileProgress = 0.25;
     manager.playerX = 0.75;
 
-    const started = manager.startPredictedPath([
+    const started = manager.startInteractionPredictedPath([
       { x: 1.5, z: 1.5 },
       { x: 10.5, z: 0.5 },
-    ], true, { coalesceDuplicateDestination: false });
+    ], true);
 
     expect(started).toBe(true);
     expect(sentMoves).toEqual([{
@@ -276,6 +276,28 @@ describe('GameManager local movement prediction', () => {
     expect(manager.path).toEqual([
       { x: 1.5, z: 0.5 },
       { x: 1.5, z: 1.5 },
+      { x: 10.5, z: 0.5 },
+    ]);
+  });
+
+  test('active interaction redirects still coalesce an identical active route', () => {
+    const { manager, sentMoves } = makeManager([
+      { x: 1.5, z: 0.5 },
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.predictedPathDestination = { x: 10.5, z: 0.5 };
+    manager.tileProgress = 0.25;
+    manager.playerX = 0.75;
+
+    const started = manager.startInteractionPredictedPath([
+      { x: 1.5, z: 0.5 },
+      { x: 10.5, z: 0.5 },
+    ], true);
+
+    expect(started).toBe(false);
+    expect(sentMoves).toEqual([]);
+    expect(manager.path).toEqual([
+      { x: 1.5, z: 0.5 },
       { x: 10.5, z: 0.5 },
     ]);
   });
