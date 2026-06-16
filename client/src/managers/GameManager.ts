@@ -66,7 +66,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, movementTilesPerSecond, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -4969,6 +4969,7 @@ export class GameManager {
       const entityId = v[0];
       const appearance = appearanceFromWireValues(v, 1);
       this.entities.npcAppearances.set(entityId, appearance);
+      this.applyNpcNameplate(entityId);
       // Live-apply for an already-rendered customizable NPC (admin /npcedit).
       const sprite = this.entities.npcSprites.get(entityId);
       if (sprite instanceof CharacterEntity && sprite.isReady) {
@@ -6083,13 +6084,13 @@ export class GameManager {
   }
 
   /** Display name for an NPC entity: per-spawn override wins, then loaded
-   *  npc defs, then the legacy NPC_NAMES table, else 'NPC'. Used by
-   *  right-click, tooltip, and shop title. */
+   *  npc defs, then the legacy NPC_NAMES table, then appearance-based
+   *  default humanoid naming. Used by right-click, tooltip, and shop title. */
   private npcDisplayName(entityId: number, defId: number | undefined): string {
-    const override = this.entities.npcOverrideNames.get(entityId);
-    if (override) return override;
-    if (defId !== undefined) return this.npcDefsCache.get(defId)?.name || NPC_NAMES[defId] || 'NPC';
-    return 'NPC';
+    const rawName = this.entities.npcOverrideNames.get(entityId)
+      || (defId !== undefined ? this.npcDefsCache.get(defId)?.name || NPC_NAMES[defId] : undefined)
+      || 'NPC';
+    return resolveNpcDisplayNameForAppearance(rawName, this.entities.npcAppearances.get(entityId) ?? null) ?? rawName;
   }
 
   private async handleMapChange(mapId: string, newX: number, newZ: number): Promise<void> {
@@ -7220,7 +7221,7 @@ export class GameManager {
     if (!data) return [];
     const def = this.objectDefsCache.get(data.defId);
     if (!this.isWorldObjectOnCurrentInteractionFloor(data, def)) return [];
-    if (!def || (data.depleted && def.category !== 'door')) return [];
+    if (!def || !this.isWorldObjectInteractable(def, data.depleted)) return [];
 
     if (def.category === 'ladder') return this.getLadderInteractionOptions(objectEntityId, def, data);
 
@@ -7361,7 +7362,7 @@ export class GameManager {
     const placedName = model?.metadata?.placedName;
     if (typeof placedName === 'string' && placedName.trim()) return placedName.trim();
     const assetId = model?.metadata?.assetId;
-    if (def.id === GENERIC_SCENERY_OBJECT_DEF_ID && typeof assetId === 'string') {
+    if (typeof assetId === 'string') {
       return sceneryExamineMetaForAsset(assetId)?.name ?? def.name;
     }
     return def.name;
@@ -7373,6 +7374,7 @@ export class GameManager {
     data: { ladderActionMask?: number },
   ): InteractionOption[] {
     const mask = data.ladderActionMask ?? 0;
+    const displayName = this.worldObjectDisplayName(objectEntityId, def);
     const options: InteractionOption[] = [];
     def.actions.forEach((actionName, actionIdx) => {
       const available =
@@ -7381,7 +7383,7 @@ export class GameManager {
         || (actionName === 'Climb-up' && (mask & 2) !== 0);
       if (!available) return;
       options.push({
-        label: `${actionName} ${def.name}`,
+        label: `${actionName} ${displayName}`,
         primary: actionName === 'Examine' ? false : undefined,
         action: () => this.interactObject(objectEntityId, actionIdx),
       });
@@ -7456,7 +7458,7 @@ export class GameManager {
   }
 
   private isNonCombatNpc(entityId: number, npcDefId: number | undefined = this.entities.npcDefs.get(entityId)): boolean {
-    const name = this.entities.npcOverrideNames.get(entityId) || (npcDefId !== undefined ? this.npcDefsCache.get(npcDefId)?.name : undefined);
+    const name = this.npcDisplayName(entityId, npcDefId);
     const flags = this.entities.npcInteractions.get(entityId) ?? 0;
     const hasDialogue = (flags & NPC_INTERACTION_HAS_DIALOGUE) !== 0;
     const hasProtectedUi = (flags & (NPC_INTERACTION_HAS_SHOP | NPC_INTERACTION_HAS_BANK)) !== 0;
@@ -8990,7 +8992,8 @@ export class GameManager {
     const def = this.objectDefsCache.get(data.defId);
     if (!def) return;
     if (!this.isWorldObjectOnCurrentInteractionFloor(data, def)) return;
-    // Doors can always be clicked (open/close toggle). Other objects can't when depleted.
+    // Doors can always be clicked (open/close toggle). Depleted chests stay
+    // examineable so their open visual is not a dead right-click target.
     if (!this.isWorldObjectInteractable(def, data.depleted)) return;
     if (this.tryUseInventoryItemOn('object', objectEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
@@ -12161,7 +12164,7 @@ export class GameManager {
     } else if (def.category === 'ladder') {
       actions = def.actions;
     } else if (depleted) {
-      return [];
+      actions = def.actions.includes('Examine') ? ['Examine'] : [];
     } else {
       actions = def.actions;
     }
@@ -12170,7 +12173,7 @@ export class GameManager {
 
   private isWorldObjectInteractable(def: WorldObjectDef | undefined | null, depleted: boolean): boolean {
     if (!def) return false;
-    return !depleted || def.category === 'door';
+    return !depleted || def.category === 'door' || def.category === 'chest';
   }
 
   private setWorldObjectPickTarget(objectEntityId: number, interactive: boolean, root?: TransformNode | null): void {

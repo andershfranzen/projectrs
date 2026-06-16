@@ -21,6 +21,7 @@ export * from './gear';
 export * from './secureChannel';
 export * from './opcodeMapping';
 export * from './npcSafety';
+export * from './npcDisplayName';
 export * from './png';
 export * from './projectile';
 export * from './movementPath';

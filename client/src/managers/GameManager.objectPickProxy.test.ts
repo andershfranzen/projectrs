@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { BROTHER_MONK_CHEST_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID } from '@projectrs/shared';
+import { BROTHER_MONK_CHEST_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID } from '@projectrs/shared';
 import { GameManager } from './GameManager';
 
 function makeManager(): any {
@@ -58,6 +58,15 @@ const SCENERY_DEF = {
   width: 1,
   height: 1,
   actions: ['Examine'],
+};
+
+const STAIRS_DEF = {
+  id: STAIRS_OBJECT_DEF_ID,
+  name: 'Stairs',
+  category: 'ladder',
+  width: 1,
+  height: 1,
+  actions: ['Climb-up', 'Climb-down', 'Examine'],
 };
 
 describe('GameManager world object pick proxies', () => {
@@ -301,6 +310,53 @@ describe('GameManager world object pick proxies', () => {
     const fallbackOptions = manager.getWorldObjectInteractionOptions(12345);
     expect(fallbackOptions[0].label).toBe('Walk here');
     expect(fallbackOptions[0].primary).not.toBe(false);
+  });
+
+  test('mapped stair assets use asset-specific display names in interaction labels', () => {
+    const manager = makeManager();
+    manager.currentFloor = 1;
+    manager.worldObjectDefs = new Map([
+      [12346, {
+        defId: STAIRS_OBJECT_DEF_ID,
+        x: 220.5,
+        z: 158.5,
+        floor: 0,
+        depleted: false,
+        ladderActionMask: 1,
+      }],
+    ]);
+    manager.objectDefsCache = new Map([[STAIRS_OBJECT_DEF_ID, STAIRS_DEF]]);
+    manager.worldObjectModels = new Map([[12346, { metadata: { assetId: 'WIPStair1' } }]]);
+    manager.interactObject = () => {};
+
+    const options = manager.getWorldObjectInteractionOptions(12346);
+
+    expect(options.map((option: { label: string }) => option.label)).toEqual([
+      'Climb-down Wooden spiral staircase',
+      'Examine Wooden spiral staircase',
+    ]);
+    expect(options[1].primary).toBe(false);
+  });
+
+  test('depleted chests keep examine in the menu', () => {
+    const manager = makeManager();
+    const interactions: Array<{ objectEntityId: number; actionIndex: number }> = [];
+    manager.worldObjectDefs = new Map([
+      [45678, { defId: BROTHER_MONK_CHEST_OBJECT_DEF_ID, x: 107.5, z: 94.5, floor: 0, depleted: true }],
+    ]);
+    manager.objectDefsCache = new Map([[BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_DEF]]);
+    manager.worldObjectModels = new Map();
+    manager.isWorldObjectOnCurrentInteractionFloor = () => true;
+    manager.worldObjectInteractionActions = () => [];
+    manager.interactObject = (objectEntityId: number, actionIndex: number) => {
+      interactions.push({ objectEntityId, actionIndex });
+    };
+
+    const options = manager.getWorldObjectInteractionOptions(45678);
+
+    expect(options.map((option: { label: string }) => option.label)).toEqual(['Examine Brother Monk Chest']);
+    options[0].action();
+    expect(interactions).toEqual([{ objectEntityId: 45678, actionIndex: 0 }]);
   });
 
   test('left-clicking the brother monk chest uses primary object interaction', () => {

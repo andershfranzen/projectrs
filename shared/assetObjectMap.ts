@@ -224,8 +224,8 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
     examineText: 'A sturdy barrel for storing supplies.',
   },
   'Bench_1': {
-    name: 'Bench',
-    examineText: 'A sturdy wooden bench for weary travellers.',
+    name: 'Stone bench',
+    examineText: 'A cold stone bench worn smooth by mourners and weather.',
   },
   'Bench1': {
     name: 'Bench',
@@ -263,13 +263,45 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
     name: 'Carpet',
     examineText: 'A worn carpet that makes the room feel lived in.',
   },
+  'Carpet2x4': {
+    name: 'Carpet',
+    examineText: 'A larger carpet, worn smooth where people keep pretending not to pace.',
+  },
+  'Cart': {
+    name: 'Cart',
+    examineText: 'A wooden cart built for carrying more than anyone wants to lift.',
+  },
+  'Cart_2': {
+    name: 'Cart',
+    examineText: 'A wooden cart built for carrying more than anyone wants to lift.',
+  },
+  'Cart_3': {
+    name: 'Cart',
+    examineText: 'A sturdy cart with room for cargo, excuses, or both.',
+  },
+  'Cart_4': {
+    name: 'Cart',
+    examineText: 'A sturdy cart with room for cargo, excuses, or both.',
+  },
   'Chains_1003': {
-    name: 'Chains',
-    examineText: 'Heavy chains, cold and unpleasant to touch.',
+    name: 'Chained stone coffin',
+    examineText: 'A stone coffin bound shut with heavy chains.',
   },
   'chair': {
     name: 'Chair',
     examineText: 'A simple wooden chair.',
+  },
+  'Chair_1': {
+    name: 'Chair',
+    examineText: 'A plain chair polished by years of reluctant sitting.',
+  },
+  'Chair_2': {
+    name: 'Chair',
+    examineText: 'A plain chair polished by years of reluctant sitting.',
+  },
+  'Chair_3': {
+    name: 'Chair',
+    examineText: 'A plain chair polished by years of reluctant sitting.',
   },
   'Coffin': {
     name: 'Coffin',
@@ -295,9 +327,13 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
     name: 'Cross',
     examineText: 'A weathered cross, placed with solemn purpose.',
   },
+  'depleted_rock': {
+    name: 'Depleted rock',
+    examineText: 'A rock picked clean of anything worth swinging at.',
+  },
   'Fountain_2': {
-    name: 'Fountain',
-    examineText: 'The water reflects someone who should probably get back to work.',
+    name: 'Broken fountain',
+    examineText: 'A dry, broken fountain. Whatever water once flowed here is long gone.',
   },
   'helm shop sign': {
     name: 'Helmet shop sign',
@@ -307,6 +343,22 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
     name: 'Lamp',
     examineText: 'A lamp that keeps the gloom at bay.',
   },
+  'Minecart': {
+    name: 'Mine cart',
+    examineText: 'A mine cart with a useful shape and a suspicious number of dents.',
+  },
+  'MinecartTrackStraight': {
+    name: 'Mine cart track',
+    examineText: 'A length of track worn smooth by heavy mine carts.',
+  },
+  'MinecartTrackStop': {
+    name: 'Mine cart buffer',
+    examineText: 'A track stop for mine carts that are done negotiating.',
+  },
+  'MinecartTrackTurn': {
+    name: 'Mine cart track',
+    examineText: 'A curved length of track. Even mine carts need options.',
+  },
   'Notice_Board': {
     name: 'Notice board',
     examineText: 'A board for notices, warnings, and local news.',
@@ -314,6 +366,46 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
   'OnePersonBed1': {
     name: 'Bed',
     examineText: "A bed with the exact shape of a bad night's sleep.",
+  },
+  'open tier 1 chest': {
+    name: 'Open chest',
+    examineText: 'An open wooden chest. Someone has already helped themselves.',
+  },
+  'open tier 2 chest': {
+    name: 'Open chest',
+    examineText: 'An open iron-bound chest. The good part is missing.',
+  },
+  'open tier 3 chest': {
+    name: 'Open chest',
+    examineText: 'An open black bronze chest. It looks recently disappointed.',
+  },
+  'open tier 4 chest': {
+    name: 'Open chest',
+    examineText: 'An open mithril chest. The lock won, then lost.',
+  },
+  'open tier 5 chest': {
+    name: 'Open chest',
+    examineText: 'An open steel chest. Nothing valuable is sitting politely inside.',
+  },
+  'open tier 6 chest': {
+    name: 'Open chest',
+    examineText: 'An open royal gold chest. It has the smug emptiness of expensive security.',
+  },
+  'PalmTree1': {
+    name: 'Palm tree',
+    examineText: 'A palm tree doing its best with sand, sun, and very little encouragement.',
+  },
+  'PalmTree': {
+    name: 'Palm tree',
+    examineText: 'A palm tree doing its best with sand, sun, and very little encouragement.',
+  },
+  'PalmTreeLowSwept': {
+    name: 'Palm tree',
+    examineText: 'A wind-swept palm tree, bent but still making a point.',
+  },
+  'PalmTreeWindHook': {
+    name: 'Palm tree',
+    examineText: 'A crooked palm tree shaped by desert wind.',
   },
   'ranged shop sign': {
     name: 'Ranged shop sign',
@@ -331,17 +423,57 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
     name: 'Sack',
     examineText: 'A tied sack. Something dry rustles inside.',
   },
+  'Shop_Sign_1': {
+    name: 'Shop sign',
+    examineText: 'A hanging shop sign, creaking softly over the doorway.',
+  },
+  'Shop_Sign_2': {
+    name: 'Shop sign',
+    examineText: 'A hanging shop sign, creaking softly over the doorway.',
+  },
+  'StallBase': {
+    name: 'Stall base',
+    examineText: 'The bare bones of a market stall, waiting for ambition and inventory.',
+  },
   'table1': {
     name: 'Table',
     examineText: 'A plain wooden table.',
+  },
+  'Table_1': {
+    name: 'Table',
+    examineText: 'A pale table scrubbed clean enough to show every scratch.',
+  },
+  'Table_2': {
+    name: 'Table',
+    examineText: 'A pale table scrubbed clean enough to show every scratch.',
+  },
+  'Table_3': {
+    name: 'Table',
+    examineText: 'A pale table scrubbed clean enough to show every scratch.',
+  },
+  'Tanning Rack': {
+    name: 'Tanning rack',
+    examineText: 'A rack for stretching leather. The smell has settled in permanently.',
+  },
+  'Theodosian_Chair_1': {
+    name: 'Chair',
+    examineText: 'A palace chair with a better posture than most people.',
   },
   'Theodosian_Table_1': {
     name: 'Table',
     examineText: 'A sturdy table.',
   },
+  'Byzantine_WIPStair1': {
+    name: 'Wooden spiral staircase',
+    examineText: 'A wooden spiral staircase leading between levels.',
+  },
   'Tent': {
     name: 'Tent',
     examineText: 'A canvas tent pitched for a short stay.',
+  },
+  'Theodosian_WIPStair1': {
+    name: 'Wooden spiral staircase',
+    examineText: 'A wooden spiral staircase leading between levels.',
   },
   'Walltorch': {
     name: 'Wall torch',
@@ -350,6 +482,14 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
   'Waterwheel': {
     name: 'Waterwheel',
     examineText: 'A wooden waterwheel built to turn with the current.',
+  },
+  'weapon shop sign': {
+    name: 'Weapon shop sign',
+    examineText: 'A sign advertising sharp solutions to common problems.',
+  },
+  'WIPStair1': {
+    name: 'Wooden spiral staircase',
+    examineText: 'A wooden spiral staircase leading between levels.',
   },
 };
 

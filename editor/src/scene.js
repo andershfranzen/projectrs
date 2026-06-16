@@ -94,6 +94,7 @@ import {
   isReadableSignAssetId,
   MAX_SIGN_TEXT_LENGTH,
   normalizeSignText,
+  resolveNpcDisplayNameForAppearance,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -679,6 +680,11 @@ function tuneModelLighting(model, assetOrPath = null) {
 
   function ensureBankAccessSpawnName(spawn, def) {
     if (def?.bankAccess && !spawn.name) spawn.name = BANK_ACCESS_SPAWN_NAME
+  }
+
+  function npcSpawnDisplayName(spawn, def) {
+    const rawName = spawn?.name || def?.name || `NPC ${spawn?.npcId ?? '?'}`
+    return resolveNpcDisplayNameForAppearance(rawName, spawn?.appearance ?? def?.defaultAppearance ?? null) || rawName
   }
 
   function bankAccessSpawnHint(def) {
@@ -1381,7 +1387,7 @@ function tuneModelLighting(model, assetOrPath = null) {
       const visualScale = npcVisualScale(spawn)
       if (modelCfg) {
         const def = npcDefById(spawn.npcId)
-        const label = spawn.name || def?.name || `NPC ${spawn.npcId}`
+        const label = npcSpawnDisplayName(spawn, def)
         const entity = new Npc3DEntity(scene, modelCfg.file, modelCfg.scale, modelCfg.anims, {
           label,
           materialColors: modelCfg.materialColors,
@@ -1653,7 +1659,7 @@ function tuneModelLighting(model, assetOrPath = null) {
         const scale = npcVisualScale(selectedNpcSpawn)
         const scaleText = Math.abs(scale - 1) > 0.0001 ? ` · ${formatNpcScale(scale)}` : ''
         const levelText = def ? ` · level-${npcSpawnCombatLevel(selectedNpcSpawn, def)}` : ''
-        selectedLabel.textContent = `${selectedNpcSpawn.name || def?.name || `NPC ${selectedNpcSpawn.npcId}`} @ ${selectedNpcSpawn.x.toFixed(1)}, ${selectedNpcSpawn.z.toFixed(1)} ${formatNpcSpawnFloorText(selectedNpcSpawn)}${levelText} · ${formatNpcFacing(npcFacingAngle(selectedNpcSpawn))}${scaleText}`
+        selectedLabel.textContent = `${npcSpawnDisplayName(selectedNpcSpawn, def)} @ ${selectedNpcSpawn.x.toFixed(1)}, ${selectedNpcSpawn.z.toFixed(1)} ${formatNpcSpawnFloorText(selectedNpcSpawn)}${levelText} · ${formatNpcFacing(npcFacingAngle(selectedNpcSpawn))}${scaleText}`
       } else {
         selectedLabel.textContent = 'No spawn selected'
       }
@@ -1688,7 +1694,7 @@ function tuneModelLighting(model, assetOrPath = null) {
       const def = npcDefs.find(d => d.id === spawn.npcId)
       // Per-spawn name takes precedence in the list so renamed NPCs are
       // easy to spot among generic ones.
-      const name = spawn.name || def?.name || `NPC ${spawn.npcId}`
+      const name = npcSpawnDisplayName(spawn, def)
       const row = document.createElement('div')
       row.style.cssText = `display:flex;justify-content:space-between;align-items:center;gap:5px;padding:4px 5px;font-size:11px;cursor:pointer;border-radius:3px;margin-bottom:2px;${spawn === selectedNpcSpawn ? 'background:#1a4faf;' : 'background:#222;'}`
       const label = document.createElement('span')
@@ -14646,13 +14652,13 @@ function applyToolAtTile(tile, eventLike = null) {
         for (const spawn of allSpawns.filter(s => s.npcId === trigger.npcDefId && s.name === trigger.npcName)) {
           const def = npcDefs.find(d => d.id === spawn.npcId)
           const tree = spawn.dialogue ?? def?.dialogue
-          if (tree) trees.push({ label: spawn.name, tree })
+          if (tree) trees.push({ label: npcSpawnDisplayName(spawn, def), tree })
         }
       } else if (trigger.npcDefId) {
         const def = npcDefs.find(d => d.id === trigger.npcDefId)
         if (def?.dialogue) trees.push({ label: def.name, tree: def.dialogue })
         for (const spawn of allSpawns.filter(s => s.npcId === trigger.npcDefId && s.dialogue)) {
-          trees.push({ label: spawn.name || def?.name || `NPC ${trigger.npcDefId}`, tree: spawn.dialogue })
+          trees.push({ label: npcSpawnDisplayName(spawn, def), tree: spawn.dialogue })
         }
       }
       return trees
@@ -15543,12 +15549,14 @@ function applyToolAtTile(tile, eventLike = null) {
         seenSpawns.add(key)
         const def = npcDefs.find(d => d.id === spawn.npcId)
         const where = spawn.mapId ? `, ${spawn.mapId}` : ', current map'
+        const displayName = npcSpawnDisplayName(spawn, def)
         choices.push({
           kind: 'spawn',
           npcDefId: spawn.npcId,
           name: spawn.name,
-          display: `${spawn.name} - ${def?.name || 'NPC'} (${spawn.npcId}${where})`,
-          search: `${spawn.name} ${def?.name || ''} ${spawn.npcId} ${spawn.mapId || ''}`,
+          displayName,
+          display: `${displayName} - ${def?.name || 'NPC'} (${spawn.npcId}${where})`,
+          search: `${displayName} ${spawn.name} ${def?.name || ''} ${spawn.npcId} ${spawn.mapId || ''}`,
         })
       }
       for (const def of npcDefs) {
@@ -15564,29 +15572,36 @@ function applyToolAtTile(tile, eventLike = null) {
     function parseQuestNpcDisplay(value) {
       const text = String(value || '').trim()
       if (!text) return null
-      const exact = questNpcChoices().find(choice => choice.display === text)
+      const choices = questNpcChoices()
+      const exact = choices.find(choice => choice.display === text)
       if (exact) return exact
       const idMatch = text.match(/\((\d+)(?:,|\))/)
       if (idMatch) {
         const id = parseInt(idMatch[1])
         const spawnName = text.split(' - ')[0]?.trim()
-        const spawn = questNpcChoices().find(choice => choice.kind === 'spawn' && choice.npcDefId === id && choice.name === spawnName)
+        const spawn = choices.find(choice =>
+          choice.kind === 'spawn'
+          && choice.npcDefId === id
+          && (choice.name === spawnName || choice.displayName === spawnName)
+        )
         if (spawn) return spawn
         if (npcDefs.some(def => def.id === id)) return { kind: 'def', npcDefId: id }
       }
       const lower = text.toLowerCase()
-      const fuzzy = questNpcChoices().find(choice => choice.display.toLowerCase().includes(lower) || choice.search.toLowerCase().includes(lower))
+      const fuzzy = choices.find(choice => choice.display.toLowerCase().includes(lower) || choice.search.toLowerCase().includes(lower))
       return fuzzy || null
     }
     function formatQuestNpcDisplay(trigger) {
       if (trigger.npcName) {
-        const found = questNpcChoices().find(choice => choice.kind === 'spawn' && choice.npcDefId === trigger.npcDefId && choice.name === trigger.npcName)
+        const choices = questNpcChoices()
+        const found = choices.find(choice => choice.kind === 'spawn' && choice.npcDefId === trigger.npcDefId && choice.name === trigger.npcName)
         if (found) return found.display
         const def = npcDefs.find(d => d.id === trigger.npcDefId)
         return `${trigger.npcName} - ${def?.name || 'NPC'} (${trigger.npcDefId || '?'})`
       }
       if (trigger.npcDefId) {
-        const found = questNpcChoices().find(choice => choice.kind === 'def' && choice.npcDefId === trigger.npcDefId)
+        const choices = questNpcChoices()
+        const found = choices.find(choice => choice.kind === 'def' && choice.npcDefId === trigger.npcDefId)
         if (found) return found.display
         return `NPC ${trigger.npcDefId}`
       }

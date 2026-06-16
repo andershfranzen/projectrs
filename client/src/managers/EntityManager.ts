@@ -12,7 +12,7 @@ import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { mountWorldOverlayElement } from '../rendering/worldOverlay';
 import type { GroundItemLabelMode } from '../ui/gameSettings';
-import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, normalizeNpcVisualScale, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementTilesPerSecond, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors, type NpcEquipmentFitOverrides, type MovementMode } from '@projectrs/shared';
+import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, normalizeNpcVisualScale, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors, type NpcEquipmentFitOverrides, type MovementMode } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -126,8 +126,9 @@ export class EntityManager {
    *  NPC_INTERACTIONS opcode on chunk-entry; absent entries → 0 (combat-only).
    *  bit 0 = dialogue, bit 1 = shop, bit 2 = bank, bit 3 = dialogue can start combat. */
   readonly npcInteractions: Map<number, number> = new Map();
-  /** Per-spawn display name override (NPC_NAME opcode). When absent, display
-   *  names fall back to loaded npc defs, then the legacy NPC_NAMES table. */
+  /** Runtime display name override (NPC_NAME opcode). When absent, display
+   *  names fall back to loaded npc defs, then the legacy NPC_NAMES table,
+   *  then appearance-based default humanoid naming. */
   readonly npcOverrideNames: Map<number, string> = new Map();
   /** Count of NPCs currently rendered as CharacterEntity. Kept for diagnostics
    *  and possible future adaptive quality, but not used to hide humanoid NPCs:
@@ -205,15 +206,17 @@ export class EntityManager {
     this.npcVisualScales.set(entityId, visualScale);
 
     const def = this.npcDefsCache.get(defId);
-    const visualConfig = resolveNpcVisualConfig(defId, def, this.npcAppearances.get(entityId) ?? null);
+    const appearance = this.npcAppearances.get(entityId) ?? null;
+    const visualConfig = resolveNpcVisualConfig(defId, def, appearance);
 
     // If NPC_NAME arrived before this entity was created (chunk-entry order
     // isn't guaranteed), honour the override on first construction so the
     // floating label is correct from frame 1.
-    const name = this.npcOverrideNames.get(entityId)
+    const rawName = this.npcOverrideNames.get(entityId)
       || def?.name
       || NPC_NAMES[defId]
       || `NPC${defId}`;
+    const name = resolveNpcDisplayNameForAppearance(rawName, appearance) ?? rawName;
 
     // Dedicated 3D model path (rat, spider, cow, camel). Always preferred when
     // available — these have purpose-built animations.

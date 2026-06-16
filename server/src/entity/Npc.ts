@@ -1,5 +1,5 @@
 import { Entity } from './Entity';
-import { NPC_INTERACTION_DIRECT_ATTACK, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_STARTS_COMBAT, effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, normalizeNpcEquipmentFits, normalizeNpcVisualScale, npcCombatLevel } from '@projectrs/shared';
+import { NPC_INTERACTION_DIRECT_ATTACK, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_STARTS_COMBAT, effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, normalizeNpcEquipmentFits, normalizeNpcVisualScale, npcCombatLevel, resolveNpcNameOverrideForAppearance } from '@projectrs/shared';
 import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors, QuestCondition, NpcEquipmentFitOverrides } from '@projectrs/shared';
 import { canTravel, stepTowardNaiveInteraction, type PathingCollision } from '../pathing/Pathing';
 
@@ -148,8 +148,9 @@ export class Npc extends Entity {
   readonly visibilityCondition: QuestCondition | null;
   /** Allows direct attack while the NPC also has dialogue. */
   readonly directAttack: boolean;
-  /** Per-spawn name override (`spawn.name`). When null the runtime falls
-   *  back to def.name (already set on Entity by the super constructor). */
+  /** Runtime display-name override. Usually `spawn.name`, but anonymous
+   *  default humanoids can synthesize one from their appearance. When null
+   *  the runtime falls back to def.name. */
   readonly nameOverride: string | null;
   /** Visual-only scale multiplier. Gameplay size/interaction stays on
    *  NpcDef.size so authoring a big-looking mob does not silently alter
@@ -228,9 +229,11 @@ export class Npc extends Entity {
     const effHealth = (typeof overrideHealth === 'number' && overrideHealth > 0)
       ? Math.floor(overrideHealth)
       : def.health;
-    super(opts.nameOverride || def.name, x, z, effHealth);
+    const normalizedAppearance = opts.appearance ? normalizeAppearance(opts.appearance) : null;
+    const resolvedNameOverride = resolveNpcNameOverrideForAppearance(opts.nameOverride, def.name, normalizedAppearance);
+    super(resolvedNameOverride ?? def.name, x, z, effHealth);
     this.npcId = def.id;
-    this.nameOverride = opts.nameOverride && opts.nameOverride.length > 0 ? opts.nameOverride : null;
+    this.nameOverride = resolvedNameOverride;
     this.def = def;
     this.spawnX = x;
     this.spawnZ = z;
@@ -241,7 +244,7 @@ export class Npc extends Entity {
     this.huntRangeOverride = normalizeOptionalRange(opts.huntRange);
     this.attackRangeOverride = normalizeOptionalRange(opts.attackRange);
     this.retreatHealthOverride = normalizeOptionalRange(opts.retreatHealth);
-    this.appearance = opts.appearance ? normalizeAppearance(opts.appearance) : null;
+    this.appearance = normalizedAppearance;
     this.equipment = opts.equipment ?? null;
     this.equipmentFits = normalizeNpcEquipmentFits(opts.equipmentFits);
     this.customColors = opts.customColors ?? null;

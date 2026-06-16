@@ -772,29 +772,6 @@
             "questId": "Bob's Burial"
           }
         ]
-      },
-      {
-        "action": "Throw sketch",
-        "condition": {
-          "type": "not",
-          "condition": {
-            "type": "all",
-            "conditions": [
-              {
-                "type": "questStage",
-                "questId": "Bob's Burial",
-                "minStage": 2,
-                "maxStage": 2
-              },
-              {
-                "type": "hasItem",
-                "itemId": 236,
-                "quantity": 1
-              }
-            ]
-          }
-        },
-        "message": "You have nothing suspicious to throw into the well."
       }
     ]
   },

@@ -5490,8 +5490,9 @@ export class World {
       ? obj.def.actions[actionIndex]
       : this.currentObjectActionsForPlayer(player, obj)[actionIndex];
     if (!action) return;
-    // Doors can be interacted with when open (to close) — other objects can't when depleted
-    if (obj.depleted && obj.def.category !== 'door') {
+    // Doors can be interacted with when open (to close). Depleted non-door
+    // objects keep Examine available but block their gameplay actions.
+    if (obj.depleted && obj.def.category !== 'door' && action !== 'Examine') {
       this.sendWorldObjectUpdate(player, obj);
       // Chests give explicit feedback so the player knows the click was
       // received but the chest is still on cooldown; trees/rocks etc. stay
@@ -5764,6 +5765,9 @@ export class World {
     } else {
       actions = Array.isArray(obj.def.actions) ? obj.def.actions : obj.currentActions;
     }
+    if (obj.depleted && obj.def.category !== 'door') {
+      actions = actions.includes('Examine') ? ['Examine'] : [];
+    }
     return mergeObjectActionLabels(actions, this.objectInteractionActionLabelsForPlayer(player, obj));
   }
 
@@ -5826,6 +5830,10 @@ export class World {
       return hasRelic
         ? 'I should sacrifice some relics for good luck!'
         : 'i wish i had something worth sacrificing';
+    }
+    if (obj.depleted && obj.def.depletedAssetId) {
+      const depletedMeta = sceneryExamineMetaForAsset(obj.def.depletedAssetId);
+      if (depletedMeta?.examineText) return depletedMeta.examineText;
     }
     return obj.examineText || obj.def.examineText || `It's ${obj.displayName}.`;
   }

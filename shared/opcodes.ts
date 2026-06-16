@@ -305,9 +305,10 @@ export enum ServerOpcode {
    *  when available, or 0. Broadcast on animation changes and chunk-entry
    *  resync so other clients see skilling/combat animations. */
   PLAYER_ANIMATION = 79,
-  /** Per-spawn name override. String packet — display name string followed
-   *  by [npcEntityId]. Sent on chunk-entry only for spawns with a custom
-   *  spawn.name; absent → client falls back to NPC_NAMES[defId]. */
+  /** Runtime NPC display-name override. String packet — display name string
+   *  followed by [npcEntityId]. Sent on chunk-entry for custom spawn names
+   *  and synthesized default humanoid names; absent → client falls back to
+   *  loaded npc defs / NPC_NAMES[defId]. */
   NPC_NAME = 84,
   /** Server-driven NPC yaw broadcast. Values: [npcEntityId, angleQ1000]
    *  where angleQ1000 = round(angle_radians * 1000). atan2 produces [-π, π]

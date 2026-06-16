@@ -24,6 +24,19 @@ const wellDef: WorldObjectDef = {
   color: [80, 80, 90],
 };
 
+const chestDef: WorldObjectDef = {
+  id: 20,
+  name: 'Wooden Chest',
+  category: 'chest',
+  actions: ['Lockpick', 'Examine'],
+  blocking: true,
+  width: 1,
+  height: 1,
+  color: [120, 80, 40],
+  depletedAssetId: 'open tier 1 chest',
+  examineText: 'A simple wooden chest with a stubborn lock.',
+};
+
 const fakeWs = {
   sendBinary() {},
   send() {},
@@ -116,6 +129,26 @@ describe('placed object interactions', () => {
 
     player.inventory[0] = null;
     expect(world.currentObjectActionsForPlayer(player, obj)).toEqual(['Examine']);
+  });
+
+  test('depleted chests keep Examine but hide Lockpick until restocked', () => {
+    const player = new Player('chest_checker', 10.5, 10.5, fakeWs, 1);
+    const obj = new WorldObject(chestDef, 10.5, 11.5, 'kcmap');
+    obj.depleted = true;
+
+    const world = Object.create(World.prototype) as any;
+
+    expect(world.currentObjectActionsForPlayer(player, obj)).toEqual(['Examine']);
+  });
+
+  test('depleted chest examine text uses the open chest visual', () => {
+    const player = new Player('chest_reader', 10.5, 10.5, fakeWs, 1);
+    const obj = new WorldObject(chestDef, 10.5, 11.5, 'kcmap');
+    obj.depleted = true;
+
+    const world = Object.create(World.prototype) as any;
+
+    expect(world.objectExamineTextFor(player, obj)).toBe('An open wooden chest. Someone has already helped themselves.');
   });
 
   test('using a bucket on a well fills it without a well Fill action', () => {
