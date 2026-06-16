@@ -46,6 +46,10 @@ describe('broadcast sync batching', () => {
     world.currentTick = 42;
     world._dirtyPlayerPackets = new Map();
     world._dirtyNpcPackets = new Map();
+    world._playerMovementStepBatches = new Map([[viewer.player.id, {
+      modeIndex: 1,
+      steps: [{ x: viewer.player.position.x + 1, z: viewer.player.position.y, floor: 0, y: 0 }],
+    }]]);
     world._batchScratch = [];
     world.chunkManagers = new Map([['kcmap', {
       forEachEntityNearChunk(_cx: number, _cz: number, fn: (id: number) => void) {
@@ -60,7 +64,10 @@ describe('broadcast sync batching', () => {
     expect(new DataView(exact(viewer.packets[0])).getUint8(0)).toBe(ServerOpcode.PACKET_BATCH);
 
     const inner = decodePacketBatch(exact(viewer.packets[0])).map(packet => decodePacket(packet).opcode);
+    expect(inner[0]).toBe(ServerOpcode.PLAYER_MOVE_STEPS);
+    expect(inner[1]).toBe(ServerOpcode.PLAYER_SELF_SYNC);
     expect(inner).toContain(ServerOpcode.PLAYER_SELF_SYNC);
+    expect(inner).toContain(ServerOpcode.PLAYER_MOVE_STEPS);
     expect(inner).toContain(ServerOpcode.PLAYER_SYNC);
     expect(inner).toContain(ServerOpcode.PLAYER_REMOTE_EQUIPMENT);
     expect(inner).toContain(ServerOpcode.PLAYER_REMOTE_STANCE);

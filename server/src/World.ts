@@ -12211,6 +12211,8 @@ export class World {
       if (viewer.disconnected) continue;
       const a = viewer.appearance;
       const syncPackets: SyncPacket[] = [];
+      const selfMovementPkt = movementStepPackets.get(viewer.id);
+      if (selfMovementPkt) this.queueEncodedSyncPacket(syncPackets, selfMovementPkt);
       this.queueSyncPacket(
         syncPackets,
         ServerOpcode.PLAYER_SELF_SYNC,

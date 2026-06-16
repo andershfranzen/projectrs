@@ -4902,7 +4902,6 @@ export class GameManager {
     this.network.on(ServerOpcode.PLAYER_MOVE_STEPS, (_op, v) => {
       // Layout: [entityId, modeIdx, count, x10, z10, floor, y10, ...].
       const entityId = v[0];
-      if (entityId === this.localPlayerId) return;
       const mode = movementModeFromIndex(v[1] ?? 0);
       const count = Math.max(0, Math.min(4, Math.trunc(v[2] ?? 0)));
       const steps: RemoteMovementStep[] = [];
@@ -4918,6 +4917,10 @@ export class GameManager {
         });
       }
       if (steps.length === 0) return;
+      if (entityId === this.localPlayerId) {
+        this.applyLocalAuthoritativeMoveSteps(steps);
+        return;
+      }
       const queuedStepCount = this.queueRemoteMovementSteps(entityId, steps);
       this.entities.remoteMovementSegmentSteps.set(entityId, queuedStepCount);
       this.entities.remoteWalkUntil.set(entityId, performance.now() + 900);
@@ -8246,6 +8249,18 @@ export class GameManager {
     return -1;
   }
 
+  private findPredictedRouteSegmentContainingTile(tx: number, tz: number): number {
+    if (this.path.length === 0) return -1;
+    let start = this.predictedPathStart ?? (this.pathIndex === 0 ? this.tileFrom : null);
+    if (!start) return -1;
+    for (let i = 0; i < this.path.length; i++) {
+      const waypoint = this.path[i];
+      if (this.tileOnCompressedSegment(start, waypoint, tx, tz)) return i;
+      start = waypoint;
+    }
+    return -1;
+  }
+
   private isTileOnActivePredictedStep(tx: number, tz: number): boolean {
     if (this.pathIndex >= this.path.length) return false;
     if (Math.floor(this.tileFrom.x) === tx && Math.floor(this.tileFrom.z) === tz) return false;
@@ -8276,9 +8291,6 @@ export class GameManager {
     if (this.shouldIgnoreRecentPredictedArrivalAuthority(serverX, serverZ)) return true;
     const maxAxisDelta = Math.max(Math.abs(serverX - this.playerX), Math.abs(serverZ - this.playerZ));
     if (this.pathIndex < this.path.length) {
-      const serverTileX = Math.floor(serverX);
-      const serverTileZ = Math.floor(serverZ);
-      if (serverMoving && this.findPathSegmentContainingTile(serverTileX, serverTileZ) >= 0) return true;
       return maxAxisDelta <= GameManager.LOCAL_AUTHORITY_HARD_RESET_DIST;
     }
     if (serverMoving) {
@@ -8324,13 +8336,6 @@ export class GameManager {
       return true;
     }
 
-    const start = this.recentPredictedArrivalStart;
-    if (!start) return false;
-    let from = start;
-    for (const waypoint of this.recentPredictedArrivalPath) {
-      if (this.tileOnCompressedSegment(from, waypoint, tx, tz)) return true;
-      from = waypoint;
-    }
     return false;
   }
 
@@ -11732,11 +11737,15 @@ export class GameManager {
   }
 
   private fastForwardPredictedPathToAuthority(serverX: number, serverZ: number): boolean {
+    return this.reanchorPredictedPathToAuthority(serverX, serverZ, false);
+  }
+
+  private reanchorPredictedPathToAuthority(serverX: number, serverZ: number, allowRewind: boolean): boolean {
     if (this.pathIndex >= this.path.length) return false;
     const sTx = Math.floor(serverX);
     const sTz = Math.floor(serverZ);
     let foundIndex = -1;
-    for (let i = this.pathIndex; i < this.path.length; i++) {
+    for (let i = allowRewind ? 0 : this.pathIndex; i < this.path.length; i++) {
       const wp = this.path[i];
       if (Math.floor(wp.x) === sTx && Math.floor(wp.z) === sTz) {
         foundIndex = i;
@@ -11759,7 +11768,9 @@ export class GameManager {
       return true;
     }
 
-    const segmentIdx = this.findPathSegmentContainingTile(sTx, sTz);
+    const segmentIdx = allowRewind
+      ? this.findPredictedRouteSegmentContainingTile(sTx, sTz)
+      : this.findPathSegmentContainingTile(sTx, sTz);
     if (segmentIdx >= 0) {
       this.playerX = serverX;
       this.playerZ = serverZ;
@@ -11772,6 +11783,57 @@ export class GameManager {
     }
 
     return false;
+  }
+
+  private applyLocalAuthoritativeMovementFloor(floor: number): void {
+    if (!Number.isFinite(floor)) return;
+    const nextFloor = Math.trunc(floor);
+    const floorChanged = this.currentFloor !== nextFloor;
+    this.currentFloor = nextFloor;
+    if (this.localTeleportHeightOverride?.floor !== nextFloor) this.localTeleportHeightOverride = null;
+    if (!floorChanged) return;
+    this.chunkManager.setCurrentFloor(nextFloor);
+    this.refreshHoverHiddenRoofs(true, false);
+  }
+
+  private renderLocalPlayerAtAuthoritativeStep(step: RemoteMovementStep): void {
+    if (!this.localPlayer) return;
+    const y = Number.isFinite(step.y) ? step.y : this.getHeight(this.playerX, this.playerZ);
+    this.localPlayer.setPositionXYZ(this.playerX, y, this.playerZ);
+    this.inputManager.setPlayerY(y);
+  }
+
+  private applyLocalAuthoritativeMoveSteps(steps: RemoteMovementStep[]): void {
+    const final = steps[steps.length - 1];
+    if (!final) return;
+
+    const now = performance.now();
+    this.lastSelfAuthorityAt = now;
+    this.lastSelfAuthorityWarnAt = 0;
+    this.selfAuthorityGraceUntil = 0;
+    this.latestSelfSync = { x: final.x, z: final.z, moving: true };
+    this.clearSpellMovementLockOnSelfSync();
+    this.clearRecentPredictedArrival();
+    this.localPlayer?.setMovementMode(final.mode);
+
+    const reanchored = this.reanchorPredictedPathToAuthority(final.x, final.z, true);
+    if (!reanchored) {
+      this.clearPredictedPath(false, false);
+      this.playerX = final.x;
+      this.playerZ = final.z;
+      this.tileProgress = 0;
+      this.setTileFrom(final.x, final.z);
+    }
+
+    this.applyLocalAuthoritativeMovementFloor(final.floor);
+    this.renderLocalPlayerAtAuthoritativeStep(final);
+
+    if (this.pathIndex < this.path.length) {
+      if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
+    } else if (!reanchored) {
+      this.localCombatWalkUntilMs = 0;
+      this.localPlayer?.stopWalking();
+    }
   }
 
   private hardResetLocalPlayerToAuthority(serverX: number, serverZ: number, serverMoving: boolean = false): void {

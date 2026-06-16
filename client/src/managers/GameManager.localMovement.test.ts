@@ -54,6 +54,7 @@ function makeManager(path: { x: number; z: number }[], predictedSteps: number): 
   manager.recentPredictedArrivalStart = null;
   manager.recentPredictedArrivalPath = [];
   manager.recentPredictedArrivalDestination = null;
+  manager.currentFloor = 0;
   manager.pendingPath = null;
   manager.isSkilling = false;
   manager.localCombatWalkUntilMs = 0;
@@ -163,16 +164,60 @@ describe('GameManager local movement prediction', () => {
     expect(player.walking).toBe(false);
   });
 
-  test('keeps visible run prediction when server sync is behind on the same route', () => {
+  test('does not ignore a large moving authority mismatch just because it is on the same route', () => {
     const { manager } = makeManager([
       { x: 10.5, z: 0.5 },
     ], 10);
     manager.playerX = 6.25;
     manager.playerZ = 0.5;
 
-    expect(manager.shouldIgnoreVisibleLocalAuthority(1.5, 0.5, true)).toBe(true);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(1.5, 0.5, true)).toBe(false);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(2.0, 0.5, true)).toBe(true);
     expect(manager.shouldIgnoreVisibleLocalAuthority(1.5, 0.5, false)).toBe(false);
     expect(manager.shouldIgnoreVisibleLocalAuthority(6.25, 6.0, true)).toBe(false);
+  });
+
+  test('local authoritative move steps rewind an ahead run prediction to the server accepted tile', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.playerX = 6.25;
+    manager.playerZ = 0.5;
+    manager.tileProgress = 0.575;
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 1.5, z: 0.5, floor: 0, y: 0, mode: 'run' },
+      { x: 2.5, z: 0.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(manager.pathIndex).toBe(0);
+    expect(manager.tileProgress).toBe(0);
+    expect(manager.tileFrom).toEqual({ x: 2.5, z: 0.5 });
+    expect(manager.playerX).toBe(2.5);
+    expect(manager.playerZ).toBe(0.5);
+    expect(manager.predictedPathUnitSteps).toBe(8);
+    expect(player.modes.at(-1)).toBe('run');
+    expect(player.walking).toBe(true);
+    expect(player.positions.at(-1)).toEqual({ x: 2.5, y: 0, z: 0.5 });
+  });
+
+  test('local authoritative move steps advance to the next waypoint when the server reaches it', () => {
+    const { manager } = makeManager([
+      { x: 1.5, z: 0.5 },
+      { x: 2.5, z: 0.5 },
+      { x: 3.5, z: 0.5 },
+    ], 3);
+    manager.playerX = 2.25;
+    manager.playerZ = 0.5;
+    manager.pathIndex = 1;
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 1.5, z: 0.5, floor: 0, y: 0, mode: 'walk' },
+    ]);
+
+    expect(manager.pathIndex).toBe(1);
+    expect(manager.tileFrom).toEqual({ x: 1.5, z: 0.5 });
+    expect(manager.predictedPathUnitSteps).toBe(2);
   });
 
   test('hidden catch-up fast-forwards onto the predicted path without clearing the route', () => {
@@ -206,7 +251,7 @@ describe('GameManager local movement prediction', () => {
     expect(player.positions.at(-1)).toEqual({ x: 2.5, y: 0, z: 0.5 });
   });
 
-  test('ignores a stale stopped self-sync from the route immediately after predicted arrival', () => {
+  test('does not ignore a stopped self-sync from an earlier route tile after predicted arrival', () => {
     const { manager, player } = makeManager([
       { x: 7.5, z: 0.5 },
     ], 7);
@@ -215,7 +260,7 @@ describe('GameManager local movement prediction', () => {
 
     expect(manager.pathIndex).toBe(1);
     expect(manager.playerX).toBeCloseTo(7.5, 5);
-    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(true);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(false);
     expect(manager.playerX).toBeCloseTo(7.5, 5);
     expect(player.positions.at(-1)).toEqual({ x: 7.5, y: 0, z: 0.5 });
   });
@@ -240,10 +285,10 @@ describe('GameManager local movement prediction', () => {
 
     expect(manager.shouldIgnoreVisibleLocalAuthority(7.5, 0.5, false)).toBe(true);
     expect(manager.recentPredictedArrivalUntil).toBeGreaterThan(performance.now());
-    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(true);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(false);
   });
 
-  test('can preserve recent-arrival protection through arrival-side cleanup', () => {
+  test('can preserve destination-only recent-arrival protection through arrival-side cleanup', () => {
     const { manager } = makeManager([
       { x: 7.5, z: 0.5 },
     ], 7);
@@ -251,7 +296,8 @@ describe('GameManager local movement prediction', () => {
     advanceLocalMovement(manager, 2.5);
     manager.clearPredictedPath(false, false);
 
-    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(true);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(7.5, 0.5, false)).toBe(true);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(false);
   });
 
   test('default path clearing removes recent-arrival protection for explicit resets', () => {
