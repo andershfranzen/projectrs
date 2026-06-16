@@ -34,9 +34,13 @@ function makeLocalPlayer(): LocalPlayerStub {
   return player;
 }
 
-function makeManager(path: { x: number; z: number }[], predictedSteps: number): { manager: any; player: LocalPlayerStub } {
+function makeManager(
+  path: { x: number; z: number }[],
+  predictedSteps: number,
+): { manager: any; player: LocalPlayerStub; floorUpdates: number[] } {
   const manager = Object.create(GameManager.prototype) as any;
   const player = makeLocalPlayer();
+  const floorUpdates: number[] = [];
 
   manager.movementMode = 'run';
   manager.path = path;
@@ -51,8 +55,6 @@ function makeManager(path: { x: number; z: number }[], predictedSteps: number): 
   manager.predictedPathDestination = null;
   manager.predictedPathAuthorityReanchorAttempts = 0;
   manager.recentPredictedArrivalUntil = 0;
-  manager.recentPredictedArrivalStart = null;
-  manager.recentPredictedArrivalPath = [];
   manager.recentPredictedArrivalDestination = null;
   manager.currentFloor = 0;
   manager.pendingPath = null;
@@ -64,11 +66,13 @@ function makeManager(path: { x: number; z: number }[], predictedSteps: number): 
   manager.minimap = null;
   manager.localPlayer = player;
   manager.inputManager = { setPlayerY: () => {} };
+  manager.chunkManager = { setCurrentFloor: (floor: number) => { floorUpdates.push(floor); } };
   manager.getHeight = () => 0;
+  manager.refreshHoverHiddenRoofs = () => {};
   manager.shouldKeepLocalCombatWalkLoopAlive = () => false;
   manager.refreshLocalCombatFacing = () => {};
 
-  return { manager, player };
+  return { manager, player, floorUpdates };
 }
 
 function advanceLocalMovement(manager: any, seconds: number, camPos: any = null): void {
@@ -218,6 +222,20 @@ describe('GameManager local movement prediction', () => {
     expect(manager.pathIndex).toBe(1);
     expect(manager.tileFrom).toEqual({ x: 1.5, z: 0.5 });
     expect(manager.predictedPathUnitSteps).toBe(2);
+  });
+
+  test('local authoritative move steps apply server floor and height', () => {
+    const { manager, player, floorUpdates } = makeManager([
+      { x: 1.5, z: 0.5 },
+    ], 1);
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 1.5, z: 0.5, floor: 2, y: 4.25, mode: 'walk' },
+    ]);
+
+    expect(manager.currentFloor).toBe(2);
+    expect(floorUpdates).toEqual([2]);
+    expect(player.positions.at(-1)).toEqual({ x: 1.5, y: 4.25, z: 0.5 });
   });
 
   test('hidden catch-up fast-forwards onto the predicted path without clearing the route', () => {

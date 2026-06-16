@@ -559,8 +559,6 @@ export class GameManager {
   private predictedPathDestination: { x: number; z: number } | null = null;
   private predictedPathAuthorityReanchorAttempts: number = 0;
   private recentPredictedArrivalUntil: number = 0;
-  private recentPredictedArrivalStart: { x: number; z: number } | null = null;
-  private recentPredictedArrivalPath: { x: number; z: number }[] = [];
   private recentPredictedArrivalDestination: { x: number; z: number } | null = null;
   /** NPC entityId to face when the current path completes. 2004scape
    *  Player.faceEntity equivalent — set by talkToNpc/attackNpc, cleared
@@ -8301,21 +8299,16 @@ export class GameManager {
 
   private clearRecentPredictedArrival(): void {
     this.recentPredictedArrivalUntil = 0;
-    this.recentPredictedArrivalStart = null;
-    this.recentPredictedArrivalPath = [];
     this.recentPredictedArrivalDestination = null;
   }
 
   private armRecentPredictedArrival(): void {
-    const start = this.predictedPathStart;
     const destination = this.path[this.path.length - 1] ?? null;
-    if (!start || !destination) {
+    if (!destination) {
       this.clearRecentPredictedArrival();
       return;
     }
     this.recentPredictedArrivalUntil = performance.now() + GameManager.RECENT_ARRIVAL_AUTHORITY_GRACE_MS;
-    this.recentPredictedArrivalStart = { x: start.x, z: start.z };
-    this.recentPredictedArrivalPath = this.path.slice();
     this.recentPredictedArrivalDestination = { x: destination.x, z: destination.z };
   }
 
