@@ -52,6 +52,7 @@ const STALL_GUARD_MIN_QUERY_RANGE_TILES = 6;
 const STALL_SPOT_WARNING = 'Hey! Get your hands off there!';
 const STALL_MERCHANT_GUARD_CALL = 'Guards guards!';
 const STALL_MERCHANT_BLOCK_MESSAGE = 'The merchant is watching you too closely.';
+const TELEPORT_LANDING_SEARCH_RADIUS = 8;
 type ItemQuantity = { itemId: number; quantity: number };
 type EquipmentConflict = ItemQuantity & { slot: EquipSlot };
 
@@ -1815,6 +1816,62 @@ export class World {
     if (typeof maybeMap.isTileBlockedOnFloor === 'function') return maybeMap.isTileBlockedOnFloor(tileX, tileZ, floor);
     if (typeof maybeMap.isBlocked === 'function') return maybeMap.isBlocked(tileX, tileZ);
     return false;
+  }
+
+  private isTeleportLandingTileBlocked(mapId: string, map: GameMap, tileX: number, tileZ: number, floor: number): boolean {
+    const key = this.blockedKeyFor(mapId, tileX, tileZ, floor);
+    return this.mapTileBlockedOnFloor(map, tileX, tileZ, floor)
+      || (this.blockedObjectTiles?.has(key) ?? false)
+      || this.isCenteredDoorTileBlockedKey(key);
+  }
+
+  private resolveTeleportLanding(
+    mapId: string,
+    map: GameMap,
+    targetX: number,
+    targetZ: number,
+    floor: number,
+  ): { x: number; z: number; adjusted: boolean } | null {
+    if (
+      !Number.isFinite(targetX)
+      || !Number.isFinite(targetZ)
+      || !Number.isFinite(floor)
+      || targetX < 0
+      || targetX >= map.width
+      || targetZ < 0
+      || targetZ >= map.height
+    ) {
+      return null;
+    }
+
+    const originTileX = Math.floor(targetX);
+    const originTileZ = Math.floor(targetZ);
+    const candidates: Array<{ tileX: number; tileZ: number; distSq: number; adjusted: boolean }> = [];
+    for (let radius = 0; radius <= TELEPORT_LANDING_SEARCH_RADIUS; radius++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+          const tileX = originTileX + dx;
+          const tileZ = originTileZ + dz;
+          if (tileX < 0 || tileZ < 0 || tileX >= map.width || tileZ >= map.height) continue;
+          if (this.isTeleportLandingTileBlocked(mapId, map, tileX, tileZ, floor)) continue;
+          candidates.push({
+            tileX,
+            tileZ,
+            distSq: ((tileX + 0.5) - targetX) ** 2 + ((tileZ + 0.5) - targetZ) ** 2,
+            adjusted: dx !== 0 || dz !== 0,
+          });
+        }
+      }
+      if (candidates.length > 0) break;
+    }
+
+    candidates.sort((a, b) => a.distSq - b.distSq || a.tileZ - b.tileZ || a.tileX - b.tileX);
+    const best = candidates[0];
+    if (!best) return null;
+    return best.adjusted
+      ? { x: best.tileX + 0.5, z: best.tileZ + 0.5, adjusted: true }
+      : { x: targetX, z: targetZ, adjusted: false };
   }
 
   private isTileBlockedForPlayer(player: Player, map: GameMap, tileX: number, tileZ: number): boolean {
@@ -5872,36 +5929,13 @@ export class World {
     return recipes.length > 1;
   }
 
-  private isCraftingStationObject(obj: WorldObject): boolean {
-    return obj.def.category === 'furnace'
-      || obj.def.category === 'cookingrange'
-      || obj.def.category === 'anvil'
-      || obj.defId === FIRE_OBJECT_DEF_ID
-      || obj.defId === POTTERY_WHEEL_OBJECT_DEF_ID
-      || obj.defId === KILN_OBJECT_DEF_ID
-      || obj.defId === SPINNING_WHEEL_OBJECT_DEF_ID;
-  }
-
   private shouldDelayPendingObjectInteractionAfterArrival(obj: WorldObject | undefined): boolean {
-    if (!obj) return true;
-    if (obj.def.category === 'door') return false;
-    // Recipe stations open UI or mutate inventory after server-side adjacency
-    // validation. They do not start a world skilling animation, so replaying
-    // them on the arrival tick avoids a visible furnace/anvil dead tick without
-    // weakening movement validation.
-    if ((obj.def.recipes?.length ?? 0) > 0 && this.isCraftingStationObject(obj)) return false;
-    return true;
+    return !obj;
   }
 
-  private shouldDelayPendingUseItemOnObjectAfterArrival(obj: WorldObject | undefined, itemId: number): boolean {
+  private shouldDelayPendingUseItemOnObjectAfterArrival(obj: WorldObject | undefined, _itemId: number): boolean {
     if (!obj) return true;
-    if (obj.def.category === 'door' || obj.def.category === 'bank') return false;
-    if (this.findItemOnObjectRecipe(itemId, obj)) return false;
-    if (this.findKilnRecipeIndex(itemId, obj) >= 0) return false;
-    if (this.findSpinningWheelRecipeIndex(itemId, obj) >= 0) return false;
-    if (this.findObjectRecipeIndex(itemId, obj) >= 0) return false;
-    if (this.objectStorageSurfaceWorldY(obj) !== null) return false;
-    return true;
+    return false;
   }
 
   private shouldDelayPendingUseItemOnNpcAfterArrival(npc: Npc | undefined): boolean {
@@ -10217,13 +10251,9 @@ export class World {
       this.repairOrCompleteSultansMineDoorTransit(player);
       this.updateEntityChunk(player);
 
-      // Defer adjacency-triggered actions one tick if the player just consumed
-      // a waypoint this tick — server's authoritative tile updates instantly
-      // when a step finishes, but the client interpolates the visual character
-      // smoothly, so firing immediately makes interactions register while the
-      // character is still visually mid-step (looks like you're chopping a tree
-      // a tile away from where you're standing). Holding the action for the
-      // next tick (~600ms) lets the client catch up.
+      // The server replays queued object actions as soon as movement drains.
+      // Client-side skilling visuals wait for the predicted route to finish, so
+      // adding another authoritative tick here only creates a visible dead tick.
       const justArrived = player.lastMovedTick === this.currentTick && !player.hasMoveQueue();
 
       // Bot-detection: record the final destination tile when a movement
@@ -10258,10 +10288,6 @@ export class World {
       if (player.pendingInteraction && !player.hasMoveQueue()) {
         const { objectEntityId, actionIndex, swingSign, recipeIndex, recipeQuantity, expectedDoorOpen } = player.pendingInteraction;
         const obj = this.worldObjects.get(objectEntityId);
-        // Most non-door interactions wait one arrival tick so skilling
-        // animations do not start while the client is still visually finishing
-        // the final step. Crafting stations are UI/inventory actions, so they
-        // can replay immediately after authoritative adjacency validation.
         if (justArrived && this.shouldDelayPendingObjectInteractionAfterArrival(obj)) continue;
         this.clearQueuedPlayerActions(player);
         if (obj && this.canPlayerTargetObject(player, obj)) {
@@ -11919,21 +11945,17 @@ export class World {
     let targetZ = z;
     let targetFloor = forcedFloor !== undefined ? Math.floor(forcedFloor) : player.currentFloor;
     let forceFloorChange = forcedFloor !== undefined;
-    const tx = Math.floor(targetX);
-    const tz = Math.floor(targetZ);
-    const destinationValid = Number.isFinite(targetX)
-      && Number.isFinite(targetZ)
-      && Number.isFinite(targetFloor)
-      && targetX >= 0
-      && targetX < map.width
-      && targetZ >= 0
-      && targetZ < map.height
-      && !map.isTileBlockedOnFloor(tx, tz, targetFloor);
-    if (!destinationValid) {
+    const landing = this.resolveTeleportLanding(mapId, map, targetX, targetZ, targetFloor);
+    if (landing) {
+      targetX = landing.x;
+      targetZ = landing.z;
+      if (landing.adjusted) forcedY = undefined;
+    } else {
       const fallback = map.findSpawnPoint();
       console.warn(`[teleportPlayer] invalid target (${x},${z}, floor=${forcedFloor ?? player.currentFloor}) on ${mapId}; using spawn (${fallback.x},${fallback.z})`);
-      targetX = fallback.x;
-      targetZ = fallback.z;
+      const fallbackLanding = this.resolveTeleportLanding(mapId, map, fallback.x, fallback.z, 0);
+      targetX = fallbackLanding?.x ?? fallback.x;
+      targetZ = fallbackLanding?.z ?? fallback.z;
       targetFloor = 0;
       forceFloorChange = true;
       forcedY = undefined;
@@ -12014,21 +12036,24 @@ export class World {
     const requestedFloor = Number.isFinite(transition.targetFloor)
       ? Math.floor(transition.targetFloor!)
       : 0;
-    const tileX = Math.floor(targetX);
-    const tileZ = Math.floor(targetZ);
-    const targetValid = typeof targetX === 'number'
-      && isFinite(targetX)
-      && typeof targetZ === 'number'
-      && isFinite(targetZ)
-      && targetX >= 0
-      && targetX < targetMapObj.width
-      && targetZ >= 0
-      && targetZ < targetMapObj.height
-      && !targetMapObj.isTileBlockedOnFloor(tileX, tileZ, requestedFloor);
-    if (!targetValid) {
+    const landing = this.resolveTeleportLanding(newMap, targetMapObj, targetX, targetZ, requestedFloor);
+    if (landing) {
+      transition = {
+        ...transition,
+        targetX: landing.x,
+        targetZ: landing.z,
+        targetY: landing.adjusted ? undefined : transition.targetY,
+      };
+    } else {
       const fallback = targetMapObj.findSpawnPoint();
       console.warn(`[handleMapTransition] invalid target (${targetX},${targetZ}, floor=${requestedFloor}) on ${newMap}; using spawn (${fallback.x},${fallback.z})`);
-      transition = { targetMap: newMap, targetX: fallback.x, targetZ: fallback.z, targetFloor: 0 };
+      const fallbackLanding = this.resolveTeleportLanding(newMap, targetMapObj, fallback.x, fallback.z, 0);
+      transition = {
+        targetMap: newMap,
+        targetX: fallbackLanding?.x ?? fallback.x,
+        targetZ: fallbackLanding?.z ?? fallback.z,
+        targetFloor: 0,
+      };
     }
     const targetFloor = Number.isFinite(transition.targetFloor) ? Math.floor(transition.targetFloor!) : 0;
 

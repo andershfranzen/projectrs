@@ -221,15 +221,14 @@ describe('server-authoritative smithing picker', () => {
     expect(replays).toEqual([10050]);
   });
 
-  test('deferred resource interaction still waits one tick after arrival', () => {
+  test('deferred resource interaction replays on the arrival tick', () => {
     const { world, player, replays } = makePendingArrivalHarness('rock');
 
     world.tickPlayerMovement();
 
     expect(player.lastMovedTick).toBe(world.currentTick);
     expect(player.hasMoveQueue()).toBe(false);
-    expect(replays).toEqual([]);
-    expect(player.pendingInteraction).toMatchObject({ objectEntityId: 10050 });
+    expect(replays).toEqual([10050]);
   });
 
   test('deferred use-item-on-furnace interaction replays on the arrival tick', () => {
@@ -242,15 +241,14 @@ describe('server-authoritative smithing picker', () => {
     expect(replays).toEqual([10050]);
   });
 
-  test('deferred inert use-item-on-object interaction still waits one tick after arrival', () => {
+  test('deferred inert use-item-on-object interaction replays on the arrival tick', () => {
     const { world, player, replays } = makePendingArrivalHarness('rock', 'useItemOnObject');
 
     world.tickPlayerMovement();
 
     expect(player.lastMovedTick).toBe(world.currentTick);
     expect(player.hasMoveQueue()).toBe(false);
-    expect(replays).toEqual([]);
-    expect(player.pendingUseItemOnObject).toMatchObject({ objectEntityId: 10050 });
+    expect(replays).toEqual([10050]);
   });
 
   test('recipe station clicks while busy queue without canceling active production', () => {
