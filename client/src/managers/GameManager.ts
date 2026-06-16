@@ -8276,6 +8276,9 @@ export class GameManager {
     if (this.shouldIgnoreRecentPredictedArrivalAuthority(serverX, serverZ)) return true;
     const maxAxisDelta = Math.max(Math.abs(serverX - this.playerX), Math.abs(serverZ - this.playerZ));
     if (this.pathIndex < this.path.length) {
+      const serverTileX = Math.floor(serverX);
+      const serverTileZ = Math.floor(serverZ);
+      if (serverMoving && this.findPathSegmentContainingTile(serverTileX, serverTileZ) >= 0) return true;
       return maxAxisDelta <= GameManager.LOCAL_AUTHORITY_HARD_RESET_DIST;
     }
     if (serverMoving) {

@@ -163,6 +163,18 @@ describe('GameManager local movement prediction', () => {
     expect(player.walking).toBe(false);
   });
 
+  test('keeps visible run prediction when server sync is behind on the same route', () => {
+    const { manager } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.playerX = 6.25;
+    manager.playerZ = 0.5;
+
+    expect(manager.shouldIgnoreVisibleLocalAuthority(1.5, 0.5, true)).toBe(true);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(1.5, 0.5, false)).toBe(false);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(6.25, 6.0, true)).toBe(false);
+  });
+
   test('hidden catch-up fast-forwards onto the predicted path without clearing the route', () => {
     const { manager, player } = makeManager([
       { x: 1.5, z: 0.5 },

@@ -85,3 +85,57 @@ describe('EntityManager ground item stacks', () => {
     expect(manager.getGroundItemStackForTileKey('0,5,7').map(item => item.id)).toEqual([2]);
   });
 });
+
+describe('EntityManager map disposal', () => {
+  test('preserves player names across map-change entity cleanup', () => {
+    const manager = Object.create(EntityManager.prototype) as EntityManager;
+    (manager as any).remotePlayers = new Map([
+      [7, { dispose() {} }],
+    ]);
+    (manager as any).deathEffectEntities = new Map();
+    (manager as any).activeDeathEffectEntityIds = new Set();
+    (manager as any).remoteTargets = new Map([[7, { x: 1, z: 1 }]]);
+    (manager as any).remoteWalkUntil = new Map();
+    (manager as any).remoteMovementModes = new Map();
+    (manager as any).remoteMovementSegmentSteps = new Map();
+    (manager as any).remoteMovementStepQueues = new Map();
+    (manager as any).remoteAppearances = new Map();
+    (manager as any).remoteEquipment = new Map();
+    (manager as any).remoteStances = new Map();
+    (manager as any).remoteCombatLevels = new Map();
+    (manager as any).remoteAdminFlags = new Map();
+    (manager as any).remoteModeratorFlags = new Map();
+    (manager as any).remoteCombatTargets = new Map();
+    (manager as any).playerNames = new Map([[7, 'Alice']]);
+    (manager as any).nameToEntityId = new Map([['alice', 7]]);
+    (manager as any).npcSprites = new Map();
+    (manager as any).npcTargets = new Map();
+    (manager as any).npcDefs = new Map();
+    (manager as any).npcCombatLevels = new Map();
+    (manager as any).npcAppearances = new Map();
+    (manager as any).npcEquipment = new Map();
+    (manager as any).npcEquipmentFits = new Map();
+    (manager as any).npcCustomColors = new Map();
+    (manager as any).npcAttackAnimOverrides = new Map();
+    (manager as any).npcFacingAngles = new Map();
+    (manager as any).npcInteractions = new Map();
+    (manager as any).npcOverrideNames = new Map();
+    (manager as any).npcCombatTargets = new Map();
+    (manager as any).npc3dCount = 0;
+    (manager as any).objectSprites = new Map();
+    (manager as any).groundItems = new Map();
+    (manager as any).groundItemSprites = new Map();
+    (manager as any).groundItemModels = new Map();
+    (manager as any).groundItemPickProxies = new Map();
+    (manager as any).groundItemTileVersions = new Map();
+    (manager as any).pendingGroundItemTileRefreshes = new Set();
+    (manager as any).groundItemIdsByTile = new Map();
+    (manager as any).groundItemLabels = new Map();
+
+    manager.disposeAllEntities();
+
+    expect(manager.remotePlayers.size).toBe(0);
+    expect(manager.playerNames.get(7)).toBe('Alice');
+    expect(manager.nameToEntityId.get('alice')).toBe(7);
+  });
+});

@@ -181,9 +181,9 @@ interface DiagnosticBrowserGap {
 }
 
 const TEXT_SHADOW = '1px 1px 0 #000';
-const BOT_GRID_COLUMNS = 'minmax(92px, 1.1fr) 54px 72px minmax(130px, 1.4fr) 102px';
-const EVENT_GRID_COLUMNS = '76px 82px minmax(94px, 0.9fr) minmax(180px, 2fr) 96px';
-const DIAGNOSTIC_GRID_COLUMNS = '78px 98px minmax(80px, 0.8fr) minmax(170px, 2fr) 64px';
+const BOT_GRID_COLUMNS = 'minmax(142px, 1.25fr) 54px 74px minmax(158px, 1.45fr) minmax(116px, 0.95fr) 106px';
+const EVENT_GRID_COLUMNS = '76px 88px minmax(112px, 0.9fr) minmax(210px, 2fr) 116px';
+const DIAGNOSTIC_GRID_COLUMNS = '78px 106px minmax(96px, 0.8fr) minmax(190px, 2fr) 64px';
 const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
   { type: 'chat', label: 'Chat' },
   { type: 'private_chat', label: 'Private' },
@@ -284,8 +284,8 @@ export class AdminPanel {
       subtitle: 'Bot review',
       geometry: {
         kind: 'game-canvas',
-        width: 'min(800px, calc(100% - var(--right-rail-width, 300px) - 18px))',
-        maxHeight: 'calc(100% - var(--chat-height, 220px) - 18px)',
+        width: 'min(1040px, calc(100% - var(--right-rail-width, 300px) - 18px))',
+        maxHeight: 'calc(100% - var(--chat-height, 220px) - 14px)',
       },
       chrome: 'dialogue',
       closeButton: true,
@@ -298,19 +298,21 @@ export class AdminPanel {
     body.style.cssText = `
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      padding: 9px 10px 10px;
+      gap: 9px;
+      padding: 10px 11px 11px;
+      flex: 1 1 auto;
       min-height: 0;
       overflow: hidden;
       color: #f1d6b6;
       font-family: Arial, Helvetica, sans-serif;
       text-shadow: ${TEXT_SHADOW};
+      box-sizing: border-box;
     `;
 
     const tabBar = document.createElement('div');
     tabBar.style.cssText = `
       display: flex;
-      gap: 5px;
+      gap: 6px;
       align-items: center;
       min-width: 0;
       margin-left: auto;
@@ -333,7 +335,13 @@ export class AdminPanel {
     header.insertBefore(tabBar, closeButton ?? null);
 
     const toolbar = document.createElement('div');
-    toolbar.style.cssText = `display: flex; align-items: center; gap: 8px; min-width: 0;`;
+    toolbar.style.cssText = `
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(140px, 180px) auto;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    `;
 
     this.summaryEl = document.createElement('div');
     this.summaryEl.style.cssText = `
@@ -384,8 +392,9 @@ export class AdminPanel {
       flex-direction: column;
       gap: 6px;
       min-width: 0;
-      padding: 6px;
+      padding: 7px;
       border: 1px solid rgba(74, 64, 53, 0.58);
+      border-radius: 3px;
       background: rgba(12, 8, 6, 0.36);
     `;
     const eventSearchRow = document.createElement('div');
@@ -458,8 +467,9 @@ export class AdminPanel {
       gap: 6px;
       align-items: center;
       min-width: 0;
-      padding: 6px;
+      padding: 7px;
       border: 1px solid rgba(74, 64, 53, 0.58);
+      border-radius: 3px;
       background: rgba(12, 8, 6, 0.36);
     `;
     this.diagnosticSearchInput = document.createElement('input');
@@ -529,34 +539,53 @@ export class AdminPanel {
       border: 1px solid rgba(74, 64, 53, 0.72);
       background: rgba(18, 13, 10, 0.64);
     `;
-    for (const label of ['Account', 'Score', 'Risk', 'Signals', 'Last login']) {
+    for (const label of ['Account', 'Score', 'Risk', 'Signals', 'Network', 'Last login']) {
       const cell = document.createElement('div');
       cell.textContent = label;
       this.gridHeaderEl.appendChild(cell);
     }
-    body.appendChild(this.gridHeaderEl);
+    const mainLayout = document.createElement('div');
+    mainLayout.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr));
+      gap: 8px;
+      min-height: 0;
+      overflow: hidden;
+    `;
+
+    const listPane = document.createElement('div');
+    listPane.style.cssText = `
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    `;
+    listPane.appendChild(this.gridHeaderEl);
 
     this.rowsEl = document.createElement('div');
     this.rowsEl.style.cssText = `
-      min-height: 118px;
-      max-height: 246px;
+      flex: 1 1 auto;
+      min-height: 220px;
+      max-height: min(48vh, 430px);
       overflow: auto;
       border: 1px solid rgba(74, 64, 53, 0.72);
+      border-top: 0;
       background: rgba(8, 6, 5, 0.4);
     `;
-    body.appendChild(this.rowsEl);
+    listPane.appendChild(this.rowsEl);
 
     this.detailEl = document.createElement('div');
     this.detailEl.style.cssText = `
-      min-height: 126px;
-      max-height: 250px;
+      min-height: 260px;
+      max-height: min(56vh, 540px);
       overflow: auto;
       border: 1px solid rgba(74, 64, 53, 0.72);
       background: rgba(14, 10, 8, 0.56);
-      padding: 8px;
+      padding: 9px;
       box-sizing: border-box;
     `;
-    body.appendChild(this.detailEl);
+    mainLayout.append(listPane, this.detailEl);
+    body.appendChild(mainLayout);
 
     root.appendChild(body);
     (document.getElementById('game-frame') ?? document.body).appendChild(root);
@@ -826,7 +855,7 @@ export class AdminPanel {
     this.clearRiskButton.style.display = '';
     this.eventFilterEl.style.display = 'none';
     this.diagnosticFilterEl.style.display = 'none';
-    this.setGridHeader(BOT_GRID_COLUMNS, ['Account', 'Score', 'Risk', 'Signals', 'Last login']);
+    this.setGridHeader(BOT_GRID_COLUMNS, ['Account', 'Score', 'Risk', 'Signals', 'Network', 'Last login']);
     const total = this.accounts.length;
     const high = this.accounts.filter((a) => a.riskLevel === 'high' || a.riskLevel === 'critical').length;
     const sharedIp = this.accounts.filter((a) => a.sharedIpAlts.length > 0).length;
@@ -1114,7 +1143,7 @@ export class AdminPanel {
     const flags = this.diagnosticFlags(entry);
 
     const root = document.createElement('div');
-    root.style.cssText = `display: flex; flex-direction: column; gap: 8px;`;
+    root.style.cssText = `display: flex; flex-direction: column; gap: 9px;`;
 
     const title = document.createElement('div');
     title.style.cssText = `display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13px; font-weight: bold; color: #f4ded5;`;
@@ -1337,6 +1366,7 @@ export class AdminPanel {
       this.truncateCell(String(account.riskScore)),
       this.riskPill(account.riskLevel),
       this.truncateCell(this.signalSummary(account)),
+      this.accountNetworkCell(account),
       this.truncateCell(this.formatTime(account.lastLoginTs)),
     );
     return row;
@@ -1375,20 +1405,36 @@ export class AdminPanel {
     if (account.ipBan) {
       cell.appendChild(this.statusPill('IP BAN', '#9a4f24', this.ipBanTitle(account.ipBan)));
     }
-    if (account.sharedIpAlts.length > 0) {
-      cell.appendChild(this.statusPill(`IP x${account.sharedIpAlts.length + 1}`, '#6b3b34', 'This account has ever shared a login IP with other accounts'));
-    }
-    if (account.vpnLikeIp) {
-      cell.appendChild(this.statusPill('VPN/DC?', '#7a5a25', account.vpnLikeIp.reason));
-    }
     if (account.accountMute) {
       cell.appendChild(this.statusPill('MUTED', '#7a5a25', this.muteTitle(account.accountMute)));
     }
-    if (account.isAdmin) {
-      cell.appendChild(this.statusPill('ADMIN', '#5f4a7d', 'Admin account'));
-    } else if (account.isModerator) {
-      cell.appendChild(this.statusPill('MOD', '#2f5f8f', 'Moderator account'));
+    if (account.isAdmin) cell.appendChild(this.statusPill('ADMIN', '#5f4a7d', 'Admin account'));
+    else if (account.isModerator) cell.appendChild(this.statusPill('MOD', '#2f5f8f', 'Moderator account'));
+    return cell;
+  }
+
+  private accountNetworkCell(account: AdminBotAccount): HTMLDivElement {
+    const cell = document.createElement('div');
+    cell.style.cssText = `
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+      align-self: center;
+    `;
+    if (account.sharedIpAlts.length > 0) {
+      cell.appendChild(this.statusPill(`IP x${account.sharedIpAlts.length + 1}`, '#6b3b34', account.lastIp ? `Last IP: ${account.lastIp}` : 'This account has ever shared a login IP with other accounts'));
+    } else if (account.lastIp) {
+      cell.appendChild(this.statusPill('IP', '#4d5d45', account.lastIp));
     }
+    if (account.vpnLikeIp) {
+      cell.appendChild(this.statusPill('VPN/DC?', '#7a5a25', `${account.vpnLikeIp.ip}: ${account.vpnLikeIp.reason}`));
+    }
+    if (account.deviceIdsSeen > 1) {
+      cell.appendChild(this.statusPill(`${account.deviceIdsSeen} dev`, '#4d535f', `${account.deviceIdsSeen} device IDs seen`));
+    }
+    if (cell.childElementCount === 0) cell.appendChild(this.truncateCell('-'));
     return cell;
   }
 
@@ -1646,7 +1692,7 @@ export class AdminPanel {
       for (const signal of diagnosticFlags.slice(0, 6)) {
         weakSignals.appendChild(this.summaryPill(`diag ${signal}`, '#4d535f'));
       }
-      root.appendChild(weakSignals);
+      root.appendChild(this.detailSection('Supporting signals', weakSignals));
     }
 
     if (account.accountBan || account.ipBan) {
@@ -1695,7 +1741,7 @@ export class AdminPanel {
       ['PTR', account.lastReverseDns || '-'],
     ];
     for (const [label, value] of metricRows) metrics.appendChild(this.metricCell(label, value));
-    root.appendChild(metrics);
+    root.appendChild(this.detailSection('Overview', metrics));
 
     if (summary) {
       const session = document.createElement('div');
@@ -1723,7 +1769,7 @@ export class AdminPanel {
         ['Cursor cells', String(this.summaryNumber(summary, 'cursorUniqueCells') ?? '-')],
       ];
       for (const [label, value] of sessionRows) session.appendChild(this.metricCell(label, value));
-      root.appendChild(session);
+      root.appendChild(this.detailSection('Timing', session));
     }
 
     const xpEntries = Object.entries(xpPerHour).filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]);
@@ -1733,7 +1779,7 @@ export class AdminPanel {
       for (const [skill, value] of xpEntries.slice(0, 8)) {
         xp.appendChild(this.summaryPill(`${skill}: ${this.formatNumber(value)}/hr`, '#564428'));
       }
-      root.appendChild(xp);
+      root.appendChild(this.detailSection('XP rate', xp));
     }
 
     if (account.suspiciousPacketReasons.length > 0) {
@@ -1742,7 +1788,7 @@ export class AdminPanel {
       for (const entry of account.suspiciousPacketReasons.slice(0, 8)) {
         packets.appendChild(this.summaryPill(`${entry.reason}: ${this.formatNumber(entry.count)}`, '#4d355f'));
       }
-      root.appendChild(packets);
+      root.appendChild(this.detailSection('Suspicious packets', packets));
     }
 
     if (account.topPathDestinations.length > 0 || account.sharedDeviceAlts.length > 0 || account.sharedIpAlts.length > 0 || account.vpnLikeIp) {
@@ -1775,14 +1821,14 @@ export class AdminPanel {
         pill.title = `${signal.reverseDns} at ${this.formatTime(signal.lastSeenTs)}`;
         context.appendChild(pill);
       }
-      root.appendChild(context);
+      root.appendChild(this.detailSection('Links and movement', context));
     }
 
     if (account.sessionHistory.length > 0) {
-      root.appendChild(this.sessionHistoryTable(account.sessionHistory));
+      root.appendChild(this.detailSection('Recent sessions', this.sessionHistoryTable(account.sessionHistory)));
     }
 
-    root.appendChild(this.moderationControls(account));
+    root.appendChild(this.detailSection('Actions', this.moderationControls(account)));
 
     // The flat reasons line is superseded by the ranked "Why flagged" breakdown
     // rendered near the top of the pane (see renderWhyFlagged).
@@ -1793,11 +1839,9 @@ export class AdminPanel {
   private moderationControls(account: AdminBotAccount): HTMLDivElement {
     const wrap = document.createElement('div');
     wrap.style.cssText = `
-      display: grid;
-      grid-template-columns: 120px minmax(120px, 1fr) repeat(7, minmax(74px, auto));
-      gap: 6px;
-      align-items: stretch;
-      padding-top: 2px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
     `;
 
     const duration = document.createElement('select');
@@ -1814,6 +1858,28 @@ export class AdminPanel {
     reason.maxLength = 200;
     reason.placeholder = 'Reason';
     reason.style.cssText = this.inputCss();
+
+    const inputs = document.createElement('div');
+    inputs.style.cssText = `
+      display: grid;
+      grid-template-columns: minmax(110px, 150px) minmax(160px, 1fr);
+      gap: 6px;
+      min-width: 0;
+    `;
+    inputs.append(duration, reason);
+
+    const clearRisk = this.smallButton('Clear risk', '#5d4930');
+    clearRisk.onclick = () => void this.clearBotRiskForAccount(account);
+
+    const teleportTo = this.smallButton('Teleport to', '#2f5f8f');
+    teleportTo.disabled = !account.online;
+    teleportTo.title = account.online ? `Teleport to ${account.username}` : 'Player is offline';
+    teleportTo.onclick = () => void this.teleportAccount(account, 'to-target');
+
+    const teleportHere = this.smallButton('Teleport here', '#2f5f8f');
+    teleportHere.disabled = !account.online;
+    teleportHere.title = account.online ? `Teleport ${account.username} to you` : 'Player is offline';
+    teleportHere.onclick = () => void this.teleportAccount(account, 'to-admin');
 
     const accountBan = this.smallButton(account.accountBan ? 'Update account ban' : 'Ban account', '#8f2f28');
     accountBan.disabled = account.isAdmin;
@@ -1878,7 +1944,20 @@ export class AdminPanel {
       enabled: !account.isModerator,
     });
 
-    wrap.append(duration, reason, accountBan, groupBan, accountUnban, accountMute, accountUnmute, ipBan, ipUnban, adminGrant, moderatorToggle);
+    const groups = document.createElement('div');
+    groups.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+      gap: 6px;
+      min-width: 0;
+    `;
+    groups.append(
+      this.actionGroup('Review', clearRisk),
+      this.actionGroup('Movement', teleportTo, teleportHere),
+      this.actionGroup('Account', accountBan, accountUnban, accountMute, accountUnmute, adminGrant, moderatorToggle),
+      this.actionGroup('IP', ipBan, ipUnban, groupBan),
+    );
+    wrap.append(inputs, groups);
     return wrap;
   }
 
@@ -2061,7 +2140,7 @@ export class AdminPanel {
       head.appendChild(this.summaryPill('legacy calibration', '#564428'));
     }
     if (summary?.isLikelyMobile === true) {
-      const pill = this.summaryPill('📱 mobile — cursor signals exempt', '#2f5f8f');
+      const pill = this.summaryPill('mobile cursor exempt', '#2f5f8f');
       pill.title = 'Touch-dominant client. Cursor-absence signals are suppressed to avoid false-flagging phone players; all automation detectors still apply.';
       head.appendChild(pill);
     }
@@ -2444,16 +2523,62 @@ export class AdminPanel {
     return cell;
   }
 
+  private detailSection(title: string, content: HTMLElement): HTMLDivElement {
+    const section = document.createElement('div');
+    section.style.cssText = `
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 7px;
+      border: 1px solid rgba(84, 70, 50, 0.58);
+      background: rgba(20, 14, 10, 0.44);
+      box-sizing: border-box;
+    `;
+    const heading = document.createElement('div');
+    heading.textContent = title;
+    heading.style.cssText = `
+      color: #c9b48f;
+      font: 700 10px Arial, Helvetica, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    `;
+    section.append(heading, content);
+    return section;
+  }
+
+  private actionGroup(title: string, ...controls: HTMLElement[]): HTMLDivElement {
+    const group = document.createElement('div');
+    group.style.cssText = `
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      padding: 6px;
+      border: 1px solid rgba(84, 70, 50, 0.5);
+      background: rgba(8, 6, 5, 0.24);
+    `;
+    const heading = document.createElement('div');
+    heading.textContent = title;
+    heading.style.cssText = `font: 700 10px Arial, Helvetica, sans-serif; color: #a99573;`;
+    const row = document.createElement('div');
+    row.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px;`;
+    row.append(...controls);
+    group.append(heading, row);
+    return group;
+  }
+
   private tabButtonCss(active: boolean): string {
     return `
-      min-width: 76px;
-      padding: 3px 7px;
+      min-width: 88px;
+      min-height: 26px;
+      padding: 4px 8px;
       border: 1px solid ${active ? '#9a332b' : 'rgba(74, 64, 53, 0.72)'};
       border-radius: 3px;
       background: ${active ? 'rgba(78, 18, 14, 0.95)' : 'rgba(18, 13, 10, 0.64)'};
       color: ${active ? '#f4ded5' : '#d9c6a2'};
       cursor: pointer;
-      font: 700 10px Arial, Helvetica, sans-serif;
+      font: 700 11px Arial, Helvetica, sans-serif;
       text-shadow: ${TEXT_SHADOW};
     `;
   }
@@ -2470,6 +2595,7 @@ export class AdminPanel {
       cursor: pointer;
       font: 700 11px Arial, Helvetica, sans-serif;
       text-shadow: ${TEXT_SHADOW};
+      white-space: nowrap;
     `;
   }
 
@@ -2512,6 +2638,7 @@ export class AdminPanel {
       cursor: pointer;
       font: 700 10px Arial, Helvetica, sans-serif;
       text-shadow: ${TEXT_SHADOW};
+      white-space: nowrap;
     `;
     button.addEventListener('mouseenter', () => {
       if (!button.disabled) button.style.filter = 'brightness(1.14)';

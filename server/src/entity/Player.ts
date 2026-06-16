@@ -395,6 +395,7 @@ export class Player extends Entity {
   private _actionCapabilitiesById: Map<number, ActionCapabilityRecord> = new Map();
   private _actionCapabilityIdByKey: Map<string, number> = new Map();
   private _nextActionCapabilityId: number = 1;
+  private _lastActionCapabilityPruneTick: number = -1;
   private static RL_MAX_MESSAGES = 30;   // max messages per window
   private static RL_WINDOW_MS = 1000;    // 1-second window
   private static SUSPICIOUS_PACKET_WINDOW_MS = 60_000;
@@ -476,6 +477,8 @@ export class Player extends Entity {
   }
 
   private pruneActionCapabilities(currentTick: number): void {
+    if (this._lastActionCapabilityPruneTick === currentTick) return;
+    this._lastActionCapabilityPruneTick = currentTick;
     for (const [id, cap] of this._actionCapabilitiesById) {
       if (cap.expiresTick >= currentTick) continue;
       this._actionCapabilitiesById.delete(id);

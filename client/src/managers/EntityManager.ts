@@ -1045,8 +1045,9 @@ export class EntityManager {
     this.remoteCombatLevels.clear();
     this.remoteAdminFlags.clear();
     this.remoteModeratorFlags.clear();
-    this.playerNames.clear();
-    this.nameToEntityId.clear();
+    // Player names arrive over the chat socket, not PLAYER_SYNC. Preserve the
+    // global id/name cache across map changes so remotes recreated after a
+    // teleport do not fall back to "Player" until another chat backfill.
 
     for (const [, sprite] of this.npcSprites) sprite.dispose();
     this.npcSprites.clear();
