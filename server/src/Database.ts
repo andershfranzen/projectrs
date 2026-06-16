@@ -3939,6 +3939,23 @@ export class GameDatabase {
     }));
   }
 
+  getPublicSharedIpAccountIds(accountId: number): number[] {
+    const rows = this.db.query(`
+      WITH my_ips AS (
+        SELECT DISTINCT ip_address
+        FROM login_history
+        WHERE account_id = ? AND ${SHARED_IP_PUBLIC_FILTER_SQL}
+      )
+      SELECT DISTINCT a.id AS account_id
+      FROM login_history lh
+      JOIN my_ips mi ON mi.ip_address = lh.ip_address
+      JOIN accounts a ON a.id = lh.account_id
+      WHERE lh.account_id <> ? AND a.is_admin = 0
+      ORDER BY a.id
+    `).all(accountId, accountId) as Array<{ account_id: number }>;
+    return rows.map((row) => row.account_id);
+  }
+
   private getVpnLikeIpSignal(accountId: number): AdminVpnLikeIpSignal | null {
     const rows = this.db.query(`
       SELECT ip_address, reverse_dns, login_ts

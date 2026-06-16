@@ -109,6 +109,27 @@ describe('admin bot review data', () => {
     }
   });
 
+  test('finds all non-admin accounts linked by public shared IPs for bulk bans', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const target = db.loginFallbackAccount('bulk-target', '11111111-1111-4111-8111-111111111111');
+      const first = db.loginFallbackAccount('bulk-alt-one', '22222222-2222-4222-8222-222222222222');
+      const second = db.loginFallbackAccount('bulk-alt-two', '33333333-3333-4333-8333-333333333333');
+      const admin = db.loginFallbackAccount('bulk-admin', '44444444-4444-4444-8444-444444444444');
+      db.setAccountAdminRole(admin.accountId, true);
+
+      db.recordLogin(target.accountId, '198.51.100.10', target.wsSecret);
+      db.recordLogin(target.accountId, '198.51.100.11', target.wsSecret);
+      db.recordLogin(first.accountId, '198.51.100.10', first.wsSecret);
+      db.recordLogin(second.accountId, '198.51.100.11', second.wsSecret);
+      db.recordLogin(admin.accountId, '198.51.100.10', admin.wsSecret);
+
+      expect(db.getPublicSharedIpAccountIds(target.accountId)).toEqual([first.accountId, second.accountId]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('filters bot review accounts by username', () => {
     const db = new GameDatabase(':memory:');
     try {

@@ -1433,6 +1433,9 @@ export class AdminPanel {
       this.accountMenuItem('Ban permanent', account.isAdmin, () => {
         void this.runTimedModeration(account, '/api/admin/ban-account', 0, 'Ban account');
       }),
+      this.accountMenuItem('Perm ban IP group', account.isAdmin, () => {
+        void this.banSharedIpGroup(account);
+      }),
       this.accountMenuItem('Unban account', !account.accountBan, () => {
         void this.runModerationAction('/api/admin/unban-account', { accountId: account.accountId });
       }),
@@ -1581,6 +1584,17 @@ export class AdminPanel {
     await this.runModerationAction('/api/admin/ban-ip', {
       ip: account.lastIp,
       durationSeconds,
+      reason: reason.trim().slice(0, 200),
+    });
+  }
+
+  private async banSharedIpGroup(account: AdminBotAccount): Promise<void> {
+    const reason = window.prompt(`Permanent shared-IP ban: ${account.username}\nReason (optional):`, '');
+    if (reason === null) return;
+    const shownAlts = account.sharedIpAlts.length;
+    if (!window.confirm(`Permanently ban ${account.username} and all non-admin accounts sharing valid public login IPs with them?${shownAlts > 0 ? `\nCurrently shown shared-IP accounts: ${shownAlts}.` : ''}`)) return;
+    await this.runModerationAction('/api/admin/ban-shared-ip-accounts', {
+      accountId: account.accountId,
       reason: reason.trim().slice(0, 200),
     });
   }
@@ -1810,6 +1824,11 @@ export class AdminPanel {
       reason: reason.value,
     });
 
+    const groupBan = this.smallButton('Perm ban IP group', '#8f2f28');
+    groupBan.disabled = account.isAdmin;
+    groupBan.title = account.isAdmin ? 'Admin accounts cannot be banned here' : 'Ban this account and non-admin shared-IP accounts';
+    groupBan.onclick = () => void this.banSharedIpGroup(account);
+
     const accountUnban = this.smallButton('Unban account', '#5d4930');
     accountUnban.disabled = !account.accountBan;
     accountUnban.onclick = () => void this.runModerationAction('/api/admin/unban-account', {
@@ -1859,7 +1878,7 @@ export class AdminPanel {
       enabled: !account.isModerator,
     });
 
-    wrap.append(duration, reason, accountBan, accountUnban, accountMute, accountUnmute, ipBan, ipUnban, adminGrant, moderatorToggle);
+    wrap.append(duration, reason, accountBan, groupBan, accountUnban, accountMute, accountUnmute, ipBan, ipUnban, adminGrant, moderatorToggle);
     return wrap;
   }
 

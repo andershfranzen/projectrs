@@ -3835,6 +3835,34 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
       }
     }
 
+    if (url.pathname === '/api/admin/ban-shared-ip-accounts' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { accountId?: unknown; reason?: unknown };
+        const accountId = Math.floor(Number(body.accountId));
+        if (!Number.isInteger(accountId) || accountId <= 0) return jsonResponse({ ok: false, error: 'Invalid account' }, 400);
+        if (accountId === session.accountId) return jsonResponse({ ok: false, error: 'You cannot ban your own account' }, 400);
+        const target = db.getAccountModerationInfo(accountId);
+        if (!target) return jsonResponse({ ok: false, error: 'Account not found' }, 404);
+        if (target.isAdmin) return jsonResponse({ ok: false, error: 'Admin accounts cannot be banned here' }, 400);
+        const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
+        const accountIds = [accountId, ...db.getPublicSharedIpAccountIds(accountId)].filter((id, idx, ids) => ids.indexOf(id) === idx);
+        for (const id of accountIds) {
+          db.banAccount(id, reason, session.username, null);
+          world.kickAccountIfOnline(id);
+        }
+        return jsonResponse({
+          ok: true,
+          bannedAccountIds: accountIds,
+          message: `Permanently banned ${accountIds.length} shared-IP account${accountIds.length === 1 ? '' : 's'}`,
+        });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
+    }
+
     if (url.pathname === '/api/admin/unban-account' && req.method === 'POST') {
       const session = getBoundBearerSession(req);
       if (!session?.isAdmin) return adminForbidden();
