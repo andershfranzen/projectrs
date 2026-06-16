@@ -656,6 +656,16 @@ export class World {
     return true;
   }
 
+  setActiveAccountAdmin(accountId: number, isAdmin: boolean): boolean {
+    const player = this.getActivePlayerByAccountId(accountId);
+    if (!player) return false;
+    player.isAdmin = isAdmin;
+    const socketData = (player.ws as unknown as { data?: { isAdmin?: boolean } }).data;
+    if (socketData) socketData.isAdmin = isAdmin;
+    player.syncDirty = true;
+    return true;
+  }
+
   renameActiveAccount(accountId: number, username: string): boolean {
     let updated = false;
     for (const player of this.players.values()) {

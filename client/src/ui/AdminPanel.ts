@@ -1447,6 +1447,9 @@ export class AdminPanel {
         void this.runModerationAction('/api/admin/unmute-account', { accountId: account.accountId });
       }),
       this.accountMenuSeparator(),
+      this.accountMenuItem('Grant admin', account.isAdmin, () => {
+        void this.grantAdmin(account);
+      }),
       this.accountMenuItem(account.isModerator ? 'Remove mod' : 'Grant mod', account.isAdmin && !account.isModerator, () => {
         void this.runModerationAction('/api/admin/set-moderator', {
           accountId: account.accountId,
@@ -1843,6 +1846,11 @@ export class AdminPanel {
       ip: account.lastIp,
     });
 
+    const adminGrant = this.smallButton('Grant admin', '#5f4a7d');
+    adminGrant.disabled = account.isAdmin;
+    adminGrant.title = account.isAdmin ? 'Account is already admin' : 'Grant admin role';
+    adminGrant.onclick = () => void this.grantAdmin(account);
+
     const moderatorToggle = this.smallButton(account.isModerator ? 'Remove mod' : 'Grant mod', account.isModerator ? '#5d4930' : '#2f5f8f');
     moderatorToggle.disabled = account.isAdmin && !account.isModerator;
     moderatorToggle.title = moderatorToggle.disabled ? 'Admin accounts already use the admin role' : `${account.isModerator ? 'Remove' : 'Grant'} moderator role`;
@@ -1851,7 +1859,7 @@ export class AdminPanel {
       enabled: !account.isModerator,
     });
 
-    wrap.append(duration, reason, accountBan, accountUnban, accountMute, accountUnmute, ipBan, ipUnban, moderatorToggle);
+    wrap.append(duration, reason, accountBan, accountUnban, accountMute, accountUnmute, ipBan, ipUnban, adminGrant, moderatorToggle);
     return wrap;
   }
 
@@ -1872,6 +1880,11 @@ export class AdminPanel {
     } catch (err) {
       this.renderActionError(err instanceof Error ? err.message : 'Moderation request failed.');
     }
+  }
+
+  private async grantAdmin(account: AdminBotAccount): Promise<void> {
+    if (!window.confirm(`Grant admin to ${account.username}?`)) return;
+    await this.runModerationAction('/api/admin/grant-admin', { accountId: account.accountId });
   }
 
   private renderActionError(message: string): void {

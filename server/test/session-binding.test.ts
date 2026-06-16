@@ -60,5 +60,6 @@ describe('session WebSocket binding', () => {
     expect(isTrustedProxyIp('::ffff:172.18.0.1')).toBe(true);
     expect(requestClientIp(fromDockerBridge, { requestIP: () => ({ address: '::ffff:172.18.0.1' }) })).toBe('198.51.100.42');
     expect(requestClientIp(fromPublicPeer, { requestIP: () => ({ address: '203.0.113.9' }) })).toBe('203.0.113.9');
+    expect(requestClientIp(fromPublicPeer, { requestIP: () => ({ address: '::ffff:203.0.113.9' }) })).toBe('203.0.113.9');
   });
 });

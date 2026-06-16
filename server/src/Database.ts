@@ -50,6 +50,28 @@ const VPN_LIKE_PTR_TOKENS: Array<[string, string]> = [
   ['colo', 'colocation PTR'],
 ];
 
+const SHARED_IP_PUBLIC_FILTER_SQL = `
+  ip_address IS NOT NULL
+  AND ip_address <> ''
+  AND lower(ip_address) NOT IN ('unknown', 'localhost', '::1', '0.0.0.0')
+  AND lower(ip_address) NOT GLOB '127.*'
+  AND lower(ip_address) NOT GLOB '::ffff:127.*'
+  AND lower(ip_address) NOT GLOB '10.*'
+  AND lower(ip_address) NOT GLOB '::ffff:10.*'
+  AND lower(ip_address) NOT GLOB '192.168.*'
+  AND lower(ip_address) NOT GLOB '::ffff:192.168.*'
+  AND lower(ip_address) NOT GLOB '172.1[6-9].*'
+  AND lower(ip_address) NOT GLOB '172.2[0-9].*'
+  AND lower(ip_address) NOT GLOB '172.3[0-1].*'
+  AND lower(ip_address) NOT GLOB '::ffff:172.1[6-9].*'
+  AND lower(ip_address) NOT GLOB '::ffff:172.2[0-9].*'
+  AND lower(ip_address) NOT GLOB '::ffff:172.3[0-1].*'
+  AND lower(ip_address) NOT GLOB '169.254.*'
+  AND lower(ip_address) NOT LIKE 'fe80:%'
+  AND lower(ip_address) NOT LIKE 'fc%'
+  AND lower(ip_address) NOT LIKE 'fd%'
+`;
+
 function vpnLikePtrReason(reverseDns: string): string | null {
   const tokens = new Set(reverseDns.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
   return VPN_LIKE_PTR_TOKENS.find(([token]) => tokens.has(token))?.[1] ?? null;
@@ -3866,7 +3888,7 @@ export class GameDatabase {
       WITH my_ips AS (
         SELECT DISTINCT ip_address
         FROM login_history
-        WHERE account_id = ? AND ip_address IS NOT NULL AND ip_address <> ''
+        WHERE account_id = ? AND ${SHARED_IP_PUBLIC_FILTER_SQL}
       )
       SELECT
         a.id AS account_id,
@@ -4780,6 +4802,12 @@ export class GameDatabase {
   setAccountModeratorRole(accountId: number, enabled: boolean): { accountId: number; username: string; isAdmin: boolean; isModerator: boolean } | null {
     const value = enabled ? 1 : 0;
     this.db.query('UPDATE accounts SET is_moderator = ? WHERE id = ?').run(value, accountId);
+    return this.getAccountModerationInfo(accountId);
+  }
+
+  setAccountAdminRole(accountId: number, enabled: boolean): { accountId: number; username: string; isAdmin: boolean; isModerator: boolean } | null {
+    const value = enabled ? 1 : 0;
+    this.db.query('UPDATE accounts SET is_admin = ? WHERE id = ?').run(value, accountId);
     return this.getAccountModerationInfo(accountId);
   }
 

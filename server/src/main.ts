@@ -1311,6 +1311,7 @@ import {
   handleChatSocketOpen,
   handleChatSocketMessage,
   handleChatSocketClose,
+  setChatAccountAdmin,
   setChatAccountModerator,
   type ChatSocketData,
 } from './network/ChatSocket';
@@ -3905,6 +3906,28 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
           ok: true,
           account: target,
           message: `${target.isModerator ? 'Granted' : 'Removed'} moderator role for ${target.username}`,
+        });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
+    }
+
+    if (url.pathname === '/api/admin/grant-admin' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { accountId?: unknown };
+        const accountId = Math.floor(Number(body.accountId));
+        if (!Number.isInteger(accountId) || accountId <= 0) return jsonResponse({ ok: false, error: 'Invalid account' }, 400);
+        const target = db.setAccountAdminRole(accountId, true);
+        if (!target) return jsonResponse({ ok: false, error: 'Account not found' }, 404);
+        world.setActiveAccountAdmin(accountId, target.isAdmin);
+        setChatAccountAdmin(accountId, target.isAdmin);
+        return jsonResponse({
+          ok: true,
+          account: target,
+          message: `Granted admin role for ${target.username}`,
         });
       } catch {
         return jsonResponse({ ok: false, error: 'Invalid request' }, 400);

@@ -85,6 +85,30 @@ describe('admin bot review data', () => {
     }
   });
 
+  test('ignores legacy local and private IPs when finding shared IP alts', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const target = db.loginFallbackAccount('review-target', '11111111-1111-4111-8111-111111111111');
+      const localOnly = db.loginFallbackAccount('local-only-alt', '22222222-2222-4222-8222-222222222222');
+      const realIpAlt = db.loginFallbackAccount('same-ip-target', '33333333-3333-4333-8333-333333333333');
+
+      db.recordLogin(target.accountId, '::1', target.wsSecret);
+      db.recordLogin(localOnly.accountId, '::1', localOnly.wsSecret);
+      db.recordLogin(target.accountId, '::ffff:127.0.0.1', target.wsSecret);
+      db.recordLogin(localOnly.accountId, '::ffff:127.0.0.1', localOnly.wsSecret);
+      db.recordLogin(target.accountId, '172.18.0.1', target.wsSecret);
+      db.recordLogin(localOnly.accountId, '172.18.0.1', localOnly.wsSecret);
+      db.recordLogin(target.accountId, '203.0.113.7', target.wsSecret);
+      db.recordLogin(realIpAlt.accountId, '203.0.113.7', realIpAlt.wsSecret);
+
+      const row = db.listAdminBotReviewAccounts(200, 'review-target')[0];
+
+      expect(row?.sharedIpAlts.map((alt) => alt.username)).toEqual(['same-ip-target']);
+    } finally {
+      db.close();
+    }
+  });
+
   test('filters bot review accounts by username', () => {
     const db = new GameDatabase(':memory:');
     try {
@@ -144,6 +168,22 @@ describe('admin bot review data', () => {
       expect(db.clearBotStatsForAccount(target.accountId)).toBe(1);
       expect(db.loadBotStats(target.accountId)).toBeNull();
       expect(db.loadBotStats(other.accountId)?.risk_score).toBe(70);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('granting admin is reflected in moderation info and bot review rows', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const target = db.loginFallbackAccount('future-admin', '11111111-1111-4111-8111-111111111111');
+
+      const updated = db.setAccountAdminRole(target.accountId, true);
+      const row = db.listAdminBotReviewAccounts(200, 'future-admin')[0];
+
+      expect(updated?.isAdmin).toBe(true);
+      expect(db.getAccountModerationInfo(target.accountId)?.isAdmin).toBe(true);
+      expect(row?.isAdmin).toBe(true);
     } finally {
       db.close();
     }

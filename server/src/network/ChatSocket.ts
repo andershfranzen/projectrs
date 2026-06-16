@@ -1408,3 +1408,8 @@ export function setChatAccountModerator(accountId: number, isModerator: boolean)
   const sock = chatSocketsByAccountId.get(accountId);
   if (sock) sock.data.isModerator = isModerator;
 }
+
+export function setChatAccountAdmin(accountId: number, isAdmin: boolean): void {
+  const sock = chatSocketsByAccountId.get(accountId);
+  if (sock) sock.data.isAdmin = isAdmin;
+}

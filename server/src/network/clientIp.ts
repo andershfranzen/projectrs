@@ -5,7 +5,7 @@ export interface RequestIpResolver {
 const TRUSTED_LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 export function requestClientIp(req: Request, srv: RequestIpResolver): string {
-  const directIp = srv.requestIP(req)?.address ?? '';
+  const directIp = normalizeIpForTrust(srv.requestIP(req)?.address ?? '');
   if (isTrustedProxyIp(directIp)) {
     const forwarded = forwardedClientIp(req);
     if (forwarded) return forwarded;
@@ -21,7 +21,7 @@ function forwardedClientIp(req: Request): string | null {
     // controls the left-most entries, so trusting them allows IP spoofing.
     const hops = forwardedFor.split(',').map((s) => s.trim()).filter(Boolean);
     for (let i = hops.length - 1; i >= 0; i--) {
-      const hop = hops[i]!;
+      const hop = normalizeIpForTrust(hops[i]!);
       if (!isTrustedProxyIp(hop)) {
         return isValidIp(hop) ? hop : null;
       }
@@ -30,9 +30,9 @@ function forwardedClientIp(req: Request): string | null {
     const last = hops[hops.length - 1];
     if (last && isValidIp(last)) return last;
   }
-  const realIp = req.headers.get('x-real-ip')?.trim();
+  const realIp = normalizeIpForTrust(req.headers.get('x-real-ip')?.trim() ?? '');
   if (realIp && isValidIp(realIp)) return realIp;
-  const cfIp = req.headers.get('cf-connecting-ip')?.trim();
+  const cfIp = normalizeIpForTrust(req.headers.get('cf-connecting-ip')?.trim() ?? '');
   if (cfIp && isValidIp(cfIp)) return cfIp;
   return null;
 }
