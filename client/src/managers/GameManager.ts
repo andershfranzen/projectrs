@@ -8425,6 +8425,13 @@ export class GameManager {
     if (!this.hasRecentLocalMoveCommand(now)) return false;
     if (this.isTileOnPredictedRoute(serverX, serverZ)) return false;
     if (this.shouldIgnoreRecentPredictedArrivalAuthority(serverX, serverZ, now)) return true;
+    if (this.selfAuthorityRedirectGraceUntil > 0 && this.pathIndex < this.path.length) {
+      if (now > this.selfAuthorityRedirectGraceUntil) {
+        this.clearSelfAuthorityRedirectGrace();
+      } else {
+        return true;
+      }
+    }
     const maxAxisDelta = Math.max(Math.abs(serverX - this.playerX), Math.abs(serverZ - this.playerZ));
     return maxAxisDelta > GameManager.LOCAL_AUTHORITY_SOFT_RETARGET_DIST;
   }

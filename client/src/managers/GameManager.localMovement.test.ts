@@ -407,6 +407,45 @@ describe('GameManager local movement prediction', () => {
     expect(manager.shouldIgnoreRedirectStaleLocalAuthority(4.5, 4.5)).toBe(false);
   });
 
+  test('recent click redirect defers nearby off-route authority instead of turning back', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.tileProgress = 0.05;
+    manager.playerX = 1.0;
+    manager.playerZ = 0.5;
+
+    manager.startLocalPredictedPath([
+      { x: 1.5, z: 0.5 },
+      { x: 1.5, z: 8.5 },
+    ], true, true);
+    manager.lastLocalMoveCommandAt = performance.now();
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 2.5, z: 1.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(manager.path).toEqual([
+      { x: 1.5, z: 0.5 },
+      { x: 1.5, z: 8.5 },
+    ]);
+    expect(manager.pathIndex).toBe(0);
+    expect(manager.playerX).toBe(1.0);
+    expect(manager.playerZ).toBe(0.5);
+    expect(player.positions).toEqual([]);
+
+    manager.selfAuthorityRedirectGraceUntil = performance.now() - 1;
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 2.5, z: 1.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(manager.path.length).toBeGreaterThan(0);
+    expect(manager.path[1]).toEqual({ x: 2.5, z: 1.5 });
+    expect(manager.path.at(-1)).toEqual({ x: 1.5, z: 8.5 });
+    expect(player.positions).toEqual([]);
+  });
+
   test('nearby authoritative recovery turns retarget the local route without teleporting', () => {
     const { manager, player } = makeManager([
       { x: 10.5, z: 0.5 },
