@@ -47,4 +47,23 @@ describe('projectile line of sight', () => {
     expect(map.hasProjectileLineOfSight(202.5, 172.5, 188.5, 172.5, 0, 1.35, 1.0)).toBe(true);
     expect(map.hasProjectileLineOfSight(188.5, 187.5, 188.5, 179.5, 0, 1.35, 1.0)).toBe(true);
   });
+
+  test('kcmap full-height building walls near the south-west building block arrows', () => {
+    const map = new GameMap('kcmap');
+
+    expect(map.hasProjectileLineOfSight(87.5, 35.5, 90.5, 35.5, 0, 1.35, 1.0)).toBe(false);
+    expect(map.hasProjectileLineOfSight(90.5, 35.5, 87.5, 35.5, 0, 1.35, 1.0)).toBe(false);
+  });
+
+  test('kcmap fence assets do not make nearby full-height building walls shoot-over', () => {
+    const map = new GameMap('kcmap');
+
+    expect(map.hasProjectileLineOfSight(86.5, 20.5, 87.5, 24.5, 0, 1.35, 1.0)).toBe(false);
+  });
+
+  test('kcmap fence asset edges remain shoot-over', () => {
+    const map = new GameMap('kcmap');
+
+    expect(map.hasProjectileLineOfSight(86.5, 23.5, 86.5, 24.5, 0, 1.35, 1.0)).toBe(true);
+  });
 });

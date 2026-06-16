@@ -121,6 +121,7 @@ import { openItemThumbnailBrowser } from './assets-system/ItemThumbnailBrowser'
 import { openItemStatsEditor } from './item-stats/ItemStatsEditor'
 import { openDropTableEditor } from './drop-tables/DropTableEditor'
 import { loadTextureRegistry } from './assets-system/TextureRegistry'
+import { planWallRun, wallEdgeSnapPosition } from './editor/WallRunPlanner'
 import {
   buildTerrainMeshes,
   buildCliffMeshes,
@@ -550,6 +551,9 @@ function tuneModelLighting(model, assetOrPath = null) {
   let previewScale = 1.0
   let hoverEdgeHelper = null
   let wallPlacementTargetActive = false
+  let wallRunMode = false
+  let wallRunAutoRotate = true
+  let wallRunStart = null
 
   let assetSectionFilter = 'all'
   let assetGroupFilter = 'all'
@@ -3724,6 +3728,18 @@ let selectedWaterFlowChunk = null
         <input id="placeScaleSlider" type="range" min="0.1" max="5" step="0.1" value="1.0" style="width:100%;margin-top:3px;" />
         <button id="refreshPreviewBtn" style="width:100%;margin-top:5px;">Refresh Preview</button>
         <div class="hint" style="margin-top:5px;">Hover wall = exact align<br>Ctrl/Cmd upper snap · Alt bypass snap</div>
+        <div style="margin-top:8px;border-top:1px solid #444;padding-top:7px;">
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;">
+            <input id="wallRunModeToggle" type="checkbox" />
+            Wall run
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;margin-top:4px;">
+            <input id="wallRunAutoRotateToggle" type="checkbox" checked />
+            Auto rotate
+          </label>
+          <button id="wallRunCancelBtn" style="width:100%;margin-top:5px;font-size:11px;">Cancel run</button>
+          <div id="wallRunStatus" class="hint" style="margin-top:4px;">Click a wall edge, then click the end edge.</div>
+        </div>
       </div>
     </div>
 
@@ -9449,6 +9465,7 @@ let selectedWaterFlowChunk = null
       const el = sidebar.querySelector(`#${activeCtx}`)
       if (el) el.style.display = 'block'
     }
+    syncWallRunControls()
 
     updateSwatches()
 
@@ -9481,6 +9498,7 @@ let selectedWaterFlowChunk = null
     if (state.tool === ToolMode.PLACE && selectedAssetId) {
       const asset = assetRegistry.find((a) => a.id === selectedAssetId)
       status += ` · ${asset?.name || selectedAssetId}`
+      if (wallRunMode) status += wallRunStart ? ' · wall run end' : ' · wall run start'
     }
     if (state.tool === ToolMode.TEXTURE_PLANE) {
       status += ` · ${selectedTextureId || 'no texture'}`
@@ -9769,6 +9787,7 @@ let selectedWaterFlowChunk = null
     const wasCollision = state.tool === ToolMode.COLLISION
     state.tool = mode
     cancelDiagFloor()
+    if (mode !== ToolMode.PLACE) wallRunStart = null
     if (hoverEdgeHelper) { hoverEdgeHelper.dispose(); hoverEdgeHelper = null }
     npcSpawnGroup.setEnabled(mode === ToolMode.NPC_SPAWN)
     itemSpawnGroup.setEnabled(mode === ToolMode.ITEM_SPAWN)
@@ -12412,10 +12431,187 @@ function applyToolAtTile(tile, eventLike = null) {
     const { x, z, u = 0.5, v = 0.5 } = hovered
     const dL = u, dR = 1 - u, dT = v, dB = 1 - v
     const min = Math.min(dL, dR, dT, dB)
-    if (min === dL) return { x: x + 0.25, z: z + 0.5, edge: 8 }  // W
-    if (min === dR) return { x: x + 0.75, z: z + 0.5, edge: 2 }  // E
-    if (min === dT) return { x: x + 0.5,  z: z + 0.25, edge: 1 } // N
-    return                 { x: x + 0.5,  z: z + 0.75, edge: 4 } // S
+    if (min === dL) return { ...wallEdgeSnapPosition(x, z, 8), edge: 8 } // W
+    if (min === dR) return { ...wallEdgeSnapPosition(x, z, 2), edge: 2 } // E
+    if (min === dT) return { ...wallEdgeSnapPosition(x, z, 1), edge: 1 } // N
+    return { ...wallEdgeSnapPosition(x, z, 4), edge: 4 } // S
+  }
+
+  function wallRunStatusEl() {
+    return sidebar.querySelector('#wallRunStatus')
+  }
+
+  function selectedWallRunAsset() {
+    const asset = assetRegistry.find((a) => a.id === selectedAssetId)
+    return isWallPlacementAsset(asset) ? asset : null
+  }
+
+  function updateWallRunStatus(message = null) {
+    const el = wallRunStatusEl()
+    if (!el) return
+    if (message) {
+      el.textContent = message
+      return
+    }
+    if (!wallRunMode) {
+      el.textContent = 'Enable Wall run to place repeated wall pieces with collision.'
+      return
+    }
+    const asset = selectedWallRunAsset()
+    if (!asset) {
+      el.textContent = 'Select a wall asset first.'
+      return
+    }
+    if (wallRunStart) {
+      el.textContent = `Start (${wallRunStart.x}, ${wallRunStart.z}) · click end edge`
+      return
+    }
+    el.textContent = 'Click a wall edge, then click the end edge.'
+  }
+
+  function syncWallRunControls() {
+    const modeToggle = sidebar.querySelector('#wallRunModeToggle')
+    if (modeToggle) modeToggle.checked = wallRunMode
+    const autoToggle = sidebar.querySelector('#wallRunAutoRotateToggle')
+    if (autoToggle) autoToggle.checked = wallRunAutoRotate
+    updateWallRunStatus()
+  }
+
+  function cancelWallRunStart(message = null) {
+    wallRunStart = null
+    updateWallRunStatus(message)
+  }
+
+  function currentWallHeightFromUI() {
+    const value = parseFloat(sidebar.querySelector('#wallHeightSlider')?.value)
+    return Number.isFinite(value) && value > 0 ? value : 1.8
+  }
+
+  function wallRunHeightAt(x, z) {
+    if (Number.isFinite(wallRunStart?.surfaceY)) return wallRunStart.surfaceY
+    if (collisionFloor > 0) {
+      return resolveCollisionFloorDisplayHeight(x, z, collisionFloor, getCollisionFloorVisualMaps())
+    }
+    return map.getAverageTileHeight(x, z)
+  }
+
+  function wallRunSurfaceYForStart(surfacePoint, placementTile) {
+    if (!surfacePoint || !placementTile) return null
+    const terrainY = map.getAverageTileHeight(placementTile.x, placementTile.z)
+    return surfacePoint.y > terrainY + 0.05 ? surfacePoint.y : null
+  }
+
+  function wallRunPlanForEndTile(asset, endTile) {
+    if (!wallRunStart) return null
+    return planWallRun({
+      assetId: asset.id,
+      layerId: activeLayerId,
+      start: wallRunStart,
+      end: { x: endTile.x, z: endTile.z },
+      scale: previewScale,
+      baseRotation: previewRotation,
+      autoRotate: wallRunAutoRotate,
+      wallHeight: currentWallHeightFromUI(),
+      defaultWallHeight: 1.8,
+      heightAt: wallRunHeightAt,
+    })
+  }
+
+  function stampWallRunCollision(plan) {
+    let changed = 0
+    const layer = getCollisionLayer()
+    for (const collision of plan.collisions) {
+      const current = getWallAt(collision.x, collision.z)
+      const next = current | collision.edge
+      if (setWallAt(collision.x, collision.z, next)) changed++
+      if (collision.wallHeight != null) {
+        const key = `${collision.x},${collision.z}`
+        if (layer.wallHeights[key] !== collision.wallHeight) {
+          layer.wallHeights[key] = collision.wallHeight
+          changed++
+        }
+      }
+    }
+    return changed
+  }
+
+  async function placeWallRun(tile, event = null) {
+    const asset = selectedWallRunAsset()
+    if (!asset) {
+      updateWallRunStatus('Select a wall asset first.')
+      statusText.textContent = 'Wall run needs a selected wall asset'
+      return
+    }
+
+    const surfacePoint = event ? pickPlacementPoint(event) : null
+    const placementTile = tileFromWorldPoint(surfacePoint) || tile
+    const edgeSnap = getWallEdgeSnap(placementTile)
+    if (!edgeSnap) return
+
+    if (!wallRunStart) {
+      wallRunStart = {
+        x: placementTile.x,
+        z: placementTile.z,
+        edge: edgeSnap.edge,
+        surfaceY: wallRunSurfaceYForStart(surfacePoint, placementTile),
+      }
+      updateWallRunStatus()
+      statusText.textContent = `Wall run start: (${placementTile.x},${placementTile.z})`
+      return
+    }
+
+    const plan = wallRunPlanForEndTile(asset, placementTile)
+    if (!plan || plan.placements.length === 0) {
+      cancelWallRunStart('No wall pieces planned.')
+      return
+    }
+
+    pushUndoState('full')
+    const placed = []
+    try {
+      await warmAssetCache([asset.path])
+
+      const workState = { startedAt: performance.now() }
+      for (const placement of plan.placements) {
+        const model = cloneAssetModelSync(asset.path)
+        if (!model) throw new Error(`Failed to clone ${asset.id}`)
+        tuneModelLighting(model, asset)
+        model.position.set(placement.position.x, placement.position.y, placement.position.z)
+        model.rotationQuaternion = null
+        model.rotation.set(placement.rotation.x, placement.rotation.y, placement.rotation.z)
+        model.scaling.set(placement.scale.x, placement.scale.y, placement.scale.z)
+        model.userData.assetId = asset.id
+        model.userData.type = 'asset'
+        model.userData.layerId = placement.layerId
+        const layer = layers.find((l) => l.id === model.userData.layerId)
+        model.setEnabled(layer ? layer.visible : true)
+        addPlacedModel(model, { invalidateShadow: false })
+        placed.push(model)
+        await yieldIfOverBudget(workState)
+      }
+    } catch (error) {
+      for (const model of placed) removePlacedModel(model)
+      wallRunStart = null
+      console.warn('[editor] Wall run placement failed:', error)
+      updateWallRunStatus('Wall run failed. See console.')
+      statusText.textContent = 'Wall run failed'
+      return
+    }
+
+    const collisionChanges = stampWallRunCollision(plan)
+    selectedPlacedObjects = placed
+    selectedPlacedObject = placed[placed.length - 1] ?? null
+    selectedTexturePlane = null
+    selectedTexturePlanes = []
+    wallRunStart = null
+    invalidateShadowCache()
+    if (collisionChanges > 0) {
+      markCollisionDirty()
+      markRootWallShadowTerrainDirty()
+    }
+    updateSelectionHelper()
+    updateToolUI()
+    statusText.textContent = `Wall run: ${placed.length} piece${placed.length === 1 ? '' : 's'} + ${plan.collisions.length} edge${plan.collisions.length === 1 ? '' : 's'}`
   }
 
   // Cache the (tile, nearest edge) signature so mousemove ticks that don't
@@ -13166,7 +13362,26 @@ function applyToolAtTile(tile, eventLike = null) {
       assetGridRenderLimit = ASSET_GRID_BATCH_SIZE
     }
 
-    const WALL_FILES = ['stone wall.glb', 'dark stone wall.glb', 'white wall.glb', 'wood wall.glb']
+    const WALL_FILES = [
+      'stone wall.glb',
+      'dark stone wall.glb',
+      'white wall.glb',
+      'wood wall.glb',
+      'byzantine new stone wall door slot header.glb',
+      'byzantine new stone wall door slot open side.glb',
+      'theodosian limewall stone wall door slot header.glb',
+      'theodosian limewall stone wall door slot open side.glb',
+      'white wall door slot header.glb',
+      'white wall door slot open side.glb',
+      'limestone wall door slot header.glb',
+      'limestone wall door slot open side.glb',
+      'dark stone wall door slot header.glb',
+      'dark stone wall door slot open side.glb',
+      'stone wall door slot header.glb',
+      'stone wall door slot open side.glb',
+      'wood wall door slot header.glb',
+      'wood wall door slot open side.glb',
+    ]
 
     filteredAssets = assetRegistry.filter((asset) => {
       if (assetSectionFilter === '__walls__') {
@@ -13198,6 +13413,7 @@ function applyToolAtTile(tile, eventLike = null) {
 
     const selectedAssetIndex = filteredAssets.findIndex((a) => a.id === selectedAssetId)
     if (filteredAssets.length && (selectedAssetIndex < 0 || selectedAssetIndex >= assetGridRenderLimit)) {
+      if (selectedAssetId !== filteredAssets[0].id) wallRunStart = null
       selectedAssetId = filteredAssets[0].id
     }
 
@@ -13246,6 +13462,7 @@ function applyToolAtTile(tile, eventLike = null) {
       assetGrid.appendChild(card)
 
       card.addEventListener('click', async () => {
+        if (selectedAssetId !== asset.id) wallRunStart = null
         selectedAssetId = asset.id
         assetGrid.querySelectorAll('.asset-card').forEach((c) => c.classList.remove('selected'))
         card.classList.add('selected')
@@ -13552,6 +13769,24 @@ function applyToolAtTile(tile, eventLike = null) {
     if (previewObject) {
       previewObject.scaling.set(previewScale, previewScale, previewScale)
     }
+    updateWallRunStatus()
+  })
+
+  sidebar.querySelector('#wallRunModeToggle')?.addEventListener('change', (event) => {
+    wallRunMode = event.target.checked
+    if (!wallRunMode) cancelWallRunStart()
+    syncWallRunControls()
+    updateToolUI()
+  })
+
+  sidebar.querySelector('#wallRunAutoRotateToggle')?.addEventListener('change', (event) => {
+    wallRunAutoRotate = event.target.checked
+    syncWallRunControls()
+  })
+
+  sidebar.querySelector('#wallRunCancelBtn')?.addEventListener('click', () => {
+    cancelWallRunStart('Wall run cancelled.')
+    updateToolUI()
   })
 
   textureSearch.addEventListener('input', refreshTexturePalette)
@@ -16900,6 +17135,10 @@ function applyToolAtTile(tile, eventLike = null) {
 
 
     if (state.tool === ToolMode.PLACE) {
+      if (wallRunMode) {
+        await placeWallRun(tile, event)
+        return
+      }
       await placeSelectedAsset(tile, event)
       return
     }
@@ -17560,6 +17799,9 @@ function applyToolAtTile(tile, eventLike = null) {
       event.preventDefault()
       if (pendingLadderWireSource) {
         cancelPendingLadderWire()
+      } else if (wallRunStart) {
+        cancelWallRunStart('Wall run cancelled.')
+        updateToolUI()
       } else if (diagFloorStart) {
         cancelDiagFloor()
         updateToolUI()

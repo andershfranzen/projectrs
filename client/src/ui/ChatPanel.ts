@@ -38,6 +38,10 @@ const MAX_CHAT_MESSAGES = 300;
 const CHAT_PLACEHOLDER_STYLE_ID = 'evilquest-chat-placeholder-style';
 const MOBILE_CHAT_HINT_QUERY = '(max-width: 760px), (pointer: coarse) and (max-width: 900px), (max-height: 520px) and (max-width: 900px) and (orientation: landscape)';
 const CHAT_BOTTOM_STICKY_THRESHOLD = 12;
+const CHAT_ENTER_FOCUS_OVERRIDE_SELECTOR = [
+  '#side-panel .eq-tab-button',
+  '#mobile-control-bar .mobile-nav-button',
+].join(',');
 
 export class ChatPanel {
   private container: HTMLDivElement;
@@ -214,10 +218,14 @@ export class ChatPanel {
       const tag = active.tagName.toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select' || active.isContentEditable) return false;
       if (active.closest('[role="dialog"], .modal, #login-screen')) return false;
-      if (this.isFocusedInteractiveControl(active, tag)) return false;
+      if (this.isFocusedInteractiveControl(active, tag) && !this.isChatEnterFocusOverrideControl(active)) return false;
     }
 
     return true;
+  }
+
+  private isChatEnterFocusOverrideControl(active: HTMLElement): boolean {
+    return Boolean(active.closest(CHAT_ENTER_FOCUS_OVERRIDE_SELECTOR));
   }
 
   private isFocusedInteractiveControl(active: HTMLElement, tag: string): boolean {

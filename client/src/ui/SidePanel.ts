@@ -1026,7 +1026,7 @@ export class SidePanel {
       { key: 'equipment', label: 'Equipment', icon: '/ui/equipment.png', pos: 'top' },
       { key: 'social', label: 'Friends and Ignore', icon: '/ui/friendlist.png', iconScale: 1.42, pos: 'top' },
       { key: 'good_magic', label: 'Good Magic', icon: '/ui/good magic.png', iconScale: 0.9, pos: 'bottom' },
-      { key: 'evil_magic', label: 'Evil Magic', icon: '/ui/evil magic.png', iconScale: 1.08, pos: 'bottom' },
+      { key: 'evil_magic', label: 'Evil Magic', icon: '/ui/evil magic.png', iconScale: 1.18, pos: 'bottom' },
       { key: 'quests', label: 'Quests', icon: '/ui/quest icon.png', pos: 'bottom' },
       { key: 'emotes', label: 'Emotes', icon: '/ui/emotes-icon.png', iconScale: 0.9, pos: 'bottom' },
       { key: 'settings', label: 'Settings', icon: '/ui/settings-icon.png', iconScale: 0.86, pos: 'bottom' },

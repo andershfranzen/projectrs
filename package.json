@@ -22,6 +22,7 @@
     "validate:kcmap": "bun scripts/validate-kcmap-release.ts",
     "audit:assets": "bun scripts/audit-assets.ts",
     "audit:data": "bun scripts/audit-data.ts",
+    "audit:projectile-walls": "bun scripts/audit-projectile-wall-collision.ts",
     "audit:rsc-pngs": "bun tools/audit-rsc-pngs.ts",
     "bake:forum-avatars": "bun scripts/bake-forum-avatars.ts",
     "test": "bun test",

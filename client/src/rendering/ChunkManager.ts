@@ -4296,14 +4296,9 @@ export class ChunkManager {
     if (this.modelAnimationGroups.has(obj.assetId)) return false;
     if (this.isRoofLikeAsset(obj.assetId)) return false;
     if (this.isAlphaBlendAsset(obj.assetId)) return false;
-    // Doors must be unique pickable nodes — clicking one looks up its
-    // metadata.objectEntityId to send PLAYER_INTERACT_OBJECT. Thin-instanced
-    // source meshes share one mesh per asset across all instances, so per-
-    // instance metadata can't be set and clicks fall through to ground move.
-    // Names like 'castleTruedoor' / 'basicTruedoor' have animations so they
-    // already opt out via modelAnimationGroups, but static doors like
-    // 'stone wall door2' or 'stone_wall_door' don't — catch them by name.
-    if (obj.assetId.toLowerCase().includes('door')) return false;
+    // Interactable doors are excluded by objectDefIdForPlacedAsset above.
+    // Door-named modular wall pieces are decorative frames and should batch
+    // like other static wall/window/pillar modules.
     return true;
   }
 
@@ -4551,26 +4546,72 @@ export class ChunkManager {
     }
   }
 
-  private markShootOverProjectileWallTile(x: number, z: number): void {
+  private markShootOverProjectileWallEdge(x: number, z: number, edge: number): void {
     if (!this.walls || !this.shootOverProjectileWallEdges) return;
     if (x < 0 || x >= this.mapWidth || z < 0 || z >= this.mapHeight) return;
     const idx = z * this.mapWidth + x;
-    const mask = this.walls[idx];
-    if (mask === 0 || this.wallHeights.has(idx)) return;
-    this.shootOverProjectileWallEdges[idx] |= mask;
+    if ((this.walls[idx] & edge) === 0 || this.wallHeights.has(idx)) return;
+    this.shootOverProjectileWallEdges[idx] |= edge;
+  }
+
+  private markShootOverProjectileWallBoundary(boundaryX: number, boundaryZ: number, axis: 'horizontal' | 'vertical'): void {
+    if (axis === 'horizontal') {
+      this.markShootOverProjectileWallEdge(boundaryX, boundaryZ - 1, WallEdge.S);
+      this.markShootOverProjectileWallEdge(boundaryX, boundaryZ, WallEdge.N);
+      return;
+    }
+    this.markShootOverProjectileWallEdge(boundaryX - 1, boundaryZ, WallEdge.E);
+    this.markShootOverProjectileWallEdge(boundaryX, boundaryZ, WallEdge.W);
+  }
+
+  private markShootOverProjectileWallTileEdges(x: number, z: number, edgeMask: number): void {
+    this.markShootOverProjectileWallEdge(x, z, edgeMask & WallEdge.N);
+    this.markShootOverProjectileWallEdge(x, z, edgeMask & WallEdge.E);
+    this.markShootOverProjectileWallEdge(x, z, edgeMask & WallEdge.S);
+    this.markShootOverProjectileWallEdge(x, z, edgeMask & WallEdge.W);
+  }
+
+  private markShootOverProjectileFencePlacement(x: number, z: number, rotY: number): void {
+    const tileX = Math.floor(x);
+    const tileZ = Math.floor(z);
+    const centerX = tileX + 0.5;
+    const centerZ = tileZ + 0.5;
+    if (Math.abs(x - centerX) <= 0.2 && Math.abs(z - centerZ) <= 0.2) {
+      const cos = Math.abs(Math.cos(rotY));
+      const sin = Math.abs(Math.sin(rotY));
+      if (Math.abs(cos - sin) < 0.25) {
+        this.markShootOverProjectileWallTileEdges(tileX, tileZ, this.walls?.[tileZ * this.mapWidth + tileX] ?? 0);
+      } else if (sin > cos) {
+        this.markShootOverProjectileWallTileEdges(tileX, tileZ, WallEdge.E | WallEdge.W);
+      } else {
+        this.markShootOverProjectileWallTileEdges(tileX, tileZ, WallEdge.N | WallEdge.S);
+      }
+      return;
+    }
+
+    const cos = Math.abs(Math.cos(rotY));
+    const sin = Math.abs(Math.sin(rotY));
+    if (Math.abs(cos - sin) < 0.25) {
+      this.markShootOverProjectileWallTileEdges(tileX, tileZ, this.walls?.[tileZ * this.mapWidth + tileX] ?? 0);
+      return;
+    }
+
+    const boundaryX = Math.round(x);
+    const boundaryZ = Math.round(z);
+    const distToVerticalBoundary = Math.abs(x - boundaryX);
+    const distToHorizontalBoundary = Math.abs(z - boundaryZ);
+    if (distToVerticalBoundary < distToHorizontalBoundary) {
+      this.markShootOverProjectileWallBoundary(boundaryX, Math.floor(z), 'vertical');
+    } else {
+      this.markShootOverProjectileWallBoundary(Math.floor(x), boundaryZ, 'horizontal');
+    }
   }
 
   private registerShootOverFenceWalls(objects: readonly PlacedObject[]): void {
     if (!this.walls || !this.shootOverProjectileWallEdges) return;
     for (const placed of objects) {
       if (!isShootOverProjectileFenceAssetId(placed.assetId)) continue;
-      const tx = Math.floor(placed.position.x);
-      const tz = Math.floor(placed.position.z);
-      for (let dz = -1; dz <= 1; dz++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          this.markShootOverProjectileWallTile(tx + dx, tz + dz);
-        }
-      }
+      this.markShootOverProjectileFencePlacement(placed.position.x, placed.position.z, placed.rotation?.y ?? 0);
     }
   }
 

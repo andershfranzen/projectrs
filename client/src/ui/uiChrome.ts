@@ -175,8 +175,8 @@ export function createIconTabButton(opts: {
     img.draggable = false;
     const scale = (opts.iconScale ?? 1) * 0.82;
     img.style.cssText = `
-      width: auto;
-      height: auto;
+      width: ${100 * scale}%;
+      height: ${100 * scale}%;
       max-width: ${100 * scale}%;
       max-height: ${100 * scale}%;
       object-fit: contain;

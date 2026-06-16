@@ -271,6 +271,23 @@ describe('procedural grass placement', () => {
 });
 
 describe('placed object thin-instance grouping', () => {
+  test('thin-instances decorative modular door frames', () => {
+    const manager = Object.assign(Object.create(ChunkManager.prototype), {
+      modelAnimationGroups: new Map(),
+      assetRegistry: new Map(),
+    }) as any;
+    const basePlacement = {
+      position: { x: 1, y: 0, z: 2 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+    };
+
+    expect(manager.canThinInstance({ ...basePlacement, assetId: 'stone door3' })).toBe(true);
+    expect(manager.canThinInstance({ ...basePlacement, assetId: 'stone wall door2' })).toBe(true);
+    expect(manager.canThinInstance({ ...basePlacement, assetId: 'byzantine stone wall door' })).toBe(true);
+    expect(manager.canThinInstance({ ...basePlacement, assetId: 'castleTruedoor' })).toBe(false);
+  });
+
   test('batches static world-object visuals but keeps doors unique', () => {
     const manager = Object.assign(Object.create(ChunkManager.prototype), {
       modelAnimationGroups: new Map(),

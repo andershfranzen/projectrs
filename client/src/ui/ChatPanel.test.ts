@@ -62,18 +62,22 @@ function makeElement(
   tagName = 'DIV',
   style: Partial<CSSStyleDeclaration> = { display: 'block', visibility: 'visible' },
   rectCount = 1,
-  attrs: { id?: string; role?: string; tabIndex?: number } = {},
+  attrs: { id?: string; role?: string; tabIndex?: number; closestMatches?: string[] } = {},
 ): HTMLElement {
-  return {
+  const el = {
     id: attrs.id ?? '',
     tagName,
     tabIndex: attrs.tabIndex ?? -1,
     isContentEditable: false,
     getAttribute: (name: string) => name === 'role' ? attrs.role ?? null : null,
-    closest: () => null,
+    closest: (selector: string) => {
+      const selectors = selector.split(',').map((part) => part.trim());
+      return selectors.some((part) => attrs.closestMatches?.includes(part)) ? el : null;
+    },
     getClientRects: () => Array.from({ length: rectCount }, () => ({})),
     __style: style,
-  } as unknown as HTMLElement;
+  };
+  return el as unknown as HTMLElement;
 }
 
 function withDomStubs<T>(
@@ -202,6 +206,26 @@ describe('ChatPanel global Enter focus guard', () => {
   test('does not steal Enter from another focused text input', () => {
     withDomStubs({ activeElement: makeElement('INPUT') }, () => {
       expect(makeFocusPanel().shouldFocusChatFromGlobalEnter(makeKeyEvent())).toBe(false);
+    });
+  });
+
+  test('allows Enter to focus chat after side panel tab buttons keep focus', () => {
+    const sideTab = makeElement('BUTTON', { display: 'block', visibility: 'visible' }, 1, {
+      tabIndex: 0,
+      closestMatches: ['#side-panel .eq-tab-button'],
+    });
+    withDomStubs({ activeElement: sideTab }, () => {
+      expect(makeFocusPanel().shouldFocusChatFromGlobalEnter(makeKeyEvent())).toBe(true);
+    });
+  });
+
+  test('allows Enter to focus chat after mobile panel navigation keeps focus', () => {
+    const mobilePanelButton = makeElement('BUTTON', { display: 'block', visibility: 'visible' }, 1, {
+      tabIndex: 0,
+      closestMatches: ['#mobile-control-bar .mobile-nav-button'],
+    });
+    withDomStubs({ activeElement: mobilePanelButton }, () => {
+      expect(makeFocusPanel().shouldFocusChatFromGlobalEnter(makeKeyEvent())).toBe(true);
     });
   });
 
