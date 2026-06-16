@@ -32,7 +32,8 @@ import { rollRareDropTable, type RolledLootDrop } from './RareDropTable';
 const NO_LOOT_NPC_IDS = new Set<number>([18]);
 const TOTAL_COMBAT_XP_PER_DAMAGE = 4;
 
-/** Maximum range for ranged attacks in tiles. */
+/** Combat ranges in tiles. */
+export const MELEE_ATTACK_DISTANCE = 1.5;
 export const RANGED_ATTACK_DISTANCE = DEFAULT_RANGED_ATTACK_DISTANCE;
 export const MAGIC_ATTACK_DISTANCE = SPELL_CAST_DISTANCE;
 export const MAGIC_ATTACK_RANGE_MODE: CombatRangeMode = 'chebyshev';
@@ -194,6 +195,12 @@ export function isPointInNpcRangedAttackRange(npc: Npc, x: number, z: number, ra
   if (isPointInsideNpcFootprint(npc, x, z)) return false;
   const fp = npc.distToFootprint(x, z);
   return combatRangeIncludesOffset(fp.dx, fp.dz, range, 'chebyshev');
+}
+
+export function isPointInNpcMeleeAttackRange(npc: Npc, x: number, z: number): boolean {
+  if (isPointInsideNpcFootprint(npc, x, z)) return false;
+  const fp = npc.distToFootprint(x, z);
+  return combatRangeIncludesOffset(fp.dx, fp.dz, MELEE_ATTACK_DISTANCE, 'euclidean');
 }
 
 export function isPointInNpcMagicAttackRange(npc: Npc, x: number, z: number): boolean {
@@ -377,9 +384,7 @@ export function processPlayerCombat(
 ): PlayerNpcCombatResult | null {
   if (npc.dead || !player.alive) return null;
 
-  const playerTileX = Math.floor(player.position.x);
-  const playerTileZ = Math.floor(player.position.y);
-  if (!npc.isInteractionTile(playerTileX, playerTileZ)) return null;
+  if (!isPointInNpcMeleeAttackRange(npc, player.position.x, player.position.y)) return null;
 
   if (player.attackCooldown > 0) return null;
   player.attackCooldown = player.getAttackSpeed(itemDefs);

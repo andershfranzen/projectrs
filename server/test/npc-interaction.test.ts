@@ -83,10 +83,16 @@ function makeWorld(): any {
   world.maps = new Map([[
     'kcmap',
     {
+      width: 64,
+      height: 64,
+      isBlocked: () => false,
+      isTileBlockedOnFloor: () => false,
       isWallBlocked: () => false,
       isWallBlockedOnFloor: () => false,
       findPathOnFloor: (_sx: number, _sz: number, gx: number, gz: number) => [{ x: gx, z: gz }],
       getEffectiveHeightOnFloor: () => 0,
+      getStairOnFloor: () => null,
+      getWalkableFloorTargetsAt: () => [],
       hasProjectileLineOfSight: () => true,
     },
   ]]);
@@ -1326,13 +1332,25 @@ describe('NPC interaction reachability', () => {
     expect(npc.position.y).toBe(10.5);
   });
 
-  test('melee combat requires a cardinal NPC interaction tile', () => {
+  test('player melee combat can resolve from diagonal NPC contact', () => {
     const diagonal = new Player('diagonal', 9.5, 9.5, fakeWs, 1);
     const cardinal = new Player('cardinal', 9.5, 10.5, fakeWs, 2);
-    const npc = new Npc(npcDef, 10.5, 10.5);
 
-    expect(processPlayerCombat(diagonal, npc, new Map())).toBeNull();
-    expect(processPlayerCombat(cardinal, npc, new Map())).not.toBeNull();
+    expect(processPlayerCombat(diagonal, new Npc(npcDef, 10.5, 10.5), new Map())).not.toBeNull();
+    expect(processPlayerCombat(cardinal, new Npc(npcDef, 10.5, 10.5), new Map())).not.toBeNull();
+  });
+
+  test('server player melee range accepts diagonal contact only with clear line-of-walk', () => {
+    const player = new Player('diagonal', 9.5, 9.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const world = makeWorld();
+
+    expect(world.isPlayerInNpcAttackRange(player, npc, 'melee')).toBe(true);
+
+    world.maps.get('kcmap').isWallBlocked = () => true;
+    expect(world.isPlayerInNpcAttackRange(player, npc, 'melee')).toBe(false);
   });
 
   test('NPC melee combat requires a cardinal NPC interaction tile', () => {

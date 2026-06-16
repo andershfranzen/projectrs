@@ -726,6 +726,7 @@ export class GameManager {
   private fogCurrentEnd = 100;
   private objectModels!: WorldObjectModels;
   private isSkilling: boolean = false;
+  private pendingLocalSkillingVisual: { objectId: number; variant?: string; stationary: boolean } | null = null;
   private isIndoors: boolean = false;
   private hiddenRoofNodes: TransformNode[] = [];
   private hiddenRoofNodeSet: Set<TransformNode> = new Set();
@@ -4552,9 +4553,7 @@ export class GameManager {
     }
     if (kind === null || !Number.isInteger(targetEntityId)) return null;
     const key = this.actionCapabilityKey(kind, targetEntityId, actionIndex);
-    const cap = this.actionCapabilities.get(key) ?? null;
-    if (cap) this.actionCapabilities.delete(key);
-    return cap;
+    return this.actionCapabilities.get(key) ?? null;
   }
 
   private applyActionCapabilities(caps: ActionCapabilityWire[]): void {
@@ -5755,11 +5754,7 @@ export class GameManager {
         }
         if (!this.isSkilling || this.skillingObjectId !== objectId) return;
         if (player && this.localPlayer !== player) return;
-        if (skipAnim) {
-          this.startSkillingStationary(objectId);
-        } else {
-          this.startSkillingVisual(objectId, variant);
-        }
+        this.queueOrStartLocalSkillingVisual(objectId, variant, skipAnim);
       })();
     });
 
@@ -5783,6 +5778,7 @@ export class GameManager {
   private endLocalSkilling(): void {
     this.isSkilling = false;
     this.skillingObjectId = -1;
+    this.pendingLocalSkillingVisual = null;
     this.localPlayer?.stopSkillAnimation();
     if (this.localPlayer) this.restoreSkillingTool(this.localPlayerId, this.localPlayer);
   }
@@ -8377,7 +8373,6 @@ export class GameManager {
     this.selfAuthorityRouteTargetSteps = 0;
     this.selfAuthorityRedirectGraceUntil = 0;
     this.selfAuthorityRedirectStaleRouteTiles.clear();
-    this.localAuthoritativeTileHeights.clear();
     this.localCombatWalkUntilMs = 0;
     if (clearRecentArrival) this.clearRecentPredictedArrival();
     if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
@@ -8428,7 +8423,7 @@ export class GameManager {
     if (this.selfAuthorityRedirectGraceUntil > 0 && this.pathIndex < this.path.length) {
       if (now > this.selfAuthorityRedirectGraceUntil) {
         this.clearSelfAuthorityRedirectGrace();
-      } else {
+      } else if (this.selfAuthorityRedirectStaleRouteTiles.has(this.routeTileKey(serverX, serverZ))) {
         return true;
       }
     }
@@ -8511,6 +8506,24 @@ export class GameManager {
     return `${Math.floor(x)},${Math.floor(z)}`;
   }
 
+  private localAuthoritativeHeightMapId(): string {
+    return this.chunkManager?.getMapId?.() ?? '';
+  }
+
+  private localAuthoritativeHeightKey(x: number, z: number, floor: number): string {
+    return `${this.localAuthoritativeHeightMapId()}:${Math.trunc(floor)}:${this.routeTileKey(x, z)}`;
+  }
+
+  private localAuthoritativeHeightKeySuffix(x: number, z: number): string {
+    return `:${this.routeTileKey(x, z)}`;
+  }
+
+  private pruneLocalAuthoritativeTileHeights(now: number = performance.now()): void {
+    for (const [key, authority] of this.localAuthoritativeTileHeights) {
+      if (now > authority.expiresAt) this.localAuthoritativeTileHeights.delete(key);
+    }
+  }
+
   private noteLocalAuthoritativeTileHeight(
     x: number,
     z: number,
@@ -8519,8 +8532,18 @@ export class GameManager {
     now: number = performance.now(),
   ): void {
     if (floor === null || y === null || !Number.isFinite(floor) || !Number.isFinite(y)) return;
-    this.localAuthoritativeTileHeights.set(this.routeTileKey(x, z), {
-      floor: Math.trunc(floor),
+    const floorIndex = Math.trunc(floor);
+    this.pruneLocalAuthoritativeTileHeights(now);
+    const key = this.localAuthoritativeHeightKey(x, z, floorIndex);
+    const mapPrefix = `${this.localAuthoritativeHeightMapId()}:`;
+    const tileSuffix = this.localAuthoritativeHeightKeySuffix(x, z);
+    for (const otherKey of this.localAuthoritativeTileHeights.keys()) {
+      if (otherKey !== key && otherKey.startsWith(mapPrefix) && otherKey.endsWith(tileSuffix)) {
+        this.localAuthoritativeTileHeights.delete(otherKey);
+      }
+    }
+    this.localAuthoritativeTileHeights.set(key, {
+      floor: floorIndex,
       y,
       expiresAt: now + GameManager.LOCAL_AUTHORITY_HEIGHT_CACHE_MS,
     });
@@ -8537,28 +8560,48 @@ export class GameManager {
     z: number,
     now: number = performance.now(),
   ): { floor: number; y: number } | null {
-    const key = this.routeTileKey(x, z);
+    const mapPrefix = `${this.localAuthoritativeHeightMapId()}:`;
+    const tileSuffix = this.localAuthoritativeHeightKeySuffix(x, z);
+    const newestSameTileAuthority = (): { floor: number; y: number; expiresAt: number } | null => {
+      let best: { floor: number; y: number; expiresAt: number } | null = null;
+      for (const [otherKey, other] of this.localAuthoritativeTileHeights) {
+        if (!otherKey.startsWith(mapPrefix) || !otherKey.endsWith(tileSuffix)) continue;
+        if (now > other.expiresAt) {
+          this.localAuthoritativeTileHeights.delete(otherKey);
+          continue;
+        }
+        if (!best || other.expiresAt > best.expiresAt) best = other;
+      }
+      return best;
+    };
+
+    const key = this.localAuthoritativeHeightKey(x, z, this.currentFloor);
     const authority = this.localAuthoritativeTileHeights.get(key);
-    if (!authority) return null;
-    if (now > authority.expiresAt) {
+    if (authority) {
+      if (now <= authority.expiresAt) return authority;
       this.localAuthoritativeTileHeights.delete(key);
-      return null;
     }
-    return authority;
+    return newestSameTileAuthority();
   }
 
-  private getLocalPlayerRenderHeight(now: number = performance.now()): number {
-    const authority = this.localAuthoritativeTileHeightFor(this.playerX, this.playerZ, now);
-    if (authority) {
-      this.applyLocalAuthoritativeMovementFloor(authority.floor);
-      return authority.y;
-    }
+  private getLocalPlayerTerrainRenderHeight(): number {
     return this.getHeightAtFloor(
       this.playerX,
       this.playerZ,
       this.currentFloor,
       this.localPlayer?.position?.y,
     );
+  }
+
+  private getLocalPlayerRenderHeight(now: number = performance.now(), useAuthoritativeHeight: boolean = true): number {
+    if (useAuthoritativeHeight) {
+      const authority = this.localAuthoritativeTileHeightFor(this.playerX, this.playerZ, now);
+      if (authority) {
+        this.applyLocalAuthoritativeMovementFloor(authority.floor);
+        return authority.y;
+      }
+    }
+    return this.getLocalPlayerTerrainRenderHeight();
   }
 
   private collectPredictedRouteTileKeys(): Set<string> {
@@ -8794,7 +8837,7 @@ export class GameManager {
     this.clearPredictedPath(true);
     this.localPlayer?.stopWalking();
     if (this.localPlayer) {
-      this.localPlayer.setPositionXYZ(this.playerX, this.getHeight(this.playerX, this.playerZ), this.playerZ);
+      this.localPlayer.setPositionXYZ(this.playerX, this.getLocalPlayerRenderHeight(), this.playerZ);
     }
     if (notifyServer) this.network.sendMove([]);
   }
@@ -9039,15 +9082,42 @@ export class GameManager {
       .filter(tile => !this.isTileBlocked(tile.x, tile.z) && hasLineOfWalk(tile.x, tile.z));
   }
 
+  private isPointInNpcMeleeAttackRange(
+    npcEntityId: number,
+    target: { x: number; z: number; floor: number; y: number },
+    x: number,
+    z: number,
+    range: number,
+  ): boolean {
+    const fp = this.distToNpcFootprint(npcEntityId, target, x, z);
+    if (!combatRangeIncludesOffset(fp.dx, fp.dz, range, 'euclidean')) return false;
+    if (this.isPointOnNpcInteractionTile(npcEntityId, target, x, z)) return true;
+
+    const tileX = Math.floor(x);
+    const tileZ = Math.floor(z);
+    const size = this.getNpcTileSize(npcEntityId);
+    for (const foot of getObjectFootprintTiles(target.x, target.z, { width: size })) {
+      const dx = foot.x - tileX;
+      const dz = foot.z - tileZ;
+      if (Math.max(Math.abs(dx), Math.abs(dz)) !== 1) continue;
+      if (dx === 0 && dz === 0) continue;
+      if (!this.isWallBlockedForPath(tileX, tileZ, foot.x, foot.z)) return true;
+    }
+    return false;
+  }
+
   private isPointInNpcInteractionRange(
     npcEntityId: number,
     target: { x: number; z: number; floor: number; y: number },
     x: number,
     z: number,
     range: number,
-    mode: 'euclidean' | 'chebyshev' | 'cardinal' = 'euclidean',
+    mode: 'euclidean' | 'chebyshev' | 'cardinal' | 'melee' = 'euclidean',
     requireRangedLineOfSight: boolean = false,
   ): boolean {
+    if (mode === 'melee') {
+      return this.isPointInNpcMeleeAttackRange(npcEntityId, target, x, z, range);
+    }
     if (mode === 'cardinal') {
       return this.isPointOnNpcInteractionTile(npcEntityId, target, x, z);
     }
@@ -9061,7 +9131,7 @@ export class GameManager {
     npcEntityId: number,
     target: { x: number; z: number; floor: number; y: number },
     requiredRange: number = 1,
-    rangeMode: 'euclidean' | 'chebyshev' | 'cardinal' = 'cardinal',
+    rangeMode: 'euclidean' | 'chebyshev' | 'cardinal' | 'melee' = 'cardinal',
     requireRangedLineOfSight: boolean = false,
   ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
     const reached = (x: number, z: number): boolean =>
@@ -9122,8 +9192,8 @@ export class GameManager {
     return this.isLocalRangedWeapon() ? this.getLocalRangedAttackRange() : 1.5;
   }
 
-  private getLocalNpcAttackRangeMode(): 'euclidean' | 'chebyshev' | 'cardinal' {
-    return this.isLocalRangedWeapon() ? 'chebyshev' : 'cardinal';
+  private getLocalNpcAttackRangeMode(): 'euclidean' | 'chebyshev' | 'cardinal' | 'melee' {
+    return this.isLocalRangedWeapon() ? 'chebyshev' : 'melee';
   }
 
   private activePredictedDestination(): { x: number; z: number } | null {
@@ -9301,7 +9371,8 @@ export class GameManager {
    *  if no reachable adjacent tile exists. */
   private walkToAdjacentTileOf(data: { x: number; z: number; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] }, def: WorldObjectDef): boolean {
     const hasAuthoredTiles = !!data.interactionTiles?.length;
-    const start = this.getActiveUnitStep()?.from ?? { x: this.playerX, z: this.playerZ };
+    const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
+    const start = activeStep?.target ?? { x: this.playerX, z: this.playerZ };
     const findBest = (
       tiles: readonly { x: number; z: number }[],
       allowAuthoredNonAdjacentTile: boolean,
@@ -9312,7 +9383,7 @@ export class GameManager {
         .map(tile => ({
           ax: tile.x,
           az: tile.z,
-          dist: Math.hypot(this.playerX - (tile.x + 0.5), this.playerZ - (tile.z + 0.5)),
+          dist: Math.hypot(start.x - (tile.x + 0.5), start.z - (tile.z + 0.5)),
         }));
 
       let best: { path: { x: number; z: number }[]; preserveCurrentStep: boolean; steps: number; dist: number } | null = null;
@@ -10888,54 +10959,55 @@ export class GameManager {
     return this.chunkManager.isWallBlocked(fx, fz, tx, tz, playerY);
   };
 
-  private finishPredictedObjectInteractionArrival(objectId: number): boolean {
-    if (this.pathIndex >= this.path.length) return false;
+  private isLocalPlayerOnObjectInteractionTile(objectId: number): boolean {
     const objData = this.worldObjectDefs.get(objectId);
     const objDef = objData ? this.objectDefsCache.get(objData.defId) : null;
     if (!objData || !objDef) return false;
-
-    const destination = this.path[this.path.length - 1];
-    if (!destination) return false;
-    if (!this.isOnObjectInteractionTile(Math.floor(destination.x), Math.floor(destination.z), objData, objDef)) {
-      return false;
-    }
-
-    this.playerX = destination.x;
-    this.playerZ = destination.z;
-    this.pathIndex = this.path.length;
-    this.renderLocalPlayerAtLogicalPosition();
-    this.inputManager.setPlayerY(this.localPlayer?.position?.y ?? this.getLocalPlayerRenderHeight());
-    this.finishPredictedPathArrival();
-    return true;
+    if (!this.isWorldObjectOnCurrentInteractionFloor(objData, objDef)) return false;
+    return this.isOnObjectInteractionTile(Math.floor(this.playerX), Math.floor(this.playerZ), objData, objDef);
   }
 
-  /** Stop any in-flight path and face the given object. Shared setup for
-   *  animated and stationary skilling starts. Server-side skilling only starts
-   *  after it has reached the object, so complete the matching local predicted
-   *  arrival instead of freezing mid-step and waiting for PLAYER_SYNC to catch
-   *  the model up. */
-  private prepareSkillingAtObject(objectId: number): void {
-    if (!this.finishPredictedObjectInteractionArrival(objectId)) {
-      this.clearPredictedPath(false, false);
-    }
+  /** Stop local walking and face the given object once the visual character is
+   *  actually on an interaction tile. This deliberately does not complete an
+   *  in-flight path: snapping here was the visible one-tile teleport when
+   *  red-clicking rocks while running. */
+  private prepareSkillingAtObject(objectId: number): boolean {
+    if (this.pathIndex < this.path.length || !this.isLocalPlayerOnObjectInteractionTile(objectId)) return false;
+    this.clearPredictedPath(false, false);
     this.setTileFrom(this.playerX, this.playerZ);
-    if (!this.localPlayer) return;
+    if (!this.localPlayer) return false;
     this.localPlayer.stopWalking();
     const objData = this.worldObjectDefs.get(objectId);
     if (objData) {
       this.localPlayer.faceToward(new Vector3(objData.x, 0, objData.z));
     }
+    return true;
   }
 
-  private startSkillingVisual(objectId: number, variant?: string): void {
-    this.prepareSkillingAtObject(objectId);
-    this.localPlayer?.startSkillAnimation(variant);
+  private beginLocalSkillingVisualNow(objectId: number, variant: string | undefined, stationary: boolean): boolean {
+    if (!this.prepareSkillingAtObject(objectId)) return false;
+    if (!stationary) this.localPlayer?.startSkillAnimation(variant);
+    return true;
   }
 
-  /** Like startSkillingVisual but with no looping skill animation — the
-   *  character stays in idle (used for lockpicking chests). */
-  private startSkillingStationary(objectId: number): void {
-    this.prepareSkillingAtObject(objectId);
+  private queueOrStartLocalSkillingVisual(objectId: number, variant: string | undefined, stationary: boolean): void {
+    this.pendingLocalSkillingVisual = null;
+    if (!this.isSkilling || this.skillingObjectId !== objectId) return;
+    if (this.beginLocalSkillingVisualNow(objectId, variant, stationary)) return;
+    this.pendingLocalSkillingVisual = { objectId, variant, stationary };
+  }
+
+  private flushPendingLocalSkillingVisual(): void {
+    const pending = this.pendingLocalSkillingVisual;
+    if (!pending) return;
+    if (!this.isSkilling || this.skillingObjectId !== pending.objectId) {
+      this.pendingLocalSkillingVisual = null;
+      return;
+    }
+    if (this.pathIndex < this.path.length) return;
+    if (this.beginLocalSkillingVisualNow(pending.objectId, pending.variant, pending.stationary)) {
+      this.pendingLocalSkillingVisual = null;
+    }
   }
 
   private finishPredictedPathArrival(): void {
@@ -10993,6 +11065,7 @@ export class GameManager {
     if (this.isSkilling) {
       this.isSkilling = false;
       this.skillingObjectId = -1;
+      this.pendingLocalSkillingVisual = null;
       // Clicking on own tile — delay the cancel so you can't spam restart
       if (clickedOwnTile) {
         this.skillCancelTime = performance.now();
@@ -12385,15 +12458,19 @@ export class GameManager {
   }
 
   /** Render the local player at the logical prediction position. */
-  private renderLocalPlayerAtLogicalPosition(): void {
+  private renderLocalPlayerAtLogicalPosition(useAuthoritativeHeight: boolean = true): void {
     if (!this.localPlayer) return;
-    const vy = this.getLocalPlayerRenderHeight();
+    const vy = this.getLocalPlayerRenderHeight(performance.now(), useAuthoritativeHeight);
     this.localPlayer.setPositionXYZ(this.playerX, vy, this.playerZ);
     this.inputManager.setPlayerY(vy);
   }
 
   private updateLocalPlayerMovement(dt: number, camPos: Vector3 | null): void {
-    if (this.pathIndex >= this.path.length || !this.localPlayer) return;
+    if (!this.localPlayer) return;
+    if (this.pathIndex >= this.path.length) {
+      this.flushPendingLocalSkillingVisual();
+      return;
+    }
     const remainingUnitSteps = this.remainingPredictedUnitSteps();
     const pathUnitSteps = this.predictedPathUnitSteps || remainingUnitSteps;
     const effectiveMode = effectiveMovementModeForPath(this.movementMode, pathUnitSteps, remainingUnitSteps);
@@ -12467,6 +12544,7 @@ export class GameManager {
         this.finishPredictedPathArrival();
         this.renderLocalPlayerAtLogicalPosition();
         this.inputManager.setPlayerY(this.localPlayer?.position?.y ?? this.getLocalPlayerRenderHeight());
+        this.flushPendingLocalSkillingVisual();
         return;
       }
 
@@ -12496,7 +12574,7 @@ export class GameManager {
     // Render exactly where local prediction says we are. InputManager.playerY
     // uses the same logical height so interaction picks resolve at gameplay
     // position.
-    this.renderLocalPlayerAtLogicalPosition();
+    this.renderLocalPlayerAtLogicalPosition(false);
     this.inputManager.setPlayerY(this.localPlayer?.position?.y ?? this.getLocalPlayerRenderHeight());
   }
 

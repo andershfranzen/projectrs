@@ -543,7 +543,6 @@ export class Player extends Entity {
       this.deleteActionCapability(id, cap);
       return 'mismatch';
     }
-    this.deleteActionCapability(id, cap);
     return 'ok';
   }
 

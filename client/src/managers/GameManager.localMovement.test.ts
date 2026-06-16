@@ -407,7 +407,7 @@ describe('GameManager local movement prediction', () => {
     expect(manager.shouldIgnoreRedirectStaleLocalAuthority(4.5, 4.5)).toBe(false);
   });
 
-  test('recent click redirect defers nearby off-route authority instead of turning back', () => {
+  test('recent click redirect retargets nearby off-route authority instead of deferring into a later snap', () => {
     const { manager, player } = makeManager([
       { x: 10.5, z: 0.5 },
     ], 10);
@@ -425,24 +425,12 @@ describe('GameManager local movement prediction', () => {
       { x: 2.5, z: 1.5, floor: 0, y: 0, mode: 'run' },
     ]);
 
-    expect(manager.path).toEqual([
-      { x: 1.5, z: 0.5 },
-      { x: 1.5, z: 8.5 },
-    ]);
+    expect(manager.path[0]).toEqual({ x: 1.5, z: 0.5 });
+    expect(manager.path[1]).toEqual({ x: 2.5, z: 1.5 });
+    expect(manager.path.at(-1)).toEqual({ x: 1.5, z: 8.5 });
     expect(manager.pathIndex).toBe(0);
     expect(manager.playerX).toBe(1.0);
     expect(manager.playerZ).toBe(0.5);
-    expect(player.positions).toEqual([]);
-
-    manager.selfAuthorityRedirectGraceUntil = performance.now() - 1;
-
-    manager.applyLocalAuthoritativeMoveSteps([
-      { x: 2.5, z: 1.5, floor: 0, y: 0, mode: 'run' },
-    ]);
-
-    expect(manager.path.length).toBeGreaterThan(0);
-    expect(manager.path[1]).toEqual({ x: 2.5, z: 1.5 });
-    expect(manager.path.at(-1)).toEqual({ x: 1.5, z: 8.5 });
     expect(player.positions).toEqual([]);
   });
 
@@ -839,6 +827,36 @@ describe('GameManager local movement prediction', () => {
     expect(manager.currentFloor).toBe(1);
     expect(floorUpdates.at(-1)).toBe(1);
     expect(player.positions.at(-1)).toEqual({ x: 1.5, y: 4.2, z: 0.5 });
+  });
+
+  test('ordinary path clears preserve server-confirmed height for the current tile', () => {
+    const { manager, floorUpdates } = makeManager([
+      { x: 3.5, z: 4.5 },
+    ], 1);
+    manager.playerX = 3.5;
+    manager.playerZ = 4.5;
+    manager.noteLocalAuthoritativeTileHeight(3.5, 4.5, 1, 5.25);
+
+    manager.clearPredictedPath();
+
+    expect(manager.getLocalPlayerRenderHeight()).toBe(5.25);
+    expect(manager.currentFloor).toBe(1);
+    expect(floorUpdates.at(-1)).toBe(1);
+  });
+
+  test('active local movement uses smooth terrain height instead of cached tile authority', () => {
+    const { manager, player } = makeManager([
+      { x: 1.5, z: 0.5 },
+    ], 1);
+    manager.chunkManager.getEffectiveHeight = (x: number, z: number) => x + z;
+    manager.noteLocalAuthoritativeTileHeight(0.5, 0.5, 0, 5.25);
+
+    advanceLocalMovement(manager, 0.1);
+
+    const rendered = player.positions.at(-1);
+    expect(rendered).toBeDefined();
+    expect(rendered!.y).toBeCloseTo(rendered!.x + rendered!.z, 5);
+    expect(rendered!.y).not.toBe(5.25);
   });
 
   test('can preserve recent-arrival route protection through arrival-side cleanup', () => {

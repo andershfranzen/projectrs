@@ -10,7 +10,7 @@ import { WorldObject, releaseObjectEntityId } from './entity/WorldObject';
 import { DataLoader } from './data/DataLoader';
 import { ASSET_TO_GROUND_ITEM_SPAWN } from './data/AssetGroundItemSpawns';
 import { GameDatabase, type GameEventLogInput } from './Database';
-import { applyPlayerMagicImpactToNpc, armNpcRetaliation, isPointInNpcMagicAttackRange, isPointInNpcRangedAttackRange as isNpcInRangedAttackRange, processPlayerCombat, processPlayerRangedCombat, processNpcCombat, rollLoot, rollPlayerMagicDamageAgainstNpc, rollPlayerMagicDamageAgainstPlayer, rollPlayerMeleeDamageAgainstPlayer, rollPlayerRangedDamageAgainstPlayer, shouldConsumeAmmoOnShot, MAGIC_ATTACK_COOLDOWN_TICKS, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE, RANGED_ATTACK_DISTANCE, type PlayerNpcCombatResult } from './combat/Combat';
+import { applyPlayerMagicImpactToNpc, armNpcRetaliation, isPointInNpcMagicAttackRange, isPointInNpcRangedAttackRange as isNpcInRangedAttackRange, processPlayerCombat, processPlayerRangedCombat, processNpcCombat, rollLoot, rollPlayerMagicDamageAgainstNpc, rollPlayerMagicDamageAgainstPlayer, rollPlayerMeleeDamageAgainstPlayer, rollPlayerRangedDamageAgainstPlayer, shouldConsumeAmmoOnShot, MAGIC_ATTACK_COOLDOWN_TICKS, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE, MELEE_ATTACK_DISTANCE, RANGED_ATTACK_DISTANCE, type PlayerNpcCombatResult } from './combat/Combat';
 import { CombatSystem, type CombatActorRef, type CombatContext, type CombatMode, type ImpactQueueEntry, type RetaliationRequest } from './combat/CombatSystem';
 import { finalizeNpcDeath as finalizeNpcDeathCombat } from './combat/NpcDeath';
 import { broadcastLocalMessage, broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSocket';
@@ -1487,6 +1487,30 @@ export class World {
     return isRectInteractionTileReachable(this.playerPathCollision(player, map), ptx, ptz, npc.position.x, npc.position.y, npc.size);
   }
 
+  private isPlayerInNpcMeleeAttackRange(player: Player, npc: Npc): boolean {
+    if (!this.canPlayerTargetNpc(player, npc)) return false;
+    if (this.isPlayerNpcInteractionReachable(player, npc)) return true;
+
+    const fp = npc.distToFootprint(player.position.x, player.position.y);
+    if (!combatRangeIncludesOffset(fp.dx, fp.dz, MELEE_ATTACK_DISTANCE, 'euclidean')) return false;
+
+    const map = this.getPlayerMap(player);
+    const collision = this.playerPathCollision(player, map);
+    if (!collision.isWallBlocked) return true;
+
+    const ptx = Math.floor(player.position.x);
+    const ptz = Math.floor(player.position.y);
+    const size = Math.max(1, Math.round(npc.size));
+    for (const foot of getObjectFootprintTiles(npc.position.x, npc.position.y, { width: size })) {
+      const dx = foot.x - ptx;
+      const dz = foot.z - ptz;
+      if (Math.max(Math.abs(dx), Math.abs(dz)) !== 1) continue;
+      if (dx === 0 && dz === 0) continue;
+      if (!collision.isWallBlocked(ptx, ptz, foot.x, foot.z)) return true;
+    }
+    return false;
+  }
+
   private isPlayerWithinNpcDialogueStartRange(player: Player, npc: Npc): boolean {
     const fp = npc.distToFootprint(player.position.x, player.position.y);
     return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= NPC_DIALOGUE_START_RANGE;
@@ -1754,7 +1778,7 @@ export class World {
   }
 
   private isPlayerInNpcAttackRange(player: Player, npc: Npc, mode: 'melee' | 'ranged' | 'magic', rangedRange: number = RANGED_ATTACK_DISTANCE): boolean {
-    if (mode === 'melee') return this.isPlayerNpcInteractionReachable(player, npc);
+    if (mode === 'melee') return this.isPlayerInNpcMeleeAttackRange(player, npc);
     if (mode === 'ranged') return this.isPointInNpcRangedAttackRange(player, npc, player.position.x, player.position.y, rangedRange);
     return isPointInNpcMagicAttackRange(npc, player.position.x, player.position.y);
   }
@@ -4524,7 +4548,7 @@ export class World {
     const isRanged = player.isRangedWeapon(this.data.itemDefs);
     const isMagicAutocast = player.autocastSpellIndex >= 0;
     const rangedAttackDist = isRanged ? player.getRangedAttackRange(this.data.itemDefs) : RANGED_ATTACK_DISTANCE;
-    const attackDist = isMagicAutocast ? MAGIC_ATTACK_DISTANCE : (isRanged ? rangedAttackDist : 1.5);
+    const attackDist = isMagicAutocast ? MAGIC_ATTACK_DISTANCE : (isRanged ? rangedAttackDist : MELEE_ATTACK_DISTANCE);
     const attackMode = isMagicAutocast ? 'magic' : (isRanged ? 'ranged' : 'melee');
     const inAttackRange = this.isPlayerInNpcAttackRange(player, npc, attackMode, rangedAttackDist);
     if (dist > Math.max(attackDist, 24)) return;
@@ -5584,18 +5608,22 @@ export class World {
       }
       return;
     }
+    const isRecipeStationAction = action !== 'Examine' && (obj.def.recipes?.length ?? 0) > 0;
     this.bumpActionRevision(player);
     this.clearQueuedPlayerActions(player);
-    this.cancelItemProduction(playerId);
 
     if (player.isBusy(this.currentTick)) {
-      const isQueuedObjectAction = obj.def.category === 'door' || obj.def.category === 'ladder' || (this.isHarvestableObjectDef(obj.def) && (obj.def.skill || obj.def.category === 'crop'));
+      const isQueuedObjectAction = obj.def.category === 'door'
+        || obj.def.category === 'ladder'
+        || (this.isHarvestableObjectDef(obj.def) && (obj.def.skill || obj.def.category === 'crop'))
+        || isRecipeStationAction;
       if (isQueuedObjectAction) {
-        player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0, expectedDoorOpen, recipeQuantity };
+        player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0, expectedDoorOpen, recipeIndex, recipeQuantity };
         this.markQueuedAction(player);
       }
       return;
     }
+    this.cancelItemProduction(playerId);
     // While a modal interface (bank/trade) is open, refuse object interactions
     // outright — no door deferral. Closing the interface is a deliberate user
     // action; we won't queue clicks behind it.
@@ -5686,10 +5714,17 @@ export class World {
         return;
       }
       const opensRecipePicker = this.shouldOpenRecipePicker(obj);
-      // Specific recipe craft packets demand strict adjacency. The initial
-      // picker-open intent may walk, then the server opens the UI on arrival.
       if (opensRecipePicker && recipeIndex >= 0) {
-        this.sendChatSystem(player, `I need to stand next to the ${obj.def.name.toLowerCase()}.`);
+        const path = this.findPathToObjectInteraction(player, obj);
+        if (!player.hasMoveQueue() && path.length > 0) {
+          player.setMoveQueue(path);
+        }
+        if (player.hasMoveQueue()) {
+          player.pendingInteraction = { objectEntityId, actionIndex, recipeIndex, recipeQuantity };
+          this.markQueuedAction(player);
+        } else {
+          this.sendChatSystem(player, `I need to stand next to the ${obj.def.name.toLowerCase()}.`);
+        }
         return;
       }
       const path = this.findPathToObjectInteraction(player, obj);
@@ -10104,7 +10139,8 @@ export class World {
           this.sendPathTruncated(player, player.position.x, player.position.y, this.currentPlayerMovementLayerState(player));
           this.sendNearbyDoorUpdates(player);
           player.clearMoveQueue();
-          this.clearQueuedPlayerActions(player);
+          // Preserve red-click intent; the pending action can re-path or fail
+          // from the authoritative tile instead of disappearing with the stale route.
           player.movementCredit = 0;
           break;
         }
@@ -10210,6 +10246,8 @@ export class World {
               // (which would fire the first matching recipe — iron, not steel).
               this.handlePlayerInteractObject(playerId, objectEntityId, actionIndex, recipeIndex ?? -1, null, recipeQuantity ?? 1);
             }
+          } else {
+            this.handlePlayerInteractObject(playerId, objectEntityId, actionIndex, recipeIndex ?? -1, expectedDoorOpen ?? null, recipeQuantity ?? 1);
           }
         }
       }

@@ -65,6 +65,8 @@ function makeHarness(): { world: any; player: Player; messages: string[] } {
     isWallBlocked: () => false,
     isWallBlockedOnFloor: () => false,
     getEffectiveHeightOnFloor: () => 0,
+    getStairOnFloor: () => null,
+    getWalkableFloorTargetsAt: () => [],
   };
   const chunkManager = {
     addEntity() {},

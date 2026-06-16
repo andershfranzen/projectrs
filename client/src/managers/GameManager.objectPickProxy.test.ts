@@ -476,15 +476,12 @@ describe('GameManager world object pick proxies', () => {
     expect(interactions).toEqual([]);
   });
 
-  test('skilling start completes a matching predicted object-arrival path', () => {
+  test('skilling start queues until a matching predicted object-arrival path drains', () => {
     const manager = makeManager();
-    let rendered = 0;
-    let finishedArrival = 0;
     let clearedPath = 0;
     let stoppedWalking = 0;
     let facedToward: { x: number; z: number } = { x: Number.NaN, z: Number.NaN };
     let tileFrom: { x: number; z: number } = { x: Number.NaN, z: Number.NaN };
-    let playerY = 0;
 
     manager.path = [{ x: 107.5, z: 95.5 }];
     manager.pathIndex = 0;
@@ -506,26 +503,31 @@ describe('GameManager world object pick proxies', () => {
     ]);
     manager.objectDefsCache = new Map([[BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_DEF]]);
     manager.isOnObjectInteractionTile = () => true;
-    manager.renderLocalPlayerAtLogicalPosition = () => { rendered += 1; };
-    manager.inputManager = { setPlayerY: (y: number) => { playerY = y; } };
     manager.getHeight = () => 0.25;
-    manager.finishPredictedPathArrival = () => { finishedArrival += 1; };
     manager.clearPredictedPath = () => { clearedPath += 1; };
     manager.setTileFrom = (x: number, z: number) => { tileFrom = { x, z }; };
     manager.localPlayer = {
       stopWalking: () => { stoppedWalking += 1; },
       faceToward: (target: { x: number; z: number }) => { facedToward = { x: target.x, z: target.z }; },
     };
+    manager.isSkilling = true;
+    manager.skillingObjectId = 45678;
 
-    manager.prepareSkillingAtObject(45678);
+    manager.queueOrStartLocalSkillingVisual(45678, undefined, true);
 
-    expect(manager.playerX).toBe(107.5);
+    expect(manager.playerX).toBe(106.5);
     expect(manager.playerZ).toBe(95.5);
-    expect(manager.pathIndex).toBe(1);
-    expect(rendered).toBe(1);
-    expect(finishedArrival).toBe(1);
+    expect(manager.pathIndex).toBe(0);
     expect(clearedPath).toBe(0);
-    expect(playerY).toBe(0.25);
+    expect(stoppedWalking).toBe(0);
+    expect(manager.pendingLocalSkillingVisual).toEqual({ objectId: 45678, variant: undefined, stationary: true });
+
+    manager.pathIndex = 1;
+    manager.playerX = 107.5;
+    manager.flushPendingLocalSkillingVisual();
+
+    expect(manager.pendingLocalSkillingVisual).toBe(null);
+    expect(clearedPath).toBe(1);
     expect(tileFrom).toEqual({ x: 107.5, z: 95.5 });
     expect(stoppedWalking).toBe(1);
     expect(facedToward).toEqual({ x: 107.5, z: 94.5 });
@@ -561,7 +563,7 @@ describe('GameManager world object pick proxies', () => {
     expect(manager.playerZ).toBe(95.5);
     expect(rendered).toBe(0);
     expect(finishedArrival).toBe(0);
-    expect(clearedPath).toBe(1);
+    expect(clearedPath).toBe(0);
   });
 
   test('object walking falls back when an authored chest use tile is blocked', () => {
