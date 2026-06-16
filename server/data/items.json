@@ -2754,11 +2754,11 @@
     "equippable": false,
     "value": 1,
     "model": "/assets/models/arrowheads/stacks/BronzeArrowheadStack1.glb",
-    "thumbnailModel": "/assets/models/arrowheads/BronzeArrowhead.glb",
     "stackModels": [
       {
         "minQuantity": 1,
-        "model": "/assets/models/arrowheads/stacks/BronzeArrowheadStack1.glb"
+        "model": "/assets/models/arrowheads/stacks/BronzeArrowheadStack1.glb",
+        "scale": 0.5
       },
       {
         "minQuantity": 2,
@@ -2790,11 +2790,11 @@
     "equippable": false,
     "value": 2,
     "model": "/assets/models/arrowheads/stacks/IronArrowheadStack1.glb",
-    "thumbnailModel": "/assets/models/arrowheads/IronArrowhead.glb",
     "stackModels": [
       {
         "minQuantity": 1,
-        "model": "/assets/models/arrowheads/stacks/IronArrowheadStack1.glb"
+        "model": "/assets/models/arrowheads/stacks/IronArrowheadStack1.glb",
+        "scale": 0.5
       },
       {
         "minQuantity": 2,
@@ -2826,11 +2826,11 @@
     "equippable": false,
     "value": 4,
     "model": "/assets/models/arrowheads/stacks/SteelArrowheadStack1.glb",
-    "thumbnailModel": "/assets/models/arrowheads/SteelArrowhead.glb",
     "stackModels": [
       {
         "minQuantity": 1,
-        "model": "/assets/models/arrowheads/stacks/SteelArrowheadStack1.glb"
+        "model": "/assets/models/arrowheads/stacks/SteelArrowheadStack1.glb",
+        "scale": 0.5
       },
       {
         "minQuantity": 2,
@@ -2862,11 +2862,11 @@
     "equippable": false,
     "value": 16,
     "model": "/assets/models/arrowheads/stacks/MithrilArrowheadStack1.glb",
-    "thumbnailModel": "/assets/models/arrowheads/MithrilArrowhead.glb",
     "stackModels": [
       {
         "minQuantity": 1,
-        "model": "/assets/models/arrowheads/stacks/MithrilArrowheadStack1.glb"
+        "model": "/assets/models/arrowheads/stacks/MithrilArrowheadStack1.glb",
+        "scale": 0.5
       },
       {
         "minQuantity": 2,
@@ -2898,11 +2898,11 @@
     "equippable": false,
     "value": 8,
     "model": "/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack1.glb",
-    "thumbnailModel": "/assets/models/arrowheads/BlackBronzeArrowhead.glb",
     "stackModels": [
       {
         "minQuantity": 1,
-        "model": "/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack1.glb"
+        "model": "/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack1.glb",
+        "scale": 0.5
       },
       {
         "minQuantity": 2,

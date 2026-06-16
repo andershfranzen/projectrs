@@ -276,7 +276,7 @@ describe('item thumbnail families', () => {
     }
   });
 
-  test('arrowhead inventory thumbnails use the editable single head while ground drops keep stack models', () => {
+  test('arrowhead inventory thumbnails use quantity-based stack models', () => {
     const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
     const tiers = new Map<number, string>([
       [264, 'Bronze'],
@@ -290,14 +290,45 @@ describe('item thumbnail families', () => {
       const def = defs.get(id);
       if (!def) throw new Error(`missing arrowhead item ${id}`);
 
-      const singleModel = `/assets/models/arrowheads/${tier}Arrowhead.glb`;
-      expect(def.thumbnailModel).toBe(singleModel);
-      expect(resolveItemModelPath(def, 1)).toBe(singleModel);
-      expect(resolveItemModelPath(def, 6)).toBe(singleModel);
+      expect(def.thumbnailModel).toBeUndefined();
+      expect(resolveItemModelPath(def, 1)).toBe(`/assets/models/arrowheads/stacks/${tier}ArrowheadStack1.glb`);
+      expect(resolveItemModelPath(def, 6)).toBe(`/assets/models/arrowheads/stacks/${tier}ArrowheadStack6Plus.glb`);
+      expect(stackModelScaleForItem(def, 1)).toBe(0.5);
       expect(stackModelScaleForItem(def, 6)).toBe(1);
       expect(resolveGroundItemModelPath(def, 1)).toBe(`/assets/models/arrowheads/stacks/${tier}ArrowheadStack1.glb`);
       expect(resolveGroundItemModelPath(def, 6)).toBe(`/assets/models/arrowheads/stacks/${tier}ArrowheadStack6Plus.glb`);
-      expect(existsSync(`client/public${singleModel}`)).toBe(true);
+      expect(existsSync(`client/public${resolveItemModelPath(def, 1)}`)).toBe(true);
+      expect(existsSync(`client/public${resolveItemModelPath(def, 6)}`)).toBe(true);
+
+      const override = (thumbnailOverridesJson as Record<string, ThumbnailOverride>)[String(id)];
+      expect(buildThumbnailOptionsFromOverride(def, override).iconScale).toBe(0.75);
+    }
+  });
+
+  test('arrow-family baked thumbnails include stack quantity variants', () => {
+    const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
+    const overrides = thumbnailOverridesJson as Record<string, ThumbnailOverride>;
+    const manifest = parseBakedThumbnailManifest(JSON.parse(readFileSync('client/public/items/3d/manifest.json', 'utf8')));
+
+    for (const id of [42, 43, 264, 265, 266, 267, 268, 270, 272, 285, 286, 287]) {
+      const def = defs.get(id);
+      if (!def) throw new Error(`missing arrow-family item ${id}`);
+      const opts = buildThumbnailOptionsFromOverride(def, overrides[String(id)]);
+
+      const oneModel = resolveItemModelPath(def, 1);
+      const stackModel = resolveItemModelPath(def, 6);
+      if (!oneModel || !stackModel) throw new Error(`missing arrow-family model ${id}`);
+
+      const oneOpts = { ...opts };
+      const oneScale = stackModelScaleForItem(def, 1);
+      if (oneScale !== 1) oneOpts.iconScale = (oneOpts.iconScale ?? 1) * oneScale;
+      const stackOpts = { ...opts };
+      const stackScale = stackModelScaleForItem(def, 6);
+      if (stackScale !== 1) stackOpts.iconScale = (stackOpts.iconScale ?? 1) * stackScale;
+
+      expect(resolveBakedThumbnailUrl(manifest, id, getThumbnailPoseKey(oneModel, oneOpts))).toBe(`/items/3d/${id}.png`);
+      expect(resolveBakedThumbnailUrl(manifest, id, getThumbnailPoseKey(stackModel, stackOpts))).toBe(`/items/3d/${id}-6.png`);
+      expect(existsSync(`client/public/items/3d/${id}-6.png`)).toBe(true);
     }
   });
 
