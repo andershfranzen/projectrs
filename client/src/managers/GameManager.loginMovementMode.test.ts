@@ -8,7 +8,6 @@ function makeManager(initialMode: 'walk' | 'run'): { manager: any; handlers: Map
   const sideModes: string[] = [];
   const manager = Object.create(GameManager.prototype) as any;
   manager.movementMode = initialMode;
-  manager.moveSpeed = initialMode === 'run' ? 1000 / 300 : 1000 / 600;
   manager._loginReadySeq = 1;
   manager._loginProgress = null;
   manager.network = {

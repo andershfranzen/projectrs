@@ -65,7 +65,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, ActionCapabilityKind, ACTION_CAPABILITY_HONEYPOT_FLAG, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode, type ActionCapabilityWire, type ActionCapabilityProof } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, ActionCapabilityKind, ACTION_CAPABILITY_HONEYPOT_FLAG, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, collectCompressedRouteTileKeys, compressedPathTileSteps, compressedPathTileStepsFromIndex, compressedRouteProgressSteps, compressedRouteSegmentIndexForTile, compressedRouteStepIndexForTile, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode, type ActionCapabilityWire, type ActionCapabilityProof } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -559,14 +559,11 @@ export class GameManager {
   private path: { x: number; z: number }[] = [];
   private pathIndex: number = 0;
   private movementMode: MovementMode = 'walk';
-  private moveSpeed: number = movementTilesPerSecond('walk');
   private runEnergyPercent: number = 100;
-  private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
   private predictedPathUnitSteps: number = 0;
   private predictedPathStartedAt: number = 0;
   private predictedPathStart: { x: number; z: number } | null = null;
   private predictedPathDestination: { x: number; z: number } | null = null;
-  private predictedPathAuthorityReanchorAttempts: number = 0;
   private lastLocalMoveCommandAt: number = 0;
   private recentPredictedArrivalUntil: number = 0;
   private recentPredictedArrivalDestination: { x: number; z: number } | null = null;
@@ -4469,7 +4466,6 @@ export class GameManager {
   private applyLocalMovementMode(mode: MovementMode): void {
     if (this.movementMode === mode) return;
     this.movementMode = mode;
-    this.moveSpeed = movementTilesPerSecond(mode);
     this.localPlayer?.setMovementMode(mode);
     this.sidePanel?.applyMovementModeFromServer(mode);
   }
@@ -8312,47 +8308,21 @@ export class GameManager {
     return Math.floor(a.x) === Math.floor(b.x) && Math.floor(a.z) === Math.floor(b.z);
   }
 
-  private tileOnCompressedSegment(start: { x: number; z: number }, end: { x: number; z: number }, tx: number, tz: number): boolean {
-    const sx = Math.floor(start.x);
-    const sz = Math.floor(start.z);
-    const ex = Math.floor(end.x);
-    const ez = Math.floor(end.z);
-    const dx = Math.sign(ex - sx);
-    const dz = Math.sign(ez - sz);
-    if (tx === sx && tz === sz) return true;
-    if (dx === 0 && dz === 0) return tx === ex && tz === ez;
-    if (dx === 0 && tx !== sx) return false;
-    if (dz === 0 && tz !== sz) return false;
-    if (dx !== 0 && Math.sign(tx - sx) !== dx) return false;
-    if (dz !== 0 && Math.sign(tz - sz) !== dz) return false;
-    if (dx !== 0 && dz !== 0 && Math.abs(tx - sx) !== Math.abs(tz - sz)) return false;
-    return Math.abs(tx - sx) <= Math.abs(ex - sx) && Math.abs(tz - sz) <= Math.abs(ez - sz);
-  }
-
   private findPathSegmentContainingTile(tx: number, tz: number): number {
-    for (let i = this.pathIndex; i < this.path.length; i++) {
-      const start = i === this.pathIndex ? this.tileFrom : this.path[i - 1];
-      if (this.tileOnCompressedSegment(start, this.path[i], tx, tz)) return i;
-    }
-    return -1;
+    return compressedRouteSegmentIndexForTile(this.tileFrom, this.path, tx, tz, this.pathIndex);
   }
 
   private findPredictedRouteSegmentContainingTile(tx: number, tz: number): number {
     if (this.path.length === 0) return -1;
     let start = this.predictedPathStart ?? (this.pathIndex === 0 ? this.tileFrom : null);
     if (!start) return -1;
-    for (let i = 0; i < this.path.length; i++) {
-      const waypoint = this.path[i];
-      if (this.tileOnCompressedSegment(start, waypoint, tx, tz)) return i;
-      start = waypoint;
-    }
-    return -1;
+    return compressedRouteSegmentIndexForTile(start, this.path, tx, tz);
   }
 
   private isTileOnActivePredictedStep(tx: number, tz: number): boolean {
     if (this.pathIndex >= this.path.length) return false;
     if (Math.floor(this.tileFrom.x) === tx && Math.floor(this.tileFrom.z) === tz) return false;
-    return this.tileOnCompressedSegment(this.tileFrom, this.path[this.pathIndex], tx, tz);
+    return compressedRouteSegmentIndexForTile(this.tileFrom, this.path, tx, tz, this.pathIndex) === this.pathIndex;
   }
 
   private setTileFrom(x: number, z: number): void {
@@ -8364,12 +8334,10 @@ export class GameManager {
     this.path = [];
     this.pathIndex = 0;
     this.tileProgress = 0;
-    this.pendingPath = null;
     this.predictedPathUnitSteps = 0;
     this.predictedPathStartedAt = 0;
     this.predictedPathStart = null;
     this.predictedPathDestination = null;
-    this.predictedPathAuthorityReanchorAttempts = 0;
     this.selfAuthorityRouteTargetSteps = 0;
     this.selfAuthorityRedirectGraceUntil = 0;
     this.selfAuthorityRedirectStaleRouteTiles.clear();
@@ -8438,60 +8406,16 @@ export class GameManager {
 
   private predictedRouteStepIndexForTile(x: number, z: number): number {
     if (this.path.length === 0) return -1;
-    const tx = Math.floor(x);
-    const tz = Math.floor(z);
     const start = this.predictedPathStart ?? (this.pathIndex === 0 ? this.tileFrom : null);
     if (!start) return -1;
-
-    let sx = Math.floor(start.x);
-    let sz = Math.floor(start.z);
-    if (sx === tx && sz === tz) return 0;
-
-    let routeSteps = 0;
-    for (const waypoint of this.path) {
-      const ex = Math.floor(waypoint.x);
-      const ez = Math.floor(waypoint.z);
-      const dx = Math.sign(ex - sx);
-      const dz = Math.sign(ez - sz);
-      const segmentSteps = Math.max(Math.abs(ex - sx), Math.abs(ez - sz));
-      for (let step = 1; step <= segmentSteps; step++) {
-        const px = sx + dx * step;
-        const pz = sz + dz * step;
-        if (px === tx && pz === tz) return routeSteps + step;
-      }
-      routeSteps += segmentSteps;
-      sx = ex;
-      sz = ez;
-    }
-
-    return -1;
+    return compressedRouteStepIndexForTile(start, this.path, x, z);
   }
 
   private predictedRouteProgressSteps(): number {
     if (this.path.length === 0) return 0;
     const start = this.predictedPathStart ?? (this.pathIndex === 0 ? this.tileFrom : null);
     if (!start) return 0;
-
-    let sx = Math.floor(start.x);
-    let sz = Math.floor(start.z);
-    let routeSteps = 0;
-    for (let i = 0; i < this.path.length; i++) {
-      const waypoint = this.path[i];
-      const ex = Math.floor(waypoint.x);
-      const ez = Math.floor(waypoint.z);
-      const segmentSteps = Math.max(Math.abs(ex - sx), Math.abs(ez - sz));
-      if (i < this.pathIndex) {
-        routeSteps += segmentSteps;
-      } else if (i === this.pathIndex) {
-        return routeSteps + Math.max(0, Math.min(segmentSteps, this.tileProgress * segmentSteps));
-      } else {
-        return routeSteps;
-      }
-      sx = ex;
-      sz = ez;
-    }
-
-    return routeSteps;
+    return compressedRouteProgressSteps(start, this.path, this.pathIndex, this.tileProgress);
   }
 
   private noteSelfAuthorityRouteTarget(x: number, z: number): void {
@@ -8610,29 +8534,9 @@ export class GameManager {
   }
 
   private collectPredictedRouteTileKeys(): Set<string> {
-    const tiles = new Set<string>();
-    if (this.path.length === 0) return tiles;
+    if (this.path.length === 0) return new Set<string>();
     const start = this.predictedPathStart ?? (this.pathIndex === 0 ? this.tileFrom : null);
-    if (!start) return tiles;
-
-    let sx = Math.floor(start.x);
-    let sz = Math.floor(start.z);
-    tiles.add(`${sx},${sz}`);
-
-    for (const waypoint of this.path) {
-      const ex = Math.floor(waypoint.x);
-      const ez = Math.floor(waypoint.z);
-      const dx = Math.sign(ex - sx);
-      const dz = Math.sign(ez - sz);
-      const segmentSteps = Math.max(Math.abs(ex - sx), Math.abs(ez - sz));
-      for (let step = 1; step <= segmentSteps; step++) {
-        tiles.add(`${sx + dx * step},${sz + dz * step}`);
-      }
-      sx = ex;
-      sz = ez;
-    }
-
-    return tiles;
+    return start ? collectCompressedRouteTileKeys(start, this.path) : new Set<string>();
   }
 
   private clearSelfAuthorityRedirectGrace(): void {
@@ -8746,7 +8650,6 @@ export class GameManager {
     if (!this.predictedPathDestination) return;
     const dest = this.path[this.path.length - 1];
     this.predictedPathDestination = dest ? { x: dest.x, z: dest.z } : null;
-    this.predictedPathAuthorityReanchorAttempts = 0;
   }
 
   private armControlledMoveLock(path: { x: number; z: number }[]): void {
@@ -8773,26 +8676,21 @@ export class GameManager {
     const currentTarget = activeStep?.target ?? this.path[this.pathIndex];
     const alreadyTrimmed = this.path.length === 1
       && this.pathIndex === 0
-      && this.pendingPath === null
       && this.sameTile(this.path[0], currentTarget);
     if (alreadyTrimmed) {
       this.predictedPathUnitSteps = 1;
       if (allowAuthorityReanchor && !this.predictedPathDestination) {
         this.predictedPathDestination = { x: currentTarget.x, z: currentTarget.z };
-        this.predictedPathAuthorityReanchorAttempts = 0;
       } else if (!allowAuthorityReanchor) {
         this.predictedPathDestination = null;
-        this.predictedPathAuthorityReanchorAttempts = 0;
       }
       return false;
     }
 
     this.path = [currentTarget];
     this.pathIndex = 0;
-    this.pendingPath = null;
     this.predictedPathUnitSteps = 1;
     this.predictedPathDestination = allowAuthorityReanchor ? { x: currentTarget.x, z: currentTarget.z } : null;
-    this.predictedPathAuthorityReanchorAttempts = 0;
     if (activeStep) {
       this.tileProgress = activeStep.progress;
       this.setTileFrom(activeStep.from.x, activeStep.from.z);
@@ -8899,12 +8797,12 @@ export class GameManager {
   private remainingPredictedUnitSteps(): number {
     const activeStep = this.getActiveUnitStep();
     if (!activeStep) return 0;
-    return 1 + compressedPathTileSteps(activeStep.target, this.path.slice(this.pathIndex));
+    return 1 + compressedPathTileStepsFromIndex(activeStep.target, this.path, this.pathIndex);
   }
 
   private predictedPathRemainingUnitSteps(): number {
     return this.pathIndex < this.path.length
-      ? compressedPathTileSteps(this.tileFrom, this.path.slice(this.pathIndex))
+      ? compressedPathTileStepsFromIndex(this.tileFrom, this.path, this.pathIndex)
       : 0;
   }
 
@@ -9238,7 +9136,7 @@ export class GameManager {
     const recentArrivalRouteTiles = !wasPathing && this.recentPredictedArrivalUntil > now
       ? new Set(this.recentPredictedArrivalRouteTiles)
       : null;
-    const shouldPreserveCurrentStep = !!activeStep && this.tileProgress > 0;
+    const shouldPreserveCurrentStep = preserveCurrentStep && !!activeStep && this.tileProgress > 0;
     const nextPath = shouldPreserveCurrentStep && activeStep && !this.sameTile(path[0], activeStep.target)
       ? [activeStep.target, ...path]
       : path;
@@ -9251,7 +9149,6 @@ export class GameManager {
     this.predictedPathStartedAt = now;
     const dest = nextPath[nextPath.length - 1];
     this.predictedPathDestination = allowAuthorityReanchor && dest ? { x: dest.x, z: dest.z } : null;
-    this.predictedPathAuthorityReanchorAttempts = 0;
     if (shouldPreserveCurrentStep && activeStep) {
       this.tileProgress = activeStep.progress;
       this.setTileFrom(activeStep.from.x, activeStep.from.z);
@@ -9262,7 +9159,6 @@ export class GameManager {
       this.setTileFrom(this.playerX, this.playerZ);
     }
     this.predictedPathStart = { x: this.tileFrom.x, z: this.tileFrom.z };
-    this.pendingPath = null;
     const initialSteps = compressedPathTileSteps(this.tileFrom, nextPath);
     this.predictedPathUnitSteps = initialSteps;
     this.selfAuthorityRouteTargetSteps = 0;
@@ -11023,7 +10919,6 @@ export class GameManager {
     this.predictedPathStartedAt = 0;
     this.predictedPathStart = null;
     this.predictedPathDestination = null;
-    this.predictedPathAuthorityReanchorAttempts = 0;
     this.selfAuthorityRouteTargetSteps = 0;
     this.selfAuthorityRedirectGraceUntil = 0;
     this.selfAuthorityRedirectStaleRouteTiles.clear();
@@ -11090,7 +10985,6 @@ export class GameManager {
     // Treat the click as a stop: end the path at the current tile center,
     // tell the server to halt too.
     if (clickedOwnTile) {
-      this.pendingPath = null;
       this.minimap?.clearDestination();
       if (this.pathIndex < this.path.length) {
         // Keep the current unit progress so interpolation continues seamlessly.
@@ -12340,7 +12234,7 @@ export class GameManager {
     }
 
     if (nextPath.length === 0) return false;
-    this.startLocalPredictedPath(nextPath, false, true);
+    this.startLocalPredictedPath(nextPath, true, true);
     this.noteSelfAuthorityRouteTarget(final.x, final.z);
     return true;
   }
@@ -12534,16 +12428,6 @@ export class GameManager {
       this.playerZ = stepTarget.z;
       this.setTileFrom(stepTarget.x, stepTarget.z);
       this.pathIndex++;
-
-      if (this.pendingPath) {
-        const staleRouteTiles = this.collectPredictedRouteTileKeys();
-        this.path = this.pendingPath;
-        this.pathIndex = 0;
-        this.pendingPath = null;
-        this.predictedPathUnitSteps = this.predictedPathRemainingUnitSteps();
-        this.selfAuthorityRouteTargetSteps = 0;
-        this.armSelfAuthorityRedirectGrace(performance.now(), staleRouteTiles);
-      }
 
       if (this.pathIndex >= this.path.length) {
         this.finishPredictedPathArrival();

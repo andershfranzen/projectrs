@@ -60,7 +60,6 @@ function makeManager(
   manager.predictedPathStartedAt = 1;
   manager.predictedPathStart = { x: 0.5, z: 0.5 };
   manager.predictedPathDestination = null;
-  manager.predictedPathAuthorityReanchorAttempts = 0;
   manager.recentPredictedArrivalUntil = 0;
   manager.recentPredictedArrivalDestination = null;
   manager.recentPredictedArrivalRouteTiles = new Set();
@@ -71,7 +70,6 @@ function makeManager(
   manager.selfAuthorityRedirectGraceUntil = 0;
   manager.selfAuthorityRedirectStaleRouteTiles = new Set();
   manager.currentFloor = 0;
-  manager.pendingPath = null;
   manager.isSkilling = false;
   manager.localCombatWalkUntilMs = 0;
   manager.pendingFaceTargetEntityId = -1;
@@ -193,7 +191,7 @@ describe('GameManager local movement prediction', () => {
     manager.startLocalPredictedPath([
       { x: 2.5, z: 1.5 },
       { x: 2.5, z: 8.5 },
-    ], false, true);
+    ], true, true);
 
     expect(manager.path[0]).toEqual({ x: 1.5, z: 0.5 });
     expect(manager.path[1]).toEqual({ x: 2.5, z: 1.5 });
@@ -559,7 +557,7 @@ describe('GameManager local movement prediction', () => {
 
     manager.startLocalPredictedPath([
       { x: 10.5, z: 0.5 },
-    ], false, true);
+    ], true, true);
 
     manager.applyLocalAuthoritativeMoveSteps([
       { x: 30.5, z: 30.5, floor: 0, y: 0, mode: 'run' },
@@ -758,7 +756,7 @@ describe('GameManager local movement prediction', () => {
     advanceLocalMovement(manager, 2.5);
     manager.startLocalPredictedPath([
       { x: 8.5, z: 1.5 },
-    ], false, true);
+    ], true, true);
 
     expect(manager.selfAuthorityRedirectGraceUntil).toBeGreaterThan(performance.now());
 

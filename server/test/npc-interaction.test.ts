@@ -157,7 +157,69 @@ function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Ar
   return { world, broadcasts };
 }
 
+function makePendingUseItemOnNpcArrivalHarness(hasBank: boolean): { world: any; player: Player; npc: Npc; replays: number[] } {
+  const player = new Player('npc_item_arrival', 9.5, 10.5, fakeWs, 1);
+  const npc = new Npc({ ...npcDef, id: hasBank ? 200 : 201, bankAccess: hasBank }, 11.5, 10.5);
+  player.currentMapLevel = 'kcmap';
+  player.currentFloor = 0;
+  npc.currentMapLevel = 'kcmap';
+  npc.currentFloor = 0;
+  player.inventory[0] = { itemId: 10, quantity: 1 };
+  player.setMoveQueue([{ x: 10.5, z: 10.5 }]);
+  player.pendingUseItemOnNpc = { invSlot: 0, itemId: 10, npcEntityId: npc.id };
+
+  const replays: number[] = [];
+  const map = {
+    isWallBlocked: () => false,
+    isWallBlockedOnFloor: () => false,
+  };
+  const world = Object.create(World.prototype) as any;
+  world.currentTick = 25;
+  world.players = new Map([[player.id, player]]);
+  world.npcs = new Map([[npc.id, npc]]);
+  world.activeDuels = new Map();
+  world.accruePlayerMovementCredit = () => { player.movementCredit = 1; };
+  world.getPlayerMap = () => map;
+  world.isPlayerMovementTileBlocked = () => false;
+  world.sultansMineExportDoorCrossedByStep = () => null;
+  world.playerHasRoyalMineOre = () => false;
+  world.markSultansMineDoorTransitMoved = () => {};
+  world.resolvePlayerMovementLayerAt = () => ({ floor: 0, y: 0, lastFloorChangeTile: null });
+  world.applyPlayerMovementLayer = () => {};
+  world.repairOrCompleteSultansMineDoorTransit = () => {};
+  world.updatePlayerRunEnergy = () => {};
+  world.updateEntityChunk = () => {};
+  world.markEntityTileOccupantsDirty = () => {};
+  world.checkpointPlayerPosition = () => {};
+  world.isQueuedActionCurrent = () => true;
+  world.handlePlayerUseItemOnNpc = (_playerId: number, _invSlot: number, _itemId: number, npcEntityId: number) => {
+    replays.push(npcEntityId);
+  };
+  return { world, player, npc, replays };
+}
+
 describe('NPC interaction reachability', () => {
+  test('deferred use-item-on-banker NPC interaction replays on the arrival tick', () => {
+    const { world, player, npc, replays } = makePendingUseItemOnNpcArrivalHarness(true);
+
+    world.tickPlayerMovement();
+
+    expect(player.lastMovedTick).toBe(world.currentTick);
+    expect(player.hasMoveQueue()).toBe(false);
+    expect(replays).toEqual([npc.id]);
+  });
+
+  test('deferred inert use-item-on-NPC interaction still waits one tick after arrival', () => {
+    const { world, player, replays } = makePendingUseItemOnNpcArrivalHarness(false);
+
+    world.tickPlayerMovement();
+
+    expect(player.lastMovedTick).toBe(world.currentTick);
+    expect(player.hasMoveQueue()).toBe(false);
+    expect(replays).toEqual([]);
+    expect(player.pendingUseItemOnNpc).toMatchObject({ itemId: 10 });
+  });
+
   test('royal guard dialogue banks inventory ore after charging coins', () => {
     const dialogue: DialogueTree = {
       root: 'greet',

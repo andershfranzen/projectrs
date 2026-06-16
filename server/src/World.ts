@@ -5872,6 +5872,43 @@ export class World {
     return recipes.length > 1;
   }
 
+  private isCraftingStationObject(obj: WorldObject): boolean {
+    return obj.def.category === 'furnace'
+      || obj.def.category === 'cookingrange'
+      || obj.def.category === 'anvil'
+      || obj.defId === FIRE_OBJECT_DEF_ID
+      || obj.defId === POTTERY_WHEEL_OBJECT_DEF_ID
+      || obj.defId === KILN_OBJECT_DEF_ID
+      || obj.defId === SPINNING_WHEEL_OBJECT_DEF_ID;
+  }
+
+  private shouldDelayPendingObjectInteractionAfterArrival(obj: WorldObject | undefined): boolean {
+    if (!obj) return true;
+    if (obj.def.category === 'door') return false;
+    // Recipe stations open UI or mutate inventory after server-side adjacency
+    // validation. They do not start a world skilling animation, so replaying
+    // them on the arrival tick avoids a visible furnace/anvil dead tick without
+    // weakening movement validation.
+    if ((obj.def.recipes?.length ?? 0) > 0 && this.isCraftingStationObject(obj)) return false;
+    return true;
+  }
+
+  private shouldDelayPendingUseItemOnObjectAfterArrival(obj: WorldObject | undefined, itemId: number): boolean {
+    if (!obj) return true;
+    if (obj.def.category === 'door' || obj.def.category === 'bank') return false;
+    if (this.findItemOnObjectRecipe(itemId, obj)) return false;
+    if (this.findKilnRecipeIndex(itemId, obj) >= 0) return false;
+    if (this.findSpinningWheelRecipeIndex(itemId, obj) >= 0) return false;
+    if (this.findObjectRecipeIndex(itemId, obj) >= 0) return false;
+    if (this.objectStorageSurfaceWorldY(obj) !== null) return false;
+    return true;
+  }
+
+  private shouldDelayPendingUseItemOnNpcAfterArrival(npc: Npc | undefined): boolean {
+    if (!npc) return true;
+    return !npc.hasBank;
+  }
+
   private currentObjectActionsForPlayer(player: Player, obj: WorldObject): readonly string[] {
     let actions: readonly string[];
     if (obj.def.category === 'door') {
@@ -10221,13 +10258,11 @@ export class World {
       if (player.pendingInteraction && !player.hasMoveQueue()) {
         const { objectEntityId, actionIndex, swingSign, recipeIndex, recipeQuantity, expectedDoorOpen } = player.pendingInteraction;
         const obj = this.worldObjects.get(objectEntityId);
-        // Doors fire instantly on arrival — toggling is visually
-        // self-evident (the door swings) and the client already
-        // interpolates the character's arrival visually. Other
-        // interactions (skilling, crafting) keep the !justArrived guard so
-        // animations don't register while the character is mid-step.
-        const isDoorInteraction = obj?.def.category === 'door';
-        if (!isDoorInteraction && justArrived) continue;
+        // Most non-door interactions wait one arrival tick so skilling
+        // animations do not start while the client is still visually finishing
+        // the final step. Crafting stations are UI/inventory actions, so they
+        // can replay immediately after authoritative adjacency validation.
+        if (justArrived && this.shouldDelayPendingObjectInteractionAfterArrival(obj)) continue;
         this.clearQueuedPlayerActions(player);
         if (obj && this.canPlayerTargetObject(player, obj)) {
           if (this.isAdjacentToObject(player, obj)) {
@@ -10252,15 +10287,17 @@ export class World {
         }
       }
       if (player.pendingUseItemOnObject && !player.hasMoveQueue()) {
-        if (justArrived) continue;
         const { invSlot, itemId, objectEntityId } = player.pendingUseItemOnObject;
+        const obj = this.worldObjects.get(objectEntityId);
+        if (justArrived && this.shouldDelayPendingUseItemOnObjectAfterArrival(obj, itemId)) continue;
         player.pendingUseItemOnObject = null;
         player.pendingActionRevision = -1;
         this.handlePlayerUseItemOnObject(playerId, invSlot, itemId, objectEntityId);
       }
       if (player.pendingUseItemOnNpc && !player.hasMoveQueue()) {
-        if (justArrived) continue;
         const { invSlot, itemId, npcEntityId } = player.pendingUseItemOnNpc;
+        const npc = this.npcs.get(npcEntityId);
+        if (justArrived && this.shouldDelayPendingUseItemOnNpcAfterArrival(npc)) continue;
         player.pendingUseItemOnNpc = null;
         player.pendingActionRevision = -1;
         this.handlePlayerUseItemOnNpc(playerId, invSlot, itemId, npcEntityId);
