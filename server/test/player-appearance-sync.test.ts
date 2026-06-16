@@ -69,6 +69,8 @@ describe('player appearance sync', () => {
       hairStyle: 6,
     });
     const subject = makePlayer('subject', 2, appearance);
+    subject.player.isAdmin = true;
+    subject.player.isModerator = true;
 
     const world = Object.create(World.prototype) as any;
     world.players = new Map([[viewer.player.id, viewer.player], [subject.player.id, subject.player]]);
@@ -103,6 +105,7 @@ describe('player appearance sync', () => {
       (packet) => packet.opcode === ServerOpcode.PLAYER_SYNC && packet.values[0] === subject.player.id,
     );
     expect(remoteSync?.values.slice(5, 13)).toEqual(selfSync?.values.slice(6, 14));
+    expect(remoteSync?.values[16]).toBe(0);
   });
 
   test('appearance editor close keeps first-login creation mandatory', () => {

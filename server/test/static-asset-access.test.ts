@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { hasForbiddenStaticSourceExtension, requiresAdminStaticAsset, requiresAuthenticatedGameStaticAsset } from '../src/security/StaticAssetAccess';
+import { hasForbiddenStaticSourceExtension, requiresAdminStaticAsset, requiresAuthenticatedGameStaticAsset, staticGameAssetCacheControl } from '../src/security/StaticAssetAccess';
 
 describe('static game asset access', () => {
   test('protects game model and thumbnail assets but not public bundles', () => {
@@ -25,6 +25,7 @@ describe('static game asset access', () => {
     expect(requiresAuthenticatedGameStaticAsset('/assets/admin-panel-AbC_123.js')).toBe(false);
     expect(requiresAuthenticatedGameStaticAsset('/assets/AdminPanel-AbC_123.js')).toBe(false);
     expect(requiresAdminStaticAsset('/assets/GameManager-Kg0KN_Zj.js')).toBe(false);
+    expect(staticGameAssetCacheControl('/assets/AdminPanel-AbC_123.js', true)).toBe('private, no-store');
   });
 
   test('blocks source asset formats regardless of URL encoding', () => {

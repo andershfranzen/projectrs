@@ -17,6 +17,7 @@ interface AdminBotAccount {
   username: string;
   isAdmin: boolean;
   isModerator: boolean;
+  online: boolean;
   riskScore: number;
   riskLevel: RiskLevel | string;
   riskReasons: string[];
@@ -57,6 +58,23 @@ interface AdminBotAccount {
     riskLevel: string;
     banned: boolean;
   }>;
+  sharedIpAlts: Array<{
+    accountId: number;
+    username: string;
+    ips: number;
+    logins: number;
+    lastSeenTs: number | null;
+    lastIp: string | null;
+    riskScore: number;
+    riskLevel: string;
+    banned: boolean;
+  }>;
+  vpnLikeIp: {
+    ip: string;
+    reverseDns: string;
+    lastSeenTs: number;
+    reason: string;
+  } | null;
   lastSessionSummary: Record<string, unknown> | null;
   accountBan: AdminAccountBan | null;
   ipBan: AdminIpBan | null;
@@ -811,13 +829,17 @@ export class AdminPanel {
     this.setGridHeader(BOT_GRID_COLUMNS, ['Account', 'Score', 'Risk', 'Signals', 'Last login']);
     const total = this.accounts.length;
     const high = this.accounts.filter((a) => a.riskLevel === 'high' || a.riskLevel === 'critical').length;
-    const flagged = this.accounts.filter((a) => a.riskScore > 0 || a.totalFlagEvents > 0).length;
+    const sharedIp = this.accounts.filter((a) => a.sharedIpAlts.length > 0).length;
+    const vpnLike = this.accounts.filter((a) => !!a.vpnLikeIp).length;
+    const flagged = this.accounts.filter((a) => a.riskScore > 0 || a.totalFlagEvents > 0 || a.sharedIpAlts.length > 0 || !!a.vpnLikeIp).length;
     const suspiciousPackets = this.accounts.reduce((sum, a) => sum + a.totalSuspiciousPackets, 0);
     const banned = this.accounts.filter((a) => a.accountBan || a.ipBan).length;
     this.summaryEl.replaceChildren(
       this.summaryPill(`${total} accounts`, '#6c5c43'),
       this.summaryPill(`${flagged} flagged`, '#8f6d2d'),
       this.summaryPill(`${high} high/critical`, '#8f2f28'),
+      this.summaryPill(`${sharedIp} shared IP`, sharedIp > 0 ? '#6b3b34' : '#4d5d45'),
+      this.summaryPill(`${vpnLike} VPN/DC`, vpnLike > 0 ? '#7a5a25' : '#4d5d45'),
       this.summaryPill(`${banned} banned`, banned > 0 ? '#8f2f28' : '#4d5d45'),
       this.summaryPill(`${suspiciousPackets} bad packets`, '#5f4a7d'),
       this.summaryPill(`${this.botSearchQuery ? 'search on' : 'all names'}`, this.botSearchQuery ? '#7a5a25' : '#4d5d45'),
@@ -1342,11 +1364,22 @@ export class AdminPanel {
       font-weight: ${account.accountBan || account.ipBan ? '700' : '400'};
     `;
     cell.appendChild(name);
+    cell.appendChild(this.statusPill(
+      account.online ? 'ONLINE' : 'OFFLINE',
+      account.online ? '#2f6f4e' : '#5a5146',
+      account.online ? 'Online now' : 'Offline',
+    ));
     if (account.accountBan) {
       cell.appendChild(this.statusPill('BANNED', '#b52f24', this.accountBanTitle(account.accountBan)));
     }
     if (account.ipBan) {
       cell.appendChild(this.statusPill('IP BAN', '#9a4f24', this.ipBanTitle(account.ipBan)));
+    }
+    if (account.sharedIpAlts.length > 0) {
+      cell.appendChild(this.statusPill(`IP x${account.sharedIpAlts.length + 1}`, '#6b3b34', 'This account has ever shared a login IP with other accounts'));
+    }
+    if (account.vpnLikeIp) {
+      cell.appendChild(this.statusPill('VPN/DC?', '#7a5a25', account.vpnLikeIp.reason));
     }
     if (account.accountMute) {
       cell.appendChild(this.statusPill('MUTED', '#7a5a25', this.muteTitle(account.accountMute)));
@@ -1383,6 +1416,17 @@ export class AdminPanel {
     `;
 
     menu.append(
+      this.accountMenuItem('Clear risk score', false, () => {
+        void this.clearBotRiskForAccount(account);
+      }),
+      this.accountMenuSeparator(),
+      this.accountMenuItem('Teleport to', !account.online, () => {
+        void this.teleportAccount(account, 'to-target');
+      }),
+      this.accountMenuItem('Teleport to me', !account.online, () => {
+        void this.teleportAccount(account, 'to-admin');
+      }),
+      this.accountMenuSeparator(),
       this.accountMenuItem(account.accountBan ? 'Update ban 24h' : 'Ban 24h', account.isAdmin, () => {
         void this.runTimedModeration(account, '/api/admin/ban-account', 24 * 3600, 'Ban account');
       }),
@@ -1425,6 +1469,47 @@ export class AdminPanel {
     const top = Math.max(8, Math.min(event.clientY, window.innerHeight - rect.height - 8));
     menu.style.left = `${left}px`;
     menu.style.top = `${top}px`;
+  }
+
+  private async clearBotRiskForAccount(account: AdminBotAccount): Promise<void> {
+    const confirmed = window.confirm(`Clear bot review score and telemetry for ${account.username}?`);
+    if (!confirmed) return;
+    try {
+      const res = await fetch('/api/admin/bot-review/clear-account', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({ accountId: account.accountId }),
+      });
+      const payload = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok || !payload.ok) throw new Error(payload.error || `Clear failed (${res.status})`);
+      this.selectedAccountId = account.accountId;
+      await this.refreshBotReview();
+    } catch (err) {
+      this.renderActionError(err instanceof Error ? err.message : 'Unable to clear risk score.');
+    }
+  }
+
+  private async teleportAccount(account: AdminBotAccount, direction: 'to-target' | 'to-admin'): Promise<void> {
+    try {
+      const res = await fetch('/api/admin/bot-review/teleport', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({ accountId: account.accountId, direction }),
+      });
+      const payload = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok || !payload.ok) throw new Error(payload.error || `Teleport failed (${res.status})`);
+      await this.refreshBotReview();
+    } catch (err) {
+      this.renderActionError(err instanceof Error ? err.message : 'Teleport failed.');
+    }
   }
 
   private accountMenuItem(label: string, disabled: boolean, action: () => void): HTMLButtonElement {
@@ -1518,6 +1603,7 @@ export class AdminPanel {
       document.createTextNode(`${account.username} #${account.accountId}`),
       this.riskPill(account.riskLevel),
     );
+    title.appendChild(this.summaryPill(account.online ? 'online' : 'offline', account.online ? '#2f6f4e' : '#5a5146'));
     if (account.isAdmin) title.appendChild(this.summaryPill('admin', '#5f4a7d'));
     if (account.isModerator) title.appendChild(this.summaryPill('moderator', '#2f5f8f'));
     root.appendChild(title);
@@ -1572,6 +1658,7 @@ export class AdminPanel {
     `;
     const metricRows: Array<[string, string]> = [
       ['Score', String(account.riskScore)],
+      ['Online', account.online ? 'yes' : 'no'],
       ['Total time', this.formatMinutes(account.totalSessionMinutes)],
       ['Evidence events', String(account.totalFlagEvents)],
       ['Bad packets', String(account.totalSuspiciousPackets)],
@@ -1582,6 +1669,8 @@ export class AdminPanel {
       ['Moves', this.formatNumber(account.totalMovements)],
       ['Chats', this.formatNumber(account.totalChatMessages)],
       ['Devices', String(account.deviceIdsSeen)],
+      ['IP alts', String(account.sharedIpAlts.length)],
+      ['VPN/DC', account.vpnLikeIp?.reason ?? '-'],
       ['Path repeat', this.formatPercent(account.topPathRepetition)],
       ['Last login', this.formatTime(account.lastLoginTs)],
       ['Last session', account.lastSessionMinutes == null ? '-' : this.formatMinutes(account.lastSessionMinutes)],
@@ -1639,7 +1728,7 @@ export class AdminPanel {
       root.appendChild(packets);
     }
 
-    if (account.topPathDestinations.length > 0 || account.sharedDeviceAlts.length > 0) {
+    if (account.topPathDestinations.length > 0 || account.sharedDeviceAlts.length > 0 || account.sharedIpAlts.length > 0 || account.vpnLikeIp) {
       const context = document.createElement('div');
       context.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px;`;
       for (const entry of account.topPathDestinations.slice(0, 5)) {
@@ -1649,10 +1738,24 @@ export class AdminPanel {
         // Highlight alts that are themselves banned or high-risk — a strong
         // alt-account / gold-farm-fleet signal an admin should not miss.
         const flagged = alt.banned || alt.riskLevel === 'high' || alt.riskLevel === 'critical';
-        const tag = alt.banned ? ' ⛔ BANNED' : flagged ? ` ⚠ ${alt.riskLevel} ${alt.riskScore}` : '';
+        const tag = alt.banned ? ' BANNED' : flagged ? ` ${alt.riskLevel} ${alt.riskScore}` : '';
         const color = alt.banned ? '#b52f24' : flagged ? '#8f2f28' : '#6b3b34';
         const pill = this.summaryPill(`device alt ${alt.username}: ${alt.devices} dev/${alt.logins} logins${tag}`, color);
         if (flagged) pill.title = 'Shares a device with this account and is itself flagged/banned — likely the same operator.';
+        context.appendChild(pill);
+      }
+      for (const alt of account.sharedIpAlts.slice(0, 5)) {
+        const flagged = alt.banned || alt.riskLevel === 'high' || alt.riskLevel === 'critical';
+        const tag = alt.banned ? ' BANNED' : flagged ? ` ${alt.riskLevel} ${alt.riskScore}` : '';
+        const color = alt.banned ? '#b52f24' : flagged ? '#8f2f28' : '#6b3b34';
+        const pill = this.summaryPill(`same IP ${alt.username}: ${alt.ips} ip/${alt.logins} logins${tag}`, color);
+        pill.title = alt.lastIp ? `Shared IP: ${alt.lastIp}` : 'Shares at least one login IP with this account.';
+        context.appendChild(pill);
+      }
+      if (account.vpnLikeIp) {
+        const signal = account.vpnLikeIp;
+        const pill = this.summaryPill(`VPN/DC ${signal.ip}: ${signal.reason}`, '#7a5a25');
+        pill.title = `${signal.reverseDns} at ${this.formatTime(signal.lastSeenTs)}`;
         context.appendChild(pill);
       }
       root.appendChild(context);
@@ -1865,6 +1968,8 @@ export class AdminPanel {
     const contextFlags = this.summaryStringArray(account.lastSessionSummary, 'contextFlags');
     if (contextFlags.length > 0) return `ctx ${contextFlags.slice(0, 2).join(', ')}`;
     if (account.riskReasons.length > 0) return account.riskReasons.slice(0, 2).join(', ');
+    if (account.vpnLikeIp) return `VPN/DC-looking IP: ${account.vpnLikeIp.reason}`;
+    if (account.sharedIpAlts.length > 0) return `ever shared IP with ${account.sharedIpAlts.length} account(s)`;
     return account.totalFlagEvents > 0 ? `${account.totalFlagEvents} lifetime flags` : 'none';
   }
 

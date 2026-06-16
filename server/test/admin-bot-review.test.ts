@@ -45,8 +45,14 @@ describe('admin bot review data', () => {
       const deviceId = '11111111-1111-4111-8111-111111111111';
       const target = db.loginFallbackAccount('review-target', deviceId);
       const alt = db.loginFallbackAccount('alt-target', deviceId);
-      db.recordLogin(target.accountId, '203.0.113.7', deviceId);
+      const ipAlt = db.loginFallbackAccount('same-ip-target', '33333333-3333-4333-8333-333333333333');
+      const residential = db.loginFallbackAccount('residential-target', '44444444-4444-4444-8444-444444444444');
+      const targetLoginId = db.recordLogin(target.accountId, '203.0.113.7', deviceId);
+      db.setLoginReverseDns(targetLoginId, 'se-sto-wg-001.relays.mullvad.net');
       db.recordLogin(alt.accountId, '203.0.113.8', deviceId);
+      db.recordLogin(ipAlt.accountId, '203.0.113.7', '33333333-3333-4333-8333-333333333333');
+      const residentialLoginId = db.recordLogin(residential.accountId, '203.0.113.9', '44444444-4444-4444-8444-444444444444');
+      db.setLoginReverseDns(residentialLoginId, 'customer-203-0-113-9.toronto.isp.example');
 
       const stats = BotStats.empty();
       stats.onLogin({});
@@ -68,6 +74,12 @@ describe('admin bot review data', () => {
       expect(row?.riskReasons.some((reason) => reason.includes('low-social high-activity'))).toBe(true);
       expect(row?.chatRatePerHour).toBeLessThan(1);
       expect(row?.sharedDeviceAlts[0]?.username).toBe('alt-target');
+      expect(row?.sharedIpAlts[0]?.username).toBe('same-ip-target');
+      expect(row?.sharedIpAlts[0]?.lastIp).toBe('203.0.113.7');
+      expect(row?.vpnLikeIp?.reason).toBe('Mullvad PTR');
+      expect(row?.vpnLikeIp?.ip).toBe('203.0.113.7');
+      const residentialRow = db.listAdminBotReviewAccounts().find((entry) => entry.accountId === residential.accountId);
+      expect(residentialRow?.vpnLikeIp).toBeNull();
     } finally {
       db.close();
     }
@@ -112,6 +124,26 @@ describe('admin bot review data', () => {
       expect(row?.totalSuspiciousPackets).toBe(0);
       expect(row?.lastIp).toBe('203.0.113.7');
       expect(row?.lastSessionMinutes).toBe(8);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('clears bot risk telemetry for one account only', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const target = db.loginFallbackAccount('reset-one', '11111111-1111-4111-8111-111111111111');
+      const other = db.loginFallbackAccount('keep-one', '22222222-2222-4222-8222-222222222222');
+      const targetStats = BotStats.empty();
+      const otherStats = BotStats.empty();
+      targetStats.riskScore = 80;
+      otherStats.riskScore = 70;
+      db.saveBotStats(target.accountId, targetStats.toRow());
+      db.saveBotStats(other.accountId, otherStats.toRow());
+
+      expect(db.clearBotStatsForAccount(target.accountId)).toBe(1);
+      expect(db.loadBotStats(target.accountId)).toBeNull();
+      expect(db.loadBotStats(other.accountId)?.risk_score).toBe(70);
     } finally {
       db.close();
     }

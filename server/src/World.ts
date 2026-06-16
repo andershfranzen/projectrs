@@ -634,12 +634,25 @@ export class World {
     return reset;
   }
 
+  resetActiveBotStatsForAccount(accountId: number): number {
+    let reset = 0;
+    for (const [, player] of this.players) {
+      if (player.accountId !== accountId || !player.botStats) continue;
+      const xpBaseline: Record<string, number> = {};
+      for (const skill of ALL_SKILLS) xpBaseline[skill] = player.skills[skill].xp;
+      player.botStats = BotStats.empty();
+      player.botStats.onLogin(xpBaseline, player.deviceId);
+      reset++;
+    }
+    return reset;
+  }
+
   setActiveAccountModerator(accountId: number, isModerator: boolean): boolean {
     const player = this.getActivePlayerByAccountId(accountId);
     if (!player) return false;
     player.isModerator = isModerator;
     player.syncDirty = true;
-    broadcastPlayerInfo(player.id, player.name, player.isAdmin, player.isModerator);
+    broadcastPlayerInfo(player.id, player.name);
     return true;
   }
 
@@ -652,7 +665,7 @@ export class World {
       if (typeof socketData.username === 'string') socketData.username = username;
       player.syncDirty = true;
       if (!player.disconnected && !player.requestIdleLogout) {
-        broadcastPlayerInfo(player.id, player.name, player.isAdmin, player.isModerator);
+        broadcastPlayerInfo(player.id, player.name);
       }
       updated = true;
     }
@@ -2627,9 +2640,9 @@ export class World {
       });
 
       this.sendLoginBootstrap(player);
-      broadcastPlayerInfo(player.id, player.name, player.isAdmin, player.isModerator);
+      broadcastPlayerInfo(player.id, player.name);
       for (const [, other] of this.players) {
-        if (other.id !== player.id) broadcastPlayerInfo(other.id, other.name, other.isAdmin, other.isModerator);
+        if (other.id !== player.id) broadcastPlayerInfo(other.id, other.name);
       }
       this.broadcastRemoteEquipment(player);
       this.sendRemoteStance(player, player);
@@ -2685,10 +2698,10 @@ export class World {
     this.sendLoginBootstrap(player);
 
     // Broadcast player name to all chat sockets
-    broadcastPlayerInfo(player.id, player.name, player.isAdmin, player.isModerator);
+    broadcastPlayerInfo(player.id, player.name);
     for (const [, other] of this.players) {
       if (other.id !== player.id) {
-        broadcastPlayerInfo(other.id, other.name, other.isAdmin, other.isModerator);
+        broadcastPlayerInfo(other.id, other.name);
       }
     }
 
@@ -5805,7 +5818,7 @@ export class World {
       this.queueObjectSaySequence(player, effect.saySequence);
     } else if (typeof effect.say === 'string') {
       const say = effect.say.trim();
-      if (say) broadcastLocalMessage(player.name, say.slice(0, 1000), player.accountId, player.isAdmin, player.isModerator);
+      if (say) broadcastLocalMessage(player.name, say.slice(0, 1000), player.accountId);
     }
     const message = typeof effect.message === 'string' ? effect.message.trim() : '';
     if (message) this.sendChatSystem(player, message.slice(0, 300));
@@ -5922,7 +5935,7 @@ export class World {
         : 0;
       const delayTicks = Math.round((delaySeconds * 1000) / TICK_RATE);
       if (delayTicks <= 0) {
-        broadcastLocalMessage(player.name, message, player.accountId, player.isAdmin, player.isModerator);
+        broadcastLocalMessage(player.name, message, player.accountId);
         continue;
       }
       this.objectSayScheduledLines.push({
@@ -11559,7 +11572,7 @@ export class World {
       }
       const player = this.players.get(line.playerId);
       if (!player || player.disconnected || player.requestIdleLogout) continue;
-      broadcastLocalMessage(line.playerName, line.message, line.accountId, line.isAdmin, line.isModerator);
+      broadcastLocalMessage(line.playerName, line.message, line.accountId);
     }
     this.objectSayScheduledLines = remaining;
   }
@@ -12154,7 +12167,7 @@ export class World {
           player.combatLevel,
           player.currentFloor,
           qPos(player.effectiveY),
-          (player.isAdmin ? 1 : 0) | (player.isModerator ? 2 : 0),
+          0,
         ));
       }
     }
@@ -12399,7 +12412,7 @@ export class World {
       subject.combatLevel,
       subject.currentFloor,
       qPos(subject.effectiveY),
-      (subject.isAdmin ? 1 : 0) | (subject.isModerator ? 2 : 0),
+      0,
     );
   }
 

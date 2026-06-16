@@ -67,6 +67,26 @@ function makeSocialWorld(extra: Record<string, unknown> = {}): any {
 }
 
 describe('admin chat teleport commands', () => {
+  test('player info does not expose staff roles to normal chat clients', () => {
+    const observer = makeCollectingSocket('Observer', 50);
+    const staff = makePlayer(900, 'Staff', 'kcmap', 10, 10);
+    staff.isAdmin = true;
+    staff.isModerator = true;
+    const world = makeSocialWorld();
+    world.players = new Map([[staff.id, staff]]);
+
+    try {
+      handleChatSocketOpen(observer.ws, world);
+
+      const playerInfo = observer.payloads.find(payload => payload.type === 'player_info' && payload.entityId === staff.id);
+      expect(playerInfo).toEqual({ type: 'player_info', entityId: staff.id, name: 'Staff' });
+      expect(Object.hasOwn(playerInfo ?? {}, 'isAdmin')).toBe(false);
+      expect(Object.hasOwn(playerInfo ?? {}, 'isModerator')).toBe(false);
+    } finally {
+      handleChatSocketClose(observer.ws, world);
+    }
+  });
+
   test('muted local chat echoes normally to sender and scrambles for others', () => {
     const sender = makeCollectingSocket('Muted', 42);
     const senderOtherTab = makeCollectingSocket('Muted', 42);

@@ -27,6 +27,33 @@ const RETIRED_RESOURCE_ITEM_IDS = [46, 47, 57] as const;
 const RETIRED_RESOURCE_OBJECT_IDS = [17, 18] as const;
 const HISCORE_EXCLUDED_USERNAMES = new Set(['blackberry']);
 const VALID_STANCES = new Set<string>(STANCE_KEYS);
+const VPN_LIKE_PTR_TOKENS: Array<[string, string]> = [
+  ['vpn', 'VPN PTR'],
+  ['proxy', 'proxy PTR'],
+  ['tor', 'Tor PTR'],
+  ['mullvad', 'Mullvad PTR'],
+  ['nordvpn', 'NordVPN PTR'],
+  ['expressvpn', 'ExpressVPN PTR'],
+  ['surfshark', 'Surfshark PTR'],
+  ['privateinternetaccess', 'PIA PTR'],
+  ['m247', 'M247 VPN/datacenter PTR'],
+  ['digitalocean', 'DigitalOcean PTR'],
+  ['linode', 'Linode PTR'],
+  ['vultr', 'Vultr PTR'],
+  ['ovh', 'OVH PTR'],
+  ['hetzner', 'Hetzner PTR'],
+  ['amazonaws', 'AWS PTR'],
+  ['googleusercontent', 'Google Cloud PTR'],
+  ['azure', 'Azure PTR'],
+  ['datacenter', 'datacenter PTR'],
+  ['hosting', 'hosting PTR'],
+  ['colo', 'colocation PTR'],
+];
+
+function vpnLikePtrReason(reverseDns: string): string | null {
+  const tokens = new Set(reverseDns.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+  return VPN_LIKE_PTR_TOKENS.find(([token]) => tokens.has(token))?.[1] ?? null;
+}
 const STARTER_INVENTORY = [
   { itemId: 31, quantity: 1 },  // Bronze Axe
   { itemId: 33, quantity: 1 },  // Bronze Pickaxe
@@ -272,6 +299,25 @@ export interface AdminSharedDeviceAlt {
   banned: boolean;
 }
 
+export interface AdminSharedIpAlt {
+  accountId: number;
+  username: string;
+  ips: number;
+  logins: number;
+  lastSeenTs: number | null;
+  lastIp: string | null;
+  riskScore: number;
+  riskLevel: string;
+  banned: boolean;
+}
+
+export interface AdminVpnLikeIpSignal {
+  ip: string;
+  reverseDns: string;
+  lastSeenTs: number;
+  reason: string;
+}
+
 export interface AdminBotReviewAccount {
   accountId: number;
   username: string;
@@ -308,6 +354,8 @@ export interface AdminBotReviewAccount {
   actionsPerHour: number | null;
   actionsPerChat: number | null;
   sharedDeviceAlts: AdminSharedDeviceAlt[];
+  sharedIpAlts: AdminSharedIpAlt[];
+  vpnLikeIp: AdminVpnLikeIpSignal | null;
   lastSessionSummary: Record<string, unknown> | null;
   accountBan: AccountBanRecord | null;
   ipBan: IpBanRecord | null;
@@ -2039,8 +2087,10 @@ export class GameDatabase {
     }
   }
 
-  async createAccount(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; wsSecret: string; accountId: number; isAdmin: boolean; isModerator: boolean } | { ok: false; error: string }> {
+  async createAccount(username: string, password: string, deviceId: string = '', clientIp: string = ''): Promise<{ ok: true; token: string; wsSecret: string; accountId: number; isAdmin: boolean; isModerator: boolean } | { ok: false; error: string }> {
     if (!PUBLIC_SIGNUPS_ENABLED) return { ok: false, error: ACCOUNT_CREATION_CLOSED_MESSAGE };
+    const ipBan = this.isIpBanned(clientIp);
+    if (ipBan) return { ok: false, error: 'Banned' };
 
     const usernameError = validateUsername(username);
     if (usernameError) return { ok: false, error: usernameError };
@@ -3482,6 +3532,10 @@ export class GameDatabase {
     return this.db.query('DELETE FROM bot_stats').run().changes;
   }
 
+  clearBotStatsForAccount(accountId: number): number {
+    return this.db.query('DELETE FROM bot_stats WHERE account_id = ?').run(accountId).changes;
+  }
+
   /** Record a new login session. Returns the rowid so handlePlayerDisconnect
    *  can finalize it without re-querying. */
   recordLogin(accountId: number, ip: string, deviceId: string = ''): number {
@@ -3742,6 +3796,8 @@ export class GameDatabase {
         actionsPerHour: totalHours === null ? null : totalActions / totalHours,
         actionsPerChat: totalChats > 0 ? totalActions / totalChats : null,
         sharedDeviceAlts: this.getSharedDeviceAlts(row.id),
+        sharedIpAlts: this.getSharedIpAlts(row.id),
+        vpnLikeIp: this.getVpnLikeIpSignal(row.id),
         lastSessionSummary: parseJsonObject(row.last_session_summary),
         accountBan: this.getAccountBanRecord(row.id),
         ipBan: lastIp ? this.getIpBanRecord(lastIp) : null,
@@ -3750,6 +3806,8 @@ export class GameDatabase {
     });
     accounts.sort((a, b) =>
       b.riskScore - a.riskScore
+      || Number(!!b.vpnLikeIp) - Number(!!a.vpnLikeIp)
+      || b.sharedIpAlts.length - a.sharedIpAlts.length
       || (b.lastLoginTs ?? 0) - (a.lastLoginTs ?? 0)
       || a.username.localeCompare(b.username)
     );
@@ -3801,6 +3859,76 @@ export class GameDatabase {
       riskLevel: row.risk_level,
       banned: row.banned === 1,
     }));
+  }
+
+  private getSharedIpAlts(accountId: number, limit: number = 8): AdminSharedIpAlt[] {
+    const rows = this.db.query(`
+      WITH my_ips AS (
+        SELECT DISTINCT ip_address
+        FROM login_history
+        WHERE account_id = ? AND ip_address IS NOT NULL AND ip_address <> ''
+      )
+      SELECT
+        a.id AS account_id,
+        a.username,
+        COUNT(DISTINCT lh.ip_address) AS ips,
+        COUNT(*) AS logins,
+        MAX(lh.login_ts) AS last_seen_ts,
+        (
+          SELECT lh2.ip_address FROM login_history lh2
+          JOIN my_ips mi2 ON mi2.ip_address = lh2.ip_address
+          WHERE lh2.account_id = a.id
+          ORDER BY lh2.login_ts DESC, lh2.id DESC
+          LIMIT 1
+        ) AS last_ip,
+        COALESCE(bs.risk_score, 0) AS risk_score,
+        COALESCE(bs.risk_level, 'low') AS risk_level,
+        MAX(CASE WHEN ab.account_id IS NOT NULL THEN 1 ELSE 0 END) AS banned
+      FROM login_history lh
+      JOIN my_ips mi ON mi.ip_address = lh.ip_address
+      JOIN accounts a ON a.id = lh.account_id
+      LEFT JOIN bot_stats bs ON bs.account_id = a.id
+      LEFT JOIN account_bans ab ON ab.account_id = a.id AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
+      WHERE lh.account_id <> ?
+      GROUP BY a.id, a.username, bs.risk_score, bs.risk_level
+      ORDER BY banned DESC, risk_score DESC, ips DESC, logins DESC, last_seen_ts DESC
+      LIMIT ?
+    `).all(accountId, accountId, Math.max(1, Math.min(20, limit))) as Array<{
+      account_id: number;
+      username: string;
+      ips: number;
+      logins: number;
+      last_seen_ts: number | null;
+      last_ip: string | null;
+      risk_score: number;
+      risk_level: string;
+      banned: number;
+    }>;
+    return rows.map((row) => ({
+      accountId: row.account_id,
+      username: row.username,
+      ips: row.ips,
+      logins: row.logins,
+      lastSeenTs: row.last_seen_ts,
+      lastIp: row.last_ip,
+      riskScore: row.risk_score,
+      riskLevel: row.risk_level,
+      banned: row.banned === 1,
+    }));
+  }
+
+  private getVpnLikeIpSignal(accountId: number): AdminVpnLikeIpSignal | null {
+    const rows = this.db.query(`
+      SELECT ip_address, reverse_dns, login_ts
+      FROM login_history
+      WHERE account_id = ? AND reverse_dns IS NOT NULL AND reverse_dns <> ''
+      ORDER BY login_ts DESC, id DESC
+    `).all(accountId) as Array<{ ip_address: string; reverse_dns: string; login_ts: number }>;
+    for (const row of rows) {
+      const reason = vpnLikePtrReason(row.reverse_dns);
+      if (reason) return { ip: row.ip_address, reverseDns: row.reverse_dns, lastSeenTs: row.login_ts, reason };
+    }
+    return null;
   }
 
   private seedForumCategories(): void {

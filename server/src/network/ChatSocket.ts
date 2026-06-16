@@ -175,7 +175,7 @@ function preparePlayerForAdminTeleport(player: Player, world: World): void {
   player.pendingInteraction = null;
 }
 
-function adminTeleportPlayerToPlayer(world: World, traveler: Player, destination: Player): void {
+export function adminTeleportPlayerToPlayer(world: World, traveler: Player, destination: Player): void {
   preparePlayerForAdminTeleport(traveler, world);
   if (traveler.currentMapLevel === destination.currentMapLevel) {
     world.teleportPlayer(
@@ -293,12 +293,12 @@ function sendPrivateMessage(
   });
 }
 
-function localChatPayload(from: string, message: string, fromAccountId?: number, fromIsAdmin: boolean = false, fromIsModerator: boolean = false): string {
-  return JSON.stringify({ type: 'local', from, fromAccountId, isAdmin: fromIsAdmin, isModerator: fromIsModerator, message });
+function localChatPayload(from: string, message: string, fromAccountId?: number): string {
+  return JSON.stringify({ type: 'local', from, fromAccountId, message });
 }
 
-function sendLocalEchoToAccount(accountId: number, from: string, message: string, fromIsAdmin: boolean = false, fromIsModerator: boolean = false): void {
-  const payload = localChatPayload(from, message, accountId, fromIsAdmin, fromIsModerator);
+function sendLocalEchoToAccount(accountId: number, from: string, message: string): void {
+  const payload = localChatPayload(from, message, accountId);
   for (const sock of chatSockets) {
     if (sock.data.accountId === accountId) {
       chatSend(sock, payload);
@@ -306,10 +306,10 @@ function sendLocalEchoToAccount(accountId: number, from: string, message: string
   }
 }
 
-export function broadcastLocalMessage(from: string, message: string, fromAccountId?: number, fromIsAdmin: boolean = false, fromIsModerator: boolean = false): void {
+export function broadcastLocalMessage(from: string, message: string, fromAccountId?: number): void {
   const msg = message.substring(0, 1000);
   if (!from || msg.length === 0) return;
-  const payload = localChatPayload(from, msg, fromAccountId, fromIsAdmin, fromIsModerator);
+  const payload = localChatPayload(from, msg, fromAccountId);
   broadcastLocalPayload(payload, fromAccountId);
 }
 
@@ -328,9 +328,9 @@ function broadcastLocalPayload(payload: string, fromAccountId?: number, excludeA
 function sendMutedLocalMessage(ws: ServerWebSocket<ChatSocketData>, from: string, message: string, world: World): void {
   const original = message.substring(0, 1000);
   const scrambled = randomMutedMessage(original, world);
-  sendLocalEchoToAccount(ws.data.accountId, from, original, ws.data.isAdmin, ws.data.isModerator);
+  sendLocalEchoToAccount(ws.data.accountId, from, original);
   broadcastLocalPayload(
-    localChatPayload(from, scrambled, ws.data.accountId, ws.data.isAdmin, ws.data.isModerator),
+    localChatPayload(from, scrambled, ws.data.accountId),
     ws.data.accountId,
     ws.data.accountId,
   );
@@ -470,7 +470,7 @@ export function handleChatSocketOpen(
   // forever (player_info never re-sends for already-online players).
   for (const [, p] of world.players) {
     try {
-      ws.send(JSON.stringify({ type: 'player_info', entityId: p.id, name: p.name, isAdmin: p.isAdmin, isModerator: p.isModerator }));
+      ws.send(JSON.stringify({ type: 'player_info', entityId: p.id, name: p.name }));
     } catch { /* ignore */ }
   }
   sendSocialList(ws, world);
@@ -550,7 +550,7 @@ export function handleChatSocketMessage(
       const speaker = ws.data.playerId != null ? world.getPlayer(ws.data.playerId) : null;
       speaker?.botStats?.recordChat();
 
-      broadcastLocalMessage(from, msg, ws.data.accountId, ws.data.isAdmin, ws.data.isModerator);
+      broadcastLocalMessage(from, msg, ws.data.accountId);
       recordGameEvent(world, {
         type: 'chat',
         message: `${from}: ${msg}`,
@@ -1362,8 +1362,8 @@ export function handleChatSocketClose(
 }
 
 /** Broadcast player info to all chat sockets so clients can map entityId → name */
-export function broadcastPlayerInfo(entityId: number, name: string, isAdmin: boolean = false, isModerator: boolean = false): void {
-  const payload = JSON.stringify({ type: 'player_info', entityId, name, isAdmin, isModerator });
+export function broadcastPlayerInfo(entityId: number, name: string): void {
+  const payload = JSON.stringify({ type: 'player_info', entityId, name });
   for (const sock of chatSockets) {
     chatSend(sock, payload);
   }

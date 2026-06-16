@@ -45,6 +45,7 @@ export function hasForbiddenStaticSourceExtension(pathname: string): boolean {
  * Hashed JS/CSS bundles are handled by the caller (content-addressed, immutable).
  */
 export function staticGameAssetCacheControl(pathname: string, isProductionLike: boolean): string {
+  if (requiresAdminStaticAsset(pathname)) return 'private, no-store';
   const isProtected = requiresAuthenticatedGameStaticAsset(pathname);
   if (!isProductionLike) {
     return isProtected ? 'private, no-cache, must-revalidate' : 'no-cache, must-revalidate';

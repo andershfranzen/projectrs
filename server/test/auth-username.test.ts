@@ -25,6 +25,23 @@ describe('account usernames', () => {
     }
   });
 
+  test('createAccount rejects active IP bans when a signup IP is supplied', async () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      db.banIp('203.0.113.45', 'bot network', 'test-admin');
+
+      const blocked = await db.createAccount('BlockedUser', 'password123', DEVICE_ID, '203.0.113.45');
+      expect(blocked.ok).toBe(false);
+      if (!blocked.ok) expect(blocked.error).toBe('Banned');
+      expect(db.getAccountIdByUsername('BlockedUser')).toBeNull();
+
+      const allowed = await db.createAccount('AllowedUser', 'password123', DEVICE_ID, '203.0.113.46');
+      expect(allowed.ok).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
   test('renameAccount validates names and preserves new casing', async () => {
     const db = new GameDatabase(':memory:');
     try {

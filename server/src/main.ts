@@ -1307,6 +1307,7 @@ import {
   type GameSocketData,
 } from './network/GameSocket';
 import {
+  adminTeleportPlayerToPlayer,
   handleChatSocketOpen,
   handleChatSocketMessage,
   handleChatSocketClose,
@@ -1478,6 +1479,8 @@ function serveStatic(req: Request, pathname: string, allowIndexFallback = false)
     let cacheControl = 'public, max-age=3600';
     if (isIndexFallback || filePath.endsWith('.html')) {
       cacheControl = 'no-cache';
+    } else if (requiresAdminStaticAsset(decoded)) {
+      cacheControl = gameStaticAssetCacheControl(decoded);
     } else if (decoded.startsWith('/assets/') && (filePath.endsWith('.js') || filePath.endsWith('.css'))) {
       cacheControl = 'public, max-age=31536000, immutable';
     } else if (requiresAuthenticatedGameStaticAsset(decoded)) {
@@ -3345,17 +3348,15 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         if (!captcha.ok) {
           return htmlResponse(renderOAuthAuthorizePage(request, captcha.error || 'Captcha failed.'), 400);
         }
-        const ipBan = db.isIpBanned(ip);
-        if (ipBan) {
-          return htmlResponse(renderOAuthAuthorizePage(request, `Banned${ipBan.reason ? `: ${ipBan.reason}` : ''}`), 403);
+        if (db.isIpBanned(ip)) {
+          return htmlResponse(renderOAuthAuthorizePage(request, 'Banned'), 403);
         }
         const account = await db.verifyAccountPassword(username, password);
         if (!account) {
           return htmlResponse(renderOAuthAuthorizePage(request, 'Invalid username or password.'), 400);
         }
-        const acctBan = db.isAccountBanned(account.accountId);
-        if (acctBan) {
-          return htmlResponse(renderOAuthAuthorizePage(request, `Banned${acctBan.reason ? `: ${acctBan.reason}` : ''}`), 403);
+        if (db.isAccountBanned(account.accountId)) {
+          return htmlResponse(renderOAuthAuthorizePage(request, 'Banned'), 403);
         }
         loginAttempts.delete(key);
         const { code } = db.createOAuthAuthorizationCode({
@@ -3477,6 +3478,9 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         return jsonResponse({ ok: false, error: ACCOUNT_CREATION_CLOSED_MESSAGE }, 403);
       }
       const ip = requestClientIp(req, server);
+      if (db.isIpBanned(ip)) {
+        return jsonResponse({ ok: false, error: 'Banned' }, 403);
+      }
       const preauthFailure = preauthFailureResponse(req, ip, 'signup');
       if (preauthFailure) return preauthFailure;
       try {
@@ -3490,11 +3494,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         }
         const captcha = await verifyRecaptchaToken(body.recaptchaToken, 'signup', ip);
         if (!captcha.ok) return jsonResponse({ ok: false, error: captcha.error || 'Captcha failed' }, 400);
-        const ipBan = db.isIpBanned(ip);
-        if (ipBan) {
-          return jsonResponse({ ok: false, error: `Banned${ipBan.reason ? `: ${ipBan.reason}` : ''}` }, 403);
-        }
-        const result = await db.createAccount(username, body.password || '', device.deviceId);
+        const result = await db.createAccount(username, body.password || '', device.deviceId, ip);
         if (result.ok) {
           signupAttempts.delete(key);
           return jsonResponse(
@@ -3535,9 +3535,8 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         if (!captcha.ok) return jsonResponse({ ok: false, error: captcha.error || 'Captcha failed' }, 400);
         // IP-ban gate runs before password verification so a banned IP can't
         // be used to mine for valid credentials via timing/rate signals.
-        const ipBan = db.isIpBanned(ip);
-        if (ipBan) {
-          return jsonResponse({ ok: false, error: `Banned${ipBan.reason ? `: ${ipBan.reason}` : ''}` }, 403);
+        if (db.isIpBanned(ip)) {
+          return jsonResponse({ ok: false, error: 'Banned' }, 403);
         }
         const password = body.password || '';
         const useFallbackLogin = FALLBACK_LOGIN_ENABLED
@@ -3550,10 +3549,9 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
           const lastLoginTs = db.getLastLoginTs(result.accountId);
           // Account-ban gate runs AFTER successful auth so we don't reveal
           // ban status to someone who can't even produce the password.
-          const acctBan = db.isAccountBanned(result.accountId);
-          if (acctBan) {
+          if (db.isAccountBanned(result.accountId)) {
             db.logout(result.token);
-            return jsonResponse({ ok: false, error: `Banned${acctBan.reason ? `: ${acctBan.reason}` : ''}` }, 403);
+            return jsonResponse({ ok: false, error: 'Banned' }, 403);
           }
           // One-account-per-browser rule. A different account already in the
           // world with the same device_id is refused entry. Per-browser, not
@@ -3674,7 +3672,10 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
       return jsonResponse({
         ok: true,
         generatedAt: Math.floor(Date.now() / 1000),
-        accounts: db.listAdminBotReviewAccounts(limit, query),
+        accounts: db.listAdminBotReviewAccounts(limit, query).map(account => ({
+          ...account,
+          online: !!world.getActivePlayerByAccountId(account.accountId),
+        })),
       });
     }
 
@@ -3691,6 +3692,66 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         details: { action: 'clear_bot_review_stats', cleared, resetActive },
       });
       return jsonResponse({ ok: true, cleared, resetActive });
+    }
+
+    if (url.pathname === '/api/admin/bot-review/clear-account' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { accountId?: unknown };
+        const accountId = Number(body.accountId);
+        if (!Number.isInteger(accountId) || accountId <= 0) {
+          return jsonResponse({ ok: false, error: 'Invalid accountId' }, 400);
+        }
+        const cleared = db.clearBotStatsForAccount(accountId);
+        const resetActive = world.resetActiveBotStatsForAccount(accountId);
+        audit({
+          type: 'admin',
+          tick: world.getCurrentTick(),
+          accountId: session.accountId,
+          details: { action: 'clear_account_bot_review_stats', targetAccountId: accountId, cleared, resetActive },
+        });
+        return jsonResponse({ ok: true, cleared, resetActive });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
+    }
+
+    if (url.pathname === '/api/admin/bot-review/teleport' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { accountId?: unknown; direction?: unknown };
+        const accountId = Number(body.accountId);
+        const direction = String(body.direction ?? '');
+        if (!Number.isInteger(accountId) || accountId <= 0) {
+          return jsonResponse({ ok: false, error: 'Invalid accountId' }, 400);
+        }
+        if (direction !== 'to-target' && direction !== 'to-admin') {
+          return jsonResponse({ ok: false, error: 'Invalid teleport direction' }, 400);
+        }
+        const adminPlayer = world.getActivePlayerByAccountId(session.accountId);
+        if (!adminPlayer) return jsonResponse({ ok: false, error: 'You are not online in game' }, 409);
+        const target = world.getActivePlayerByAccountId(accountId);
+        if (!target) return jsonResponse({ ok: false, error: 'Target player is not online' }, 404);
+        if (direction === 'to-target') {
+          adminTeleportPlayerToPlayer(world, adminPlayer, target);
+        } else {
+          if (target.id === adminPlayer.id) return jsonResponse({ ok: false, error: 'Cannot teleport yourself to yourself' }, 400);
+          adminTeleportPlayerToPlayer(world, target, adminPlayer);
+        }
+        audit({
+          type: 'admin',
+          tick: world.getCurrentTick(),
+          accountId: session.accountId,
+          details: { action: 'admin_bot_review_teleport', direction, targetAccountId: accountId },
+        });
+        return jsonResponse({ ok: true });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
     }
 
     if (url.pathname === '/api/admin/game-events' && req.method === 'GET') {
@@ -5245,9 +5306,10 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
           // from client/public/assets/) still uses a short cache so swapped
           // assets show up without forcing browser-data clears during dev.
           const isHashedBundle = filePath.endsWith('.js') || filePath.endsWith('.css');
-          const cacheControl = isHashedBundle
-            ? 'public, max-age=31536000, immutable'
-            : gameStaticAssetCacheControl(decodedPath);
+          let cacheControl = gameStaticAssetCacheControl(decodedPath);
+          if (!requiresAdminStaticAsset(decodedPath) && isHashedBundle) {
+            cacheControl = 'public, max-age=31536000, immutable';
+          }
           return new Response(content, {
             headers: {
               'Content-Type': getMimeType(filePath),
