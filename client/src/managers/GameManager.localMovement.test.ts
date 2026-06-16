@@ -198,6 +198,10 @@ describe('GameManager local movement prediction', () => {
     expect(manager.tileFrom).toEqual({ x: 0.5, z: 0.5 });
     expect(manager.tileProgress).toBe(0.5);
     expect(manager.playerX).toBe(1.0);
+    expect(player.directions.at(-1)).toEqual({
+      dx: 1.5 - manager.playerX,
+      dz: 0,
+    });
 
     manager.updateLocalPlayerMovement(0.01, {} as any);
 

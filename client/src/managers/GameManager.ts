@@ -7680,6 +7680,10 @@ export class GameManager {
   private faceLocalPlayerToward(x: number, z: number): void {
     const lp = this.localPlayer;
     if (!lp) return;
+    if (this.pathIndex < this.path.length) {
+      this.refreshLocalPathTravelFacing();
+      return;
+    }
     lp.faceTowardXZ(x, z);
   }
 
@@ -8684,6 +8688,7 @@ export class GameManager {
       } else if (!allowAuthorityReanchor) {
         this.predictedPathDestination = null;
       }
+      this.refreshLocalPathTravelFacing();
       return false;
     }
 
@@ -8701,6 +8706,7 @@ export class GameManager {
     if (notifyServer && this.network.sendMove([currentTarget], this.movementMode)) {
       this.noteLocalMoveCommandSent();
     }
+    this.refreshLocalPathTravelFacing();
     return true;
   }
 
@@ -9171,6 +9177,14 @@ export class GameManager {
     }
     this.localPlayer?.setMovementMode(effectiveMovementModeForPath(this.movementMode, initialSteps, initialSteps));
     if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
+    this.refreshLocalPathTravelFacing();
+  }
+
+  private refreshLocalPathTravelFacing(): void {
+    if (!this.localPlayer || this.pathIndex >= this.path.length) return;
+    const nextTarget = this.getActiveUnitStep()?.target ?? this.path[this.pathIndex];
+    if (!nextTarget) return;
+    this.localPlayer.updateMovementDirection(nextTarget.x - this.playerX, nextTarget.z - this.playerZ);
   }
 
   private usesCornerObjectInteraction(def: WorldObjectDef, hasInteractionMask: boolean = false): boolean {
@@ -9483,16 +9497,6 @@ export class GameManager {
         this.alignMarkerToTerrain(mx, mz, this.interactMarker);
         this.interactMarker.isVisible = true;
         if (this.destMarker) this.destMarker.isVisible = false;
-      }
-
-      if (def.category === 'crop') {
-        const ptx = Math.floor(this.playerX);
-        const ptz = Math.floor(this.playerZ);
-        if (this.isOnObjectInteractionTile(ptx, ptz, data, def)) {
-          this.faceLocalPlayerToward(data.x, data.z);
-        } else {
-          // Server owns deferred object execution; no local arrival cache.
-        }
       }
 
       if (actionIndex >= 0) this.interactObject(objectEntityId, actionIndex);

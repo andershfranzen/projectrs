@@ -619,4 +619,39 @@ describe('GameManager world object pick proxies', () => {
 
     expect(manager.isOnObjectInteractionTile(108, 94, data, BROTHER_MONK_CHEST_DEF)).toBe(true);
   });
+
+  test('left-clicking an adjacent crop while pathing does not face away from travel before redirecting', () => {
+    const manager = makeManager();
+    const interactions: Array<{ objectEntityId: number; actionIndex: number }> = [];
+    let faced = 0;
+
+    manager.castingUntil = 0;
+    manager.skillCancelTime = -1000;
+    manager.playerX = 10.5;
+    manager.playerZ = 9.5;
+    manager.path = [{ x: 20.5, z: 9.5 }];
+    manager.pathIndex = 0;
+    manager.worldObjectDefs = new Map([
+      [24680, { defId: CROP_DEF.id, x: 10.5, z: 10.5, y: 0, floor: 0, depleted: false }],
+    ]);
+    manager.objectDefsCache = new Map([[CROP_DEF.id, CROP_DEF]]);
+    manager.isWorldObjectOnCurrentInteractionFloor = () => true;
+    manager.isWorldObjectInteractable = () => true;
+    manager.tryUseInventoryItemOn = () => false;
+    manager.spawnCursorClickEffect = () => {};
+    manager.interactMarker = null;
+    manager.destMarker = null;
+    manager.localPlayer = {
+      faceTowardXZ: () => { faced += 1; },
+      updateMovementDirection: () => {},
+    };
+    manager.interactObject = (objectEntityId: number, actionIndex: number) => {
+      interactions.push({ objectEntityId, actionIndex });
+    };
+
+    manager.handleObjectClick(24680);
+
+    expect(faced).toBe(0);
+    expect(interactions).toEqual([{ objectEntityId: 24680, actionIndex: 0 }]);
+  });
 });
