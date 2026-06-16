@@ -589,11 +589,12 @@ describe('GameManager local movement prediction', () => {
     expect(player.positions).toEqual([]);
   });
 
-  test('local authoritative move steps apply server floor and height when correcting position', () => {
+  test('local authoritative move corrections apply server floor but render client floor height', () => {
     const { manager, player, floorUpdates } = makeManager([], 0);
+    manager.chunkManager.getEffectiveHeight = (_x: number, _z: number, floor?: number) => floor === 2 ? 4.25 : 0;
 
     manager.applyLocalAuthoritativeMoveSteps([
-      { x: 1.5, z: 0.5, floor: 2, y: 4.25, mode: 'walk' },
+      { x: 1.5, z: 0.5, floor: 2, y: 9.5, mode: 'walk' },
     ]);
 
     expect(manager.playerX).toBe(1.5);
@@ -812,10 +813,11 @@ describe('GameManager local movement prediction', () => {
     expect(player.positions.at(-1)).toEqual({ x: 0.5, y: 0, z: 2.5 });
   });
 
-  test('server-confirmed movement height is preserved when the visual reaches that tile', () => {
+  test('server-confirmed movement floor is applied before arrival terrain height is sampled', () => {
     const { manager, player, floorUpdates } = makeManager([
       { x: 1.5, z: 0.5 },
     ], 1);
+    manager.chunkManager.getEffectiveHeight = (_x: number, _z: number, floor?: number) => floor === 1 ? 4.2 : 0;
 
     manager.applyLocalAuthoritativeMoveSteps([
       { x: 1.5, z: 0.5, floor: 1, y: 4.2, mode: 'walk' },
@@ -829,17 +831,36 @@ describe('GameManager local movement prediction', () => {
     expect(player.positions.at(-1)).toEqual({ x: 1.5, y: 4.2, z: 0.5 });
   });
 
-  test('ordinary path clears preserve server-confirmed height for the current tile', () => {
+  test('path arrival does not snap visual height to cached server tile height', () => {
+    const { manager, player } = makeManager([
+      { x: 1.5, z: 0.5 },
+    ], 1);
+    manager.chunkManager.getEffectiveHeight = (x: number, z: number) => x + z;
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 1.5, z: 0.5, floor: 0, y: 5.25, mode: 'walk' },
+    ]);
+
+    advanceLocalMovement(manager, 0.7);
+
+    expect(manager.playerX).toBeCloseTo(1.5, 5);
+    expect(player.positions.at(-1)).toEqual({ x: 1.5, y: 2, z: 0.5 });
+  });
+
+  test('ordinary path clears keep server floor without forcing server height visually', () => {
     const { manager, floorUpdates } = makeManager([
       { x: 3.5, z: 4.5 },
     ], 1);
     manager.playerX = 3.5;
     manager.playerZ = 4.5;
+    manager.chunkManager.getEffectiveHeight = (_x: number, _z: number, floor?: number) => floor === 1 ? 2.25 : 1.25;
     manager.noteLocalAuthoritativeTileHeight(3.5, 4.5, 1, 5.25);
 
     manager.clearPredictedPath();
+    manager.applyLocalAuthoritativeFloorForCurrentTile();
 
-    expect(manager.getLocalPlayerRenderHeight()).toBe(5.25);
+    expect(manager.getLocalPlayerRenderHeight()).toBe(2.25);
+    expect(manager.getLocalPlayerRenderHeight(performance.now(), true)).toBe(5.25);
     expect(manager.currentFloor).toBe(1);
     expect(floorUpdates.at(-1)).toBe(1);
   });

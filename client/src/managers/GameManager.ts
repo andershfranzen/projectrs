@@ -8593,7 +8593,7 @@ export class GameManager {
     );
   }
 
-  private getLocalPlayerRenderHeight(now: number = performance.now(), useAuthoritativeHeight: boolean = true): number {
+  private getLocalPlayerRenderHeight(now: number = performance.now(), useAuthoritativeHeight: boolean = false): number {
     if (useAuthoritativeHeight) {
       const authority = this.localAuthoritativeTileHeightFor(this.playerX, this.playerZ, now);
       if (authority) {
@@ -8602,6 +8602,11 @@ export class GameManager {
       }
     }
     return this.getLocalPlayerTerrainRenderHeight();
+  }
+
+  private applyLocalAuthoritativeFloorForCurrentTile(now: number = performance.now()): void {
+    const authority = this.localAuthoritativeTileHeightFor(this.playerX, this.playerZ, now);
+    if (authority) this.applyLocalAuthoritativeMovementFloor(authority.floor);
   }
 
   private collectPredictedRouteTileKeys(): Set<string> {
@@ -8837,7 +8842,7 @@ export class GameManager {
     this.clearPredictedPath(true);
     this.localPlayer?.stopWalking();
     if (this.localPlayer) {
-      this.localPlayer.setPositionXYZ(this.playerX, this.getLocalPlayerRenderHeight(), this.playerZ);
+      this.localPlayer.setPositionXYZ(this.playerX, this.getLocalPlayerTerrainRenderHeight(), this.playerZ);
     }
     if (notifyServer) this.network.sendMove([]);
   }
@@ -12217,7 +12222,8 @@ export class GameManager {
 
   private reconcileLocalPlayerToServer(serverX: number, serverZ: number, hiddenCatchup: boolean, serverMoving: boolean = false): void {
     if (hiddenCatchup && this.fastForwardPredictedPathToAuthority(serverX, serverZ)) {
-      this.renderLocalPlayerAtLogicalPosition();
+      this.applyLocalAuthoritativeFloorForCurrentTile();
+      this.renderLocalPlayerAtLogicalPosition(false);
       this.inputManager.setPlayerY(this.localPlayer?.position?.y ?? this.getLocalPlayerRenderHeight());
       return;
     }
@@ -12354,13 +12360,11 @@ export class GameManager {
     if (floor !== null) this.applyLocalAuthoritativeMovementFloor(floor);
     if (y === null || !Number.isFinite(y) || !this.localPlayer) return;
     this.noteLocalAuthoritativeTileHeight(this.playerX, this.playerZ, floor, y);
-    this.localPlayer.setPositionXYZ(this.playerX, y, this.playerZ);
-    this.inputManager.setPlayerY(y);
   }
 
   private renderLocalPlayerAtAuthoritativeStep(step: RemoteMovementStep): void {
     if (!this.localPlayer) return;
-    const y = Number.isFinite(step.y) ? step.y : this.getHeight(this.playerX, this.playerZ);
+    const y = this.getLocalPlayerTerrainRenderHeight();
     this.localPlayer.setPositionXYZ(this.playerX, y, this.playerZ);
     this.inputManager.setPlayerY(y);
   }
@@ -12439,7 +12443,8 @@ export class GameManager {
     this.setTileFrom(serverX, serverZ);
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
-    this.renderLocalPlayerAtLogicalPosition();
+    this.applyLocalAuthoritativeFloorForCurrentTile();
+    this.renderLocalPlayerAtLogicalPosition(false);
     this.inputManager.setPlayerY(this.localPlayer?.position?.y ?? this.getLocalPlayerRenderHeight());
     if (serverMoving) {
       this.localCombatWalkUntilMs = 0;
@@ -12458,7 +12463,7 @@ export class GameManager {
   }
 
   /** Render the local player at the logical prediction position. */
-  private renderLocalPlayerAtLogicalPosition(useAuthoritativeHeight: boolean = true): void {
+  private renderLocalPlayerAtLogicalPosition(useAuthoritativeHeight: boolean = false): void {
     if (!this.localPlayer) return;
     const vy = this.getLocalPlayerRenderHeight(performance.now(), useAuthoritativeHeight);
     this.localPlayer.setPositionXYZ(this.playerX, vy, this.playerZ);
@@ -12542,7 +12547,8 @@ export class GameManager {
 
       if (this.pathIndex >= this.path.length) {
         this.finishPredictedPathArrival();
-        this.renderLocalPlayerAtLogicalPosition();
+        this.applyLocalAuthoritativeFloorForCurrentTile();
+        this.renderLocalPlayerAtLogicalPosition(false);
         this.inputManager.setPlayerY(this.localPlayer?.position?.y ?? this.getLocalPlayerRenderHeight());
         this.flushPendingLocalSkillingVisual();
         return;
