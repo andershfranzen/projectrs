@@ -43,6 +43,7 @@ export const STAIRS_OBJECT_DEF_ID = 43;
 export const GENERIC_SCENERY_OBJECT_DEF_ID = 45;
 export const FIRE_OBJECT_DEF_ID = 60;
 export const BROTHER_MONK_CHEST_OBJECT_DEF_ID = 64;
+export const SIGN_OBJECT_DEF_ID = 65;
 export const BATCH_OBJECT_RECIPE_DEF_IDS: readonly number[] = [
   COOKING_RANGE_OBJECT_DEF_ID,
   FIRE_OBJECT_DEF_ID,

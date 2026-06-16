@@ -5910,5 +5910,31 @@
       "z": 1
     },
     "examineText": "Brother Fenn's Broken Stall."
+  },
+  {
+    "assetId": "sign",
+    "layerId": "layer_0",
+    "position": {
+      "x": 158.5,
+      "y": 0,
+      "z": 83.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": -0.5235987755982985,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 0.85,
+      "z": 1
+    },
+    "signText": "North West City of Wibergis.\nSouth East Castle Mud.",
+    "interactions": [
+      {
+        "action": "Examine",
+        "message": "North West City of Wibergis.\nSouth East Castle Mud."
+      }
+    ]
   }
 ]

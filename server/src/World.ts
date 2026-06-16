@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_KEY_ITEM_ID, BROTHER_MONK_BEAR_HIDE_ITEM_ID, BEAR_HIDE_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, storageSurfaceProfileForPlacedAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, EQUIPMENT_SLOT_NAMES, occupiedEquipmentSlotsForDef, equipmentSlotSetsConflict, movementModeFromIndex, movementModeIndex, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe, type EquipSlot, type InventorySlot } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, MATCHBOX_ITEM_ID, ASHES_ITEM_ID, FIRE_OBJECT_DEF_ID, BROTHER_MONK_CHEST_OBJECT_DEF_ID, BROTHER_MONK_CHEST_KEY_ITEM_ID, BROTHER_MONK_BEAR_HIDE_ITEM_ID, BEAR_HIDE_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, FIREMAKING_ATTEMPT_TICKS, FIREMAKING_LOG_COST, FIREMAKING_ROLL_HIGH, FIREMAKING_ROLL_LOW, FIRE_MIN_DURATION_TICKS, FIRE_RANDOM_DURATION_TICKS, FIRE_ASHES_DESPAWN_TICKS, firemakingRecipeForLog, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, COMBAT_BONUS_WIRE_KEYS, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, storageSurfaceProfileForPlacedAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, placedObjectInteractionsWithSignText, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, EQUIPMENT_SLOT_NAMES, occupiedEquipmentSlotsForDef, equipmentSlotSetsConflict, movementModeFromIndex, movementModeIndex, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance, type SurvivalFiremakingRecipe, type EquipSlot, type InventorySlot } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -419,8 +419,10 @@ interface RuntimeObjectSpawn {
 }
 
 interface RuntimeGroundItemSpawn {
+  id?: number;
   itemId: number;
   quantity?: number;
+  respawnTime?: number;
   x: number;
   z: number;
   y?: number;
@@ -2044,11 +2046,37 @@ export class World {
   private spawnStaticGroundItems(mapId: string, gameMap: GameMap, itemSpawns: ReadonlyArray<RuntimeGroundItemSpawn>): number {
     let count = 0;
     const cm = this.chunkManagers.get(mapId);
-    for (const item of itemSpawns) {
-      const id = this.allocateGroundItemId();
-      if (id === null) continue;
+    for (let i = 0; i < itemSpawns.length; i++) {
+      const item = itemSpawns[i];
+      if (!this.data.getItem(item.itemId)) {
+        console.warn(`Unknown item id ${item.itemId} for authored ground item spawn ${this.authoredGroundItemSpawnSourceRef(i, item.id)} in ${mapId}`);
+        continue;
+      }
       const quantity = Math.max(1, Math.floor(item.quantity ?? 1));
       const resolved = this.resolveAuthoredFloor(gameMap, item.x, item.z, item.y, item.floor);
+      const respawnTime = Number.isFinite(item.respawnTime)
+        ? Math.max(0, Math.floor(item.respawnTime!))
+        : 0;
+      if (respawnTime > 0) {
+        const source: GroundItemRespawnSource = {
+          itemId: item.itemId,
+          quantity,
+          x: item.x,
+          z: item.z,
+          y: resolved.y,
+          floor: resolved.floor,
+          mapLevel: mapId,
+          respawnTime,
+          respawnTimer: -1,
+        };
+        const spawnKey = this.authoredGroundItemSpawnKey(mapId, i, item.id, source.itemId, source.x, source.z, source.y, source.floor);
+        this.groundItemRespawnSources.set(spawnKey, source);
+        if (this.spawnRespawningGroundItem(spawnKey, source, false)) count++;
+        continue;
+      }
+
+      const id = this.allocateGroundItemId();
+      if (id === null) continue;
       const groundItem: GroundItem = {
         id,
         itemId: item.itemId,
@@ -2065,6 +2093,16 @@ export class World {
       count++;
     }
     return count;
+  }
+
+  private authoredGroundItemSpawnSourceRef(index: number, sourceId: number | undefined): string {
+    return Number.isInteger(sourceId) && sourceId! > 0 ? `id:${sourceId}` : `idx:${index}`;
+  }
+
+  private authoredGroundItemSpawnKey(mapId: string, index: number, sourceId: number | undefined, itemId: number, x: number, z: number, y: number | undefined, floor: number): string {
+    const sourceRef = this.authoredGroundItemSpawnSourceRef(index, sourceId);
+    if (sourceRef.startsWith('id:')) return `${mapId}|item-spawn|${sourceRef}`;
+    return `${mapId}|item-spawn|${sourceRef}|${itemId}|${Math.floor(floor)}|${qPos(x)}|${qPos(z)}|${Number.isFinite(y) ? qPos(y!) : 0}`;
   }
 
   private spawnPlacedGroundItems(mapId: string, gameMap: GameMap): number {
@@ -2164,7 +2202,7 @@ export class World {
           scale: placed.scale,
           name: placed.name || sceneryMeta?.name,
           examineText: placed.examineText || sceneryMeta?.examineText,
-          interactions: placed.interactions,
+          interactions: placedObjectInteractionsWithSignText(placed),
           defaultOpen: placed.defaultOpen === true,
           openDirection: placed.openDirection === 1 ? 1 : -1,
           locked: placed.locked === true,

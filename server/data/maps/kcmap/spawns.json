@@ -4700,23 +4700,56 @@
   "objects": [],
   "items": [
     {
+      "id": 1,
       "itemId": 247,
       "x": 127.5,
       "z": 67.5,
       "quantity": 1
     },
     {
+      "id": 2,
       "itemId": 245,
       "x": 73.5,
       "z": 48.5,
       "quantity": 1
     },
     {
+      "id": 3,
       "itemId": 251,
       "x": 87.5,
       "z": 36.5,
       "quantity": 1,
       "y": 0.8
+    },
+    {
+      "id": 22,
+      "itemId": 32,
+      "x": 153.471,
+      "z": 68.522,
+      "quantity": 1,
+      "y": 2.12,
+      "floor": 1,
+      "respawnTime": 300
+    },
+    {
+      "id": 25,
+      "itemId": 8,
+      "x": 344.474,
+      "z": 174.584,
+      "quantity": 1,
+      "y": 0,
+      "floor": 0,
+      "respawnTime": 300
+    },
+    {
+      "id": 34,
+      "itemId": 10,
+      "x": 280.5,
+      "z": 136.5,
+      "quantity": 10,
+      "y": 1.174,
+      "floor": 0,
+      "respawnTime": 300
     }
   ]
 }

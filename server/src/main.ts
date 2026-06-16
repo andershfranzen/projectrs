@@ -255,6 +255,67 @@ function loadEditorMapPlacedObjects(mapDir: string): PlacedObject[] {
   }
 }
 
+type PlacedObjectWipeRisk = {
+  existingCount: number;
+  incomingCount: number;
+  missingObjectCount: number;
+  missingChunks: { key: string; existingCount: number }[];
+  thinnedChunks: { key: string; existingCount: number; incomingCount: number }[];
+};
+
+function countObjectsByChunk(objects: PlacedObject[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const [key, chunkObjects] of splitObjectsByChunk(objects)) {
+    counts.set(key, chunkObjects.length);
+  }
+  return counts;
+}
+
+function detectPlacedObjectWipeRisk(existingObjects: PlacedObject[] | null, incomingObjects: PlacedObject[]): PlacedObjectWipeRisk | null {
+  if (!existingObjects || existingObjects.length === 0 || incomingObjects.length === 0) return null;
+
+  const existingChunks = countObjectsByChunk(existingObjects);
+  const incomingChunks = countObjectsByChunk(incomingObjects);
+  const existingCount = existingObjects.length;
+  const incomingCount = incomingObjects.length;
+  let missingObjectCount = 0;
+  const missingChunks: PlacedObjectWipeRisk['missingChunks'] = [];
+  const thinnedChunks: PlacedObjectWipeRisk['thinnedChunks'] = [];
+
+  for (const [key, existingChunkCount] of existingChunks) {
+    const incomingChunkCount = incomingChunks.get(key) ?? 0;
+    const missingInChunk = Math.max(0, existingChunkCount - incomingChunkCount);
+    missingObjectCount += missingInChunk;
+
+    if (incomingChunkCount === 0 && existingChunkCount >= 3) {
+      missingChunks.push({ key, existingCount: existingChunkCount });
+      continue;
+    }
+    if (existingChunkCount >= 40 && missingInChunk >= 20 && incomingChunkCount <= existingChunkCount * 0.75) {
+      thinnedChunks.push({ key, existingCount: existingChunkCount, incomingCount: incomingChunkCount });
+    }
+  }
+
+  const hasNetObjectLoss = incomingCount < existingCount;
+  const largeTotalDrop = Math.max(0, existingCount - incomingCount) >= Math.max(20, Math.ceil(existingCount * 0.02));
+  const largeChunkDrop = missingObjectCount >= Math.max(20, Math.ceil(existingCount * 0.02));
+  if (!largeTotalDrop && (!hasNetObjectLoss || (!largeChunkDrop && missingChunks.length === 0 && thinnedChunks.length === 0))) return null;
+
+  return { existingCount, incomingCount, missingObjectCount, missingChunks, thinnedChunks };
+}
+
+function formatPlacedObjectWipeRisk(risk: PlacedObjectWipeRisk): string {
+  const examples = [
+    ...risk.missingChunks.slice(0, 4).map(chunk => `${chunk.key} missing ${chunk.existingCount}`),
+    ...risk.thinnedChunks.slice(0, 4).map(chunk => `${chunk.key} ${chunk.existingCount}->${chunk.incomingCount}`),
+  ];
+  const moreCount = risk.missingChunks.length + risk.thinnedChunks.length - examples.length;
+  const chunkSummary = examples.length > 0
+    ? ` Affected chunks: ${examples.join(', ')}${moreCount > 0 ? `, and ${moreCount} more` : ''}.`
+    : '';
+  return `Refusing to save placed objects: incoming payload appears partial and would drop ${risk.missingObjectCount}/${risk.existingCount} existing object placements.${chunkSummary} Reload the editor map before saving. For intentional large removals, edit the object chunk files manually after taking a backup.`;
+}
+
 function editorFiniteNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -4502,14 +4563,24 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
           }, 409);
         }
 
-        let objectsToSave = mapData.placedObjects ?? [];
+        let existingObjectsForSave = loadChunkedObjects(mapDir);
+        let objectsToSave = dedupePlacedObjects(mapData.placedObjects ?? [], 'placed object(s) from editor payload');
         // Preserve existing objects if editor sends empty (prevents accidental wipe)
         if (objectsToSave.length === 0) {
-          const existing = loadChunkedObjects(mapDir);
-          if (existing) objectsToSave = existing;
+          if (existingObjectsForSave) objectsToSave = existingObjectsForSave;
           else {
             const existingMap = await loadJsonOrNull<KCMapFile>(mapJsonPath);
+            existingObjectsForSave = existingMap?.placedObjects ?? null;
             if (existingMap) objectsToSave = existingMap.placedObjects ?? [];
+          }
+        } else {
+          if (!existingObjectsForSave) {
+            const existingMap = await loadJsonOrNull<KCMapFile>(mapJsonPath);
+            existingObjectsForSave = existingMap?.placedObjects ?? null;
+          }
+          const objectWipeRisk = detectPlacedObjectWipeRisk(existingObjectsForSave, objectsToSave);
+          if (objectWipeRisk) {
+            return jsonResponse({ ok: false, error: formatPlacedObjectWipeRisk(objectWipeRisk) }, 409);
           }
         }
 

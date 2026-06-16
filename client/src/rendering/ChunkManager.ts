@@ -13,7 +13,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB, worldAABBForMaterials } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, createObjectShadowCaster, createWallEdgeShadowCaster, isLinearCasterCoveredByWallRuns, isLinearShadowAsset, objectShadowBounds, objectShadowFactorAt, wallShadowRunsFromEntries } from '@projectrs/shared';
+import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, createObjectShadowCaster, createWallEdgeShadowCaster, isLinearCasterCoveredByWallRuns, isLinearShadowAsset, objectShadowBounds, objectShadowFactorAt, wallShadowRunsFromEntries, placedObjectInteractionsWithSignText } from '@projectrs/shared';
 import { groundDetailFamily } from '@projectrs/shared';
 import { GroundDetailPluginMaterial } from './GroundDetailPlugin';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, DEFAULT_CUT_ANGLE, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, waterFlowUvFromTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
@@ -1137,7 +1137,6 @@ export class ChunkManager {
     if (import.meta.env.DEV && derivedTotal > 0) {
       console.log(`[ChunkManager] Derived ${derivedTotal} upper-floor walkable tiles across ${derivedFloors.size} floor(s) from texture planes`);
     }
-
     this.loaded = true;
     this.lastChunkX = -999;
     this.lastChunkZ = -999;
@@ -4338,7 +4337,7 @@ export class ChunkManager {
       placedY: obj.position.y,
       placedZ: obj.position.z,
       interactionActions: this.placedObjectInteractionActions(obj),
-      interactions: Array.isArray(obj.interactions) && obj.interactions.length > 0 ? obj.interactions : undefined,
+      interactions: this.placedObjectInteractions(obj),
       placedName: obj.name,
       isNoRoof: obj.noRoof === true,
       pickProxyBounds: bounds ? {
@@ -4371,10 +4370,15 @@ export class ChunkManager {
     }
   }
 
+  private placedObjectInteractions(obj: PlacedObject): PlacedObjectInteraction[] | undefined {
+    return placedObjectInteractionsWithSignText(obj);
+  }
+
   private placedObjectInteractionActions(obj: PlacedObject): string[] | undefined {
-    if (!Array.isArray(obj.interactions) || obj.interactions.length === 0) return undefined;
+    const interactions = this.placedObjectInteractions(obj);
+    if (!interactions || interactions.length === 0) return undefined;
     const actions: string[] = [];
-    for (const interaction of obj.interactions) {
+    for (const interaction of interactions) {
       const action = interaction.action?.trim();
       if (!action || actions.includes(action)) continue;
       actions.push(action);
@@ -5175,7 +5179,7 @@ export class ChunkManager {
         placedY: obj.position.y,
         placedZ: obj.position.z,
         interactionActions: this.placedObjectInteractionActions(obj),
-        interactions: Array.isArray(obj.interactions) && obj.interactions.length > 0 ? obj.interactions : undefined,
+        interactions: this.placedObjectInteractions(obj),
         placedName: obj.name,
         isNoRoof: obj.noRoof === true,
       } satisfies PlacedObjectNodeMetadata;

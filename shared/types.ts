@@ -487,7 +487,7 @@ export interface WallsFile extends FloorLayerData {
 export interface WorldObjectDef {
   id: number;
   name: string;
-  category: 'tree' | 'rock' | 'fishingspot' | 'furnace' | 'cookingrange' | 'anvil' | 'altar' | 'obelisk' | 'door' | 'ladder' | 'chest' | 'crop' | 'bank' | 'stall' | 'scenery';
+  category: 'tree' | 'rock' | 'fishingspot' | 'furnace' | 'cookingrange' | 'anvil' | 'altar' | 'obelisk' | 'door' | 'ladder' | 'chest' | 'crop' | 'bank' | 'stall' | 'sign' | 'scenery';
   actions: string[]; // e.g. ["Chop", "Examine"]
   blocking: boolean;
   /** Tile footprint width in local X. */
@@ -721,8 +721,12 @@ export interface ObjectSpawnEntry {
 }
 
 export interface SpawnedItem {
+  /** Stable editor-authored source id. Older maps may omit this. */
+  id?: number;
   itemId: number;
   quantity?: number;
+  /** Optional respawn delay in ticks after pickup. Omitted/0 means no timed respawn. */
+  respawnTime?: number;
   x: number;
   z: number;
   floor?: number;
@@ -930,6 +934,8 @@ export interface PlacedObject {
   name?: string;
   /** Optional per-instance examine text. Falls back to object definition text. */
   examineText?: string;
+  /** Optional per-instance text read aloud by the player when using a sign. */
+  signText?: string;
   /** Optional per-action effects for this specific placed object. */
   interactions?: PlacedObjectInteraction[];
   /** Door instances with this enabled start open and auto-reset back open after being closed. */

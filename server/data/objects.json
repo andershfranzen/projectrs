@@ -2264,6 +2264,26 @@
     "examineText": "A locked chest. The skeleton guarding it must have the key."
   },
   {
+    "id": 65,
+    "name": "Sign",
+    "category": "sign",
+    "actions": [
+      "Read",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "depth": 1,
+    "height": 1.7,
+    "color": [
+      126,
+      76,
+      37
+    ],
+    "modelAssetId": "sign",
+    "examineText": "A wooden sign."
+  },
+  {
     "id": 22,
     "name": "Rice Plant",
     "category": "crop",

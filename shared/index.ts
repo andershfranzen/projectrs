@@ -12,6 +12,7 @@ export * from './doorEdge';
 export * from './character';
 export * from './objectFootprint';
 export * from './objectActions';
+export * from './signText';
 export * from './spells';
 export * from './tileCut';
 export * from './auth';

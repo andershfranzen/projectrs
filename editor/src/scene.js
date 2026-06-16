@@ -91,6 +91,9 @@ import {
   wallShadowRunsFromWallRecord,
   isValidMinimapIconFilename,
   minimapIconUrl,
+  isReadableSignAssetId,
+  MAX_SIGN_TEXT_LENGTH,
+  normalizeSignText,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -103,7 +106,13 @@ import { Npc3DEntity } from '@client/rendering/Npc3DEntity'
 import { resolveNpcModelSourceId, resolveNpcVisualConfig } from '@client/data/NpcConfig'
 import { mergeNpcGearSlotFit, resolveNpcGearSlotConfig } from '@client/data/NpcGearConfig'
 import { EQUIP_SLOT_BONES } from '@client/data/EquipmentConfig'
-import { resolveItemModelPath as resolveRuntimeItemModelPath } from '@client/rendering/ItemIcon'
+import { getThumbnail as getRuntimeItemThumbnail } from '@client/rendering/ThumbnailRenderer'
+import {
+  buildGroundItemOptionsForItem,
+  getItemLegacyIconUrl,
+  resolveGroundItemModelPath,
+  resolveItemModelPath as resolveRuntimeItemModelPath,
+} from '@client/rendering/ItemIcon'
 import { loadAssetRegistry } from './assets-system/AssetRegistry'
 import { loadAssetModel, cloneAssetModelSync, warmAssetCache, makeGhostMaterial, initAssetLoader } from './assets-system/AssetLoader'
 import { getThumbnail } from './assets-system/ThumbnailRenderer'
@@ -706,7 +715,7 @@ function tuneModelLighting(model, assetOrPath = null) {
     })
 
     if (spawns.some(spawn => spawn && typeof spawn === 'object' && npcSpawnFloor(spawn) > 0)) {
-      const visualMaps = buildCollisionFloorVisualMaps()
+      const visualMaps = getCollisionFloorVisualMaps()
       spawns.forEach((spawn, index) => {
         if (!spawn || typeof spawn !== 'object') return
         const floor = npcSpawnFloor(spawn)
@@ -888,7 +897,7 @@ function tuneModelLighting(model, assetOrPath = null) {
   function npcSpawnAuthoredFloorHeight(spawn, visualMaps = null) {
     const floor = npcSpawnFloor(spawn)
     if (floor <= 0) return null
-    const maps = visualMaps || buildCollisionFloorVisualMaps()
+    const maps = visualMaps || getCollisionFloorVisualMaps()
     const tile = npcSpawnTileCoords(spawn)
     const idx = tile.z * map.width + tile.x
     return maps.explicit.get(floor)?.get(idx)
@@ -1119,7 +1128,7 @@ function tuneModelLighting(model, assetOrPath = null) {
   /** Build the same GearDef shape GameManager builds. Keep this thin so the
    *  editor preview stays aligned with /geardebug and the live client. */
   function buildEditorCharacterGearDef(slotName, itemId, bodyType = 0) {
-    const itemDef = itemDefs.find(d => d.id === itemId)
+    const itemDef = itemDefById(itemId)
     const sourceItemId = resolveGearFitSourceItemId(itemId, itemDefs)
     return buildCharacterGearDef(
       itemId,
@@ -1266,7 +1275,7 @@ function tuneModelLighting(model, assetOrPath = null) {
         entry.entity.detachGear(slot)
         continue
       }
-      const itemDef = itemDefs.find(d => d.id === itemId)
+      const itemDef = itemDefById(itemId)
       if (!itemDef || itemDef.equipSlot !== slot) {
         entry.entity.detachGear(slot)
         continue
@@ -1332,7 +1341,7 @@ function tuneModelLighting(model, assetOrPath = null) {
           slot,
           itemId,
           built.def,
-          itemDefs.find(d => d.id === itemId),
+          itemDefById(itemId),
           built.override,
           stillCurrent,
         )
@@ -1521,7 +1530,7 @@ function tuneModelLighting(model, assetOrPath = null) {
         npcPreviews.delete(id)
       }
     }
-    const visualMaps = buildCollisionFloorVisualMaps()
+    const visualMaps = getCollisionFloorVisualMaps()
     for (const spawn of npcSpawns) {
       if (shouldShowNpcPreview(spawn)) ensureNpcPreview(spawn, visualMaps)
       else disposeNpcPreview(spawn)
@@ -1736,22 +1745,57 @@ function tuneModelLighting(model, assetOrPath = null) {
   }
 
   // --- Item Spawn system ---
-  let itemSpawns = []         // { id, itemId, x, z, quantity, y? }
+  let itemSpawns = []         // { id, itemId, x, z, quantity, respawnTime?, y?, floor? }
   let _itemSpawnNextId = 1
+  let selectedItemSpawn = null
+  let selectedItemTypeId = 0
+  let itemSpawnSurfaceMode = true
+  let itemSpawnPickerRenderToken = 0
   let itemDefs = []            // loaded from server
+  let itemDefByIdMap = new Map()
   let questObjectDefs = []      // loaded for quest authoring item/object pickers
   let editorObjectDefs = []     // loaded from server; used by select-object UI
   let editorObjectDefById = new Map()
   const itemSpawnGroup = new TransformNode('itemSpawnGroup', scene)
+  let itemSpawnMarkerMaterial = null
+  let itemSpawnSelectedMarkerMaterial = null
+  let itemSpawnThumbObserver = null
+  const itemSpawnThumbRequests = new WeakMap()
+  const itemSpawnThumbOptionsCache = new Map()
+  const itemSpawnThumbUrlCache = new Map()
+
+  function setItemDefs(defs) {
+    itemDefs = Array.isArray(defs) ? defs : []
+    itemDefByIdMap = new Map(itemDefs.map(def => [def.id, def]))
+    itemSpawnThumbOptionsCache.clear()
+    itemSpawnThumbUrlCache.clear()
+  }
+
+  function syncItemTypeSelectOptions(previousValue = null) {
+    const sel = sidebar.querySelector('#itemTypeSelect')
+    if (!sel) return
+    const previous = previousValue ?? sel.value
+    sel.innerHTML = itemDefs.map(d => `<option value="${d.id}">${d.name} (${d.id})</option>`).join('')
+    if (previous && [...sel.options].some(o => o.value === previous)) {
+      sel.value = previous
+      selectedItemTypeId = parseInt(previous, 10) || selectedItemTypeId
+    } else if (selectedItemTypeId && sel.querySelector(`option[value="${selectedItemTypeId}"]`)) {
+      sel.value = String(selectedItemTypeId)
+    } else if (itemDefs.length) {
+      selectedItemTypeId = itemDefs[0].id
+      sel.value = String(selectedItemTypeId)
+    }
+  }
 
   async function loadItemDefs() {
     try {
       const res = await fetch('/data/items.json')
-      itemDefs = await res.json()
-      const sel = sidebar.querySelector('#itemTypeSelect')
-      if (sel) {
-        sel.innerHTML = itemDefs.map(d => `<option value="${d.id}">${d.name} (${d.id})</option>`).join('')
-      }
+      setItemDefs(await res.json())
+      syncItemTypeSelectOptions()
+      if (!selectedItemTypeId && itemDefs.length) selectedItemTypeId = itemDefs[0].id
+      setSelectedItemType(selectedItemTypeId, { render: false })
+      renderItemTypePicker()
+      updateItemSpawnControls()
       if (typeof syncNpcTypeInput === 'function') syncNpcTypeInput()
     } catch (e) {
       console.warn('Failed to load item definitions:', e)
@@ -1761,6 +1805,229 @@ function tuneModelLighting(model, assetOrPath = null) {
 
   function resolveItemThumbnailModelPath(def) {
     return resolveRuntimeItemModelPath(def)
+  }
+
+  function itemDefById(itemId) {
+    return itemDefByIdMap.get(Number(itemId)) || null
+  }
+
+  function selectedItemDef() {
+    return itemDefById(selectedItemTypeId) || itemDefs[0] || null
+  }
+
+  function setSelectedItemType(itemId, options = {}) {
+    const nextId = Math.floor(Number(itemId))
+    if (!Number.isFinite(nextId) || nextId <= 0) return
+    selectedItemTypeId = nextId
+    const sel = sidebar.querySelector('#itemTypeSelect')
+    if (sel) sel.value = String(selectedItemTypeId)
+    updateSelectedItemPreview()
+    if (options.render !== false) renderItemTypePicker()
+  }
+
+  function itemSpawnQuantityFromInput() {
+    const raw = Number(sidebar.querySelector('#itemSpawnQuantity')?.value)
+    return Number.isFinite(raw) ? Math.max(1, Math.floor(raw)) : 1
+  }
+
+  function itemSpawnRespawnTimeFromInput() {
+    const raw = Number(sidebar.querySelector('#itemSpawnRespawnTime')?.value)
+    return Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : undefined
+  }
+
+  function currentItemSpawnFloorOverride() {
+    const raw = sidebar.querySelector('#itemSpawnFloorMode')?.value ?? 'auto'
+    if (raw === 'auto') return undefined
+    const floor = Math.floor(Number(raw))
+    return Number.isFinite(floor) ? floor : undefined
+  }
+
+  function formatItemSpawnFloor(spawn) {
+    const floor = Number.isFinite(spawn?.floor) ? Math.floor(spawn.floor) : 0
+    if (floor === 0) return 'G'
+    return floor > 0 ? `F${floor}` : `B${Math.abs(floor)}`
+  }
+
+  function itemSpawnKnownFloorForY(x, z, y) {
+    if (!Number.isFinite(y)) return 0
+    const tx = Math.max(0, Math.min(map.width - 1, Math.floor(x)))
+    const tz = Math.max(0, Math.min(map.height - 1, Math.floor(z)))
+    const terrainY = map.getAverageTileHeight(tx, tz)
+    let bestFloor = 0
+    let bestDist = Math.abs(y - terrainY)
+    const consider = (floor, height) => {
+      if (!Number.isFinite(floor) || !Number.isFinite(height)) return
+      const dist = Math.abs(y - height)
+      if (dist < bestDist - 0.05) {
+        bestFloor = Math.floor(floor)
+        bestDist = dist
+      }
+    }
+    const idx = tz * map.width + tx
+    const visualMaps = getCollisionFloorVisualMaps()
+    for (const [floor, byTile] of visualMaps.explicit) consider(floor, byTile.get(idx))
+    for (const [floor, byTile] of visualMaps.derived) consider(floor, byTile.get(idx))
+    const ranked = visualMaps.ranked.get(idx) || []
+    for (let i = 0; i < ranked.length; i++) consider(i + 1, ranked[i])
+    return bestFloor !== 0 && bestDist <= 0.75 ? bestFloor : 0
+  }
+
+  function itemSpawnFloorForPlacement(x, z, y) {
+    const override = currentItemSpawnFloorOverride()
+    if (override !== undefined) return override
+    return itemSpawnKnownFloorForY(x, z, y)
+  }
+
+  function updateSelectedItemPreview() {
+    const preview = sidebar?.querySelector?.('#itemSelectedPreview')
+    if (!preview) return
+    const def = selectedItemDef()
+    if (!def) {
+      preview.innerHTML = '<div class="item-spawn-thumb empty"></div><div class="item-spawn-selected-meta"><div>No item selected</div></div>'
+      return
+    }
+    preview.innerHTML = ''
+    const thumb = document.createElement('div')
+    thumb.className = 'item-spawn-thumb'
+    const img = document.createElement('img')
+    img.alt = def.name || `Item ${def.id}`
+    thumb.appendChild(img)
+    void renderItemSpawnThumb(img, def, itemSpawnQuantityFromInput())
+    const meta = document.createElement('div')
+    meta.className = 'item-spawn-selected-meta'
+    meta.innerHTML = `<div>${escapeEditorHtml(def.name || `Item ${def.id}`)}</div><small>#${def.id}${def.equipSlot ? ` · ${escapeEditorHtml(def.equipSlot)}` : ''}</small>`
+    preview.appendChild(thumb)
+    preview.appendChild(meta)
+  }
+
+  function setItemSpawnThumbFallback(img, def) {
+    const legacy = getItemLegacyIconUrl(def)
+    if (legacy) img.src = legacy
+    else img.removeAttribute('src')
+  }
+
+  function cachedGroundItemOptionsForThumb(def) {
+    const key = def.id
+    let promise = itemSpawnThumbOptionsCache.get(key)
+    if (!promise) {
+      promise = Promise.resolve(buildGroundItemOptionsForItem(def)).catch(err => {
+        itemSpawnThumbOptionsCache.delete(key)
+        throw err
+      })
+      itemSpawnThumbOptionsCache.set(key, promise)
+    }
+    return promise
+  }
+
+  function cachedRuntimeItemThumb(def, quantity, modelPath) {
+    const key = `${def.id}:${Math.max(1, Math.floor(quantity || 1))}:${modelPath}`
+    let promise = itemSpawnThumbUrlCache.get(key)
+    if (!promise) {
+      promise = cachedGroundItemOptionsForThumb(def)
+        .then(options => getRuntimeItemThumbnail(modelPath, options))
+        .catch(err => {
+          itemSpawnThumbUrlCache.delete(key)
+          throw err
+        })
+      itemSpawnThumbUrlCache.set(key, promise)
+    }
+    return promise
+  }
+
+  async function renderItemSpawnThumb(img, def, quantity = 1, token = itemSpawnPickerRenderToken) {
+    if (!img || !def) return
+    setItemSpawnThumbFallback(img, def)
+    const modelPath = resolveGroundItemModelPath(def, quantity)
+    if (!modelPath) return
+    const key = `${def.id}:${Math.max(1, Math.floor(quantity || 1))}:${modelPath}:${token}`
+    img.dataset.thumbKey = key
+    try {
+      const url = await cachedRuntimeItemThumb(def, quantity, modelPath)
+      if (url && img.isConnected && img.dataset.thumbKey === key) img.src = url
+    } catch {
+      // Leave the legacy icon/blank placeholder in place.
+    }
+  }
+
+  function createItemSpawnThumbObserver(rootEl) {
+    if (typeof IntersectionObserver !== 'function') return null
+    return new IntersectionObserver((entries, obs) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue
+        obs.unobserve(entry.target)
+        const request = itemSpawnThumbRequests.get(entry.target)
+        if (!request) continue
+        void renderItemSpawnThumb(entry.target, request.def, request.quantity, request.token)
+      }
+    }, { root: rootEl, rootMargin: '120px', threshold: 0.01 })
+  }
+
+  function queueItemSpawnThumb(img, def, quantity, observer, token) {
+    setItemSpawnThumbFallback(img, def)
+    if (!resolveGroundItemModelPath(def, quantity)) return
+    itemSpawnThumbRequests.set(img, { def, quantity, token })
+    if (observer) observer.observe(img)
+    else void renderItemSpawnThumb(img, def, quantity, token)
+  }
+
+  function renderItemTypePicker() {
+    const grid = sidebar?.querySelector?.('#itemTypeGrid')
+    const search = sidebar?.querySelector?.('#itemTypeSearch')
+    if (!grid) return
+    itemSpawnPickerRenderToken++
+    const token = itemSpawnPickerRenderToken
+    if (itemSpawnThumbObserver) {
+      itemSpawnThumbObserver.disconnect()
+      itemSpawnThumbObserver = null
+    }
+    const query = String(search?.value || '').trim().toLowerCase()
+    const quantity = itemSpawnQuantityFromInput()
+    const defs = itemDefs
+      .filter(def => {
+        if (!query) return true
+        return [
+          def.id,
+          def.name,
+          def.equipSlot || '',
+          def.model || '',
+          def.thumbnailModel || '',
+        ].join(' ').toLowerCase().includes(query)
+      })
+      .slice(0, 96)
+    grid.innerHTML = ''
+    if (!defs.length) {
+      grid.innerHTML = '<div class="item-spawn-picker-empty">No items found</div>'
+      updateSelectedItemPreview()
+      return
+    }
+    itemSpawnThumbObserver = createItemSpawnThumbObserver(grid)
+    const fragment = document.createDocumentFragment()
+    for (const def of defs) {
+      const card = document.createElement('button')
+      card.type = 'button'
+      card.className = `item-spawn-card${def.id === selectedItemTypeId ? ' active' : ''}`
+      card.title = `${def.name || `Item ${def.id}`} (#${def.id})`
+      const thumb = document.createElement('div')
+      thumb.className = 'item-spawn-thumb'
+      const img = document.createElement('img')
+      img.alt = def.name || `Item ${def.id}`
+      thumb.appendChild(img)
+      const name = document.createElement('span')
+      name.className = 'item-spawn-card-name'
+      name.textContent = def.name || `Item ${def.id}`
+      const detail = document.createElement('small')
+      detail.textContent = `#${def.id}${resolveGroundItemModelPath(def, quantity) ? ' · 3D' : ''}`
+      card.appendChild(thumb)
+      card.appendChild(name)
+      card.appendChild(detail)
+      card.addEventListener('click', () => {
+        setSelectedItemType(def.id)
+      })
+      fragment.appendChild(card)
+      queueItemSpawnThumb(img, def, quantity, itemSpawnThumbObserver, token)
+    }
+    grid.appendChild(fragment)
+    updateSelectedItemPreview()
   }
 
   async function loadEditorObjectDefs() {
@@ -1825,25 +2092,35 @@ function tuneModelLighting(model, assetOrPath = null) {
       const surface = pickPlacedObjectSurfacePoint(event) ?? pickSurfacePoint(event)
       if (surface) {
         const y = surface.y + offset
-        return { x: surface.x, z: surface.z, y, authoredY: y }
+        const floor = itemSpawnFloorForPlacement(surface.x, surface.z, y)
+        return { x: surface.x, z: surface.z, y, floor, authoredY: y }
       }
     }
 
     const x = tile.x + 0.5
     const z = tile.z + 0.5
     const y = itemSpawnTerrainY(x, z) + offset
+    const floor = itemSpawnFloorForPlacement(x, z, y)
     return {
       x,
       z,
+      floor,
       y,
-      authoredY: Math.abs(offset) > 0.001 ? y : undefined
+      authoredY: Math.abs(offset) > 0.001 || floor !== 0 ? y : undefined
     }
   }
 
-  function addItemSpawn(itemId, x, z, quantity = 1, id, y, floor) {
-    const spawn = { id: id || _itemSpawnNextId++, itemId, x, z, quantity }
+  function addItemSpawn(itemId, x, z, quantity = 1, id, y, floor, respawnTime) {
+    const spawn = {
+      id: id || _itemSpawnNextId++,
+      itemId: Math.max(1, Math.floor(Number(itemId) || 1)),
+      x,
+      z,
+      quantity: Math.max(1, Math.floor(Number(quantity) || 1))
+    }
     if (Number.isFinite(y)) spawn.y = y
-    if (Number.isFinite(floor)) spawn.floor = Math.max(0, Math.floor(floor))
+    if (Number.isFinite(floor)) spawn.floor = Math.floor(floor)
+    if (Number.isFinite(respawnTime)) spawn.respawnTime = Math.max(0, Math.floor(respawnTime))
     if (id && id >= _itemSpawnNextId) _itemSpawnNextId = id + 1
     itemSpawns.push(spawn)
     return spawn
@@ -1852,6 +2129,7 @@ function tuneModelLighting(model, assetOrPath = null) {
   function removeItemSpawn(spawn) {
     const idx = itemSpawns.indexOf(spawn)
     if (idx >= 0) itemSpawns.splice(idx, 1)
+    if (selectedItemSpawn === spawn) selectedItemSpawn = null
   }
 
   function serializeItemSpawns() {
@@ -1864,7 +2142,8 @@ function tuneModelLighting(model, assetOrPath = null) {
         quantity: s.quantity
       }
       if (Number.isFinite(s.y)) out.y = serializeOptionalNumber(s.y, 3)
-      if (Number.isFinite(s.floor)) out.floor = Math.max(0, Math.floor(s.floor))
+      if (Number.isFinite(s.floor)) out.floor = Math.floor(s.floor)
+      if (Number.isFinite(s.respawnTime)) out.respawnTime = Math.max(0, Math.floor(s.respawnTime))
       return out
     })
   }
@@ -1872,30 +2151,170 @@ function tuneModelLighting(model, assetOrPath = null) {
   function loadItemSpawns(data) {
     itemSpawns = []
     _itemSpawnNextId = 1
+    selectedItemSpawn = null
     for (const s of data || []) {
-      addItemSpawn(s.itemId, s.x, s.z, s.quantity ?? 1, s.id, s.y, s.floor)
+      addItemSpawn(s.itemId, s.x, s.z, s.quantity ?? 1, s.id, s.y, s.floor, s.respawnTime)
     }
     rebuildItemSpawnMeshes()
     refreshItemSpawnList()
+    updateItemSpawnControls()
   }
 
-  function rebuildItemSpawnMeshes() {
-    for (const child of [...itemSpawnGroup.getChildren()]) child.dispose()
-    for (const spawn of itemSpawns) {
-      const def = itemDefs.find(d => d.id === spawn.itemId)
-      const name = def?.name || `Item ${spawn.itemId}`
-      const marker = MeshBuilder.CreateBox(`itemSpawn_${spawn.id}`, { width: 0.4, height: 0.3, depth: 0.4 }, scene)
-      const mat = new StandardMaterial(`itemSpawnMat_${spawn.id}`, scene)
+  function getItemSpawnMarkerMaterial(selected) {
+    if (selected) {
+      if (!itemSpawnSelectedMarkerMaterial) {
+        const mat = new StandardMaterial('itemSpawnMarkerSelectedMat', scene)
+        mat.diffuseColor = new Color3(0.35, 0.7, 1.0)
+        mat.emissiveColor = new Color3(0.05, 0.25, 0.45)
+        mat.specularColor = new Color3(0, 0, 0)
+        itemSpawnSelectedMarkerMaterial = mat
+      }
+      return itemSpawnSelectedMarkerMaterial
+    }
+    if (!itemSpawnMarkerMaterial) {
+      const mat = new StandardMaterial('itemSpawnMarkerMat', scene)
       mat.diffuseColor = new Color3(0.9, 0.75, 0.2)
       mat.emissiveColor = new Color3(0.4, 0.35, 0.1)
       mat.specularColor = new Color3(0, 0, 0)
-      marker.material = mat
+      itemSpawnMarkerMaterial = mat
+    }
+    return itemSpawnMarkerMaterial
+  }
+
+  function rebuildItemSpawnMeshes() {
+    for (const child of [...itemSpawnGroup.getChildren()]) child.dispose(false, false)
+    for (const spawn of itemSpawns) {
+      const def = itemDefById(spawn.itemId)
+      const name = def?.name || `Item ${spawn.itemId}`
+      const selected = spawn === selectedItemSpawn
+      const marker = MeshBuilder.CreateBox(`itemSpawn_${spawn.id}`, {
+        width: selected ? 0.52 : 0.4,
+        height: selected ? 0.38 : 0.3,
+        depth: selected ? 0.52 : 0.4
+      }, scene)
+      marker.material = getItemSpawnMarkerMaterial(selected)
       const y = itemSpawnWorldY(spawn)
       marker.position = new Vector3(spawn.x, y + 0.15, spawn.z)
       marker.metadata = { itemSpawn: spawn }
       marker.parent = itemSpawnGroup
+      const groundY = itemSpawnTerrainY(spawn.x, spawn.z)
+      if (Math.abs(y - groundY) > 0.08) {
+        const stem = MeshBuilder.CreateLines(`itemSpawnStem_${spawn.id}`, {
+          points: [
+            new Vector3(spawn.x, groundY + 0.03, spawn.z),
+            new Vector3(spawn.x, y + 0.04, spawn.z)
+          ]
+        }, scene)
+        stem.color = selected ? new Color3(0.35, 0.8, 1.0) : new Color3(0.9, 0.75, 0.2)
+        stem.isPickable = false
+        stem.parent = itemSpawnGroup
+      }
     }
     itemSpawnGroup.setEnabled(state.tool === ToolMode.ITEM_SPAWN)
+  }
+
+  function selectItemSpawn(spawn, focusCamera = false) {
+    selectedItemSpawn = spawn || null
+    if (selectedItemSpawn) {
+      setSelectedItemType(selectedItemSpawn.itemId)
+      if (focusCamera) camera.target = new Vector3(selectedItemSpawn.x, itemSpawnWorldY(selectedItemSpawn), selectedItemSpawn.z)
+    }
+    rebuildItemSpawnMeshes()
+    refreshItemSpawnList()
+    updateItemSpawnControls()
+  }
+
+  function updateItemSpawnControls() {
+    const surface = sidebar?.querySelector?.('#itemSpawnUseSurface')
+    if (surface && document.activeElement !== surface) surface.checked = itemSpawnSurfaceMode
+    const selectedLabel = sidebar?.querySelector?.('#itemSpawnSelectedLabel')
+    const editPanel = sidebar?.querySelector?.('#itemSpawnEditPanel')
+    if (selectedLabel) {
+      if (selectedItemSpawn) {
+        const def = itemDefById(selectedItemSpawn.itemId)
+        const offset = itemSpawnHeightOffset(selectedItemSpawn)
+        const respawn = Number.isFinite(selectedItemSpawn.respawnTime) ? `${Math.floor(selectedItemSpawn.respawnTime)}t` : 'none'
+        selectedLabel.textContent = `${def?.name || `Item ${selectedItemSpawn.itemId}`} x${selectedItemSpawn.quantity || 1} @ ${selectedItemSpawn.x.toFixed(2)}, ${selectedItemSpawn.z.toFixed(2)} ${formatItemSpawnFloor(selectedItemSpawn)} · y ${itemSpawnWorldY(selectedItemSpawn).toFixed(2)} (${offset >= 0 ? '+' : ''}${offset.toFixed(2)}) · respawn ${respawn}`
+      } else {
+        selectedLabel.textContent = 'No item spawn selected'
+      }
+    }
+    if (editPanel) editPanel.style.display = selectedItemSpawn ? 'block' : 'none'
+    if (!selectedItemSpawn) return
+    const qty = sidebar.querySelector('#itemSpawnSelectedQuantity')
+    const respawn = sidebar.querySelector('#itemSpawnSelectedRespawnTime')
+    const floor = sidebar.querySelector('#itemSpawnSelectedFloor')
+    const y = sidebar.querySelector('#itemSpawnSelectedY')
+    if (qty && document.activeElement !== qty) qty.value = String(Math.max(1, Math.floor(selectedItemSpawn.quantity || 1)))
+    if (respawn && document.activeElement !== respawn) respawn.value = Number.isFinite(selectedItemSpawn.respawnTime) ? String(Math.max(0, Math.floor(selectedItemSpawn.respawnTime))) : ''
+    if (floor && document.activeElement !== floor) floor.value = Number.isFinite(selectedItemSpawn.floor) ? String(Math.floor(selectedItemSpawn.floor)) : ''
+    if (y && document.activeElement !== y) y.value = Number.isFinite(selectedItemSpawn.y) ? String(Number(selectedItemSpawn.y).toFixed(3)) : ''
+  }
+
+  function normalizedItemSpawnValues(spawn) {
+    return {
+      quantity: Math.max(1, Math.floor(Number(spawn?.quantity) || 1)),
+      respawnTime: Number.isFinite(spawn?.respawnTime) ? Math.max(0, Math.floor(spawn.respawnTime)) : undefined,
+      floor: Number.isFinite(spawn?.floor) ? Math.floor(spawn.floor) : undefined,
+      y: Number.isFinite(spawn?.y) ? Number(spawn.y) : undefined,
+    }
+  }
+
+  function readSelectedItemSpawnControlValues(fallbackSpawn) {
+    const qty = Number(sidebar.querySelector('#itemSpawnSelectedQuantity')?.value)
+    const fallback = normalizedItemSpawnValues(fallbackSpawn)
+    const next = {
+      quantity: Number.isFinite(qty) ? Math.max(1, Math.floor(qty)) : fallback.quantity,
+      respawnTime: fallback.respawnTime,
+      floor: fallback.floor,
+      y: fallback.y,
+    }
+    const respawnRaw = sidebar.querySelector('#itemSpawnSelectedRespawnTime')?.value ?? ''
+    if (String(respawnRaw).trim() === '') next.respawnTime = undefined
+    else {
+      const respawn = Number(respawnRaw)
+      if (Number.isFinite(respawn)) next.respawnTime = Math.max(0, Math.floor(respawn))
+    }
+    const floorRaw = sidebar.querySelector('#itemSpawnSelectedFloor')?.value ?? ''
+    if (String(floorRaw).trim() === '') next.floor = undefined
+    else {
+      const floor = Math.floor(Number(floorRaw))
+      if (Number.isFinite(floor)) next.floor = floor
+    }
+    const yRaw = sidebar.querySelector('#itemSpawnSelectedY')?.value ?? ''
+    if (String(yRaw).trim() === '') next.y = undefined
+    else {
+      const y = Number(yRaw)
+      if (Number.isFinite(y)) next.y = y
+    }
+    return next
+  }
+
+  function updateSelectedItemSpawnFromControls() {
+    if (!selectedItemSpawn) return false
+    const current = normalizedItemSpawnValues(selectedItemSpawn)
+    const next = readSelectedItemSpawnControlValues(selectedItemSpawn)
+    if (
+      current.quantity === next.quantity &&
+      current.respawnTime === next.respawnTime &&
+      current.floor === next.floor &&
+      current.y === next.y
+    ) {
+      updateItemSpawnControls()
+      return false
+    }
+    pushUndoState('spawns')
+    selectedItemSpawn.quantity = next.quantity
+    if (next.respawnTime === undefined) delete selectedItemSpawn.respawnTime
+    else selectedItemSpawn.respawnTime = next.respawnTime
+    if (next.floor === undefined) delete selectedItemSpawn.floor
+    else selectedItemSpawn.floor = next.floor
+    if (next.y === undefined) delete selectedItemSpawn.y
+    else selectedItemSpawn.y = next.y
+    rebuildItemSpawnMeshes()
+    refreshItemSpawnList()
+    updateItemSpawnControls()
+    return true
   }
 
   function refreshItemSpawnList() {
@@ -1905,20 +2324,36 @@ function tuneModelLighting(model, assetOrPath = null) {
     if (countEl) countEl.textContent = itemSpawns.length
     listEl.innerHTML = ''
     for (const spawn of itemSpawns) {
-      const def = itemDefs.find(d => d.id === spawn.itemId)
+      const def = itemDefById(spawn.itemId)
       const name = def?.name || `Item ${spawn.itemId}`
       const offset = itemSpawnHeightOffset(spawn)
       const yText = Number.isFinite(spawn.y) && Math.abs(offset) > 0.001
         ? ` · y ${spawn.y.toFixed(2)} (${offset >= 0 ? '+' : ''}${offset.toFixed(2)})`
         : ''
+      const respawnText = Number.isFinite(spawn.respawnTime) ? ` · ${Math.floor(spawn.respawnTime)}t` : ''
       const row = document.createElement('div')
-      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:3px 5px;font-size:11px;cursor:pointer;border-radius:3px;margin-bottom:2px;background:#222;'
-      row.innerHTML = `<span>${name} <span style="opacity:0.5;">(${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}${yText})</span></span>`
+      row.style.cssText = `display:flex;justify-content:space-between;align-items:center;gap:5px;padding:3px 5px;font-size:11px;cursor:pointer;border-radius:3px;margin-bottom:2px;${spawn === selectedItemSpawn ? 'background:#1a4faf;' : 'background:#222;'}`
+      row.innerHTML = `<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeEditorHtml(name)} x${Math.max(1, spawn.quantity || 1)} <span style="opacity:0.55;">(${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)} ${formatItemSpawnFloor(spawn)}${yText}${respawnText})</span></span>`
+      const del = document.createElement('button')
+      del.type = 'button'
+      del.textContent = 'Delete'
+      del.title = 'Delete item spawn'
+      del.style.cssText = 'flex:0 0 auto;width:auto;margin:0;font-size:10px;padding:2px 5px;background:#4a2222;color:#fff;border:1px solid #7a4444;border-radius:3px;cursor:pointer;'
+      del.addEventListener('click', (event) => {
+        event.stopPropagation()
+        pushUndoState('spawns')
+        removeItemSpawn(spawn)
+        rebuildItemSpawnMeshes()
+        refreshItemSpawnList()
+        updateItemSpawnControls()
+      })
+      row.appendChild(del)
       row.addEventListener('click', () => {
-        camera.target = new Vector3(spawn.x, itemSpawnWorldY(spawn), spawn.z)
+        selectItemSpawn(spawn, true)
       })
       listEl.appendChild(row)
     }
+    updateItemSpawnControls()
   }
 
   function pickItemSpawn(event) {
@@ -2288,6 +2723,22 @@ function tuneModelLighting(model, assetOrPath = null) {
   let wallLineStart = null  // {x, z, edge} for Ctrl+click line drawing
   let blockLineStart = null // {x, z} for Ctrl+click block line drawing
   let collisionFloor = 0
+  let collisionFloorVisualMapsCache = null
+  let collisionFloorVisualMapsRevision = 0
+  let collisionFloorVisualMapsCacheRevision = -1
+
+  function invalidateCollisionFloorVisualMaps() {
+    collisionFloorVisualMapsRevision++
+    collisionFloorVisualMapsCache = null
+  }
+
+  function getCollisionFloorVisualMaps() {
+    if (!collisionFloorVisualMapsCache || collisionFloorVisualMapsCacheRevision !== collisionFloorVisualMapsRevision) {
+      collisionFloorVisualMapsCache = buildCollisionFloorVisualMaps()
+      collisionFloorVisualMapsCacheRevision = collisionFloorVisualMapsRevision
+    }
+    return collisionFloorVisualMapsCache
+  }
 
   // Diagonal floor placement
   let diagFloorMode = false
@@ -2396,6 +2847,7 @@ function tuneModelLighting(model, assetOrPath = null) {
     const layer = getCollisionLayer()
     if (height == null) delete layer.floors[`${x},${z}`]
     else layer.floors[`${x},${z}`] = height
+    invalidateCollisionFloorVisualMaps()
   }
 
   function setHoleAt(x, z, isHole) {
@@ -2419,6 +2871,7 @@ function tuneModelLighting(model, assetOrPath = null) {
     collisionData.tiles = root.tiles
     collisionData.holes = root.holes
     collisionData.floorLayers = normalizeCollisionFloorLayers(data?.floorLayers)
+    invalidateCollisionFloorVisualMaps()
     rebuildCollisionMeshes()
     invalidateShadowCache()
     markRootWallShadowTerrainDirty({ force: true })
@@ -2666,7 +3119,7 @@ function tuneModelLighting(model, assetOrPath = null) {
     for (const child of [...collisionGroup.getChildren()]) child.dispose(false, true)
 
     const layer = getCollisionLayer()
-    const visualMaps = buildCollisionFloorVisualMaps()
+    const visualMaps = getCollisionFloorVisualMaps()
 
     // Wall edges — render as 3D rectangle outlines at the actual wallHeights.
     // Top edge is color-coded: yellow = default 1.8, orange = custom-height
@@ -2934,6 +3387,7 @@ let selectedWaterFlowChunk = null
   }
 
   function markTerrainDirty({ skipTexturePlanes = true, skipShadows = false, skipTextureOverlays = true, heightsOnly = false, region = null, rebuildTexturePlanes = false, rebuildTextureOverlays = false } = {}) {
+    invalidateCollisionFloorVisualMaps()
     // Convenience: explicit rebuild flags override skip flags
     if (rebuildTexturePlanes) skipTexturePlanes = false
     if (rebuildTextureOverlays) skipTextureOverlays = false
@@ -2982,6 +3436,7 @@ let selectedWaterFlowChunk = null
   }
 
   function markCollisionDirty() {
+    invalidateCollisionFloorVisualMaps()
     _collisionDirty = true
     requestEditorRender('collision-dirty')
   }
@@ -3409,6 +3864,11 @@ let selectedWaterFlowChunk = null
           <button id="ladderClearLinksBtn" style="width:100%;font-size:11px;padding:4px 6px;color:#ffb0b0;">Clear all links</button>
           <div id="ladderLinksList" style="margin-top:6px;font-size:10px;color:#999;line-height:1.4;"></div>
         </div>
+        <div id="signTextRow" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #333;">
+          <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Sign text</div>
+          <textarea id="objectSignText" maxlength="${MAX_SIGN_TEXT_LENGTH}" placeholder="The player reads this overhead when using Read." style="width:100%;height:64px;box-sizing:border-box;font-size:11px;resize:vertical;"></textarea>
+          <div style="font-size:10px;color:#777;margin-top:3px;">Adds a Read action to this sign.</div>
+        </div>
         <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Examine text</div>
         <textarea id="objectExamineText" placeholder="It's an old sealed letter." style="width:100%;height:54px;box-sizing:border-box;font-size:11px;resize:vertical;"></textarea>
         <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Interaction effect</div>
@@ -3589,14 +4049,64 @@ let selectedWaterFlowChunk = null
 
     <div class="ctx-panel" id="ctx-item-spawn" style="display:none">
       <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px;">Item Type</div>
-      <select id="itemTypeSelect" style="width:100%;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;"></select>
+      <input id="itemTypeSearch" type="text" placeholder="Search item name, ID, slot..." style="width:100%;box-sizing:border-box;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;" />
+      <select id="itemTypeSelect" style="display:none;"></select>
+      <div id="itemSelectedPreview" class="item-spawn-selected-preview"></div>
+      <div id="itemTypeGrid" class="item-spawn-picker"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;align-items:end;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
+        <label style="font-size:11px;color:rgba(255,255,255,0.45);display:block;margin-top:0;">Quantity
+          <input id="itemSpawnQuantity" type="number" min="1" step="1" value="1" style="width:100%;margin-top:3px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;box-sizing:border-box;" />
+        </label>
+        <label style="font-size:11px;color:rgba(255,255,255,0.45);display:block;margin-top:0;">Respawn Ticks
+          <input id="itemSpawnRespawnTime" type="number" min="0" step="1" value="300" style="width:100%;margin-top:3px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;box-sizing:border-box;" />
+        </label>
+      </div>
       <div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:end;margin-top:8px;">
         <label style="font-size:11px;color:rgba(255,255,255,0.45);">Height Offset
           <input id="itemSpawnHeightOffset" type="number" step="0.05" value="0" style="width:100%;margin-top:3px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;box-sizing:border-box;" />
         </label>
         <button id="itemSpawnHeightReset" style="height:29px;font-size:11px;padding:4px 7px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;cursor:pointer;">Ground</button>
       </div>
-      <div class="hint" style="margin-top:6px;">Click to place · Ctrl/Cmd+Click uses the top surface · Shift+Click to remove</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;align-items:end;margin-top:8px;">
+        <label style="font-size:11px;color:rgba(255,255,255,0.45);display:block;margin-top:0;">Floor
+          <select id="itemSpawnFloorMode" style="width:100%;margin-top:3px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;">
+            <option value="auto">Auto</option>
+            <option value="-2">B2</option>
+            <option value="-1">B1</option>
+            <option value="0">Ground</option>
+            <option value="1">F1</option>
+            <option value="2">F2</option>
+            <option value="3">F3</option>
+          </select>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#ddd;margin:0 0 6px;cursor:pointer;">
+          <input id="itemSpawnUseSurface" type="checkbox" checked />
+          Surface pick
+        </label>
+      </div>
+      <div class="hint" style="margin-top:6px;">Click to place · Shift+Click to remove · surface pick targets tables and floor planes</div>
+      <div id="itemSpawnSelectedLabel" style="font-size:10px;color:rgba(255,255,255,0.55);margin-top:8px;min-height:13px;">No item spawn selected</div>
+      <div id="itemSpawnEditPanel" style="display:none;margin-top:7px;border:1px solid #333;border-radius:4px;background:#171717;padding:7px;">
+        <div style="font-size:11px;color:#aaa;margin-bottom:5px;">Selected spawn</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <label style="font-size:10px;color:#aaa;display:block;margin-top:0;">Qty
+            <input id="itemSpawnSelectedQuantity" type="number" min="1" step="1" style="width:100%;box-sizing:border-box;margin-top:3px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 5px;font-size:11px;" />
+          </label>
+          <label style="font-size:10px;color:#aaa;display:block;margin-top:0;">Respawn
+            <input id="itemSpawnSelectedRespawnTime" type="number" min="0" step="1" placeholder="none" style="width:100%;box-sizing:border-box;margin-top:3px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 5px;font-size:11px;" />
+          </label>
+          <label style="font-size:10px;color:#aaa;display:block;margin-top:0;">Floor
+            <input id="itemSpawnSelectedFloor" type="number" step="1" placeholder="auto" style="width:100%;box-sizing:border-box;margin-top:3px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 5px;font-size:11px;" />
+          </label>
+          <label style="font-size:10px;color:#aaa;display:block;margin-top:0;">Y
+            <input id="itemSpawnSelectedY" type="number" step="0.05" placeholder="terrain" style="width:100%;box-sizing:border-box;margin-top:3px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 5px;font-size:11px;" />
+          </label>
+        </div>
+        <div style="display:flex;gap:5px;margin-top:6px;">
+          <button id="itemSpawnApplySelectedBtn" style="flex:1;width:auto;margin:0;font-size:11px;padding:4px 6px;">Apply</button>
+          <button id="itemSpawnDeleteSelectedBtn" style="flex:1;width:auto;margin:0;font-size:11px;padding:4px 6px;background:#4a2222;color:#fff;border-color:#744;">Delete</button>
+        </div>
+      </div>
       <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:10px;border-top:1px solid #444;padding-top:8px;">Item Spawns <span id="itemSpawnCount">0</span></div>
       <div id="itemSpawnList" style="max-height:200px;overflow-y:auto;margin-top:4px;"></div>
     </div>
@@ -3773,6 +4283,43 @@ let selectedWaterFlowChunk = null
   sidebar.querySelector('#itemSpawnHeightReset')?.addEventListener('click', () => {
     const input = sidebar.querySelector('#itemSpawnHeightOffset')
     if (input) input.value = '0'
+    const floor = sidebar.querySelector('#itemSpawnFloorMode')
+    if (floor) floor.value = 'auto'
+    updateSelectedItemPreview()
+  })
+  sidebar.querySelector('#itemTypeSearch')?.addEventListener('input', () => renderItemTypePicker())
+  sidebar.querySelector('#itemTypeSearch')?.addEventListener('change', () => {
+    const text = String(sidebar.querySelector('#itemTypeSearch')?.value || '').trim()
+    const numeric = parseInt(text.replace(/^\D+/, ''), 10)
+    const lower = text.toLowerCase()
+    const found = itemDefById(numeric)
+      || itemDefs.find(def => (def.name || '').toLowerCase() === lower)
+      || itemDefs.find(def => `${def.name || ''} (${def.id})`.toLowerCase() === lower)
+    if (found) setSelectedItemType(found.id)
+  })
+  sidebar.querySelector('#itemTypeSelect')?.addEventListener('change', (event) => {
+    setSelectedItemType(parseInt(event.target.value, 10))
+  })
+  sidebar.querySelector('#itemSpawnQuantity')?.addEventListener('change', () => {
+    updateSelectedItemPreview()
+    renderItemTypePicker()
+  })
+  sidebar.querySelector('#itemSpawnRespawnTime')?.addEventListener('change', () => updateItemSpawnControls())
+  sidebar.querySelector('#itemSpawnUseSurface')?.addEventListener('change', (event) => {
+    itemSpawnSurfaceMode = !!event.target.checked
+    updateItemSpawnControls()
+  })
+  for (const id of ['itemSpawnSelectedQuantity', 'itemSpawnSelectedRespawnTime', 'itemSpawnSelectedFloor', 'itemSpawnSelectedY']) {
+    sidebar.querySelector(`#${id}`)?.addEventListener('change', () => updateSelectedItemSpawnFromControls())
+  }
+  sidebar.querySelector('#itemSpawnApplySelectedBtn')?.addEventListener('click', () => updateSelectedItemSpawnFromControls())
+  sidebar.querySelector('#itemSpawnDeleteSelectedBtn')?.addEventListener('click', () => {
+    if (!selectedItemSpawn) return
+    pushUndoState('spawns')
+    removeItemSpawn(selectedItemSpawn)
+    rebuildItemSpawnMeshes()
+    refreshItemSpawnList()
+    updateItemSpawnControls()
   })
   sidebar.querySelector('#minimapMarkerDeleteBtn')?.addEventListener('click', () => deleteMinimapMarker())
   sidebar.querySelector('#minimapMarkerApplyIconBtn')?.addEventListener('click', () => applyActiveIconToSelectedMinimapMarker())
@@ -4013,7 +4560,7 @@ let selectedWaterFlowChunk = null
   }
 
   function formatItemDisplay(id) {
-    const def = itemDefs.find(d => d.id === id)
+    const def = itemDefById(id)
     return def ? `${def.name} (${def.id})` : (id > 0 ? String(id) : '')
   }
 
@@ -4080,7 +4627,7 @@ let selectedWaterFlowChunk = null
   }
 
   function itemDefTextById(itemId) {
-    const item = itemDefs.find(def => def.id === itemId)
+    const item = itemDefById(itemId)
     if (!item) return ''
     return [item.name, item.model, item.icon, item.sprite].filter(Boolean).join(' ')
   }
@@ -4704,7 +5251,7 @@ let selectedWaterFlowChunk = null
       .join('')
     const posX = spawn?.x ?? 0
     const posZ = spawn?.z ?? 0
-    const floorVisualMaps = spawn ? buildCollisionFloorVisualMaps() : null
+    const floorVisualMaps = spawn ? getCollisionFloorVisualMaps() : null
     const spawnFloor = npcSpawnFloor(spawn)
     const floorHint = npcSpawnFloorHint(spawn, floorVisualMaps)
     const visualScale = npcVisualScale(spawn)
@@ -5625,7 +6172,7 @@ let selectedWaterFlowChunk = null
       if (itemId <= 0) continue
       const baseFit = npcModelGearBaseFit(spawn, slot)
       if (!baseFit) continue
-      const itemDef = itemDefs.find(d => d.id === itemId)
+      const itemDef = itemDefById(itemId)
       if (itemDef?.equipSlot && itemDef.equipSlot !== slot) continue
       rows.push({ label, slot, itemId, itemDef, baseFit })
     }
@@ -5807,7 +6354,7 @@ let selectedWaterFlowChunk = null
         // Snap to canonical "Name (ID)" form on resolve so the user sees the
         // matched item. Blank stays blank.
         input.value = id > 0 ? formatItemDisplay(id) : ''
-        const ok = id === 0 || itemDefs.some(d => d.id === id)
+        const ok = id === 0 || !!itemDefById(id)
         input.style.borderColor = ok ? '#444' : '#a55'
         refreshNpcPreviewGear(spawn)
         if (npcModelGearBaseFit(spawn, slot) || id <= 0) renderEquipmentTab(root)
@@ -5869,7 +6416,7 @@ let selectedWaterFlowChunk = null
   }
 
   function itemNameForEditor(itemId) {
-    return itemDefs.find(d => d.id === itemId)?.name || `Item ${itemId}`
+    return itemDefById(itemId)?.name || `Item ${itemId}`
   }
 
   function syncNpcRelicDropToCombatLevel(def) {
@@ -5925,7 +6472,7 @@ let selectedWaterFlowChunk = null
 
     if (!Array.isArray(def.lootTable)) def.lootTable = []
     const rows = def.lootTable.map(drop => {
-      const item = itemDefs.find(d => d.id === drop.itemId)
+      const item = itemDefById(drop.itemId)
       const chance = Math.max(0, Math.min(1, Number(drop.chance) || 0))
       const expectedQty = (Number(drop.quantity) || 0) * chance
       const expectedValue = expectedQty * (Number(item?.value) || 0)
@@ -6218,7 +6765,7 @@ let selectedWaterFlowChunk = null
         // entry gets its name filled in, and an unresolvable string visibly
         // resets to the raw ID instead of looking valid.
         itemInput.value = formatItemDisplay(id)
-        const recognised = itemDefs.some(d => d.id === id)
+        const recognised = !!itemDefById(id)
         itemInput.style.borderColor = (id > 0 && recognised) ? '#444' : '#aa5544'
         dirty()
       })
@@ -6705,6 +7252,13 @@ let selectedWaterFlowChunk = null
     else delete selectedPlacedObject.userData.name
     ensureShopItemDatalist()
   })
+  const objectSignText = sidebar.querySelector('#objectSignText')
+  objectSignText?.addEventListener('input', () => {
+    if (!selectedPlacedObject || !isSignPlacedObject(selectedPlacedObject)) return
+    const signText = normalizeSignText(objectSignText.value)
+    if (signText) selectedPlacedObject.userData.signText = signText
+    else delete selectedPlacedObject.userData.signText
+  })
   function placedObjectDef(obj) {
     const defId = obj ? ASSET_TO_OBJECT_DEF[obj.userData?.assetId] : null
     if (defId == null) return null
@@ -6725,6 +7279,11 @@ let selectedWaterFlowChunk = null
   function isLadderPlacedObject(obj) {
     const def = placedObjectDef(obj)
     return def?.category === 'ladder'
+  }
+  function isSignPlacedObject(obj) {
+    if (!obj) return false
+    const def = placedObjectDef(obj)
+    return def?.category === 'sign' || isReadableSignAssetId(obj.userData?.assetId || '')
   }
   function isTeleportPlacedObject(obj) {
     const def = placedObjectDef(obj)
@@ -6879,6 +7438,15 @@ let selectedWaterFlowChunk = null
   function copyNoRoofFlag(src, dest) {
     if (src?.userData?.noRoof) dest.userData.noRoof = true
     else delete dest.userData.noRoof
+  }
+  function copySignTextField(src, dest) {
+    const signText = normalizeSignText(src?.userData?.signText)
+    if (signText && isSignPlacedObject(dest)) dest.userData.signText = signText
+    else delete dest.userData.signText
+  }
+  function copyPlacedObjectAuthoringFields(src, dest) {
+    copyNoRoofFlag(src, dest)
+    copySignTextField(src, dest)
   }
   function mapInfoById(mapId) {
     return editorServerMaps.find(m => m?.id === mapId) || null
@@ -7334,7 +7902,7 @@ let selectedWaterFlowChunk = null
       return null
     }
 
-    const visualMaps = buildCollisionFloorVisualMaps()
+    const visualMaps = getCollisionFloorVisualMaps()
     const y =
       visualMaps.explicit.get(floor)?.get(idx)
       ?? visualMaps.derived.get(floor)?.get(idx)
@@ -7919,12 +8487,12 @@ let selectedWaterFlowChunk = null
     return npcId > 0 ? npcDefById(npcId) : null
   }
   function stallMerchantShopPriceForItem(itemId) {
-    const def = itemDefs.find(item => item.id === itemId)
+    const def = itemDefById(itemId)
     const value = Math.max(1, Math.ceil(Number(def?.value) || 1))
     return Math.max(1, value * 2)
   }
   function stallMerchantShopStockForItem(itemId) {
-    const def = itemDefs.find(item => item.id === itemId)
+    const def = itemDefById(itemId)
     const value = Math.max(1, Number(def?.value) || 1)
     let stock = 1
     if (value <= 5) stock = 20
@@ -8112,7 +8680,7 @@ let selectedWaterFlowChunk = null
         const id = parseItemIdFromDisplay(itemInput.value)
         shop.items[idx].itemId = id
         itemInput.value = formatItemDisplay(id)
-        const recognised = itemDefs.some(def => def.id === id)
+        const recognised = !!itemDefById(id)
         itemInput.style.borderColor = (id > 0 && recognised) ? '' : '#aa5544'
         markDefsDirty()
       })
@@ -8985,6 +9553,8 @@ let selectedWaterFlowChunk = null
       const addSayLine = sidebar.querySelector('#objectEffectAddSayLine')
       const message = sidebar.querySelector('#objectEffectMessage')
       const effect = selectedPlacedObject?.userData?.interactions?.[0] || null
+      const signTextRow = sidebar.querySelector('#signTextRow')
+      const signTextInput = sidebar.querySelector('#objectSignText')
       const doorLabel = sidebar.querySelector('#doorDefaultOpenLabel')
       const doorInput = sidebar.querySelector('#doorDefaultOpenInput')
       const doorDirectionLabel = sidebar.querySelector('#doorOpenDirectionLabel')
@@ -9000,8 +9570,10 @@ let selectedWaterFlowChunk = null
       const stallLootRows = sidebar.querySelector('#stallLootRows')
       const stallMerchantRow = sidebar.querySelector('#stallMerchantRow')
       const showDoorDefault = showObjectName && isDoorPlacedObject(selectedPlacedObject)
+      const showSignText = showObjectName && isSignPlacedObject(selectedPlacedObject)
       const showAltarTier = showObjectName && isAltarPlacedObject(selectedPlacedObject)
       const showStallLoot = showObjectName && isStallPlacedObject(selectedPlacedObject)
+      if (signTextRow) signTextRow.style.display = showSignText ? 'block' : 'none'
       if (doorLabel) doorLabel.style.display = showDoorDefault ? 'flex' : 'none'
       if (doorDirectionLabel) doorDirectionLabel.style.display = showDoorDefault ? 'block' : 'none'
       if (doorLockedFields) doorLockedFields.style.display = showDoorDefault ? 'block' : 'none'
@@ -9043,6 +9615,9 @@ let selectedWaterFlowChunk = null
       }
       if (showAltarTier && altarTierSelect && document.activeElement !== altarTierSelect) {
         altarTierSelect.value = String(Math.max(1, Math.floor(selectedPlacedObject.userData.altarTier || 1)))
+      }
+      if (showSignText && signTextInput && document.activeElement !== signTextInput) {
+        signTextInput.value = selectedPlacedObject.userData.signText || ''
       }
       const ladderWiringRow = sidebar.querySelector('#ladderWiringRow')
       const showLadderUI = showObjectName && isLadderPlacedObject(selectedPlacedObject)
@@ -9205,6 +9780,12 @@ let selectedWaterFlowChunk = null
       refreshNpcSpawnList()
       syncNpcTypeInput()
       updateNpcPlacementControls()
+    }
+    if (mode === ToolMode.ITEM_SPAWN) {
+      renderItemTypePicker()
+      rebuildItemSpawnMeshes()
+      refreshItemSpawnList()
+      updateItemSpawnControls()
     }
     if (mode === ToolMode.MINIMAP_MARKER) {
       refreshMinimapMarkerPanel()
@@ -9560,6 +10141,7 @@ let selectedWaterFlowChunk = null
       }
       if (obj.userData.name) out.name = obj.userData.name
       if (obj.userData.examineText) out.examineText = obj.userData.examineText
+      if (obj.userData.signText) out.signText = obj.userData.signText
       if (obj.userData.interactions?.length) out.interactions = JSON.parse(JSON.stringify(obj.userData.interactions))
       if (obj.userData.defaultOpen) out.defaultOpen = true
       if (obj.userData.openDirection === 1) out.openDirection = 1
@@ -9624,6 +10206,7 @@ let selectedWaterFlowChunk = null
       model.userData.layerId = placed.layerId || 'layer_0'
       if (placed.name) model.userData.name = placed.name
       if (placed.examineText) model.userData.examineText = placed.examineText
+      if (placed.signText) model.userData.signText = placed.signText
       if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
       if (placed.defaultOpen) model.userData.defaultOpen = true
       if (placed.openDirection === 1) model.userData.openDirection = 1
@@ -10023,6 +10606,7 @@ let selectedWaterFlowChunk = null
       model.userData.layerId = placed.layerId || activeLayerId
       if (placed.name) model.userData.name = placed.name
       if (placed.examineText) model.userData.examineText = placed.examineText
+      if (placed.signText) model.userData.signText = placed.signText
       if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
       if (placed.noRoof) model.userData.noRoof = true
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
@@ -10495,6 +11079,7 @@ let selectedWaterFlowChunk = null
   }
 
   function appendTexturePlane(plane) {
+    invalidateCollisionFloorVisualMaps()
     if (!texturePlaneGroup) {
       texturePlaneGroup = new TransformNode('texture-planes', scene)
       texturePlaneGroup.setEnabled(true)
@@ -10509,6 +11094,7 @@ let selectedWaterFlowChunk = null
   }
 
   function removeTexturePlaneMesh(plane) {
+    invalidateCollisionFloorVisualMaps()
     const node = texturePlaneNodeFor(plane)
     if (node) {
       texturePlaneNodesById.delete(plane?.id)
@@ -10633,6 +11219,7 @@ let selectedWaterFlowChunk = null
   }
 
   function updateTexturePlaneMeshTransform(plane) {
+    invalidateCollisionFloorVisualMaps()
     const node = texturePlaneNodeFor(plane)
     if (!node) return
     setTexturePlaneNodeFrozen(node, false)
@@ -10795,6 +11382,7 @@ let selectedWaterFlowChunk = null
   }
 
   function shouldUseStackedPlacementSurface(eventLike) {
+    if (state.tool === ToolMode.ITEM_SPAWN && itemSpawnSurfaceMode) return true
     return !!(eventLike?.ctrlKey || eventLike?.metaKey)
   }
 
@@ -10928,6 +11516,7 @@ let selectedWaterFlowChunk = null
     model.userData.layerId = placed.layerId || activeLayerId
     if (placed.name) model.userData.name = placed.name
     if (placed.examineText) model.userData.examineText = placed.examineText
+    if (placed.signText) model.userData.signText = placed.signText
     if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
     if (placed.defaultOpen) model.userData.defaultOpen = true
     if (placed.openDirection === 1) model.userData.openDirection = 1
@@ -12066,7 +12655,7 @@ function applyToolAtTile(tile, eventLike = null) {
         model.userData.assetId = asset.id
         model.userData.type = 'asset'
         model.userData.layerId = src.userData.layerId || activeLayerId
-        copyNoRoofFlag(src, model)
+        copyPlacedObjectAuthoringFields(src, model)
         addPlacedModel(model)
         model.computeWorldMatrix(true)
         model.position.copyFrom(src.position.add(offsetVec))
@@ -12178,7 +12767,7 @@ function applyToolAtTile(tile, eventLike = null) {
         model.userData.assetId = asset.id
         model.userData.type = 'asset'
         model.userData.layerId = src.userData.layerId || activeLayerId
-        copyNoRoofFlag(src, model)
+        copyPlacedObjectAuthoringFields(src, model)
         addPlacedModel(model)
         model.computeWorldMatrix(true)
 
@@ -12228,7 +12817,7 @@ function applyToolAtTile(tile, eventLike = null) {
       model.userData.assetId = asset.id
       model.userData.type = 'asset'
       model.userData.layerId = selectedPlacedObject.userData.layerId || activeLayerId
-      copyNoRoofFlag(selectedPlacedObject, model)
+      copyPlacedObjectAuthoringFields(selectedPlacedObject, model)
 
       addPlacedModel(model)
       model.computeWorldMatrix(true)
@@ -13211,7 +13800,7 @@ function applyToolAtTile(tile, eventLike = null) {
       spawns: {
         npcs: serializeNpcSpawns(),
         objects: [],
-        items: serializeItemSpawns().map(({ id: _id, ...spawn }) => spawn)
+        items: serializeItemSpawns()
       },
       mapData: {
         map: saveData.map,
@@ -13288,13 +13877,12 @@ function applyToolAtTile(tile, eventLike = null) {
   dropsBtn?.addEventListener('click', () => openDropsEditor(selectedNpcSpawn?.npcId))
   itemsBtn?.addEventListener('click', () => openItemStatsEditor({
     onSaved(savedItems) {
-      itemDefs = savedItems
-      const sel = sidebar.querySelector('#itemTypeSelect')
-      if (sel) {
-        const previous = sel.value
-        sel.innerHTML = itemDefs.map(d => `<option value="${d.id}">${d.name} (${d.id})</option>`).join('')
-        if ([...sel.options].some(o => o.value === previous)) sel.value = previous
-      }
+      const previous = sidebar.querySelector('#itemTypeSelect')?.value ?? null
+      setItemDefs(savedItems)
+      syncItemTypeSelectOptions(previous)
+      setSelectedItemType(selectedItemTypeId, { render: false })
+      renderItemTypePicker()
+      updateItemSpawnControls()
       const dl = document.getElementById('shopItemDatalist')
       if (dl) dl.dataset.signature = ''
       ensureShopItemDatalist()
@@ -14546,7 +15134,7 @@ function applyToolAtTile(tile, eventLike = null) {
     }
 
     function validateItemRef(id, questId, path, issue) {
-      if (!Number.isInteger(id) || !itemDefs.some(d => d.id === id)) issue('error', questId, path, 'Item ID does not exist.')
+      if (!Number.isInteger(id) || !itemDefById(id)) issue('error', questId, path, 'Item ID does not exist.')
     }
 
     // ---- field widget helpers ----
@@ -14982,6 +15570,7 @@ function applyToolAtTile(tile, eventLike = null) {
           x: s.x,
           z: s.z,
           quantity: s.quantity ?? 1,
+          respawnTime: s.respawnTime,
           y: s.y,
           floor: s.floor
         })),
@@ -15682,6 +16271,7 @@ function applyToolAtTile(tile, eventLike = null) {
           delete plane.bridge
         }
       }
+      invalidateCollisionFloorVisualMaps()
       texBridgeCheckbox.checked = !!selectedTexturePlane.bridge
       return
     }
@@ -15711,6 +16301,7 @@ function applyToolAtTile(tile, eventLike = null) {
         delete plane.bridge
       }
     }
+    invalidateCollisionFloorVisualMaps()
     texNoRoofCheckbox.checked = !!selectedTexturePlane.noRoof
   })
 
@@ -16361,16 +16952,30 @@ function applyToolAtTile(tile, eventLike = null) {
           removeItemSpawn(picked)
           rebuildItemSpawnMeshes()
           refreshItemSpawnList()
+          updateItemSpawnControls()
         }
         return
       }
-      const itemId = parseInt(sidebar.querySelector('#itemTypeSelect')?.value)
+      const picked = pickItemSpawn(event)
+      if (picked) {
+        selectItemSpawn(picked, false)
+        return
+      }
+      const itemId = selectedItemTypeId || parseInt(sidebar.querySelector('#itemTypeSelect')?.value)
       if (!itemId) return
       const placement = itemSpawnPlacementPoint(tile, event)
       pushUndoState('spawns')
-      addItemSpawn(itemId, placement.x, placement.z, 1, undefined, placement.authoredY)
-      rebuildItemSpawnMeshes()
-      refreshItemSpawnList()
+      const spawn = addItemSpawn(
+        itemId,
+        placement.x,
+        placement.z,
+        itemSpawnQuantityFromInput(),
+        undefined,
+        placement.authoredY,
+        placement.floor,
+        itemSpawnRespawnTimeFromInput(),
+      )
+      selectItemSpawn(spawn, false)
       return
     }
 

@@ -388,6 +388,134 @@ canvas {
   border-color: rgba(255,255,255,0.2);
 }
 
+.item-spawn-selected-preview {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin-top: 7px;
+  padding: 6px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+}
+
+.item-spawn-selected-meta {
+  min-width: 0;
+  font-size: 11px;
+  color: #eee;
+}
+
+.item-spawn-selected-meta div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-spawn-selected-meta small {
+  display: block;
+  margin-top: 2px;
+  color: rgba(255,255,255,0.45);
+}
+
+.item-spawn-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  max-height: 238px;
+  overflow-y: auto;
+  margin-top: 7px;
+}
+
+.item-spawn-card {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 42px 26px 12px;
+  gap: 3px;
+  align-items: center;
+  justify-items: center;
+  padding: 5px 4px;
+  margin: 0;
+  text-align: center;
+  background: rgba(255,255,255,0.055);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  color: #ddd;
+}
+
+.ctx-panel .item-spawn-card {
+  width: auto;
+  margin-top: 0;
+  text-align: center;
+}
+
+.item-spawn-card:hover {
+  background: rgba(255,255,255,0.11);
+  border-color: rgba(255,255,255,0.24);
+}
+
+.item-spawn-card.active {
+  background: rgba(26, 79, 175, 0.75);
+  border-color: #5590ff;
+  color: #fff;
+}
+
+.item-spawn-thumb {
+  width: 42px;
+  height: 42px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.28);
+  border: 1px solid rgba(255,255,255,0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.item-spawn-thumb.empty::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
+.item-spawn-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  image-rendering: auto;
+}
+
+.item-spawn-card-name {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.15;
+}
+
+.item-spawn-card small {
+  color: rgba(255,255,255,0.45);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.item-spawn-card.active small {
+  color: rgba(255,255,255,0.72);
+}
+
+.item-spawn-picker-empty {
+  grid-column: 1 / -1;
+  padding: 10px;
+  color: rgba(255,255,255,0.45);
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
 .item-stats-modal {
   position: fixed;
   inset: 0;

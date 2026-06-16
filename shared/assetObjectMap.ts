@@ -1,4 +1,4 @@
-import { BROTHER_MONK_CHEST_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, RICE_PLANT_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID } from './constants';
+import { BROTHER_MONK_CHEST_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, RICE_PLANT_OBJECT_DEF_ID, SIGN_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID } from './constants';
 
 /**
  * Maps editor-placed asset IDs (GLB model names) to game object definition IDs (objects.json).
@@ -130,7 +130,20 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'well': 27,
   'desert well': 27,
   'desert fountain': 27,
+  // Readable signs. Per-instance text lives on PlacedObject.signText and is
+  // converted into the standard placed-object Read interaction at runtime.
+  'sign': SIGN_OBJECT_DEF_ID,
+  'sign post': SIGN_OBJECT_DEF_ID,
 };
+
+export const READABLE_SIGN_ASSET_IDS: ReadonlySet<string> = new Set([
+  'sign',
+  'sign post',
+]);
+
+export function isReadableSignAssetId(assetId: string): boolean {
+  return READABLE_SIGN_ASSET_IDS.has(assetId);
+}
 
 /**
  * Editor-placed assets that are represented in-game as ground items instead of

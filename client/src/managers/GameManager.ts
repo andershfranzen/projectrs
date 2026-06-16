@@ -8994,9 +8994,9 @@ export class GameManager {
     if (!this.isWorldObjectInteractable(def, data.depleted)) return;
     if (this.tryUseInventoryItemOn('object', objectEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
-    // Auto-interact with skilling objects, doors, ladders, banks, and
+    // Auto-interact with skilling objects, signs, doors, ladders, banks, and
     // crafting stations (furnace, anvil, range).
-    if (isHarvestObjectDef(def) || def.category === 'crop' || def.category === 'door' || def.category === 'ladder' || def.category === 'bank' || (def.recipes && def.recipes.length > 0)) {
+    if (isHarvestObjectDef(def) || def.category === 'crop' || def.category === 'sign' || def.category === 'door' || def.category === 'ladder' || def.category === 'bank' || (def.recipes && def.recipes.length > 0)) {
       const actionIndex = def.category === 'ladder'
         ? this.primaryLadderActionIndex(def, data)
         : 0;
