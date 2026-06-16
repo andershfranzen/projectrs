@@ -7586,7 +7586,7 @@ let selectedWaterFlowChunk = null
     }
     const match = nearestDungeonExitForMap(targetMap, anchor)
     if (!match) {
-      setDungeonExitStatus(`No saved CavernExit1 on ${targetMap}. Place one in that dungeon, save the map, then try again.`, '#ffb45f')
+      setDungeonExitStatus(`No saved dungeon exit on ${targetMap}. Place a CavernExit1 or open trapdoor in that dungeon, save the map, then try again.`, '#ffb45f')
       renderTeleportOccupancyPreview()
       return
     }
@@ -7597,7 +7597,7 @@ let selectedWaterFlowChunk = null
     entryZ.value = formatTeleportNumber(landing.z)
     saveTriggerFromUI()
     const coord = `${formatTeleportNumber(landing.x)}, ${formatTeleportNumber(landing.y)}, ${formatTeleportNumber(landing.z)}`
-    setDungeonExitStatus(`Linked to ${match.exit.objectName || match.exit.assetId || 'CavernExit1'} on ${targetMap} at ${coord}.`, '#7bdca8')
+    setDungeonExitStatus(`Linked to ${match.exit.objectName || match.exit.assetId || 'dungeon exit'} on ${targetMap} at ${coord}.`, '#7bdca8')
     updateToolUI()
   }
   function formatTeleportNumber(value) {

@@ -1,4 +1,4 @@
-import { BROTHER_MONK_CHEST_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, RICE_PLANT_OBJECT_DEF_ID, SIGN_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID } from './constants';
+import { BROTHER_MONK_CHEST_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, RICE_PLANT_OBJECT_DEF_ID, SIGN_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID, TRAPDOOR_OBJECT_DEF_ID } from './constants';
 
 /**
  * Maps editor-placed asset IDs (GLB model names) to game object definition IDs (objects.json).
@@ -83,6 +83,8 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'cavedoor': 15,  // Cave Entrance -> map transition
   'CavernEntrance1': 15,
   'CavernExit1': 15,
+  'TrapdoorClosed': TRAPDOOR_OBJECT_DEF_ID,
+  'TrapdoorOpenFinal': TRAPDOOR_OBJECT_DEF_ID,
   // Floor transitions
   'Ladder': 23,
   'stone stairs': STAIRS_OBJECT_DEF_ID,

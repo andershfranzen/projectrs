@@ -320,7 +320,7 @@ function editorFiniteNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-const DUNGEON_EXIT_ASSET_IDS = new Set(['CavernExit1']);
+const DUNGEON_EXIT_ASSET_IDS = new Set(['CavernExit1', 'TrapdoorOpenFinal']);
 
 type EditorTeleportEntry = {
   targetMap: string;

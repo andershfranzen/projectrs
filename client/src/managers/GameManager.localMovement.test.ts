@@ -12,6 +12,9 @@ type LocalPlayerStub = {
   setMovementMode: (mode: string) => void;
   updateMovementDirection: (dx: number, dz: number) => void;
   setPositionXYZ: (x: number, y: number, z: number) => void;
+  clearFaceLock: () => void;
+  isSkillAnimPlaying: () => boolean;
+  resetTransientAnimation: () => void;
 };
 
 function makeLocalPlayer(): LocalPlayerStub {
@@ -30,6 +33,9 @@ function makeLocalPlayer(): LocalPlayerStub {
     setPositionXYZ: (x: number, y: number, z: number) => {
       player.positions.push({ x, y, z });
     },
+    clearFaceLock: () => {},
+    isSkillAnimPlaying: () => false,
+    resetTransientAnimation: () => {},
   };
   return player;
 }
@@ -37,10 +43,11 @@ function makeLocalPlayer(): LocalPlayerStub {
 function makeManager(
   path: { x: number; z: number }[],
   predictedSteps: number,
-): { manager: any; player: LocalPlayerStub; floorUpdates: number[] } {
+): { manager: any; player: LocalPlayerStub; floorUpdates: number[]; sentMoves: Array<{ path: { x: number; z: number }[]; mode: string }> } {
   const manager = Object.create(GameManager.prototype) as any;
   const player = makeLocalPlayer();
   const floorUpdates: number[] = [];
+  const sentMoves: Array<{ path: { x: number; z: number }[]; mode: string }> = [];
 
   manager.movementMode = 'run';
   manager.path = path;
@@ -56,7 +63,13 @@ function makeManager(
   manager.predictedPathAuthorityReanchorAttempts = 0;
   manager.recentPredictedArrivalUntil = 0;
   manager.recentPredictedArrivalDestination = null;
+  manager.recentPredictedArrivalRouteTiles = new Set();
+  manager.lastLocalMoveCommandAt = 0;
+  manager.localAuthoritativeTileHeights = new Map();
   manager.pendingSelfMoveStepsByTick = [];
+  manager.selfAuthorityRouteTargetSteps = 0;
+  manager.selfAuthorityRedirectGraceUntil = 0;
+  manager.selfAuthorityRedirectStaleRouteTiles = new Set();
   manager.currentFloor = 0;
   manager.pendingPath = null;
   manager.isSkilling = false;
@@ -66,14 +79,27 @@ function makeManager(
   manager.destMarker = null;
   manager.minimap = null;
   manager.localPlayer = player;
+  manager.network = {
+    sendMove: (movePath: { x: number; z: number }[], mode: string) => {
+      sentMoves.push({ path: movePath, mode });
+      return true;
+    },
+  };
   manager.inputManager = { setPlayerY: () => {} };
-  manager.chunkManager = { setCurrentFloor: (floor: number) => { floorUpdates.push(floor); } };
+  manager.chunkManager = {
+    setCurrentFloor: (floor: number) => { floorUpdates.push(floor); },
+    getMapWidth: () => 128,
+    getMapHeight: () => 128,
+    getEffectiveHeight: () => 0,
+  };
   manager.getHeight = () => 0;
+  manager.isTileBlocked = () => false;
+  manager.isWallBlockedForPath = () => false;
   manager.refreshHoverHiddenRoofs = () => {};
   manager.shouldKeepLocalCombatWalkLoopAlive = () => false;
   manager.refreshLocalCombatFacing = () => {};
 
-  return { manager, player, floorUpdates };
+  return { manager, player, floorUpdates, sentMoves };
 }
 
 function advanceLocalMovement(manager: any, seconds: number, camPos: any = null): void {
@@ -141,6 +167,99 @@ describe('GameManager local movement prediction', () => {
     expect(manager.playerZ).toBeCloseTo(0.5, 5);
   });
 
+  test('lands on a unit tile for a rendered frame before continuing through a turn', () => {
+    const { manager } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.tileProgress = 0.095;
+    manager.playerX = 1.45;
+
+    manager.updateLocalPlayerMovement(0.1, null);
+
+    expect(manager.pathIndex).toBe(0);
+    expect(manager.tileProgress).toBeCloseTo(0.1, 6);
+    expect(manager.playerX).toBeCloseTo(1.5, 6);
+    expect(manager.playerZ).toBeCloseTo(0.5, 6);
+  });
+
+  test('route replacement while mid-step preserves the current unit tile before turning', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.tileProgress = 0.05;
+    manager.playerX = 1.0;
+    manager.playerZ = 0.5;
+
+    manager.startLocalPredictedPath([
+      { x: 2.5, z: 1.5 },
+      { x: 2.5, z: 8.5 },
+    ], false, true);
+
+    expect(manager.path[0]).toEqual({ x: 1.5, z: 0.5 });
+    expect(manager.path[1]).toEqual({ x: 2.5, z: 1.5 });
+    expect(manager.tileFrom).toEqual({ x: 0.5, z: 0.5 });
+    expect(manager.tileProgress).toBe(0.5);
+    expect(manager.playerX).toBe(1.0);
+
+    manager.updateLocalPlayerMovement(0.01, {} as any);
+
+    expect(player.directions.at(-1)).toEqual({
+      dx: 1.5 - manager.playerX,
+      dz: 0,
+    });
+  });
+
+  test('duplicate active destination clicks do not resend or rewrite local movement', () => {
+    const { manager, sentMoves } = makeManager([
+      { x: 1.5, z: 0.5 },
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.predictedPathDestination = { x: 10.5, z: 0.5 };
+    manager.tileProgress = 0.25;
+    manager.playerX = 0.75;
+
+    const started = manager.startPredictedPath([
+      { x: 1.5, z: 0.5 },
+      { x: 10.5, z: 0.5 },
+    ], true);
+
+    expect(started).toBe(false);
+    expect(sentMoves).toEqual([]);
+    expect(manager.path).toEqual([
+      { x: 1.5, z: 0.5 },
+      { x: 10.5, z: 0.5 },
+    ]);
+    expect(manager.tileProgress).toBe(0.25);
+    expect(manager.playerX).toBe(0.75);
+  });
+
+  test('repeated duplicate destination clicks leave the active run route untouched', () => {
+    const { manager, sentMoves } = makeManager([
+      { x: 1.5, z: 0.5 },
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.predictedPathDestination = { x: 10.5, z: 0.5 };
+    manager.tileProgress = 0.25;
+    manager.playerX = 0.75;
+
+    for (let i = 0; i < 12; i++) {
+      const started = manager.startPredictedPath([
+        { x: 1.5, z: 0.5 },
+        { x: 10.5, z: 0.5 },
+      ], true);
+      expect(started).toBe(false);
+    }
+
+    expect(sentMoves).toEqual([]);
+    expect(manager.path).toEqual([
+      { x: 1.5, z: 0.5 },
+      { x: 10.5, z: 0.5 },
+    ]);
+    expect(manager.tileProgress).toBe(0.25);
+    expect(manager.playerX).toBe(0.75);
+    expect(manager.selfAuthorityRedirectGraceUntil).toBe(0);
+  });
+
   test('ignores visible self authority while a predicted path is still draining', () => {
     const { manager } = makeManager([
       { x: 1.5, z: 0.5 },
@@ -206,7 +325,226 @@ describe('GameManager local movement prediction', () => {
     expect(player.positions).toEqual([]);
   });
 
-  test('local authoritative move steps still reset an off-route prediction', () => {
+  test('local authoritative move steps catch up smoothly when the server is ahead on the same route', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 5.5, z: 0.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(manager.playerX).toBe(0.5);
+    expect(manager.pathIndex).toBe(0);
+    expect(manager.selfAuthorityRouteTargetSteps).toBe(5);
+    expect(player.positions).toEqual([]);
+
+    advanceLocalMovement(manager, 0.3);
+
+    expect(manager.playerX).toBeGreaterThan(1.5);
+    expect(manager.playerX).toBeLessThan(5.5);
+    expect(manager.pathIndex).toBe(0);
+  });
+
+  test('local authoritative move steps ignore stale off-route packets after a running redirect', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.tileProgress = 0.05;
+    manager.playerX = 1.0;
+    manager.playerZ = 0.5;
+
+    manager.startLocalPredictedPath([
+      { x: 1.5, z: 0.5 },
+      { x: 1.5, z: 8.5 },
+    ], true, true);
+
+    expect(manager.selfAuthorityRedirectGraceUntil).toBeGreaterThan(performance.now());
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 4.5, z: 0.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(manager.path).toEqual([
+      { x: 1.5, z: 0.5 },
+      { x: 1.5, z: 8.5 },
+    ]);
+    expect(manager.pathIndex).toBe(0);
+    expect(manager.tileFrom).toEqual({ x: 0.5, z: 0.5 });
+    expect(manager.tileProgress).toBe(0.5);
+    expect(manager.playerX).toBe(1.0);
+    expect(manager.playerZ).toBe(0.5);
+    expect(player.positions).toEqual([]);
+
+    manager.selfAuthorityRedirectGraceUntil = performance.now() - 1;
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 4.5, z: 0.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(manager.path.length).toBeGreaterThan(0);
+    expect(manager.path.at(-1)).toEqual({ x: 1.5, z: 8.5 });
+    expect(manager.playerX).toBe(1.0);
+    expect(manager.playerZ).toBe(0.5);
+    expect(player.positions).toEqual([]);
+  });
+
+  test('redirect stale authority guard only ignores tiles outside the new route', () => {
+    const { manager } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.tileProgress = 0.05;
+    manager.playerX = 1.0;
+    manager.playerZ = 0.5;
+
+    manager.startLocalPredictedPath([
+      { x: 1.5, z: 0.5 },
+      { x: 1.5, z: 8.5 },
+    ], true, true);
+
+    expect(manager.shouldIgnoreRedirectStaleLocalAuthority(4.5, 0.5)).toBe(true);
+    expect(manager.shouldIgnoreRedirectStaleLocalAuthority(1.5, 5.5)).toBe(false);
+    expect(manager.shouldIgnoreRedirectStaleLocalAuthority(4.5, 4.5)).toBe(false);
+  });
+
+  test('nearby authoritative recovery turns retarget the local route without teleporting', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.tileProgress = 0.05;
+    manager.playerX = 1.0;
+    manager.playerZ = 0.5;
+
+    manager.startLocalPredictedPath([
+      { x: 1.5, z: 0.5 },
+      { x: 1.5, z: 8.5 },
+    ], true, true);
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 2.5, z: 1.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(player.positions).toEqual([]);
+    expect(manager.playerX).toBe(1.0);
+    expect(manager.playerZ).toBe(0.5);
+    expect(manager.pathIndex).toBe(0);
+    expect(manager.path[0]).toEqual({ x: 1.5, z: 0.5 });
+    expect(manager.path[1]).toEqual({ x: 2.5, z: 1.5 });
+    expect(manager.path.at(-1)).toEqual({ x: 1.5, z: 8.5 });
+    expect(manager.selfAuthorityRouteTargetSteps).toBeGreaterThan(0);
+  });
+
+  test('local authoritative move steps queue catch-up when visually idle and behind', () => {
+    const { manager, player } = makeManager([], 0);
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 5.5, z: 0.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(player.positions).toEqual([]);
+    expect(player.walking).toBe(true);
+    expect(manager.playerX).toBe(0.5);
+    expect(manager.playerZ).toBe(0.5);
+    expect(manager.path.length).toBeGreaterThan(0);
+    expect(manager.path.at(-1)).toEqual({ x: 5.5, z: 0.5 });
+    expect(manager.selfAuthorityRouteTargetSteps).toBeGreaterThan(0);
+  });
+
+  test('moving self-sync authority queues catch-up instead of hard resetting idle visuals', () => {
+    const { manager, player } = makeManager([], 0);
+
+    const queued = manager.retargetPredictedPathThroughAuthority([
+      { x: 5.5, z: 0.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(queued).toBe(true);
+    expect(player.positions).toEqual([]);
+    expect(player.walking).toBe(true);
+    expect(manager.playerX).toBe(0.5);
+    expect(manager.path.at(-1)).toEqual({ x: 5.5, z: 0.5 });
+  });
+
+  test('same-route self-sync authority catches up without rebuilding the route', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.playerX = 1.25;
+    manager.playerZ = 0.5;
+    manager.tileProgress = 0.075;
+
+    const queued = manager.retargetPredictedPathThroughAuthority([
+      { x: 5.5, z: 0.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(queued).toBe(false);
+    expect(player.positions).toEqual([]);
+    expect(manager.playerX).toBe(1.25);
+    expect(manager.path).toEqual([{ x: 10.5, z: 0.5 }]);
+    expect(manager.selfAuthorityRouteTargetSteps).toBeGreaterThan(0);
+
+    advanceLocalMovement(manager, 0.3);
+
+    expect(manager.playerX).toBeGreaterThan(1.5);
+    expect(player.positions.at(-1)?.x).toBe(manager.playerX);
+  });
+
+  test('stopped authority at the predicted destination catches up instead of snapping', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.playerX = 1.25;
+    manager.playerZ = 0.5;
+    manager.tileProgress = 0.075;
+
+    const queued = manager.retargetPredictedPathThroughAuthority([
+      { x: 10.5, z: 0.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(queued).toBe(false);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(10.5, 0.5, false)).toBe(false);
+    expect(player.positions).toEqual([]);
+    expect(manager.playerX).toBe(1.25);
+    expect(manager.path).toEqual([{ x: 10.5, z: 0.5 }]);
+    expect(manager.selfAuthorityRouteTargetSteps).toBe(10);
+
+    advanceLocalMovement(manager, 0.3);
+
+    expect(manager.playerX).toBeGreaterThan(1.5);
+    expect(manager.playerX).toBeLessThan(10.5);
+    expect(player.positions.at(-1)?.x).toBe(manager.playerX);
+  });
+
+  test('same-tile authority jitter does not create a catch-up route', () => {
+    const { manager } = makeManager([], 0);
+
+    const queued = manager.retargetPredictedPathThroughAuthority([
+      { x: 0.55, z: 0.5, floor: 0, y: 0, mode: 'walk' },
+    ]);
+
+    expect(queued).toBe(false);
+    expect(manager.path).toEqual([]);
+  });
+
+  test('far authoritative mismatches still hard reset active prediction', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+
+    manager.startLocalPredictedPath([
+      { x: 10.5, z: 0.5 },
+    ], false, true);
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 30.5, z: 30.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(manager.path).toEqual([]);
+    expect(manager.playerX).toBe(30.5);
+    expect(manager.playerZ).toBe(30.5);
+    expect(player.positions.at(-1)).toEqual({ x: 30.5, y: 0, z: 30.5 });
+  });
+
+  test('nearby off-route authority retargets instead of resetting an active prediction', () => {
     const { manager, player } = makeManager([
       { x: 10.5, z: 0.5 },
     ], 10);
@@ -217,11 +555,11 @@ describe('GameManager local movement prediction', () => {
       { x: 1.5, z: 1.5, floor: 0, y: 0, mode: 'walk' },
     ]);
 
-    expect(manager.path).toEqual([]);
+    expect(manager.path.length).toBeGreaterThan(0);
     expect(manager.pathIndex).toBe(0);
-    expect(manager.playerX).toBe(1.5);
-    expect(manager.playerZ).toBe(1.5);
-    expect(player.positions.at(-1)).toEqual({ x: 1.5, y: 0, z: 1.5 });
+    expect(manager.playerX).toBe(2.25);
+    expect(manager.playerZ).toBe(0.5);
+    expect(player.positions).toEqual([]);
   });
 
   test('local authoritative move steps apply server floor and height when correcting position', () => {
@@ -251,9 +589,10 @@ describe('GameManager local movement prediction', () => {
 
     manager.applyPendingSelfMoveStepsForTick(12);
 
-    expect(manager.playerX).toBe(1.5);
-    expect(manager.tileFrom).toEqual({ x: 1.5, z: 0.5 });
-    expect(player.positions.at(-1)).toEqual({ x: 1.5, y: 0, z: 0.5 });
+    expect(manager.playerX).toBe(0.5);
+    expect(manager.tileFrom).toEqual({ x: 0.5, z: 0.5 });
+    expect(manager.path.at(-1)).toEqual({ x: 1.5, z: 0.5 });
+    expect(player.positions).toEqual([]);
   });
 
   test('hidden catch-up fast-forwards onto the predicted path without clearing the route', () => {
@@ -287,7 +626,7 @@ describe('GameManager local movement prediction', () => {
     expect(player.positions.at(-1)).toEqual({ x: 2.5, y: 0, z: 0.5 });
   });
 
-  test('does not ignore a stopped self-sync from an earlier route tile after predicted arrival', () => {
+  test('ignores a stale stopped self-sync from an earlier route tile after predicted arrival', () => {
     const { manager, player } = makeManager([
       { x: 7.5, z: 0.5 },
     ], 7);
@@ -296,7 +635,7 @@ describe('GameManager local movement prediction', () => {
 
     expect(manager.pathIndex).toBe(1);
     expect(manager.playerX).toBeCloseTo(7.5, 5);
-    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(false);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(true);
     expect(manager.playerX).toBeCloseTo(7.5, 5);
     expect(player.positions.at(-1)).toEqual({ x: 7.5, y: 0, z: 0.5 });
   });
@@ -321,10 +660,149 @@ describe('GameManager local movement prediction', () => {
 
     expect(manager.shouldIgnoreVisibleLocalAuthority(7.5, 0.5, false)).toBe(true);
     expect(manager.recentPredictedArrivalUntil).toBeGreaterThan(performance.now());
-    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(false);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(true);
   });
 
-  test('can preserve destination-only recent-arrival protection through arrival-side cleanup', () => {
+  test('duplicate destination clicks after predicted arrival do not resend while authority catches up', () => {
+    const { manager, sentMoves } = makeManager([
+      { x: 7.5, z: 0.5 },
+    ], 7);
+
+    advanceLocalMovement(manager, 2.5);
+
+    const started = manager.startPredictedPath([
+      { x: 7.5, z: 0.5 },
+    ]);
+
+    expect(started).toBe(false);
+    expect(sentMoves).toEqual([]);
+    expect(manager.pathIndex).toBe(1);
+    expect(manager.playerX).toBeCloseTo(7.5, 5);
+    expect(manager.recentPredictedArrivalUntil).toBeGreaterThan(performance.now());
+  });
+
+  test('delayed self move steps on a recently completed route do not retarget backward', () => {
+    const { manager, player } = makeManager([
+      { x: 7.5, z: 0.5 },
+    ], 7);
+
+    advanceLocalMovement(manager, 2.5);
+    manager.latestSelfSync = { x: 7.5, z: 0.5, moving: false };
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 3.5, z: 0.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(manager.pathIndex).toBe(1);
+    expect(manager.playerX).toBeCloseTo(7.5, 5);
+    expect(manager.playerZ).toBeCloseTo(0.5, 5);
+    expect(manager.recentPredictedArrivalUntil).toBeGreaterThan(performance.now());
+    expect(manager.latestSelfSync).toEqual({ x: 7.5, z: 0.5, moving: false });
+    expect(player.positions.at(-1)).toEqual({ x: 7.5, y: 0, z: 0.5 });
+  });
+
+  test('far old self move steps after a recent click route do not snap idle visuals backward', () => {
+    const { manager, player } = makeManager([], 0);
+    manager.playerX = 20.5;
+    manager.playerZ = 20.5;
+    manager.setTileFrom(20.5, 20.5);
+    manager.lastLocalMoveCommandAt = performance.now();
+    manager.recentPredictedArrivalUntil = performance.now() + 1000;
+    manager.recentPredictedArrivalDestination = { x: 20.5, z: 20.5 };
+    manager.recentPredictedArrivalRouteTiles = new Set(['20,20']);
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 10.5, z: 10.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(manager.playerX).toBe(20.5);
+    expect(manager.playerZ).toBe(20.5);
+    expect(manager.path).toEqual([]);
+    expect(manager.localAuthoritativeTileHeights.size).toBe(0);
+    expect(player.positions).toEqual([]);
+  });
+
+  test('new path after predicted arrival keeps old route protected from stale authority', () => {
+    const { manager, player } = makeManager([
+      { x: 7.5, z: 0.5 },
+    ], 7);
+
+    advanceLocalMovement(manager, 2.5);
+    manager.startLocalPredictedPath([
+      { x: 8.5, z: 1.5 },
+    ], false, true);
+
+    expect(manager.selfAuthorityRedirectGraceUntil).toBeGreaterThan(performance.now());
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 3.5, z: 0.5, floor: 0, y: 0, mode: 'run' },
+    ]);
+
+    expect(manager.path).toEqual([
+      { x: 8.5, z: 1.5 },
+    ]);
+    expect(manager.pathIndex).toBe(0);
+    expect(manager.playerX).toBeCloseTo(7.5, 5);
+    expect(manager.playerZ).toBeCloseTo(0.5, 5);
+    expect(player.positions.at(-1)).toEqual({ x: 7.5, y: 0, z: 0.5 });
+  });
+
+  test('recent local move commands defer stale stopped authority while prediction is active', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.lastLocalMoveCommandAt = performance.now();
+    manager.playerX = 3.5;
+    manager.playerZ = 0.5;
+    manager.tileProgress = 0.3;
+
+    expect(manager.shouldDeferStoppedLocalAuthority(0.5, 2.5, false)).toBe(true);
+    expect(manager.shouldDeferStoppedLocalAuthority(0.5, 2.5, true)).toBe(false);
+
+    if (!manager.shouldDeferStoppedLocalAuthority(0.5, 2.5, false)) {
+      manager.reconcileLocalPlayerToServer(0.5, 2.5, false, false);
+    }
+
+    expect(manager.path).toEqual([{ x: 10.5, z: 0.5 }]);
+    expect(manager.playerX).toBe(3.5);
+    expect(player.positions).toEqual([]);
+  });
+
+  test('expired local move command grace allows real stopped authority correction', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.lastLocalMoveCommandAt = performance.now() - 10_000;
+    manager.playerX = 3.5;
+    manager.playerZ = 0.5;
+
+    expect(manager.shouldDeferStoppedLocalAuthority(0.5, 2.5, false)).toBe(false);
+    manager.reconcileLocalPlayerToServer(0.5, 2.5, false, false);
+
+    expect(manager.path).toEqual([]);
+    expect(manager.playerX).toBe(0.5);
+    expect(manager.playerZ).toBe(2.5);
+    expect(player.positions.at(-1)).toEqual({ x: 0.5, y: 0, z: 2.5 });
+  });
+
+  test('server-confirmed movement height is preserved when the visual reaches that tile', () => {
+    const { manager, player, floorUpdates } = makeManager([
+      { x: 1.5, z: 0.5 },
+    ], 1);
+
+    manager.applyLocalAuthoritativeMoveSteps([
+      { x: 1.5, z: 0.5, floor: 1, y: 4.2, mode: 'walk' },
+    ]);
+
+    advanceLocalMovement(manager, 0.7);
+
+    expect(manager.playerX).toBeCloseTo(1.5, 5);
+    expect(manager.currentFloor).toBe(1);
+    expect(floorUpdates.at(-1)).toBe(1);
+    expect(player.positions.at(-1)).toEqual({ x: 1.5, y: 4.2, z: 0.5 });
+  });
+
+  test('can preserve recent-arrival route protection through arrival-side cleanup', () => {
     const { manager } = makeManager([
       { x: 7.5, z: 0.5 },
     ], 7);
@@ -333,7 +811,7 @@ describe('GameManager local movement prediction', () => {
     manager.clearPredictedPath(false, false);
 
     expect(manager.shouldIgnoreVisibleLocalAuthority(7.5, 0.5, false)).toBe(true);
-    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(false);
+    expect(manager.shouldIgnoreVisibleLocalAuthority(0.5, 0.5, false)).toBe(true);
   });
 
   test('default path clearing removes recent-arrival protection for explicit resets', () => {

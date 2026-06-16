@@ -1214,5 +1214,25 @@
       "y": 1,
       "z": 1
     }
+  },
+  {
+    "assetId": "sign",
+    "layerId": "layer_0",
+    "position": {
+      "x": 302.5,
+      "y": 0,
+      "z": 171.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.1102230246251588e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.7,
+      "y": 0.6499999999999999,
+      "z": 0.7
+    },
+    "signText": "East the Town of Marnock.\nNorth East Swamp."
   }
 ]

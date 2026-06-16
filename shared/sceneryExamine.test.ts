@@ -3,6 +3,7 @@ import {
   BROTHER_MONK_CHEST_OBJECT_DEF_ID,
   GENERIC_SCENERY_OBJECT_DEF_ID,
   STAIRS_OBJECT_DEF_ID,
+  TRAPDOOR_OBJECT_DEF_ID,
   WELL_OBJECT_DEF_ID,
   isCropPlacedAssetId,
   isGroundItemSpawnAssetId,
@@ -132,6 +133,11 @@ test('fishing bubble assets resolve to fishing spot object definitions', () => {
   expect(objectDefIdForPlacedAsset('FishingSpotBubblesNet')).toBe(61);
   expect(objectDefIdForPlacedAsset('FishingSpotBubblesRod')).toBe(62);
   expect(objectDefIdForPlacedAsset('FishingSpotBubblesHarpoon')).toBe(63);
+});
+
+test('trapdoor assets resolve to the teleport object definition', () => {
+  expect(objectDefIdForPlacedAsset('TrapdoorClosed')).toBe(TRAPDOOR_OBJECT_DEF_ID);
+  expect(objectDefIdForPlacedAsset('TrapdoorOpenFinal')).toBe(TRAPDOOR_OBJECT_DEF_ID);
 });
 
 test('quest chest asset resolves to the dedicated Brother Monk chest definition', () => {

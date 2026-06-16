@@ -1,0 +1,129 @@
+{
+  "kit": "EvilQuest clean open tent zig-zag wall kit",
+  "sourceBlend": "eq_open_tent_zigzag_wall_kit.blend",
+  "coordinateNote": "Blender X/Y ground plane maps to EvilQuest world X/Z; Blender Z is height. Footprints use 1 Blender unit per game tile.",
+  "sceneNote": "The visible Blender scene is a single connected 6x4 wall perimeter. Optional connector post and rope-anchor modules remain exportable in the hidden Export_Modules_Hidden collection and are not scattered through the demo.",
+  "styleNote": "Wall-focused pass only. Canvas wall modules use actual zig-zag folded mesh geometry; roofs/canopies are intentionally omitted.",
+  "assets": [
+    {
+      "id": "EQ_OpenTent_WallPost_Connector_1x1",
+      "name": "WallPost Connector 1x1",
+      "role": "wall connector post",
+      "file": "eq_open_tent_wallpost_connector_1x1.glb",
+      "path": "/assets/modular-assets/runescape-tent-kit/eq_open_tent_wallpost_connector_1x1.glb",
+      "footprintTiles": {
+        "x": 1.0,
+        "y": 1.0
+      },
+      "snapOrigin": "ground-center",
+      "tileUnit": "1 Blender unit = 1 EvilQuest tile",
+      "groundAxes": "Blender X/Y = EvilQuest X/Z; Blender Z = height",
+      "wallSurface": "wood connector post for zig-zag wall modules"
+    },
+    {
+      "id": "EQ_OpenTent_WallRope_Anchor_1x1",
+      "name": "WallRope Anchor 1x1",
+      "role": "wall rope anchor",
+      "file": "eq_open_tent_wallrope_anchor_1x1.glb",
+      "path": "/assets/modular-assets/runescape-tent-kit/eq_open_tent_wallrope_anchor_1x1.glb",
+      "footprintTiles": {
+        "x": 1.0,
+        "y": 1.0
+      },
+      "snapOrigin": "ground-center",
+      "tileUnit": "1 Blender unit = 1 EvilQuest tile",
+      "groundAxes": "Blender X/Y = EvilQuest X/Z; Blender Z = height",
+      "wallSurface": "rope anchor/stake for wall modules"
+    },
+    {
+      "id": "EQ_OpenTent_ZigCorner_LWall_1x1",
+      "name": "ZigCorner LWall 1x1",
+      "role": "zig-zag wall corner",
+      "file": "eq_open_tent_zigcorner_lwall_1x1.glb",
+      "path": "/assets/modular-assets/runescape-tent-kit/eq_open_tent_zigcorner_lwall_1x1.glb",
+      "footprintTiles": {
+        "x": 1.0,
+        "y": 1.0
+      },
+      "snapOrigin": "ground-center",
+      "tileUnit": "1 Blender unit = 1 EvilQuest tile",
+      "groundAxes": "Blender X/Y = EvilQuest X/Z; Blender Z = height",
+      "wallSurface": "zig-zag folded canvas, not a flat plane"
+    },
+    {
+      "id": "EQ_OpenTent_ZigEntry_Curtains_1x2_open_edge",
+      "name": "ZigEntry Curtains 1x2 open edge",
+      "role": "open entry with folded curtains",
+      "file": "eq_open_tent_zigentry_curtains_1x2_open_edge.glb",
+      "path": "/assets/modular-assets/runescape-tent-kit/eq_open_tent_zigentry_curtains_1x2_open_edge.glb",
+      "footprintTiles": {
+        "x": 1.0,
+        "y": 2.0
+      },
+      "snapOrigin": "ground-center",
+      "tileUnit": "1 Blender unit = 1 EvilQuest tile",
+      "groundAxes": "Blender X/Y = EvilQuest X/Z; Blender Z = height",
+      "wallSurface": "zig-zag folded canvas, not a flat plane"
+    },
+    {
+      "id": "EQ_OpenTent_ZigHalfWall_1x1_open_edge",
+      "name": "ZigHalfWall 1x1 open edge",
+      "role": "low zig-zag canvas wall",
+      "file": "eq_open_tent_zighalfwall_1x1_open_edge.glb",
+      "path": "/assets/modular-assets/runescape-tent-kit/eq_open_tent_zighalfwall_1x1_open_edge.glb",
+      "footprintTiles": {
+        "x": 1.0,
+        "y": 1.0
+      },
+      "snapOrigin": "ground-center",
+      "tileUnit": "1 Blender unit = 1 EvilQuest tile",
+      "groundAxes": "Blender X/Y = EvilQuest X/Z; Blender Z = height",
+      "wallSurface": "zig-zag folded canvas, not a flat plane"
+    },
+    {
+      "id": "EQ_OpenTent_ZigWall_1x1_canvas_edge",
+      "name": "ZigWall 1x1 canvas edge",
+      "role": "zig-zag canvas wall",
+      "file": "eq_open_tent_zigwall_1x1_canvas_edge.glb",
+      "path": "/assets/modular-assets/runescape-tent-kit/eq_open_tent_zigwall_1x1_canvas_edge.glb",
+      "footprintTiles": {
+        "x": 1.0,
+        "y": 1.0
+      },
+      "snapOrigin": "ground-center",
+      "tileUnit": "1 Blender unit = 1 EvilQuest tile",
+      "groundAxes": "Blender X/Y = EvilQuest X/Z; Blender Z = height",
+      "wallSurface": "zig-zag folded canvas, not a flat plane"
+    },
+    {
+      "id": "EQ_OpenTent_ZigWall_Run_1x2_canvas_edge",
+      "name": "ZigWall Run 1x2 canvas edge",
+      "role": "zig-zag canvas wall run",
+      "file": "eq_open_tent_zigwall_run_1x2_canvas_edge.glb",
+      "path": "/assets/modular-assets/runescape-tent-kit/eq_open_tent_zigwall_run_1x2_canvas_edge.glb",
+      "footprintTiles": {
+        "x": 1.0,
+        "y": 2.0
+      },
+      "snapOrigin": "ground-center",
+      "tileUnit": "1 Blender unit = 1 EvilQuest tile",
+      "groundAxes": "Blender X/Y = EvilQuest X/Z; Blender Z = height",
+      "wallSurface": "zig-zag folded canvas, not a flat plane"
+    },
+    {
+      "id": "EQ_OpenTent_ZigWall_Striped_1x1_canvas_edge",
+      "name": "ZigWall Striped 1x1 canvas edge",
+      "role": "zig-zag canvas wall variant",
+      "file": "eq_open_tent_zigwall_striped_1x1_canvas_edge.glb",
+      "path": "/assets/modular-assets/runescape-tent-kit/eq_open_tent_zigwall_striped_1x1_canvas_edge.glb",
+      "footprintTiles": {
+        "x": 1.0,
+        "y": 1.0
+      },
+      "snapOrigin": "ground-center",
+      "tileUnit": "1 Blender unit = 1 EvilQuest tile",
+      "groundAxes": "Blender X/Y = EvilQuest X/Z; Blender Z = height",
+      "wallSurface": "zig-zag folded canvas, not a flat plane"
+    }
+  ]
+}

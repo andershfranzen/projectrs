@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { BROTHER_MONK_CHEST_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID } from '@projectrs/shared';
+import { BROTHER_MONK_CHEST_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID, TRAPDOOR_OBJECT_DEF_ID } from '@projectrs/shared';
 import { GameManager } from './GameManager';
 
 function makeManager(): any {
-  return Object.create(GameManager.prototype) as any;
+  const manager = Object.create(GameManager.prototype) as any;
+  manager.currentFloor = 0;
+  manager.localAuthoritativeTileHeights = new Map();
+  manager.getHeightAtFloor = (x: number, z: number) =>
+    typeof manager.getHeight === 'function' ? manager.getHeight(x, z) : 0;
+  return manager;
 }
 
 const ROCK_DEF = {
@@ -60,6 +65,15 @@ const SCENERY_DEF = {
   actions: ['Examine'],
 };
 
+const ENTER_SCENERY_WITHOUT_TRANSITION_DEF = {
+  id: 999,
+  name: 'Enterable Scenery',
+  category: 'scenery',
+  width: 1,
+  height: 1,
+  actions: ['Enter', 'Examine'],
+};
+
 const STAIRS_DEF = {
   id: STAIRS_OBJECT_DEF_ID,
   name: 'Stairs',
@@ -67,6 +81,20 @@ const STAIRS_DEF = {
   width: 1,
   height: 1,
   actions: ['Climb-up', 'Climb-down', 'Examine'],
+};
+
+const TRAPDOOR_DEF = {
+  id: TRAPDOOR_OBJECT_DEF_ID,
+  name: 'Trapdoor',
+  category: 'scenery',
+  width: 1,
+  height: 0.2,
+  actions: ['Enter', 'Examine'],
+  transition: {
+    targetMap: 'underground',
+    targetX: 130.5,
+    targetZ: 130.5,
+  },
 };
 
 describe('GameManager world object pick proxies', () => {
@@ -388,6 +416,64 @@ describe('GameManager world object pick proxies', () => {
 
     expect(clickEffects).toEqual([{ x: 12, y: 34, color: '#ff3030' }]);
     expect(interactions).toEqual([{ objectEntityId: 45678, actionIndex: 0 }]);
+  });
+
+  test('left-clicking a trapdoor uses the enter interaction', () => {
+    const manager = makeManager();
+    const interactions: Array<{ objectEntityId: number; actionIndex: number }> = [];
+    const clickEffects: Array<{ x: number; y: number; color?: string }> = [];
+
+    manager.castingUntil = 0;
+    manager.skillCancelTime = -1000;
+    manager.lastClickX = 56;
+    manager.lastClickY = 78;
+    manager.worldObjectDefs = new Map([
+      [56789, { defId: TRAPDOOR_OBJECT_DEF_ID, x: 42.5, z: 76.5, y: 0, floor: 0, depleted: false }],
+    ]);
+    manager.objectDefsCache = new Map([[TRAPDOOR_OBJECT_DEF_ID, TRAPDOOR_DEF]]);
+    manager.isWorldObjectOnCurrentInteractionFloor = () => true;
+    manager.isWorldObjectInteractable = () => true;
+    manager.tryUseInventoryItemOn = () => false;
+    manager.spawnCursorClickEffect = (x: number, y: number, color?: string) => {
+      clickEffects.push({ x, y, color });
+    };
+    manager.interactMarker = null;
+    manager.destMarker = null;
+    manager.interactObject = (objectEntityId: number, actionIndex: number) => {
+      interactions.push({ objectEntityId, actionIndex });
+    };
+
+    manager.handleObjectClick(56789);
+
+    expect(clickEffects).toEqual([{ x: 56, y: 78, color: '#ff3030' }]);
+    expect(interactions).toEqual([{ objectEntityId: 56789, actionIndex: 0 }]);
+  });
+
+  test('left-clicking enterable scenery without a transition does not auto-interact', () => {
+    const manager = makeManager();
+    const interactions: Array<{ objectEntityId: number; actionIndex: number }> = [];
+
+    manager.castingUntil = 0;
+    manager.skillCancelTime = -1000;
+    manager.lastClickX = 56;
+    manager.lastClickY = 78;
+    manager.worldObjectDefs = new Map([
+      [67890, { defId: ENTER_SCENERY_WITHOUT_TRANSITION_DEF.id, x: 12.5, z: 34.5, y: 0, floor: 0, depleted: false }],
+    ]);
+    manager.objectDefsCache = new Map([[ENTER_SCENERY_WITHOUT_TRANSITION_DEF.id, ENTER_SCENERY_WITHOUT_TRANSITION_DEF]]);
+    manager.isWorldObjectOnCurrentInteractionFloor = () => true;
+    manager.isWorldObjectInteractable = () => true;
+    manager.tryUseInventoryItemOn = () => false;
+    manager.spawnCursorClickEffect = () => {};
+    manager.interactMarker = null;
+    manager.destMarker = null;
+    manager.interactObject = (objectEntityId: number, actionIndex: number) => {
+      interactions.push({ objectEntityId, actionIndex });
+    };
+
+    manager.handleObjectClick(67890);
+
+    expect(interactions).toEqual([]);
   });
 
   test('skilling start completes a matching predicted object-arrival path', () => {

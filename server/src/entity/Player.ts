@@ -986,11 +986,22 @@ export class Player extends Entity {
     return this.movementMode === 'run' && !this.canRun() ? 'walk' : this.movementMode;
   }
 
-  setMoveQueue(path: { x: number; z: number }[]): void {
+  setMoveQueue(
+    path: { x: number; z: number }[],
+    opts: { preserveMovementCredit?: boolean } = {},
+  ): void {
+    const previousCredit = this.movementCredit;
+    const previousCreditUpdatedAtMs = this.movementCreditUpdatedAtMs;
+    const preserveMovementCredit = opts.preserveMovementCredit === true
+      && path.length > 0
+      && previousCreditUpdatedAtMs > 0;
+
     this.moveQueue = path;
     this.moveQueueIndex = 0;
-    this.movementCredit = 0;
-    this.movementCreditUpdatedAtMs = path.length > 0 ? performance.now() : 0;
+    this.movementCredit = preserveMovementCredit ? previousCredit : 0;
+    this.movementCreditUpdatedAtMs = path.length > 0
+      ? preserveMovementCredit ? previousCreditUpdatedAtMs : performance.now()
+      : 0;
   }
 
   clearMoveQueue(): void {

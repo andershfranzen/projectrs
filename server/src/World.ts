@@ -4300,7 +4300,6 @@ export class World {
     if (requestedMovementModeIndex !== undefined) {
       this.applyPlayerMovementModeRequest(player, requestedMovementModeIndex, false);
     }
-
     this.bumpActionRevision(player);
     this.clearCombatTarget(playerId);
     player.attackTarget = null;
@@ -4315,6 +4314,18 @@ export class World {
     // the shopkeeper. Walking away invalidates the scope.
     this.closeShopForPlayer(player);
     if (player.openDialogueState) this.sendDialogueClose(player);
+
+    const requestedDestination = path[path.length - 1] ?? null;
+    const activeDestination = player.getMoveDestination();
+    const replacingActiveMoveQueue = player.hasMoveQueue();
+    if (
+      requestedDestination
+      && activeDestination
+      && Math.floor(requestedDestination.x) === Math.floor(activeDestination.x)
+      && Math.floor(requestedDestination.z) === Math.floor(activeDestination.z)
+    ) {
+      return;
+    }
 
     const map = this.getPlayerMap(player);
     // Cap path length. Client's sendMove caps at 50 corner waypoints — anything
@@ -4341,7 +4352,6 @@ export class World {
     // the two views half a tile apart, and on the next walk the server's
     // delta calc (floor(step.x) - floor(prevX)) starts from the wrong tile,
     // which can compound into multi-tile drift.
-    const requestedDestination = path[path.length - 1] ?? null;
     const validated = expandAndValidateWaypointPath({
       startX: player.position.x,
       startZ: player.position.y,
@@ -4381,7 +4391,7 @@ export class World {
       }
     }
 
-    player.setMoveQueue(queuedPath);
+    player.setMoveQueue(queuedPath, { preserveMovementCredit: replacingActiveMoveQueue });
     // If we actually dropped tiles vs. what the client asked for, notify it
     // so it can trim its local walk to match. Skip when nothing was
     // requested (zero-distance / empty input) or when the validation
@@ -6041,7 +6051,8 @@ export class World {
 
   private isDungeonExitObject(obj: WorldObject): boolean {
     const assetId = obj.assetId?.toLowerCase();
-    return assetId === 'cavernexit1' || (assetId === 'cavedoor' && this.isDungeonMap(obj.mapLevel));
+    return assetId === 'cavernexit1'
+      || ((assetId === 'cavedoor' || assetId === 'trapdooropenfinal') && this.isDungeonMap(obj.mapLevel));
   }
 
   private shouldRememberDungeonReturnTarget(player: Player, obj: WorldObject, targetMapId: string): boolean {

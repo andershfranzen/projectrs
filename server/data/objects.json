@@ -3982,5 +3982,28 @@
     "depletionChance": 0,
     "respawnTime": 0,
     "examineText": "A test fishing spot for the future harpoon animation."
+  },
+  {
+    "id": 66,
+    "name": "Trapdoor",
+    "category": "scenery",
+    "actions": [
+      "Enter",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "height": 0.2,
+    "color": [
+      95,
+      62,
+      32
+    ],
+    "transition": {
+      "targetMap": "underground",
+      "targetX": 130.5,
+      "targetZ": 130.5
+    },
+    "examineText": "A trapdoor leading below."
   }
 ]

@@ -181,6 +181,11 @@ function isCookingStationDef(def: WorldObjectDef): boolean {
   return def.category === 'cookingrange' || def.id === FIRE_OBJECT_DEF_ID;
 }
 
+function isTeleportObjectDef(def: WorldObjectDef): boolean {
+  return def.actions?.includes('Enter') === true
+    && def.transition !== undefined;
+}
+
 function devCacheBustGearFile(file: string): string {
   return GEAR_DEBUG_CACHE_BUST_TOKEN ? `${file}${GEAR_DEBUG_CACHE_BUST_TOKEN}` : file;
 }
@@ -499,6 +504,10 @@ export class GameManager {
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 20_000;
   private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
   private static readonly AUTHORITY_LOGIN_GRACE_MS = 5_000;
+  private static readonly LOCAL_REDIRECT_AUTHORITY_GRACE_MS = TICK_RATE * 2 + 150;
+  private static readonly LOCAL_MOVE_COMMAND_AUTHORITY_GRACE_MS = TICK_RATE * 6 + 250;
+  private static readonly LOCAL_AUTHORITY_HEIGHT_CACHE_MS = TICK_RATE * 12;
+  private static readonly LOCAL_AUTHORITY_SOFT_RETARGET_DIST = 8.5;
   private static readonly RANGED_ATTACK_DISTANCE = DEFAULT_RANGED_ATTACK_DISTANCE;
   private static readonly MOBILE_LANDSCAPE_CAMERA_QUERY =
     '(max-height: 520px) and (max-width: 900px) and (orientation: landscape)';
@@ -558,8 +567,10 @@ export class GameManager {
   private predictedPathStart: { x: number; z: number } | null = null;
   private predictedPathDestination: { x: number; z: number } | null = null;
   private predictedPathAuthorityReanchorAttempts: number = 0;
+  private lastLocalMoveCommandAt: number = 0;
   private recentPredictedArrivalUntil: number = 0;
   private recentPredictedArrivalDestination: { x: number; z: number } | null = null;
+  private recentPredictedArrivalRouteTiles: Set<string> = new Set();
   /** NPC entityId to face when the current path completes. 2004scape
    *  Player.faceEntity equivalent — set by talkToNpc/attackNpc, cleared
    *  on arrival or any new ground click. */
@@ -658,6 +669,10 @@ export class GameManager {
   private lastSelfSyncReceivedAt: number = 0;
   private bufferedSelfSyncReplayCount: number = 0;
   private pendingSelfMoveStepsByTick: Array<{ tickLow: number; steps: RemoteMovementStep[] }> = [];
+  private selfAuthorityRouteTargetSteps: number = 0;
+  private selfAuthorityRedirectGraceUntil: number = 0;
+  private selfAuthorityRedirectStaleRouteTiles: Set<string> = new Set();
+  private localAuthoritativeTileHeights: Map<string, { floor: number; y: number; expiresAt: number }> = new Map();
   private lastNpcMaterializationRetryMs: number = 0;
 
   // Character creator
@@ -932,7 +947,7 @@ export class GameManager {
     });
     this.inputManager.setIndoorCheck(() => ({
       indoors: this.isIndoors,
-      playerY: this.localPlayer?.position.y ?? this.getHeight(this.playerX, this.playerZ),
+      playerY: this.localPlayer?.position?.y ?? this.getHeight(this.playerX, this.playerZ),
     }));
 
     // Track left-click position so per-handler bursts fire at the right pixel.
@@ -2745,7 +2760,7 @@ export class GameManager {
 
   /** Height query for the local player. Uses local player Y as gate input. */
   private getHeight(x: number, z: number): number {
-    const computed = this.chunkManager.getEffectiveHeight(x, z, undefined, this.localPlayer?.position.y);
+    const computed = this.chunkManager.getEffectiveHeight(x, z, undefined, this.localPlayer?.position?.y);
     const override = this.localTeleportHeightOverride;
     if (!override) return computed;
 
@@ -4721,7 +4736,42 @@ export class GameManager {
         const serverX = v[1] / 10;
         const serverZ = v[2] / 10;
         const hiddenCatchup = this.isHiddenCatchupActive();
-        if (!this.shouldIgnoreRecentPredictedArrivalAuthority(serverX, serverZ) && (hiddenCatchup || !this.shouldIgnoreVisibleLocalAuthority(serverX, serverZ, false))) {
+        const ignoreRecentArrival = this.shouldIgnoreRecentPredictedArrivalAuthority(serverX, serverZ);
+        if (!ignoreRecentArrival && !hiddenCatchup && this.isTileOnPredictedRoute(serverX, serverZ)) {
+          this.noteLocalAuthoritativeTileHeight(serverX, serverZ, floor, y);
+          this.noteSelfAuthorityRouteTarget(serverX, serverZ);
+          if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
+            this.applyLocalAppearance(syncAppearance);
+          }
+          return;
+        }
+        if (!ignoreRecentArrival && !hiddenCatchup && this.retargetPredictedPathThroughAuthority([{
+          x: serverX,
+          z: serverZ,
+          floor,
+          y,
+          mode: this.movementMode,
+        }])) {
+          this.noteLocalAuthoritativeTileHeight(serverX, serverZ, floor, y);
+          if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
+            this.applyLocalAppearance(syncAppearance);
+          }
+          return;
+        }
+        if (!ignoreRecentArrival && !hiddenCatchup && this.shouldDeferFarOffRouteMoveStepAuthority(serverX, serverZ)) {
+          if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
+            this.applyLocalAppearance(syncAppearance);
+          }
+          return;
+        }
+        if (!ignoreRecentArrival && !hiddenCatchup && this.shouldDeferStoppedLocalAuthority(serverX, serverZ, false)) {
+          if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
+            this.applyLocalAppearance(syncAppearance);
+          }
+          return;
+        }
+        if (!ignoreRecentArrival && (hiddenCatchup || !this.shouldIgnoreVisibleLocalAuthority(serverX, serverZ, false))) {
+          this.noteLocalAuthoritativeTileHeight(serverX, serverZ, floor, y);
           this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup);
         }
         if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
@@ -4836,7 +4886,6 @@ export class GameManager {
       this.lastSelfAuthorityAt = now;
       this.lastSelfAuthorityWarnAt = 0;
       this.selfAuthorityGraceUntil = 0;
-      this.latestSelfSync = { x: serverX, z: serverZ, moving: serverMoving };
       this.clearSpellMovementLockOnSelfSync();
       this.applyLocalHealthFromServer(health, maxHealth, { clearPendingImpact: health >= maxHealth && health > this.playerHealth });
       if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
@@ -4854,6 +4903,29 @@ export class GameManager {
         return;
       }
 
+      if (this.isTileOnPredictedRoute(serverX, serverZ)) {
+        this.latestSelfSync = { x: serverX, z: serverZ, moving: serverMoving };
+        this.noteSelfAuthorityRouteTarget(serverX, serverZ);
+        return;
+      }
+
+      if (this.shouldIgnoreRedirectStaleLocalAuthority(serverX, serverZ, now)) return;
+
+      if (this.retargetPredictedPathThroughAuthority([{
+        x: serverX,
+        z: serverZ,
+        floor: this.currentFloor,
+        y: this.getHeight(serverX, serverZ),
+        mode: this.movementMode,
+      }])) {
+        this.latestSelfSync = { x: serverX, z: serverZ, moving: serverMoving };
+        return;
+      }
+
+      if (this.shouldDeferFarOffRouteMoveStepAuthority(serverX, serverZ, now)) return;
+      if (this.shouldDeferStoppedLocalAuthority(serverX, serverZ, serverMoving, now)) return;
+
+      this.latestSelfSync = { x: serverX, z: serverZ, moving: serverMoving };
       if (this.shouldIgnoreVisibleLocalAuthority(serverX, serverZ, serverMoving)) return;
 
       this.reconcileLocalPlayerToServer(serverX, serverZ, false, serverMoving);
@@ -8302,6 +8374,10 @@ export class GameManager {
     this.predictedPathStart = null;
     this.predictedPathDestination = null;
     this.predictedPathAuthorityReanchorAttempts = 0;
+    this.selfAuthorityRouteTargetSteps = 0;
+    this.selfAuthorityRedirectGraceUntil = 0;
+    this.selfAuthorityRedirectStaleRouteTiles.clear();
+    this.localAuthoritativeTileHeights.clear();
     this.localCombatWalkUntilMs = 0;
     if (clearRecentArrival) this.clearRecentPredictedArrival();
     if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
@@ -8319,9 +8395,234 @@ export class GameManager {
     return maxAxisDelta <= GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
   }
 
+  private noteLocalMoveCommandSent(now: number = performance.now()): void {
+    this.lastLocalMoveCommandAt = now;
+  }
+
+  private hasRecentLocalMoveCommand(now: number = performance.now()): boolean {
+    return this.lastLocalMoveCommandAt > 0
+      && now - this.lastLocalMoveCommandAt <= GameManager.LOCAL_MOVE_COMMAND_AUTHORITY_GRACE_MS;
+  }
+
+  private shouldDeferStoppedLocalAuthority(
+    serverX: number,
+    serverZ: number,
+    serverMoving: boolean,
+    now: number = performance.now(),
+  ): boolean {
+    if (serverMoving) return false;
+    if (this.pathIndex >= this.path.length) return false;
+    if (!this.hasRecentLocalMoveCommand(now)) return false;
+    if (this.isTileOnPredictedRoute(serverX, serverZ)) return false;
+    return true;
+  }
+
+  private shouldDeferFarOffRouteMoveStepAuthority(
+    serverX: number,
+    serverZ: number,
+    now: number = performance.now(),
+  ): boolean {
+    if (!this.hasRecentLocalMoveCommand(now)) return false;
+    if (this.isTileOnPredictedRoute(serverX, serverZ)) return false;
+    if (this.shouldIgnoreRecentPredictedArrivalAuthority(serverX, serverZ, now)) return true;
+    const maxAxisDelta = Math.max(Math.abs(serverX - this.playerX), Math.abs(serverZ - this.playerZ));
+    return maxAxisDelta > GameManager.LOCAL_AUTHORITY_SOFT_RETARGET_DIST;
+  }
+
   private isTileOnPredictedRoute(x: number, z: number): boolean {
     if (this.pathIndex >= this.path.length) return false;
     return this.findPredictedRouteSegmentContainingTile(Math.floor(x), Math.floor(z)) >= 0;
+  }
+
+  private predictedRouteStepIndexForTile(x: number, z: number): number {
+    if (this.path.length === 0) return -1;
+    const tx = Math.floor(x);
+    const tz = Math.floor(z);
+    const start = this.predictedPathStart ?? (this.pathIndex === 0 ? this.tileFrom : null);
+    if (!start) return -1;
+
+    let sx = Math.floor(start.x);
+    let sz = Math.floor(start.z);
+    if (sx === tx && sz === tz) return 0;
+
+    let routeSteps = 0;
+    for (const waypoint of this.path) {
+      const ex = Math.floor(waypoint.x);
+      const ez = Math.floor(waypoint.z);
+      const dx = Math.sign(ex - sx);
+      const dz = Math.sign(ez - sz);
+      const segmentSteps = Math.max(Math.abs(ex - sx), Math.abs(ez - sz));
+      for (let step = 1; step <= segmentSteps; step++) {
+        const px = sx + dx * step;
+        const pz = sz + dz * step;
+        if (px === tx && pz === tz) return routeSteps + step;
+      }
+      routeSteps += segmentSteps;
+      sx = ex;
+      sz = ez;
+    }
+
+    return -1;
+  }
+
+  private predictedRouteProgressSteps(): number {
+    if (this.path.length === 0) return 0;
+    const start = this.predictedPathStart ?? (this.pathIndex === 0 ? this.tileFrom : null);
+    if (!start) return 0;
+
+    let sx = Math.floor(start.x);
+    let sz = Math.floor(start.z);
+    let routeSteps = 0;
+    for (let i = 0; i < this.path.length; i++) {
+      const waypoint = this.path[i];
+      const ex = Math.floor(waypoint.x);
+      const ez = Math.floor(waypoint.z);
+      const segmentSteps = Math.max(Math.abs(ex - sx), Math.abs(ez - sz));
+      if (i < this.pathIndex) {
+        routeSteps += segmentSteps;
+      } else if (i === this.pathIndex) {
+        return routeSteps + Math.max(0, Math.min(segmentSteps, this.tileProgress * segmentSteps));
+      } else {
+        return routeSteps;
+      }
+      sx = ex;
+      sz = ez;
+    }
+
+    return routeSteps;
+  }
+
+  private noteSelfAuthorityRouteTarget(x: number, z: number): void {
+    const routeStep = this.predictedRouteStepIndexForTile(x, z);
+    if (routeStep < 0) return;
+    const currentProgress = this.predictedRouteProgressSteps();
+    if (routeStep <= currentProgress + 0.05) return;
+    this.selfAuthorityRouteTargetSteps = Math.max(this.selfAuthorityRouteTargetSteps, routeStep);
+  }
+
+  private routeTileKey(x: number, z: number): string {
+    return `${Math.floor(x)},${Math.floor(z)}`;
+  }
+
+  private noteLocalAuthoritativeTileHeight(
+    x: number,
+    z: number,
+    floor: number | null,
+    y: number | null,
+    now: number = performance.now(),
+  ): void {
+    if (floor === null || y === null || !Number.isFinite(floor) || !Number.isFinite(y)) return;
+    this.localAuthoritativeTileHeights.set(this.routeTileKey(x, z), {
+      floor: Math.trunc(floor),
+      y,
+      expiresAt: now + GameManager.LOCAL_AUTHORITY_HEIGHT_CACHE_MS,
+    });
+  }
+
+  private noteLocalAuthoritativeStepHeights(steps: RemoteMovementStep[], now: number = performance.now()): void {
+    for (const step of steps) {
+      this.noteLocalAuthoritativeTileHeight(step.x, step.z, step.floor, step.y, now);
+    }
+  }
+
+  private localAuthoritativeTileHeightFor(
+    x: number,
+    z: number,
+    now: number = performance.now(),
+  ): { floor: number; y: number } | null {
+    const key = this.routeTileKey(x, z);
+    const authority = this.localAuthoritativeTileHeights.get(key);
+    if (!authority) return null;
+    if (now > authority.expiresAt) {
+      this.localAuthoritativeTileHeights.delete(key);
+      return null;
+    }
+    return authority;
+  }
+
+  private getLocalPlayerRenderHeight(now: number = performance.now()): number {
+    const authority = this.localAuthoritativeTileHeightFor(this.playerX, this.playerZ, now);
+    if (authority) {
+      this.applyLocalAuthoritativeMovementFloor(authority.floor);
+      return authority.y;
+    }
+    return this.getHeightAtFloor(
+      this.playerX,
+      this.playerZ,
+      this.currentFloor,
+      this.localPlayer?.position?.y,
+    );
+  }
+
+  private collectPredictedRouteTileKeys(): Set<string> {
+    const tiles = new Set<string>();
+    if (this.path.length === 0) return tiles;
+    const start = this.predictedPathStart ?? (this.pathIndex === 0 ? this.tileFrom : null);
+    if (!start) return tiles;
+
+    let sx = Math.floor(start.x);
+    let sz = Math.floor(start.z);
+    tiles.add(`${sx},${sz}`);
+
+    for (const waypoint of this.path) {
+      const ex = Math.floor(waypoint.x);
+      const ez = Math.floor(waypoint.z);
+      const dx = Math.sign(ex - sx);
+      const dz = Math.sign(ez - sz);
+      const segmentSteps = Math.max(Math.abs(ex - sx), Math.abs(ez - sz));
+      for (let step = 1; step <= segmentSteps; step++) {
+        tiles.add(`${sx + dx * step},${sz + dz * step}`);
+      }
+      sx = ex;
+      sz = ez;
+    }
+
+    return tiles;
+  }
+
+  private clearSelfAuthorityRedirectGrace(): void {
+    this.selfAuthorityRedirectGraceUntil = 0;
+    this.selfAuthorityRedirectStaleRouteTiles.clear();
+  }
+
+  private armSelfAuthorityRedirectGrace(
+    now: number = performance.now(),
+    staleRouteTiles: Set<string> = this.collectPredictedRouteTileKeys(),
+  ): void {
+    if (now > this.selfAuthorityRedirectGraceUntil) {
+      this.selfAuthorityRedirectStaleRouteTiles.clear();
+    }
+    for (const tile of staleRouteTiles) this.selfAuthorityRedirectStaleRouteTiles.add(tile);
+    this.selfAuthorityRedirectGraceUntil = Math.max(
+      this.selfAuthorityRedirectGraceUntil,
+      now + GameManager.LOCAL_REDIRECT_AUTHORITY_GRACE_MS,
+    );
+  }
+
+  private shouldIgnoreRedirectStaleLocalAuthority(
+    serverX: number,
+    serverZ: number,
+    now: number = performance.now(),
+  ): boolean {
+    if (this.selfAuthorityRedirectGraceUntil <= 0) return false;
+    if (now > this.selfAuthorityRedirectGraceUntil || this.pathIndex >= this.path.length) {
+      this.clearSelfAuthorityRedirectGrace();
+      return false;
+    }
+    if (this.isTileOnPredictedRoute(serverX, serverZ)) return false;
+    return this.selfAuthorityRedirectStaleRouteTiles.has(this.routeTileKey(serverX, serverZ));
+  }
+
+  private localAuthorityCatchupMultiplier(): number {
+    if (this.selfAuthorityRouteTargetSteps <= 0 || this.pathIndex >= this.path.length) return 1;
+    const lead = this.selfAuthorityRouteTargetSteps - this.predictedRouteProgressSteps();
+    if (lead <= 0.05) {
+      this.selfAuthorityRouteTargetSteps = 0;
+      return 1;
+    }
+    if (lead >= 2) return 2;
+    if (lead >= 1) return 1.5;
+    return 1.25;
   }
 
   private isCurrentLocalTile(x: number, z: number): boolean {
@@ -8329,8 +8630,7 @@ export class GameManager {
   }
 
   private shouldTreatSelfMoveStepAsConfirmation(step: RemoteMovementStep): boolean {
-    return this.isTileOnPredictedRoute(step.x, step.z)
-      && this.shouldIgnoreVisibleLocalAuthority(step.x, step.z, true);
+    return this.isTileOnPredictedRoute(step.x, step.z);
   }
 
   private applyLocalAuthoritativeStepVerticalIfCurrent(step: RemoteMovementStep): void {
@@ -8341,6 +8641,16 @@ export class GameManager {
   private clearRecentPredictedArrival(): void {
     this.recentPredictedArrivalUntil = 0;
     this.recentPredictedArrivalDestination = null;
+    this.recentPredictedArrivalRouteTiles.clear();
+  }
+
+  private activeRecentPredictedArrivalDestination(now: number = performance.now()): { x: number; z: number } | null {
+    if (this.recentPredictedArrivalUntil <= 0) return null;
+    if (now > this.recentPredictedArrivalUntil) {
+      this.clearRecentPredictedArrival();
+      return null;
+    }
+    return this.recentPredictedArrivalDestination;
   }
 
   private armRecentPredictedArrival(): void {
@@ -8351,6 +8661,7 @@ export class GameManager {
     }
     this.recentPredictedArrivalUntil = performance.now() + GameManager.RECENT_ARRIVAL_AUTHORITY_GRACE_MS;
     this.recentPredictedArrivalDestination = { x: destination.x, z: destination.z };
+    this.recentPredictedArrivalRouteTiles = this.collectPredictedRouteTileKeys();
   }
 
   private shouldIgnoreRecentPredictedArrivalAuthority(
@@ -8369,12 +8680,14 @@ export class GameManager {
     if (destination && Math.floor(destination.x) === tx && Math.floor(destination.z) === tz) {
       return true;
     }
+    if (this.recentPredictedArrivalRouteTiles.has(this.routeTileKey(serverX, serverZ))) return true;
 
     return false;
   }
 
   private refreshPredictedDestinationFromPath(): void {
     this.predictedPathUnitSteps = this.predictedPathRemainingUnitSteps();
+    this.selfAuthorityRouteTargetSteps = Math.min(this.selfAuthorityRouteTargetSteps, this.predictedPathUnitSteps);
     if (!this.predictedPathDestination) return;
     const dest = this.path[this.path.length - 1];
     this.predictedPathDestination = dest ? { x: dest.x, z: dest.z } : null;
@@ -8432,7 +8745,9 @@ export class GameManager {
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
 
-    if (notifyServer) this.network.sendMove([currentTarget], this.movementMode);
+    if (notifyServer && this.network.sendMove([currentTarget], this.movementMode)) {
+      this.noteLocalMoveCommandSent();
+    }
     return true;
   }
 
@@ -8597,7 +8912,7 @@ export class GameManager {
   ): boolean {
     const sameTile = Math.floor(fromX) === Math.floor(this.playerX)
       && Math.floor(fromZ) === Math.floor(this.playerZ);
-    const currentY = this.localPlayer?.position.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
+    const currentY = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
     const sourceBaseY = sameTile
       ? currentY
       : this.getHeightAtFloor(fromX, fromZ, this.currentFloor, currentY);
@@ -8804,12 +9119,28 @@ export class GameManager {
     return this.isLocalRangedWeapon() ? 'chebyshev' : 'cardinal';
   }
 
-  private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
-    if (path.length === 0) return;
-    if (this.isControlledMoveActive()) return;
+  private activePredictedDestination(): { x: number; z: number } | null {
+    if (this.pathIndex >= this.path.length) {
+      return this.activeRecentPredictedArrivalDestination();
+    }
+    return this.predictedPathDestination ?? this.path[this.path.length - 1] ?? null;
+  }
+
+  private shouldCoalesceDuplicatePredictedPath(path: { x: number; z: number }[]): boolean {
+    const destination = path[path.length - 1];
+    const activeDestination = this.activePredictedDestination();
+    return !!destination && !!activeDestination && this.sameTile(destination, activeDestination);
+  }
+
+  private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): boolean {
+    if (path.length === 0) return false;
+    if (this.isControlledMoveActive()) return false;
+    if (this.shouldCoalesceDuplicatePredictedPath(path)) return false;
     this.followTargetPlayerId = -1;
-    if (!this.network.sendMove(path, this.movementMode)) return;
+    if (!this.network.sendMove(path, this.movementMode)) return false;
+    this.noteLocalMoveCommandSent();
     this.startLocalPredictedPath(path, preserveCurrentStep, true);
+    return true;
   }
 
   private startLocalPredictedPath(
@@ -8819,17 +9150,27 @@ export class GameManager {
   ): void {
     if (path.length === 0) return;
     const activeStep = this.getActiveUnitStep();
+    const wasPathing = this.pathIndex < this.path.length;
+    const now = performance.now();
+    const staleRouteTiles = wasPathing ? this.collectPredictedRouteTileKeys() : null;
+    const recentArrivalRouteTiles = !wasPathing && this.recentPredictedArrivalUntil > now
+      ? new Set(this.recentPredictedArrivalRouteTiles)
+      : null;
+    const shouldPreserveCurrentStep = !!activeStep && this.tileProgress > 0;
+    const nextPath = shouldPreserveCurrentStep && activeStep && !this.sameTile(path[0], activeStep.target)
+      ? [activeStep.target, ...path]
+      : path;
     this.clearRecentPredictedArrival();
     this.localPlayer?.clearFaceLock(true);
     if (this.localPlayer?.isSkillAnimPlaying()) this.localPlayer.resetTransientAnimation();
-    this.path = path;
+    this.path = nextPath;
     this.pathIndex = 0;
     this.localCombatWalkUntilMs = 0;
-    this.predictedPathStartedAt = performance.now();
-    const dest = path[path.length - 1];
+    this.predictedPathStartedAt = now;
+    const dest = nextPath[nextPath.length - 1];
     this.predictedPathDestination = allowAuthorityReanchor && dest ? { x: dest.x, z: dest.z } : null;
     this.predictedPathAuthorityReanchorAttempts = 0;
-    if (preserveCurrentStep && activeStep && this.sameTile(path[0], activeStep.target)) {
+    if (shouldPreserveCurrentStep && activeStep) {
       this.tileProgress = activeStep.progress;
       this.setTileFrom(activeStep.from.x, activeStep.from.z);
     } else {
@@ -8840,8 +9181,16 @@ export class GameManager {
     }
     this.predictedPathStart = { x: this.tileFrom.x, z: this.tileFrom.z };
     this.pendingPath = null;
-    const initialSteps = compressedPathTileSteps(this.tileFrom, path);
+    const initialSteps = compressedPathTileSteps(this.tileFrom, nextPath);
     this.predictedPathUnitSteps = initialSteps;
+    this.selfAuthorityRouteTargetSteps = 0;
+    if (wasPathing) {
+      this.armSelfAuthorityRedirectGrace(now, staleRouteTiles ?? undefined);
+    } else if (recentArrivalRouteTiles?.size) {
+      this.armSelfAuthorityRedirectGrace(now, recentArrivalRouteTiles);
+    } else {
+      this.clearSelfAuthorityRedirectGrace();
+    }
     this.localPlayer?.setMovementMode(effectiveMovementModeForPath(this.movementMode, initialSteps, initialSteps));
     if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
   }
@@ -9123,9 +9472,9 @@ export class GameManager {
     if (!this.isWorldObjectInteractable(def, data.depleted)) return;
     if (this.tryUseInventoryItemOn('object', objectEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
-    // Auto-interact with skilling objects, signs, doors, ladders, banks, and
-    // crafting stations (furnace, anvil, range).
-    if (isHarvestObjectDef(def) || def.category === 'crop' || def.category === 'sign' || def.category === 'door' || def.category === 'ladder' || def.category === 'bank' || (def.recipes && def.recipes.length > 0)) {
+    // Auto-interact with skilling objects, signs, doors, ladders, banks,
+    // teleports, and crafting stations (furnace, anvil, range).
+    if (isHarvestObjectDef(def) || def.category === 'crop' || def.category === 'sign' || def.category === 'door' || def.category === 'ladder' || def.category === 'bank' || isTeleportObjectDef(def) || (def.recipes && def.recipes.length > 0)) {
       const actionIndex = def.category === 'ladder'
         ? this.primaryLadderActionIndex(def, data)
         : 0;
@@ -10523,12 +10872,12 @@ export class GameManager {
       return this.chunkManager.isWallBlockedOnFloor(fx, fz, tx, tz, this.currentFloor);
     }
     // Pass player height so walls below the player don't block
-    const playerY = this.localPlayer?.position.y ?? this.getHeight(this.playerX, this.playerZ);
+    const playerY = this.localPlayer?.position?.y ?? this.getHeight(this.playerX, this.playerZ);
     return this.chunkManager.isWallBlocked(fx, fz, tx, tz, playerY);
   };
 
   private isGroundWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number): boolean => {
-    const playerY = this.localPlayer?.position.y ?? this.getHeight(this.playerX, this.playerZ);
+    const playerY = this.localPlayer?.position?.y ?? this.getHeight(this.playerX, this.playerZ);
     return this.chunkManager.isWallBlocked(fx, fz, tx, tz, playerY);
   };
 
@@ -10548,7 +10897,7 @@ export class GameManager {
     this.playerZ = destination.z;
     this.pathIndex = this.path.length;
     this.renderLocalPlayerAtLogicalPosition();
-    this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
+    this.inputManager.setPlayerY(this.localPlayer?.position?.y ?? this.getLocalPlayerRenderHeight());
     this.finishPredictedPathArrival();
     return true;
   }
@@ -10591,6 +10940,9 @@ export class GameManager {
     this.predictedPathStart = null;
     this.predictedPathDestination = null;
     this.predictedPathAuthorityReanchorAttempts = 0;
+    this.selfAuthorityRouteTargetSteps = 0;
+    this.selfAuthorityRedirectGraceUntil = 0;
+    this.selfAuthorityRedirectStaleRouteTiles.clear();
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
     if (this.shouldKeepLocalCombatWalkLoopAlive()) {
@@ -11479,7 +11831,7 @@ export class GameManager {
       player: {
         x: round(this.playerX),
         z: round(this.playerZ),
-        y: round(this.localPlayer?.position.y ?? 0),
+        y: round(this.localPlayer?.position?.y ?? 0),
         walking: this.localPlayer?.isWalking() ?? false,
         movementMode: this.movementMode,
       },
@@ -11786,7 +12138,7 @@ export class GameManager {
   private reconcileLocalPlayerToServer(serverX: number, serverZ: number, hiddenCatchup: boolean, serverMoving: boolean = false): void {
     if (hiddenCatchup && this.fastForwardPredictedPathToAuthority(serverX, serverZ)) {
       this.renderLocalPlayerAtLogicalPosition();
-      this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
+      this.inputManager.setPlayerY(this.localPlayer?.position?.y ?? this.getLocalPlayerRenderHeight());
       return;
     }
     this.hardResetLocalPlayerToAuthority(serverX, serverZ, serverMoving);
@@ -11841,6 +12193,72 @@ export class GameManager {
     return false;
   }
 
+  private appendUniquePathPoint(path: { x: number; z: number }[], point: { x: number; z: number }): void {
+    const prev = path[path.length - 1];
+    if (prev && this.sameTile(prev, point)) return;
+    path.push({ x: point.x, z: point.z });
+  }
+
+  private retargetPredictedPathThroughAuthority(steps: RemoteMovementStep[]): boolean {
+    const destination = this.predictedPathDestination;
+    const final = steps[steps.length - 1];
+    if (!final) return false;
+    if (final.floor !== this.currentFloor) return false;
+    if (this.isTileOnPredictedRoute(final.x, final.z)) {
+      this.noteSelfAuthorityRouteTarget(final.x, final.z);
+      return false;
+    }
+
+    const maxAxisDelta = Math.max(Math.abs(final.x - this.playerX), Math.abs(final.z - this.playerZ));
+    if (maxAxisDelta <= GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST) return false;
+    if (maxAxisDelta > GameManager.LOCAL_AUTHORITY_SOFT_RETARGET_DIST) return false;
+
+    const authorityPath: { x: number; z: number }[] = [];
+    for (const step of steps) this.appendUniquePathPoint(authorityPath, step);
+    if (authorityPath.length === 0) return false;
+
+    const nextPath: { x: number; z: number }[] = [];
+    const firstAuthority = authorityPath[0]!;
+    if (!this.sameTile({ x: this.playerX, z: this.playerZ }, firstAuthority)) {
+      const bridge = findPath(
+        this.playerX,
+        this.playerZ,
+        firstAuthority.x,
+        firstAuthority.z,
+        this.isTileBlocked,
+        this.chunkManager.getMapWidth(),
+        this.chunkManager.getMapHeight(),
+        32,
+        this.isWallBlockedForPath,
+      );
+      if (bridge.length === 0) return false;
+      for (const point of bridge) this.appendUniquePathPoint(nextPath, point);
+    }
+
+    for (const point of authorityPath) this.appendUniquePathPoint(nextPath, point);
+
+    if (destination && !this.sameTile(final, destination)) {
+      const tail = findPath(
+        final.x,
+        final.z,
+        destination.x,
+        destination.z,
+        this.isTileBlocked,
+        this.chunkManager.getMapWidth(),
+        this.chunkManager.getMapHeight(),
+        200,
+        this.isWallBlockedForPath,
+      );
+      if (tail.length === 0) return false;
+      for (const point of tail) this.appendUniquePathPoint(nextPath, point);
+    }
+
+    if (nextPath.length === 0) return false;
+    this.startLocalPredictedPath(nextPath, false, true);
+    this.noteSelfAuthorityRouteTarget(final.x, final.z);
+    return true;
+  }
+
   private applyLocalAuthoritativeMovementFloor(floor: number): void {
     if (!Number.isFinite(floor)) return;
     const nextFloor = Math.trunc(floor);
@@ -11855,6 +12273,7 @@ export class GameManager {
   private applyLocalVerticalAuthority(floor: number | null, y: number | null): void {
     if (floor !== null) this.applyLocalAuthoritativeMovementFloor(floor);
     if (y === null || !Number.isFinite(y) || !this.localPlayer) return;
+    this.noteLocalAuthoritativeTileHeight(this.playerX, this.playerZ, floor, y);
     this.localPlayer.setPositionXYZ(this.playerX, y, this.playerZ);
     this.inputManager.setPlayerY(y);
   }
@@ -11874,20 +12293,44 @@ export class GameManager {
     this.lastSelfAuthorityAt = now;
     this.lastSelfAuthorityWarnAt = 0;
     this.selfAuthorityGraceUntil = 0;
-    this.latestSelfSync = { x: final.x, z: final.z, moving: true };
     this.clearSpellMovementLockOnSelfSync();
-    this.clearRecentPredictedArrival();
     this.localPlayer?.setMovementMode(final.mode);
+
+    if (this.shouldIgnoreRecentPredictedArrivalAuthority(final.x, final.z, now)) {
+      if (this.isCurrentLocalTile(final.x, final.z)) {
+        this.latestSelfSync = { x: final.x, z: final.z, moving: true };
+        this.applyLocalAuthoritativeStepVerticalIfCurrent(final);
+      }
+      return;
+    }
+
+    if (this.shouldDeferFarOffRouteMoveStepAuthority(final.x, final.z, now)) return;
 
     // Visible local movement is already predicting along this exact route.
     // Treat nearby self step packets as authoritative confirmation, not a
     // render command, so late packets cannot rubber-band the camera backward.
     if (this.shouldTreatSelfMoveStepAsConfirmation(final)) {
+      this.noteLocalAuthoritativeStepHeights(steps, now);
+      this.latestSelfSync = { x: final.x, z: final.z, moving: true };
+      this.noteSelfAuthorityRouteTarget(final.x, final.z);
       this.applyLocalAuthoritativeStepVerticalIfCurrent(final);
       if (this.pathIndex < this.path.length && !this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
       return;
     }
 
+    if (this.shouldIgnoreRedirectStaleLocalAuthority(final.x, final.z, now)) return;
+
+    this.clearRecentPredictedArrival();
+    this.noteLocalAuthoritativeStepHeights(steps, now);
+
+    if (this.retargetPredictedPathThroughAuthority(steps)) {
+      this.latestSelfSync = { x: final.x, z: final.z, moving: true };
+      this.applyLocalAuthoritativeStepVerticalIfCurrent(final);
+      if (this.pathIndex < this.path.length && !this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
+      return;
+    }
+
+    this.latestSelfSync = { x: final.x, z: final.z, moving: true };
     const reanchored = this.reanchorPredictedPathToAuthority(final.x, final.z, true);
     if (!reanchored) {
       this.clearPredictedPath(false, false);
@@ -11917,7 +12360,7 @@ export class GameManager {
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
     this.renderLocalPlayerAtLogicalPosition();
-    this.inputManager.setPlayerY(this.getHeight(serverX, serverZ));
+    this.inputManager.setPlayerY(this.localPlayer?.position?.y ?? this.getLocalPlayerRenderHeight());
     if (serverMoving) {
       this.localCombatWalkUntilMs = 0;
       this.localPlayer?.stopWalking();
@@ -11937,8 +12380,9 @@ export class GameManager {
   /** Render the local player at the logical prediction position. */
   private renderLocalPlayerAtLogicalPosition(): void {
     if (!this.localPlayer) return;
-    const vy = this.getHeight(this.playerX, this.playerZ);
+    const vy = this.getLocalPlayerRenderHeight();
     this.localPlayer.setPositionXYZ(this.playerX, vy, this.playerZ);
+    this.inputManager.setPlayerY(vy);
   }
 
   private updateLocalPlayerMovement(dt: number, camPos: Vector3 | null): void {
@@ -11969,7 +12413,8 @@ export class GameManager {
         const currentPathSteps = this.predictedPathUnitSteps || currentRemainingSteps;
         const mode = effectiveMovementModeForPath(this.movementMode, currentPathSteps, currentRemainingSteps);
         this.localPlayer.setMovementMode(mode);
-        const speed = effectiveMovementTilesPerSecondForPath(this.movementMode, currentPathSteps, currentRemainingSteps);
+        const speed = effectiveMovementTilesPerSecondForPath(this.movementMode, currentPathSteps, currentRemainingSteps)
+          * this.localAuthorityCatchupMultiplier();
         const progressTiles = Math.max(0, Math.min(tileSteps, this.tileProgress * tileSteps));
         const nextBoundaryTiles = Math.min(Math.floor(progressTiles + EPSILON) + 1, tileSteps);
         const distanceToBoundary = Math.max(0, nextBoundaryTiles - progressTiles);
@@ -11982,6 +12427,13 @@ export class GameManager {
           }
           this.tileProgress = nextBoundaryTiles / tileSteps;
           timeLeft -= timeToBoundary;
+          if (nextBoundaryTiles < tileSteps) {
+            // Match the classic client's route draining: a rendered update may
+            // land on the next unit tile, but it must not also start turning
+            // into the following unit tile in the same frame.
+            timeLeft = 0;
+            break;
+          }
         }
       }
 
@@ -11995,18 +12447,23 @@ export class GameManager {
       this.pathIndex++;
 
       if (this.pendingPath) {
+        const staleRouteTiles = this.collectPredictedRouteTileKeys();
         this.path = this.pendingPath;
         this.pathIndex = 0;
         this.pendingPath = null;
         this.predictedPathUnitSteps = this.predictedPathRemainingUnitSteps();
+        this.selfAuthorityRouteTargetSteps = 0;
+        this.armSelfAuthorityRedirectGrace(performance.now(), staleRouteTiles);
       }
 
       if (this.pathIndex >= this.path.length) {
         this.finishPredictedPathArrival();
         this.renderLocalPlayerAtLogicalPosition();
-        this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
+        this.inputManager.setPlayerY(this.localPlayer?.position?.y ?? this.getLocalPlayerRenderHeight());
         return;
       }
+
+      timeLeft = 0;
     }
 
     if (this.pathIndex < this.path.length) {
@@ -12033,7 +12490,7 @@ export class GameManager {
     // uses the same logical height so interaction picks resolve at gameplay
     // position.
     this.renderLocalPlayerAtLogicalPosition();
-    this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
+    this.inputManager.setPlayerY(this.localPlayer?.position?.y ?? this.getLocalPlayerRenderHeight());
   }
 
   private updateHitSplats(dt: number): void {
@@ -12073,7 +12530,7 @@ export class GameManager {
   }
 
   private updateIndoorDetection(): void {
-    const playerY = this.localPlayer?.position.y ?? this.getHeight(this.playerX, this.playerZ);
+    const playerY = this.localPlayer?.position?.y ?? this.getHeight(this.playerX, this.playerZ);
     const floor = this.currentFloor;
 
     // Floor changes are server-authoritative — see server/src/World.ts
@@ -12132,7 +12589,7 @@ export class GameManager {
     if (!point) return null;
     const ray = this.scene.createPickingRay(point.x, point.y, null, this.scene.activeCamera);
     if (Math.abs(ray.direction.y) < 0.0001) return null;
-    const y = this.localPlayer?.position.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
+    const y = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
     const t = (y - ray.origin.y) / ray.direction.y;
     if (t <= 0) return null;
     const floorX = ray.origin.x + ray.direction.x * t;
@@ -12182,7 +12639,7 @@ export class GameManager {
 
   private refreshHoverHiddenRoofs(force: boolean = false, allowStickyRetention: boolean = true): void {
     if (this._lastHoverRoofTileX === -9999 || this._lastHoverRoofTileZ === -9999) return;
-    const y = this.localPlayer?.position.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
+    const y = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
     const minY = y + 0.5;
     this.applyCollectedHoverRoofSet(
       this._lastHoverRoofTileX,
@@ -12333,7 +12790,7 @@ export class GameManager {
    *  state under some scheduling conditions. Diffing avoids that entirely. */
   private recomputeHiddenRoofs(): void {
     const floor = this.currentFloor;
-    const py = this.localPlayer?.position.y ?? 0;
+    const py = this.localPlayer?.position?.y ?? 0;
     const ceilingY = this.chunkManager.getCeilingHeight(this.playerX, this.playerZ, py);
     // Never hide nodes within head-clearance of the player — without the
     // `py + 1.5` floor, the upper-floor plane the player is climbing toward

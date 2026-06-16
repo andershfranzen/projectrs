@@ -11,6 +11,7 @@ const fakeWs = {
 function makeWorldHarness() {
   const player = new Player('runner', 0.5, 0.5, fakeWs, 1);
   const packets: { opcode: ServerOpcode; values: number[] }[] = [];
+  const counters = { actionRevisions: 0 };
   const map = {
     width: 32,
     height: 32,
@@ -22,7 +23,7 @@ function makeWorldHarness() {
   world.activeDuels = new Set();
   world.sultansMineDoorTransitFor = () => null;
   world.repairOrCompleteSultansMineDoorTransit = () => {};
-  world.bumpActionRevision = () => {};
+  world.bumpActionRevision = () => { counters.actionRevisions++; };
   world.clearCombatTarget = () => {};
   world.clearQueuedPlayerActions = () => {};
   world.cancelSkilling = () => {};
@@ -37,7 +38,7 @@ function makeWorldHarness() {
     packets.push({ opcode, values });
   };
   world.sendNearbyDoorUpdates = () => {};
-  return { world, player, packets };
+  return { world, player, packets, counters };
 }
 
 describe('player move validation', () => {
@@ -52,5 +53,47 @@ describe('player move validation', () => {
     expect(player.hasMoveQueue()).toBe(true);
     expect(player.getMoveDestination()).toEqual({ x: 5.5, z: 1.5 });
     expect(packets.some(packet => packet.opcode === ServerOpcode.PATH_TRUNCATED)).toBe(false);
+  });
+
+  test('coalesces duplicate active move requests without resetting movement credit', () => {
+    const { world, player, counters } = makeWorldHarness();
+
+    world.handlePlayerMove(player.id, [
+      { x: 2.5, z: 0.5 },
+      { x: 5.5, z: 0.5 },
+    ]);
+    player.movementCredit = 1.25;
+    player.movementCreditUpdatedAtMs = 12345;
+
+    world.handlePlayerMove(player.id, [
+      { x: 1.5, z: 0.5 },
+      { x: 5.5, z: 0.5 },
+    ]);
+
+    expect(player.getMoveDestination()).toEqual({ x: 5.5, z: 0.5 });
+    expect(player.movementCredit).toBe(1.25);
+    expect(player.movementCreditUpdatedAtMs).toBe(12345);
+    expect(counters.actionRevisions).toBe(2);
+  });
+
+  test('retargeting an active move preserves movement credit cadence', () => {
+    const { world, player } = makeWorldHarness();
+
+    world.handlePlayerMove(player.id, [
+      { x: 2.5, z: 0.5 },
+      { x: 5.5, z: 0.5 },
+    ]);
+    player.movementCredit = 0.8;
+    player.movementCreditUpdatedAtMs = 12345;
+
+    world.handlePlayerMove(player.id, [
+      { x: 1.5, z: 0.5 },
+      { x: 3.5, z: 1.5 },
+      { x: 5.5, z: 1.5 },
+    ]);
+
+    expect(player.getMoveDestination()).toEqual({ x: 5.5, z: 1.5 });
+    expect(player.movementCredit).toBe(0.8);
+    expect(player.movementCreditUpdatedAtMs).toBe(12345);
   });
 });
