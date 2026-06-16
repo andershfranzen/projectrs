@@ -5,6 +5,8 @@ export enum ClientOpcode {
    *  client ECDH public key, client nonce, and device-key signature. Must be
    *  the first client game packet after the server CRYPTO_CHALLENGE. */
   CRYPTO_RESPONSE = 2,
+  /** Values: [pathLength, x10, z10, ..., modeIdx?]. The optional trailing
+   *  modeIdx binds the route to the client's predicted walk/run mode. */
   PLAYER_MOVE = 10,
   PLAYER_ATTACK_NPC = 20,
   PLAYER_TALK_NPC = 21,
@@ -263,10 +265,12 @@ export enum ServerOpcode {
    *  future toggle reconcile optimistic UI. */
   PLAYER_MOVEMENT_MODE = 62,
   /** Authoritative player movement step batch for remote interpolation.
-   *  Values: [entityId, modeIdx, count, x10, z10, floor, y10, ...].
+   *  Values: [entityId, modeIdx, count, x10, z10, floor, y10, ..., tickLow].
    *  The server sends the actual unit steps consumed this tick; run ticks may
    *  contain two steps, including corner turns that should not be rendered as
-   *  a single diagonal shortcut. */
+   *  a single diagonal shortcut. tickLow is the same low 15 bits as the
+   *  following PLAYER_SELF_SYNC so the local client can replay-guard self
+   *  steps before applying them. */
   PLAYER_MOVE_STEPS = 63,
   /** Local player's run energy percent. Values: [percent], 0..100.
    *  Sent on login and whenever the visible percent changes. */
@@ -411,7 +415,8 @@ export enum ServerOpcode {
   DUEL_FINISH = 103,
 
   /** Server tells client its requested move path was validated short; abort
-   *  local walk at the given last reachable tile center. Values: [x10, z10]
+   *  local walk at the given last reachable tile center. Values:
+   *  [x10, z10, floor?, y10?]
    *  — last reachable tile center (×10, matching qPos scale). Fire-and-forget;
    *  sent only when the truncated server path is shorter than what the client
    *  requested. Prevents the "client visual walks past where server stopped →
@@ -420,7 +425,9 @@ export enum ServerOpcode {
   PATH_TRUNCATED = 100,
   /** Server queued a short authoritative movement path and the local client
    *  should mirror it visually without echoing PLAYER_MOVE back.
-   *  Values: [x10, z10, ...] tile centers. */
+   *  Values: [x10, z10, ...] tile centers. This legacy packet is an
+   *  uncounted x/z list; do not append metadata or old clients will treat it
+   *  as extra waypoints. Send FLOOR_CHANGE alongside it for vertical authority. */
   PLAYER_CONTROLLED_MOVE = 104,
 
   /** Full quest-state snapshot. String packet: JSON-encoded

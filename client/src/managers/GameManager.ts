@@ -657,6 +657,7 @@ export class GameManager {
   private lastSelfSyncTickLow: number | null = null;
   private lastSelfSyncReceivedAt: number = 0;
   private bufferedSelfSyncReplayCount: number = 0;
+  private pendingSelfMoveStepsByTick: Array<{ tickLow: number; steps: RemoteMovementStep[] }> = [];
   private lastNpcMaterializationRetryMs: number = 0;
 
   // Character creator
@@ -1487,6 +1488,7 @@ export class GameManager {
       this.lastSelfSyncTickLow = null;
       this.lastSelfSyncReceivedAt = 0;
       this.bufferedSelfSyncReplayCount = 0;
+      this.clearPendingSelfMoveSteps();
       this._loginReadySeq++;
       onProgress?.(0.02, 'Connecting to server');
       this.network.connect(token);
@@ -2685,6 +2687,7 @@ export class GameManager {
       this.lastSelfSyncTickLow = null;
       this.lastSelfSyncReceivedAt = 0;
       this.bufferedSelfSyncReplayCount = 0;
+      this.clearPendingSelfMoveSteps();
       this._loginReadySeq++;
       this.network.connect(this.token);
     });
@@ -4829,6 +4832,7 @@ export class GameManager {
 
       const now = performance.now();
       if (this.detectBufferedSelfSyncReplay(tickLow, now)) return;
+      this.applyPendingSelfMoveStepsForTick(tickLow);
       this.lastSelfAuthorityAt = now;
       this.lastSelfAuthorityWarnAt = 0;
       this.selfAuthorityGraceUntil = 0;
@@ -4898,7 +4902,7 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.PLAYER_MOVE_STEPS, (_op, v) => {
-      // Layout: [entityId, modeIdx, count, x10, z10, floor, y10, ...].
+      // Layout: [entityId, modeIdx, count, x10, z10, floor, y10, ..., tickLow?].
       const entityId = v[0];
       const mode = movementModeFromIndex(v[1] ?? 0);
       const count = Math.max(0, Math.min(4, Math.trunc(v[2] ?? 0)));
@@ -4916,7 +4920,16 @@ export class GameManager {
       }
       if (steps.length === 0) return;
       if (entityId === this.localPlayerId) {
-        this.applyLocalAuthoritativeMoveSteps(steps);
+        const tickOffset = 3 + count * 4;
+        const tickLowRaw = v[tickOffset];
+        const tickLow = Number.isInteger(tickLowRaw) && tickLowRaw! >= 0 && tickLowRaw! <= 0x7fff
+          ? tickLowRaw!
+          : null;
+        if (tickLow === null) {
+          this.applyLocalAuthoritativeMoveSteps(steps);
+        } else {
+          this.queuePendingSelfMoveSteps(tickLow, steps);
+        }
         return;
       }
       const queuedStepCount = this.queueRemoteMovementSteps(entityId, steps);
@@ -5997,6 +6010,8 @@ export class GameManager {
       // divergence-snap in PLAYER_SYNC fires, producing a visible teleport.
       const lastX = (v[0] ?? 0) / 10;
       const lastZ = (v[1] ?? 0) / 10;
+      const authoritativeFloor = Number.isInteger(v[2]) ? Math.trunc(v[2]!) : null;
+      const authoritativeY = Number.isFinite(v[3]) ? v[3]! / 10 : null;
       const tx = Math.floor(lastX);
       const tz = Math.floor(lastZ);
       // Find the path waypoint matching the server's final reachable tile.
@@ -6013,6 +6028,9 @@ export class GameManager {
       if (cutIdx >= 0 && cutIdx < this.path.length) {
         this.path = this.path.slice(0, cutIdx);
         this.refreshPredictedDestinationFromPath();
+        if (this.pathIndex >= this.path.length || (Math.floor(this.playerX) === tx && Math.floor(this.playerZ) === tz)) {
+          this.applyLocalVerticalAuthority(authoritativeFloor, authoritativeY);
+        }
       } else if (cutIdx < 0) {
         const segmentIdx = this.findPathSegmentContainingTile(tx, tz);
         if (segmentIdx >= 0) {
@@ -6021,8 +6039,12 @@ export class GameManager {
             { x: lastX, z: lastZ },
           ];
           this.refreshPredictedDestinationFromPath();
+          if (this.pathIndex >= this.path.length || (Math.floor(this.playerX) === tx && Math.floor(this.playerZ) === tz)) {
+            this.applyLocalVerticalAuthority(authoritativeFloor, authoritativeY);
+          }
         } else {
           this.reconcileLocalPlayerToServer(lastX, lastZ, false);
+          this.applyLocalVerticalAuthority(authoritativeFloor, authoritativeY);
         }
       }
     });
@@ -8391,7 +8413,7 @@ export class GameManager {
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
 
-    if (notifyServer) this.network.sendMove([currentTarget]);
+    if (notifyServer) this.network.sendMove([currentTarget], this.movementMode);
     return true;
   }
 
@@ -8767,7 +8789,7 @@ export class GameManager {
     if (path.length === 0) return;
     if (this.isControlledMoveActive()) return;
     this.followTargetPlayerId = -1;
-    if (!this.network.sendMove(path)) return;
+    if (!this.network.sendMove(path, this.movementMode)) return;
     this.startLocalPredictedPath(path, preserveCurrentStep, true);
   }
 
@@ -11303,6 +11325,28 @@ export class GameManager {
     return true;
   }
 
+  private clearPendingSelfMoveSteps(): void {
+    this.pendingSelfMoveStepsByTick.length = 0;
+  }
+
+  private queuePendingSelfMoveSteps(tickLow: number, steps: RemoteMovementStep[]): void {
+    const normalizedTick = tickLow & 0x7fff;
+    this.pendingSelfMoveStepsByTick.push({ tickLow: normalizedTick, steps });
+    if (this.pendingSelfMoveStepsByTick.length > 4) {
+      this.pendingSelfMoveStepsByTick.splice(0, this.pendingSelfMoveStepsByTick.length - 4);
+    }
+  }
+
+  private applyPendingSelfMoveStepsForTick(tickLow: number): void {
+    if (this.pendingSelfMoveStepsByTick.length === 0) return;
+    const normalizedTick = tickLow & 0x7fff;
+    const matchIdx = this.pendingSelfMoveStepsByTick.findIndex(entry => entry.tickLow === normalizedTick);
+    if (matchIdx < 0) return;
+    const [{ steps }] = this.pendingSelfMoveStepsByTick.splice(matchIdx, 1);
+    if (matchIdx > 0) this.pendingSelfMoveStepsByTick.splice(0, matchIdx);
+    this.applyLocalAuthoritativeMoveSteps(steps);
+  }
+
   private checkSelfAuthorityFreshness(): void {
     if (this.destroyed || this.reconnecting || this.connectionFrozen || !this._loginSettled) return;
     if (this.lastSelfAuthorityAt === 0) return;
@@ -11787,6 +11831,13 @@ export class GameManager {
     if (!floorChanged) return;
     this.chunkManager.setCurrentFloor(nextFloor);
     this.refreshHoverHiddenRoofs(true, false);
+  }
+
+  private applyLocalVerticalAuthority(floor: number | null, y: number | null): void {
+    if (floor !== null) this.applyLocalAuthoritativeMovementFloor(floor);
+    if (y === null || !Number.isFinite(y) || !this.localPlayer) return;
+    this.localPlayer.setPositionXYZ(this.playerX, y, this.playerZ);
+    this.inputManager.setPlayerY(y);
   }
 
   private renderLocalPlayerAtAuthoritativeStep(step: RemoteMovementStep): void {

@@ -618,6 +618,13 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       const pathLength = values[0];
       if (!Number.isInteger(pathLength) || pathLength < 0 || pathLength > 50) return invalid('bad-move-path-length');
       if (values.length < 1 + pathLength * 2) return invalid('truncated-move-path');
+      const modeIndexOffset = 1 + pathLength * 2;
+      if (values.length > modeIndexOffset) {
+        const modeIndex = values[modeIndexOffset];
+        if (!Number.isInteger(modeIndex) || (modeIndex !== 0 && modeIndex !== 1)) {
+          return invalid('bad-move-mode');
+        }
+      }
       return OK_PACKET;
     }
 
@@ -1435,7 +1442,9 @@ function handleDecryptedGameSocketMessage(
           z: values[1 + i * 2 + 1] / 10,
         });
       }
-      world.handlePlayerMove(playerId, path);
+      const modeIndexOffset = 1 + pathLength * 2;
+      const requestedModeIndex = values.length > modeIndexOffset ? values[modeIndexOffset] : undefined;
+      world.handlePlayerMove(playerId, path, requestedModeIndex);
       break;
     }
 

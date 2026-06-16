@@ -66,7 +66,7 @@ describe('broadcast sync batching', () => {
     const inner = decodePacketBatch(exact(viewer.packets[0])).map(packet => decodePacket(packet));
     expect(inner[0]).toEqual({
       opcode: ServerOpcode.PLAYER_MOVE_STEPS,
-      values: [viewer.player.id, 1, 1, 125, 125, 0, 0],
+      values: [viewer.player.id, 1, 1, 125, 125, 0, 0, 42],
     });
     expect(inner[1].opcode).toBe(ServerOpcode.PLAYER_SELF_SYNC);
     const opcodes = inner.map(packet => packet.opcode);

@@ -558,7 +558,7 @@ export class NetworkManager {
     }
   }
 
-  sendMove(path: { x: number; z: number }[]): boolean {
+  sendMove(path: { x: number; z: number }[], mode?: MovementMode): boolean {
     if (!this.gameSocket) return false;
     if (!this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
       this.failGameSocket(this.gameSocket, 4002, 'move send while disconnected');
@@ -572,13 +572,15 @@ export class NetworkManager {
       return false;
     }
 
-    // Encode: [opcode, pathLength, x1*10, z1*10, x2*10, z2*10, ...]
+    // Encode: [opcode, pathLength, x1*10, z1*10, x2*10, z2*10, ..., modeIdx?]
+    // modeIdx is optional for compatibility with pre-run-mode-bound servers.
     const maxSteps = Math.min(path.length, 50); // Cap path length
     const values = [maxSteps];
     for (let i = 0; i < maxSteps; i++) {
       values.push(Math.round(path[i].x * 10));
       values.push(Math.round(path[i].z * 10));
     }
+    if (mode !== undefined) values.push(movementModeIndex(mode));
     return this.sendRaw(encodePacket(ClientOpcode.PLAYER_MOVE, ...values));
   }
 

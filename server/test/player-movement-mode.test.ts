@@ -44,6 +44,33 @@ function makeMovementModeWorld(player: Player) {
   return { world, packets };
 }
 
+function makeMoveRequestWorld(player: Player) {
+  const result = makeMovementModeWorld(player);
+  Object.assign(result.world, {
+    activeDuels: new Map(),
+    sultansMineDoorTransitFor: () => null,
+    bumpActionRevision: () => {},
+    clearCombatTarget: () => {},
+    clearQueuedPlayerActions: () => {},
+    cancelSkilling: () => {},
+    cancelItemProduction: () => {},
+    closeShopForPlayer: () => {},
+    sendDialogueClose: () => {},
+    isPlayerMovementTileBlocked: () => false,
+    sendNearbyDoorUpdates: () => {},
+    getPlayerMap: () => ({
+      width: 128,
+      height: 128,
+      isWallBlocked: () => false,
+      isWallBlockedOnFloor: () => false,
+      getStairOnFloor: () => null,
+      getWalkableFloorTargetsAt: () => [],
+      getEffectiveHeightOnFloor: () => 0,
+    }),
+  });
+  return result;
+}
+
 describe('player movement modes', () => {
   test('defaults to walk movement credit', () => {
     const player = makePlayer();
@@ -155,6 +182,31 @@ describe('player movement modes', () => {
     world.handlePlayerSetMovementMode(player.id, 1);
 
     expect(player.movementMode).toBe('walk');
+    expect(packets).toContainEqual({ kind: 'mode', value: 'walk' });
+    expect(packets).toContainEqual({ kind: 'energy', value: 0 });
+  });
+
+  test('world applies movement mode bundled with a non-empty move request', () => {
+    const player = makePlayer();
+    const { world, packets } = makeMoveRequestWorld(player);
+
+    world.handlePlayerMove(player.id, [{ x: 1.5, z: 0.5 }, { x: 2.5, z: 0.5 }], 1);
+
+    expect(player.movementMode).toBe('run');
+    expect(player.getMoveDestination()).toEqual({ x: 2.5, z: 0.5 });
+    expect(packets).toContainEqual({ kind: 'mode', value: 'run' });
+    expect(packets).toContainEqual({ kind: 'broadcast', value: 'run' });
+  });
+
+  test('world rejects bundled run mode below stamina threshold but still validates the route', () => {
+    const player = makePlayer();
+    player.setRunEnergy(0);
+    const { world, packets } = makeMoveRequestWorld(player);
+
+    world.handlePlayerMove(player.id, [{ x: 1.5, z: 0.5 }], 1);
+
+    expect(player.movementMode).toBe('walk');
+    expect(player.getMoveDestination()).toEqual({ x: 1.5, z: 0.5 });
     expect(packets).toContainEqual({ kind: 'mode', value: 'walk' });
     expect(packets).toContainEqual({ kind: 'energy', value: 0 });
   });

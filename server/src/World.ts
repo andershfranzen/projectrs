@@ -1718,7 +1718,39 @@ export class World {
     const after = player.getMoveDestination();
     if (!after) return;
     if (Math.floor(before.x) === Math.floor(after.x) && Math.floor(before.z) === Math.floor(after.z)) return;
-    this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(after.x), qPos(after.z));
+    this.sendPathTruncated(player, after.x, after.z);
+  }
+
+  private currentPlayerMovementLayerState(player: Player): PlayerMovementLayerState {
+    return {
+      floor: player.currentFloor,
+      y: player.effectiveY,
+      lastFloorChangeTile: player.lastFloorChangeTile,
+    };
+  }
+
+  private movementLayerForPlayerAt(player: Player, x: number, z: number, state?: PlayerMovementLayerState): PlayerMovementLayerState {
+    return this.resolvePlayerMovementLayerAt(
+      this.getPlayerMap(player),
+      x,
+      z,
+      state ?? this.currentPlayerMovementLayerState(player),
+    );
+  }
+
+  private sendPathTruncated(player: Player, x: number, z: number, state?: PlayerMovementLayerState): void {
+    const layer = state ?? this.movementLayerForPlayerAt(player, x, z);
+    this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(x), qPos(z), layer.floor, qPos(layer.y));
+  }
+
+  private sendPlayerControlledMove(player: Player, path: readonly { x: number; z: number }[]): void {
+    if (path.length === 0) return;
+    this.sendToPlayer(player, ServerOpcode.PLAYER_CONTROLLED_MOVE, ...path.flatMap(step => [qPos(step.x), qPos(step.z)]));
+    const final = path[path.length - 1];
+    const finalLayer = this.movementLayerForPlayerAt(player, final.x, final.z);
+    if (finalLayer.floor !== player.currentFloor || Math.abs(finalLayer.y - player.effectiveY) > 0.05) {
+      this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, finalLayer.floor, qPos(finalLayer.y));
+    }
   }
 
   private isPlayerInNpcAttackRange(player: Player, npc: Npc, mode: 'melee' | 'ranged' | 'magic', rangedRange: number = RANGED_ATTACK_DISTANCE): boolean {
@@ -3473,8 +3505,9 @@ export class World {
       return;
     }
     if (!player.hasMoveQueue()) {
-      player.setMoveQueue([{ x: transit.finalX, z: transit.finalZ }]);
-      this.sendToPlayer(player, ServerOpcode.PLAYER_CONTROLLED_MOVE, qPos(transit.finalX), qPos(transit.finalZ));
+      const path = [{ x: transit.finalX, z: transit.finalZ }];
+      player.setMoveQueue(path);
+      this.sendPlayerControlledMove(player, path);
     }
   }
 
@@ -3518,7 +3551,7 @@ export class World {
     }
     player.setMoveQueue(pathThroughDoor);
     this.beginSultansMineDoorTransit(player, obj, pathThroughDoor);
-    this.sendToPlayer(player, ServerOpcode.PLAYER_CONTROLLED_MOVE, ...pathThroughDoor.flatMap(step => [qPos(step.x), qPos(step.z)]));
+    this.sendPlayerControlledMove(player, pathThroughDoor);
     return true;
   }
 
@@ -4242,7 +4275,7 @@ export class World {
     return this.canUseObjectFromTile(player, obj, ptx, ptz);
   }
 
-  handlePlayerMove(playerId: number, path: { x: number; z: number }[]): void {
+  handlePlayerMove(playerId: number, path: { x: number; z: number }[], requestedMovementModeIndex?: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
     if (this.activeDuels?.has(playerId)) {
@@ -4263,6 +4296,9 @@ export class World {
       this.clearQueuedPlayerActions(player);
       this.cancelItemProduction(playerId);
       return;
+    }
+    if (requestedMovementModeIndex !== undefined) {
+      this.applyPlayerMovementModeRequest(player, requestedMovementModeIndex, false);
     }
 
     this.bumpActionRevision(player);
@@ -4353,7 +4389,7 @@ export class World {
     if (!recoveredWithAuthoritativePath && validated.truncated && validated.path.length < validated.requestedTileCount && validated.requestedTileCount > 0) {
       const last = validated.path.length > 0 ? validated.path[validated.path.length - 1] : { x: player.position.x, z: player.position.y };
       player.botStats?.recordPathTruncation();
-      this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(last.x), qPos(last.z));
+      this.sendPathTruncated(player, last.x, last.z, validated.path.length > 0 ? validated.state : this.currentPlayerMovementLayerState(player));
       this.sendNearbyDoorUpdates(player);
     }
   }
@@ -7627,9 +7663,11 @@ export class World {
     this.sendMagicState(player);
   }
 
-  handlePlayerSetMovementMode(playerId: number, modeIndex: number): void {
-    const player = this.players.get(playerId);
-    if (!player) return;
+  private applyPlayerMovementModeRequest(player: Player, modeIndex: number, echoIfSame: boolean): boolean {
+    if (!Number.isInteger(modeIndex) || (modeIndex !== 0 && modeIndex !== 1)) {
+      if (echoIfSame) this.sendMovementMode(player, player);
+      return false;
+    }
     const mode = movementModeFromIndex(modeIndex);
     if (mode === 'run' && !player.canRun()) {
       const previousMode = player.movementMode;
@@ -7637,15 +7675,22 @@ export class World {
       this.sendMovementMode(player, player);
       this.sendRunEnergy(player);
       if (player.movementMode !== previousMode) this.broadcastMovementMode(player);
-      return;
+      return false;
     }
     if (player.movementMode === mode) {
-      this.sendMovementMode(player, player);
-      return;
+      if (echoIfSame) this.sendMovementMode(player, player);
+      return true;
     }
     player.setMovementMode(mode);
     this.sendMovementMode(player, player);
     this.broadcastMovementMode(player);
+    return true;
+  }
+
+  handlePlayerSetMovementMode(playerId: number, modeIndex: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    this.applyPlayerMovementModeRequest(player, modeIndex, true);
   }
 
   handlePlayerSetAutocast(playerId: number, spellIndex: number): void {
@@ -9819,8 +9864,9 @@ export class World {
       if (!canTravel(collision, tileX, tileZ, dx, dz)) continue;
       const x = tileX + dx + 0.5;
       const z = tileZ + dz + 0.5;
-      player.setMoveQueue([{ x, z }]);
-      this.sendToPlayer(player, ServerOpcode.PLAYER_CONTROLLED_MOVE, qPos(x), qPos(z));
+      const path = [{ x, z }];
+      player.setMoveQueue(path);
+      this.sendPlayerControlledMove(player, path);
       return;
     }
   }
@@ -10035,7 +10081,7 @@ export class World {
           this.toggleDoor(oreBlockedSultansMineDoor, 0);
           this.clearSultansMineDoorTransit(player);
           player.botStats?.recordPathTruncation();
-          this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(player.position.x), qPos(player.position.y));
+          this.sendPathTruncated(player, player.position.x, player.position.y, this.currentPlayerMovementLayerState(player));
           player.clearMoveQueue();
           this.clearQueuedPlayerActions(player);
           player.movementCredit = 0;
@@ -10044,7 +10090,7 @@ export class World {
         if (tileBlocked || wallBlocked) {
           this.clearSultansMineDoorTransit(player);
           player.botStats?.recordPathTruncation();
-          this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(player.position.x), qPos(player.position.y));
+          this.sendPathTruncated(player, player.position.x, player.position.y, this.currentPlayerMovementLayerState(player));
           this.sendNearbyDoorUpdates(player);
           player.clearMoveQueue();
           this.clearQueuedPlayerActions(player);
@@ -12830,12 +12876,13 @@ export class World {
   }
 
   /** Build PLAYER_MOVE_STEPS packet.
-   *  Layout: [entityId, modeIdx, count, x10, z10, floor, y10, ...]. */
+   *  Layout: [entityId, modeIdx, count, x10, z10, floor, y10, ..., tickLow]. */
   private encodePlayerMoveSteps(entityId: number, batch: PlayerMovementStepBatch): Uint8Array {
     const values: number[] = [entityId, batch.modeIndex, batch.steps.length];
     for (const step of batch.steps) {
       values.push(qPos(step.x), qPos(step.z), step.floor, qPos(step.y));
     }
+    values.push(this.currentTick & 0x7fff);
     return encodePacket(ServerOpcode.PLAYER_MOVE_STEPS, ...values);
   }
 

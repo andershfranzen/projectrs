@@ -56,6 +56,7 @@ function makeManager(
   manager.predictedPathAuthorityReanchorAttempts = 0;
   manager.recentPredictedArrivalUntil = 0;
   manager.recentPredictedArrivalDestination = null;
+  manager.pendingSelfMoveStepsByTick = [];
   manager.currentFloor = 0;
   manager.pendingPath = null;
   manager.isSkilling = false;
@@ -236,6 +237,27 @@ describe('GameManager local movement prediction', () => {
     expect(manager.currentFloor).toBe(2);
     expect(floorUpdates).toEqual([2]);
     expect(player.positions.at(-1)).toEqual({ x: 1.5, y: 4.25, z: 0.5 });
+  });
+
+  test('queued local authoritative move steps wait for their matching self-sync tick', () => {
+    const { manager, player } = makeManager([
+      { x: 1.5, z: 0.5 },
+      { x: 2.5, z: 0.5 },
+    ], 2);
+
+    manager.queuePendingSelfMoveSteps(12, [
+      { x: 1.5, z: 0.5, floor: 0, y: 0, mode: 'walk' },
+    ]);
+    manager.applyPendingSelfMoveStepsForTick(11);
+
+    expect(manager.playerX).toBe(0.5);
+    expect(player.positions).toEqual([]);
+
+    manager.applyPendingSelfMoveStepsForTick(12);
+
+    expect(manager.playerX).toBe(1.5);
+    expect(manager.tileFrom).toEqual({ x: 1.5, z: 0.5 });
+    expect(player.positions.at(-1)).toEqual({ x: 1.5, y: 0, z: 0.5 });
   });
 
   test('hidden catch-up fast-forwards onto the predicted path without clearing the route', () => {
