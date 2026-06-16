@@ -150,6 +150,7 @@ export class Player extends Entity {
   movementMode: MovementMode = 'walk';
   moveSpeed: number = movementTilesPerTick('walk');
   movementCredit: number = 0;
+  movementCreditUpdatedAtMs: number = 0;
   runEnergy: number = RUN_ENERGY_MAX;
   lastRunEnergyPercent: number = -1;
   pendingPickup: number = -1;
@@ -988,13 +989,15 @@ export class Player extends Entity {
   setMoveQueue(path: { x: number; z: number }[]): void {
     this.moveQueue = path;
     this.moveQueueIndex = 0;
-    if (path.length === 0) this.movementCredit = 0;
+    this.movementCredit = 0;
+    this.movementCreditUpdatedAtMs = path.length > 0 ? performance.now() : 0;
   }
 
   clearMoveQueue(): void {
     this.moveQueue = [];
     this.moveQueueIndex = 0;
     this.movementCredit = 0;
+    this.movementCreditUpdatedAtMs = 0;
   }
 
   hasMoveQueue(): boolean {

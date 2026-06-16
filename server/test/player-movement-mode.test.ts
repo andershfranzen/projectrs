@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   RUN_ENERGY_MAX,
   RUN_ENERGY_MIN_TO_RUN,
+  TICK_RATE,
   movementTilesPerTick,
   runEnergyDrainPerRunTick,
   runEnergyRecoverPerTick,
@@ -209,6 +210,33 @@ describe('player movement modes', () => {
     expect(player.getMoveDestination()).toEqual({ x: 1.5, z: 0.5 });
     expect(packets).toContainEqual({ kind: 'mode', value: 'walk' });
     expect(packets).toContainEqual({ kind: 'energy', value: 0 });
+  });
+
+  test('world prorates first movement credit from the route queue time', () => {
+    const player = makePlayer();
+    player.setMovementMode('run');
+    player.setMoveQueue([
+      { x: 1.5, z: 0.5 },
+      { x: 2.5, z: 0.5 },
+    ]);
+    const queuedAt = 10_000;
+    player.movementCreditUpdatedAtMs = queuedAt;
+    const world = Object.create(World.prototype) as any;
+
+    world.currentTickStartMs = queuedAt + TICK_RATE * 0.1;
+    world.accruePlayerMovementCredit(player);
+
+    expect(player.movementCredit).toBeCloseTo(0.2, 5);
+    expect(player.processMovement(1)).toBe(false);
+    expect(player.position.x).toBe(0.5);
+
+    world.currentTickStartMs = queuedAt + TICK_RATE;
+    world.accruePlayerMovementCredit(player);
+
+    expect(player.movementCredit).toBeCloseTo(2, 5);
+    expect(player.processMovement(2)).toBe(true);
+    expect(player.processMovement(2)).toBe(true);
+    expect(player.position.x).toBe(2.5);
   });
 
   test('world broadcasts walk when stamina disables active run mode', () => {

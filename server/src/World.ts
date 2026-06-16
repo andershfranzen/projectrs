@@ -10056,7 +10056,7 @@ export class World {
         ? movementModeIndex(player.effectiveMovementModePerTick())
         : movementModeIndex(player.movementMode);
 
-      if (player.hasMoveQueue()) player.movementCredit += player.movementCreditPerTick();
+      this.accruePlayerMovementCredit(player);
 
       while (player.hasMoveQueue() && player.movementCredit >= 1) {
         const next = player.peekNextMove();
@@ -12839,6 +12839,20 @@ export class World {
       if (!viewer || viewer.disconnected || viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
       try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
     });
+  }
+
+  private accruePlayerMovementCredit(player: Player): void {
+    if (!player.hasMoveQueue()) return;
+    if (!Number.isFinite(this.currentTickStartMs) || this.currentTickStartMs <= 0) {
+      player.movementCredit += player.movementCreditPerTick();
+      return;
+    }
+    const now = this.currentTickStartMs;
+    const last = player.movementCreditUpdatedAtMs > 0 ? player.movementCreditUpdatedAtMs : now - TICK_RATE;
+    const elapsedMs = Math.max(0, Math.min(TICK_RATE, now - last));
+    if (elapsedMs <= 0) return;
+    player.movementCredit += player.movementCreditPerTick() * (elapsedMs / TICK_RATE);
+    player.movementCreditUpdatedAtMs = now;
   }
 
   /** Build PLAYER_REMOTE_STANCE packet. Layout: [entityId, stanceIdx]. */
