@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { ClientActivityKind } from '@projectrs/shared';
 import {
   BotStats,
   behavioralEvidenceFlagCount,
@@ -279,6 +280,56 @@ describe('hard protocol evidence', () => {
     expect(summary.riskHardEvidence).toBe(true);
   });
 
+  test('non-admin admin opcodes are immediate hard evidence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.recordSuspiciousPacket('admin-delete-not-admin');
+    stats.recordSuspiciousPacket('bank-delete-not-admin');
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).toContain('adminOpcodeAbuse');
+    expect(summary.evidenceFlags).toContain('adminOpcodeAbuse');
+    expect(summary.riskHardEvidence).toBe(true);
+    expect(summary.riskSignals.some(signal => (
+      signal.flag === 'adminOpcodeAbuse'
+      && signal.tier === 'hard'
+      && signal.points === 70
+    ))).toBe(true);
+  });
+
+  test('out-of-scope map-data requests are hard evidence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.recordMapDataOutOfScope();
+    stats.recordMapDataOutOfScope();
+    stats.recordMapDataOutOfScope();
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).toContain('mapDataOutOfScope');
+    expect(summary.evidenceFlags).toContain('mapDataOutOfScope');
+    expect(summary.riskHardEvidence).toBe(true);
+    expect(summary.riskSignals.some(signal => (
+      signal.flag === 'mapDataOutOfScope'
+      && signal.tier === 'hard'
+      && signal.measured === '3 denied'
+    ))).toBe(true);
+  });
+
+  test('reserved map-data endpoint requests are hard evidence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.recordReservedMapDataPath();
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).toContain('reservedMapDataPath');
+    expect(summary.evidenceFlags).toContain('reservedMapDataPath');
+    expect(summary.riskHardEvidence).toBe(true);
+    expect(summary.riskSignals.some(signal => (
+      signal.flag === 'reservedMapDataPath'
+      && signal.tier === 'hard'
+    ))).toBe(true);
+  });
+
   test('short hard-evidence sessions become the review summary', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
@@ -288,6 +339,117 @@ describe('hard protocol evidence', () => {
     const summary = stats.finalize(db, 1, {}, 1);
     expect(summary.riskHardEvidence).toBe(true);
     expect(stats.lastSessionSummary?.flags).toContain('reservedActionCapability');
+  });
+});
+
+describe('input-shape context', () => {
+  test('flags repeated pointer actions with no preceding pointer approach as context', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 20; i++) {
+      stats.recordGameplayCommandInputShape(ClientActivityKind.Pointer, {
+        flags: 1 | 2 | 16,
+        buttons: 1,
+        dwellMs: 0,
+        moveCount: 0,
+        coalescedCount: 0,
+        pathPx: 0,
+        directPx: 0,
+      });
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).not.toContain('pointerNoApproachShape');
+    expect(summary.contextFlags).toContain('pointerNoApproachShape');
+    expect(summary.pointerNoApproachRatio).toBe(1);
+  });
+
+  test('does not flag touch input or pointer actions with approach movement', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 20; i++) {
+      stats.recordGameplayCommandInputShape(ClientActivityKind.Touch, {
+        flags: 1 | 4 | 16,
+        buttons: 1,
+        dwellMs: 0,
+        moveCount: 0,
+        coalescedCount: 0,
+        pathPx: 0,
+        directPx: 0,
+      });
+      stats.recordGameplayCommandInputShape(ClientActivityKind.Pointer, {
+        flags: 1 | 2 | 16,
+        buttons: 1,
+        dwellMs: 20,
+        moveCount: 2,
+        coalescedCount: 0,
+        pathPx: 30,
+        directPx: 20,
+      });
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.contextFlags).not.toContain('pointerNoApproachShape');
+    expect(summary.pointerNoApproachRatio).toBeLessThan(0.9);
+  });
+});
+
+describe('input-ticket target correlation', () => {
+  test('flags many changing targets funded by one screen cell as review context', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 30; i++) {
+      stats.recordGameplayCommandInputTicketTarget(ClientActivityKind.Pointer, 455, 455, `npc:${1000 + (i % 10)}`);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).not.toContain('inputTicketTargetFanout');
+    expect(summary.contextFlags).toContain('inputTicketTargetFanout');
+    expect(summary.evidenceFlags).not.toContain('inputTicketTargetFanout');
+    expect(summary.sessionInputTicketTargetCommands).toBe(30);
+    expect(summary.topInputTicketTargetCellDistinctTargets).toBe(10);
+  });
+
+  test('does not flag repeated clicks on the same target from one cell', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 30; i++) {
+      stats.recordGameplayCommandInputTicketTarget(ClientActivityKind.Pointer, 455, 455, 'npc:1000');
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).not.toContain('inputTicketTargetFanout');
+    expect(summary.topInputTicketTargetCellDistinctTargets).toBe(1);
+  });
+
+  test('does not flag varied target clicks spread across cells', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 30; i++) {
+      stats.recordGameplayCommandInputTicketTarget(ClientActivityKind.Pointer, (i % 10) * 100, Math.floor(i / 10) * 100, `npc:${1000 + i}`);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).not.toContain('inputTicketTargetFanout');
+    expect(summary.inputTicketTargetUniqueCells).toBeGreaterThan(1);
+  });
+
+  test('ignores keyboard tickets for target fanout', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 30; i++) {
+      stats.recordGameplayCommandInputTicketTarget(ClientActivityKind.Keyboard, -1, -1, `npc:${1000 + i}`);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).not.toContain('inputTicketTargetFanout');
+    expect(summary.sessionInputTicketTargetCommands).toBe(0);
   });
 });
 

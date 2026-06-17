@@ -14,6 +14,7 @@ import { applyPlayerMagicImpactToNpc, armNpcRetaliation, isPointInNpcMagicAttack
 import { CombatSystem, type CombatActorRef, type CombatContext, type CombatMode, type ImpactQueueEntry, type RetaliationRequest } from './combat/CombatSystem';
 import { finalizeNpcDeath as finalizeNpcDeathCombat } from './combat/NpcDeath';
 import { broadcastLocalMessage, broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSocket';
+import { normalizeClientIp } from './network/clientIp';
 import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
 import { consumeSpellCosts } from './magic/SpellCosts';
@@ -684,10 +685,10 @@ export class World {
     return updated;
   }
 
-  getOnlinePlayerCount(): number {
+  getOnlinePlayerCount(includeStaff: boolean = true): number {
     let count = 0;
     for (const [, player] of this.players) {
-      if (!player.disconnected && !player.requestIdleLogout) count++;
+      if (!player.disconnected && !player.requestIdleLogout && (includeStaff || (!player.isAdmin && !player.isModerator))) count++;
     }
     return count;
   }
@@ -2737,10 +2738,11 @@ export class World {
   }
 
   kickPlayersFromIp(ip: string): number {
-    if (!ip) return 0;
+    const normalizedIp = normalizeClientIp(ip);
+    if (!normalizedIp) return 0;
     const accountIds = new Set<number>();
     for (const [, player] of this.players) {
-      if (player.ip === ip) accountIds.add(player.accountId);
+      if (normalizeClientIp(player.ip) === normalizedIp) accountIds.add(player.accountId);
     }
     for (const accountId of accountIds) this.kickAccountIfOnline(accountId);
     return accountIds.size;

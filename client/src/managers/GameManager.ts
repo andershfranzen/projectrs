@@ -604,6 +604,7 @@ export class GameManager {
   private _hiddenCatchupTimer: number | null = null;
   private _visibilityHandler: (() => void) | null = null;
   private _activityHandler: (() => void) | null = null;
+  private _activityKeyupHandler: ((event: KeyboardEvent) => void) | null = null;
   private _cursorTelemetryHandler: ((event: PointerEvent) => void) | null = null;
   private _hoverActionHandler: ((event: PointerEvent) => void) | null = null;
   private _roofHoverLeaveHandler: ((event: PointerEvent) => void) | null = null;
@@ -11254,6 +11255,10 @@ export class GameManager {
       window.removeEventListener('touchstart', this._activityHandler, true);
       this._activityHandler = null;
     }
+    if (this._activityKeyupHandler) {
+      window.removeEventListener('keyup', this._activityKeyupHandler, true);
+      this._activityKeyupHandler = null;
+    }
     if (this._cursorTelemetryHandler) {
       window.removeEventListener('pointermove', this._cursorTelemetryHandler, true);
       window.removeEventListener('pointerdown', this._cursorTelemetryHandler, true);
@@ -12197,12 +12202,14 @@ export class GameManager {
     const handler = (event?: Event) => {
       if (!isTrustedBrowserInputEvent(event)) return;
       if (event instanceof PointerEvent) {
+        this.network.recordPointerInput(event);
         this.network.sendInputActivity(ClientActivityKind.Pointer, event.clientX, event.clientY);
         // CLIENT_ACTIVITY records the click itself; cursor telemetry stays
         // low-rate so rapid UI clicking cannot trip server packet guardrails.
         this.network.sendCursorPosition(event.clientX, event.clientY);
       } else if (event instanceof KeyboardEvent) {
         if (event.repeat) return;
+        this.network.recordKeyboardInput(event);
         this.network.sendInputActivity(ClientActivityKind.Keyboard);
       } else if (typeof TouchEvent !== 'undefined' && event instanceof TouchEvent) {
         const touch = event.changedTouches[0] ?? event.touches[0];
@@ -12217,14 +12224,21 @@ export class GameManager {
     };
     const cursorHandler = (event: PointerEvent) => {
       if (!isTrustedBrowserInputEvent(event)) return;
+      this.network.recordPointerInput(event);
       this.network.sendCursorPosition(event.clientX, event.clientY);
+    };
+    const keyupHandler = (event: KeyboardEvent) => {
+      if (!isTrustedBrowserInputEvent(event)) return;
+      this.network.recordKeyboardRelease(event);
     };
     window.addEventListener('pointerdown', handler, true);
     window.addEventListener('keydown', handler, true);
     window.addEventListener('touchstart', handler, true);
+    window.addEventListener('keyup', keyupHandler, true);
     window.addEventListener('pointermove', cursorHandler, true);
     window.addEventListener('pointerdown', cursorHandler, true);
     this._activityHandler = handler;
+    this._activityKeyupHandler = keyupHandler;
     this._cursorTelemetryHandler = cursorHandler;
   }
 

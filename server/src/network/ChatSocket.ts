@@ -30,6 +30,7 @@ const chatSockets: Set<ServerWebSocket<ChatSocketData>> = new Set();
 const chatSocketsByUsername: Map<string, ServerWebSocket<ChatSocketData>> = new Map();
 const chatSocketsByAccountId: Map<number, ServerWebSocket<ChatSocketData>> = new Map();
 const ignoredAccountIdsByAccountId: Map<number, Set<number>> = new Map();
+const playerInfoStaffByEntityId: Map<number, boolean> = new Map();
 
 // A chat socket buffering more than this much undrained data is effectively dead;
 // closing it stops Bun's outbound buffer from growing unbounded (OOM guard).
@@ -144,10 +145,44 @@ function isSocialListKind(value: unknown): value is SocialListKind {
   return value === 'friends' || value === 'ignore';
 }
 
-function entryWithPresence(entry: SocialEntry): SocialEntry & { online: boolean } {
+function isStaffData(data: Pick<ChatSocketData, 'isAdmin' | 'isModerator'>): boolean {
+  return data.isAdmin === true || data.isModerator === true;
+}
+
+function isStaffPlayer(player: Pick<Player, 'isAdmin' | 'isModerator'>): boolean {
+  return player.isAdmin === true || player.isModerator === true;
+}
+
+function canReceiveStaffPresence(sock: ServerWebSocket<ChatSocketData>, subjectIsStaff: boolean): boolean {
+  return !subjectIsStaff || isStaffData(sock.data);
+}
+
+function rememberPlayerInfoRole(entityId: number, subjectIsStaff: boolean): void {
+  playerInfoStaffByEntityId.set(entityId, subjectIsStaff);
+}
+
+function knownPlayerInfoStaffStatus(entityId: number, name: string): boolean | undefined {
+  const cached = playerInfoStaffByEntityId.get(entityId);
+  if (cached !== undefined) return cached;
+
+  const namedSock = chatSocketsByUsername.get(name.toLowerCase());
+  if (namedSock) {
+    const subjectIsStaff = isStaffData(namedSock.data);
+    rememberPlayerInfoRole(entityId, subjectIsStaff);
+    return subjectIsStaff;
+  }
+
+  return undefined;
+}
+
+function entryWithPresenceFor(
+  ws: ServerWebSocket<ChatSocketData>,
+  entry: SocialEntry,
+): SocialEntry & { online: boolean } {
+  const targetSocket = chatSocketsByAccountId.get(entry.accountId);
   return {
     ...entry,
-    online: chatSocketsByAccountId.has(entry.accountId),
+    online: !!targetSocket && canReceiveStaffPresence(ws, isStaffData(targetSocket.data)),
   };
 }
 
@@ -161,8 +196,8 @@ function sendSocialList(ws: ServerWebSocket<ChatSocketData>, world: World): void
   const lists = refreshSocialCache(ws.data.accountId, world);
   ws.send(JSON.stringify({
     type: 'social_list',
-    friends: lists.friends.map(entryWithPresence),
-    ignore: lists.ignore.map(entryWithPresence),
+    friends: lists.friends.map(entry => entryWithPresenceFor(ws, entry)),
+    ignore: lists.ignore.map(entry => entryWithPresenceFor(ws, entry)),
   }));
 }
 
@@ -197,9 +232,10 @@ export function adminTeleportPlayerToPlayer(world: World, traveler: Player, dest
   });
 }
 
-function sendSocialPresence(accountId: number, username: string, online: boolean): void {
+function sendSocialPresence(accountId: number, username: string, online: boolean, subjectIsStaff: boolean = false): void {
   const payload = JSON.stringify({ type: 'social_presence', accountId, username, online });
   for (const sock of chatSockets) {
+    if (!canReceiveStaffPresence(sock, subjectIsStaff)) continue;
     chatSend(sock, payload);
   }
 }
@@ -470,11 +506,14 @@ export function handleChatSocketOpen(
   // forever (player_info never re-sends for already-online players).
   for (const [, p] of world.players) {
     try {
+      const subjectIsStaff = isStaffPlayer(p);
+      rememberPlayerInfoRole(p.id, subjectIsStaff);
+      if (!canReceiveStaffPresence(ws, subjectIsStaff)) continue;
       ws.send(JSON.stringify({ type: 'player_info', entityId: p.id, name: p.name }));
     } catch { /* ignore */ }
   }
   sendSocialList(ws, world);
-  sendSocialPresence(ws.data.accountId, ws.data.username, true);
+  sendSocialPresence(ws.data.accountId, ws.data.username, true, isStaffData(ws.data));
 }
 
 export function handleChatSocketMessage(
@@ -504,7 +543,12 @@ export function handleChatSocketMessage(
       // server-side from the username so a client can't claim someone
       // else's entity.
       const player = findPlayerByUsername(ws.data.username, world);
-      if (player) ws.data.playerId = player.id;
+      if (player) {
+        ws.data.playerId = player.id;
+        const subjectIsStaff = isStaffData(ws.data) || isStaffPlayer(player);
+        rememberPlayerInfoRole(player.id, subjectIsStaff);
+        broadcastPlayerInfo(player.id, player.name);
+      }
       break;
     }
 
@@ -614,8 +658,10 @@ function handleCommand(
 
   switch (cmd) {
     case '/players': {
-      const count = world.players.size;
-      const names = Array.from(world.players.values()).map(p => p.name).join(', ');
+      const visiblePlayers = Array.from(world.players.values())
+        .filter(p => canReceiveStaffPresence(ws, isStaffPlayer(p)));
+      const count = visiblePlayers.length;
+      const names = visiblePlayers.map(p => p.name).join(', ');
       sendSystem(ws, `${count} player(s) online: ${names}`);
       break;
     }
@@ -1200,11 +1246,12 @@ function handleCommand(
           return;
         }
         label = `${arg} (${ip})`;
-        // ipban alone doesn't disconnect them (they're past the upgrade check).
-        world.kickAccountIfOnline(accountId);
       }
       world.db.banIp(ip, reason, from);
-      sendSystem(ws, `IP-banned ${label}${reason ? ` — ${reason}` : ''}.`);
+      const bannedAccountIds = world.db.banAccountsForIp(ip, reason, from, null);
+      for (const accountId of bannedAccountIds) world.kickAccountIfOnline(accountId);
+      const kicked = world.kickPlayersFromIp(ip);
+      sendSystem(ws, `IP-banned ${label}; banned ${bannedAccountIds.length} known account${bannedAccountIds.length === 1 ? '' : 's'} and kicked ${kicked}${reason ? ` — ${reason}` : ''}.`);
       break;
     }
 
@@ -1358,13 +1405,16 @@ export function handleChatSocketClose(
   if (chatSocketsByAccountId.get(ws.data.accountId) === ws) chatSocketsByAccountId.delete(ws.data.accountId);
   const stillOnline = chatSocketsByAccountId.has(ws.data.accountId);
   if (!stillOnline) ignoredAccountIdsByAccountId.delete(ws.data.accountId);
-  sendSocialPresence(ws.data.accountId, ws.data.username, stillOnline);
+  sendSocialPresence(ws.data.accountId, ws.data.username, stillOnline, isStaffData(ws.data));
 }
 
 /** Broadcast player info to all chat sockets so clients can map entityId → name */
 export function broadcastPlayerInfo(entityId: number, name: string): void {
   const payload = JSON.stringify({ type: 'player_info', entityId, name });
+  const subjectIsStaff = knownPlayerInfoStaffStatus(entityId, name);
   for (const sock of chatSockets) {
+    if (subjectIsStaff === undefined && !isStaffData(sock.data)) continue;
+    if (subjectIsStaff !== undefined && !canReceiveStaffPresence(sock, subjectIsStaff)) continue;
     chatSend(sock, payload);
   }
 }
@@ -1401,15 +1451,22 @@ export function renameChatAccount(accountId: number, username: string): boolean 
 }
 
 export function broadcastSocialPresenceForAccount(accountId: number, username: string): void {
-  sendSocialPresence(accountId, username, chatSocketsByAccountId.has(accountId));
+  const sock = chatSocketsByAccountId.get(accountId);
+  sendSocialPresence(accountId, username, !!sock, sock ? isStaffData(sock.data) : false);
 }
 
 export function setChatAccountModerator(accountId: number, isModerator: boolean): void {
   const sock = chatSocketsByAccountId.get(accountId);
-  if (sock) sock.data.isModerator = isModerator;
+  if (sock) {
+    sock.data.isModerator = isModerator;
+    if (sock.data.playerId != null) rememberPlayerInfoRole(sock.data.playerId, isStaffData(sock.data));
+  }
 }
 
 export function setChatAccountAdmin(accountId: number, isAdmin: boolean): void {
   const sock = chatSocketsByAccountId.get(accountId);
-  if (sock) sock.data.isAdmin = isAdmin;
+  if (sock) {
+    sock.data.isAdmin = isAdmin;
+    if (sock.data.playerId != null) rememberPlayerInfoRole(sock.data.playerId, isStaffData(sock.data));
+  }
 }

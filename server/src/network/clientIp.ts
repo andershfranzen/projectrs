@@ -5,7 +5,7 @@ export interface RequestIpResolver {
 const TRUSTED_LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 export function requestClientIp(req: Request, srv: RequestIpResolver): string {
-  const directIp = normalizeIpForTrust(srv.requestIP(req)?.address ?? '');
+  const directIp = normalizeClientIp(srv.requestIP(req)?.address ?? '');
   if (isTrustedProxyIp(directIp)) {
     const forwarded = forwardedClientIp(req);
     if (forwarded) return forwarded;
@@ -21,7 +21,7 @@ function forwardedClientIp(req: Request): string | null {
     // controls the left-most entries, so trusting them allows IP spoofing.
     const hops = forwardedFor.split(',').map((s) => s.trim()).filter(Boolean);
     for (let i = hops.length - 1; i >= 0; i--) {
-      const hop = normalizeIpForTrust(hops[i]!);
+      const hop = normalizeClientIp(hops[i]!);
       if (!isTrustedProxyIp(hop)) {
         return isValidIp(hop) ? hop : null;
       }
@@ -30,9 +30,9 @@ function forwardedClientIp(req: Request): string | null {
     const last = hops[hops.length - 1];
     if (last && isValidIp(last)) return last;
   }
-  const realIp = normalizeIpForTrust(req.headers.get('x-real-ip')?.trim() ?? '');
+  const realIp = normalizeClientIp(req.headers.get('x-real-ip')?.trim() ?? '');
   if (realIp && isValidIp(realIp)) return realIp;
-  const cfIp = normalizeIpForTrust(req.headers.get('cf-connecting-ip')?.trim() ?? '');
+  const cfIp = normalizeClientIp(req.headers.get('cf-connecting-ip')?.trim() ?? '');
   if (cfIp && isValidIp(cfIp)) return cfIp;
   return null;
 }
@@ -40,7 +40,7 @@ function forwardedClientIp(req: Request): string | null {
 // Basic syntactic IPv4/IPv6 shape check. Not a full validator — just enough to
 // reject obviously malformed header values before they reach ban/rate-limit keys.
 function isValidIp(ip: string): boolean {
-  const value = normalizeIpForTrust(ip);
+  const value = normalizeClientIp(ip);
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(value);
   if (v4) {
     return v4.slice(1).every((octet) => Number(octet) <= 255);
@@ -71,7 +71,7 @@ function trustedProxyEntries(): TrustedProxyEntry[] | null {
     if (!token) continue;
     const [ip, bits] = token.split('/');
     const prefix = bits !== undefined ? Number(bits) : null;
-    entries.push({ ip: normalizeIpForTrust(ip!.trim()), prefix: Number.isFinite(prefix) ? prefix : null });
+    entries.push({ ip: normalizeClientIp(ip!.trim()), prefix: Number.isFinite(prefix) ? prefix : null });
   }
   trustedProxyEntriesCache = { raw, entries };
   return entries;
@@ -89,12 +89,20 @@ function ipMatchesAllowlistEntry(ip: string, entry: TrustedProxyEntry): boolean 
   return (ipNum & mask) === (entryNum & mask);
 }
 
-function normalizeIpForTrust(ip: string): string {
-  return ip.startsWith('::ffff:') ? ip.slice('::ffff:'.length) : ip;
+export function normalizeClientIp(ip: string): string {
+  let value = ip.trim().toLowerCase();
+  if (value.startsWith('[')) {
+    const end = value.indexOf(']');
+    if (end > 0) value = value.slice(1, end);
+  }
+  const zone = value.indexOf('%');
+  if (zone > 0) value = value.slice(0, zone);
+  if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(value)) value = value.replace(/:\d+$/, '');
+  return value.startsWith('::ffff:') ? value.slice('::ffff:'.length) : value;
 }
 
 export function isTrustedProxyIp(ip: string): boolean {
-  const normalized = normalizeIpForTrust(ip);
+  const normalized = normalizeClientIp(ip);
   // When an explicit allowlist is configured, trust ONLY those peers. This
   // disables the private-range fallback so production deployments can lock down
   // which hops are allowed to set X-Forwarded-For.

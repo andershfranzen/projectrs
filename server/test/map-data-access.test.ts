@@ -21,7 +21,7 @@ describe('map data access hardening', () => {
   });
 
   test('allows nearby runtime object chunks and rejects far scans', () => {
-    const near = parseGameplayMapChunkPath('kcmap/objects/chunk_13_22.json');
+    const near = parseGameplayMapChunkPath('kcmap/objects/chunk_12_22.json');
     const far = parseGameplayMapChunkPath('kcmap/objects/chunk_30_22.json');
     expect(near).not.toBeNull();
     expect(far).not.toBeNull();

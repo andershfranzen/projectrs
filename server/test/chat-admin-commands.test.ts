@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { handleChatSocketClose, handleChatSocketMessage, handleChatSocketOpen } from '../src/network/ChatSocket';
+import { broadcastPlayerInfo, handleChatSocketClose, handleChatSocketMessage, handleChatSocketOpen } from '../src/network/ChatSocket';
 
 function makePlayer(
   id: number,
@@ -37,12 +37,12 @@ function makeAdminSocket(username: string): { ws: any; messages: string[] } {
   };
 }
 
-function makeCollectingSocket(username: string, accountId: number, isAdmin: boolean = false): { ws: any; payloads: any[] } {
+function makeCollectingSocket(username: string, accountId: number, isAdmin: boolean = false, isModerator: boolean = false): { ws: any; payloads: any[] } {
   const payloads: any[] = [];
   return {
     payloads,
     ws: {
-      data: { type: 'chat', accountId, username, isAdmin, isModerator: false },
+      data: { type: 'chat', accountId, username, isAdmin, isModerator },
       send(message: string) {
         payloads.push(JSON.parse(message));
       },
@@ -67,24 +67,144 @@ function makeSocialWorld(extra: Record<string, unknown> = {}): any {
 }
 
 describe('admin chat teleport commands', () => {
-  test('player info does not expose staff roles to normal chat clients', () => {
+  test('/ipban account-bans known accounts and kicks every online player from that IP', () => {
+    const admin = makeAdminSocket('Admin');
+    const calls: string[] = [];
+    const world = makeSocialWorld({
+      getAccountIdByUsername(name: string) {
+        calls.push(`lookup:${name}`);
+        return name === 'Target' ? 2 : null;
+      },
+      getLatestIpForAccount(accountId: number) {
+        calls.push(`latest:${accountId}`);
+        return accountId === 2 ? '203.0.113.9' : null;
+      },
+      banIp(ip: string, reason: string, by: string) {
+        calls.push(`ban-ip:${ip}:${reason}:${by}`);
+      },
+      banAccountsForIp(ip: string, reason: string, by: string) {
+        calls.push(`ban-accounts:${ip}:${reason}:${by}`);
+        return [2, 3];
+      },
+    });
+    world.kickPlayersFromIp = (ip: string) => {
+      calls.push(`kick-ip:${ip}`);
+      return 2;
+    };
+    world.kickAccountIfOnline = (accountId: number) => {
+      calls.push(`kick-account:${accountId}`);
+    };
+
+    handleChatSocketMessage(admin.ws, JSON.stringify({ type: 'local', message: '/ipban Target botting' }), world);
+
+    expect(calls).toEqual([
+      'lookup:Target',
+      'latest:2',
+      'ban-ip:203.0.113.9:botting:Admin',
+      'ban-accounts:203.0.113.9:botting:Admin',
+      'kick-account:2',
+      'kick-account:3',
+      'kick-ip:203.0.113.9',
+    ]);
+    expect(admin.messages.at(-1)).toBe('IP-banned Target (203.0.113.9); banned 2 known accounts and kicked 2 — botting.');
+  });
+
+  test('player info hides staff players from normal chat clients', () => {
     const observer = makeCollectingSocket('Observer', 50);
+    const adminObserver = makeCollectingSocket('AdminObserver', 51, true);
     const staff = makePlayer(900, 'Staff', 'kcmap', 10, 10);
     staff.isAdmin = true;
     staff.isModerator = true;
+    const adventurer = makePlayer(901, 'Adventurer', 'kcmap', 11, 10);
     const world = makeSocialWorld();
-    world.players = new Map([[staff.id, staff]]);
+    world.players = new Map([[staff.id, staff], [adventurer.id, adventurer]]);
 
     try {
       handleChatSocketOpen(observer.ws, world);
+      handleChatSocketOpen(adminObserver.ws, world);
 
-      const playerInfo = observer.payloads.find(payload => payload.type === 'player_info' && payload.entityId === staff.id);
-      expect(playerInfo).toEqual({ type: 'player_info', entityId: staff.id, name: 'Staff' });
-      expect(Object.hasOwn(playerInfo ?? {}, 'isAdmin')).toBe(false);
-      expect(Object.hasOwn(playerInfo ?? {}, 'isModerator')).toBe(false);
+      expect(observer.payloads.find(payload => payload.type === 'player_info' && payload.entityId === staff.id)).toBeUndefined();
+      expect(observer.payloads.find(payload => payload.type === 'player_info' && payload.entityId === adventurer.id))
+        .toEqual({ type: 'player_info', entityId: adventurer.id, name: 'Adventurer' });
+      expect(adminObserver.payloads.find(payload => payload.type === 'player_info' && payload.entityId === staff.id))
+        .toEqual({ type: 'player_info', entityId: staff.id, name: 'Staff' });
     } finally {
       handleChatSocketClose(observer.ws, world);
+      handleChatSocketClose(adminObserver.ws, world);
     }
+  });
+
+  test('player info for a new normal player is sent after chat identify', () => {
+    const observer = makeCollectingSocket('Observer2', 52);
+    const newcomerSocket = makeCollectingSocket('Newcomer', 53);
+    const newcomer = makePlayer(902, 'Newcomer', 'kcmap', 12, 10);
+    const world = makeSocialWorld();
+
+    try {
+      handleChatSocketOpen(observer.ws, world);
+      observer.payloads.length = 0;
+
+      world.players = new Map([[newcomer.id, newcomer]]);
+      broadcastPlayerInfo(newcomer.id, newcomer.name);
+      expect(observer.payloads.find(payload => payload.type === 'player_info' && payload.entityId === newcomer.id)).toBeUndefined();
+
+      handleChatSocketOpen(newcomerSocket.ws, world);
+      handleChatSocketMessage(newcomerSocket.ws, JSON.stringify({ type: 'identify' }), world);
+      expect(observer.payloads.find(payload => payload.type === 'player_info' && payload.entityId === newcomer.id))
+        .toEqual({ type: 'player_info', entityId: newcomer.id, name: 'Newcomer' });
+    } finally {
+      handleChatSocketClose(observer.ws, world);
+      handleChatSocketClose(newcomerSocket.ws, world);
+    }
+  });
+
+  test('global social presence hides staff account events from normal chat clients', () => {
+    const observer = makeCollectingSocket('PresenceObserver', 54);
+    const adminObserver = makeCollectingSocket('PresenceAdmin', 55, true);
+    const staff = makeCollectingSocket('PresenceStaff', 56, true);
+    const world = makeSocialWorld();
+    let staffOpen = false;
+
+    try {
+      handleChatSocketOpen(observer.ws, world);
+      handleChatSocketOpen(adminObserver.ws, world);
+      observer.payloads.length = 0;
+      adminObserver.payloads.length = 0;
+
+      handleChatSocketOpen(staff.ws, world);
+      staffOpen = true;
+      expect(observer.payloads.find(payload => payload.type === 'social_presence' && payload.accountId === 56)).toBeUndefined();
+      expect(adminObserver.payloads.find(payload => payload.type === 'social_presence' && payload.accountId === 56))
+        .toEqual({ type: 'social_presence', accountId: 56, username: 'PresenceStaff', online: true });
+
+      handleChatSocketClose(staff.ws, world);
+      staffOpen = false;
+      expect(observer.payloads.find(payload => payload.type === 'social_presence' && payload.accountId === 56)).toBeUndefined();
+      expect(adminObserver.payloads.find(payload => payload.type === 'social_presence' && payload.accountId === 56 && payload.online === false))
+        .toEqual({ type: 'social_presence', accountId: 56, username: 'PresenceStaff', online: false });
+    } finally {
+      if (staffOpen) handleChatSocketClose(staff.ws, world);
+      handleChatSocketClose(observer.ws, world);
+      handleChatSocketClose(adminObserver.ws, world);
+    }
+  });
+
+  test('/players hides staff names from normal players but not staff', () => {
+    const observer = makeCollectingSocket('PlayerListObserver', 57);
+    const adminObserver = makeCollectingSocket('PlayerListAdmin', 58, true);
+    const adventurer = makePlayer(903, 'Adventurer', 'kcmap', 10, 11);
+    const staff = makePlayer(904, 'Staff', 'kcmap', 11, 11);
+    staff.isAdmin = true;
+    const world = makeSocialWorld();
+    world.players = new Map([[adventurer.id, adventurer], [staff.id, staff]]);
+
+    handleChatSocketMessage(observer.ws, JSON.stringify({ type: 'local', message: '/players' }), world);
+    handleChatSocketMessage(adminObserver.ws, JSON.stringify({ type: 'local', message: '/players' }), world);
+
+    expect(observer.payloads.find(payload => payload.type === 'system')?.message)
+      .toBe('1 player(s) online: Adventurer');
+    expect(adminObserver.payloads.find(payload => payload.type === 'system')?.message)
+      .toBe('2 player(s) online: Adventurer, Staff');
   });
 
   test('muted local chat echoes normally to sender and scrambles for others', () => {

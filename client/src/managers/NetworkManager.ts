@@ -65,11 +65,36 @@ export type ChatHandler = (data: ChatMessage) => void;
 export type RawMessageHandler = (data: ArrayBuffer) => void;
 export type DisconnectHandler = (event: CloseEvent) => void;
 
+interface PointerInputSample {
+  t: number;
+  x: number;
+  y: number;
+  c: number;
+}
+
+interface InputShapeStats {
+  flags: number;
+  buttons: number;
+  dwellMs: number;
+  moveCount: number;
+  coalescedCount: number;
+  pathPx: number;
+  directPx: number;
+}
+
 const GAME_HEARTBEAT_INTERVAL_MS = 5_000;
 const GAME_HEARTBEAT_JITTER_MS = 1_200;
 const GAME_HEARTBEAT_TIMEOUT_MS = 60_000;
 const INPUT_TICKET_BURST_WINDOW_MS = 350;
 const INPUT_TICKET_BURST_EXTRA_TICKETS = 3;
+const INPUT_SHAPE_TRUSTED = 1;
+const INPUT_SHAPE_MOUSE = 2;
+const INPUT_SHAPE_TOUCH = 4;
+const INPUT_SHAPE_PEN = 8;
+const INPUT_SHAPE_VISIBLE = 16;
+const INPUT_SHAPE_WINDOW_MS = 1_500;
+const INPUT_SHAPE_MAX_POINTER_SAMPLES = 48;
+const INPUT_SHAPE_MAX_VALUE = 32_000;
 
 /** Opcodes whose payload is `[strLen (2 bytes), utf8 bytes, trailing int16s]`
  *  instead of the int16-array layout. Handled exclusively by raw handlers;
@@ -132,6 +157,13 @@ export class NetworkManager {
   private static readonly MAX_RECV_QUEUE_BYTES = 16 * (1 << 20); // 16 MiB
   private lastActivitySentAt: number = -Infinity;
   private lastCursorSentAt: number = -Infinity;
+  private pointerInputSamples: PointerInputSample[] = [];
+  private lastPointerDownAt: number | null = null;
+  private lastPointerDwellMs: number = 0;
+  private lastPointerFlags: number = 0;
+  private lastPointerButtons: number = 0;
+  private keyDownAtByCode: Map<string, number> = new Map();
+  private lastKeyDwellMs: number = 0;
   private pendingInputTicketSeq: number | null = null;
   private inputTicketBurst: {
     kind: ClientActivityKind;
@@ -652,13 +684,108 @@ export class NetworkManager {
     return 0;
   }
 
+  recordPointerInput(event: PointerEvent): void {
+    const now = performance.now();
+    const pointerType = event.pointerType;
+    this.lastPointerFlags = (event.isTrusted ? INPUT_SHAPE_TRUSTED : 0)
+      | (pointerType === 'mouse' ? INPUT_SHAPE_MOUSE : 0)
+      | (pointerType === 'touch' ? INPUT_SHAPE_TOUCH : 0)
+      | (pointerType === 'pen' ? INPUT_SHAPE_PEN : 0)
+      | (document.visibilityState !== 'hidden' ? INPUT_SHAPE_VISIBLE : 0);
+    this.lastPointerButtons = Math.max(0, Math.min(31, event.buttons | 0));
+    if (event.type === 'pointerdown') this.lastPointerDownAt = now;
+    if ((event.type === 'pointerup' || event.type === 'pointercancel') && this.lastPointerDownAt !== null) {
+      this.lastPointerDwellMs = Math.max(0, Math.min(INPUT_SHAPE_MAX_VALUE, Math.round(now - this.lastPointerDownAt)));
+      this.lastPointerDownAt = null;
+    }
+    if (event.type !== 'pointermove') return;
+    let coalescedCount = 0;
+    try { coalescedCount = event.getCoalescedEvents?.().length ?? 0; } catch { coalescedCount = 0; }
+    this.pointerInputSamples.push({ t: now, x: event.clientX, y: event.clientY, c: coalescedCount });
+    this.trimPointerInputSamples(now);
+  }
+
+  recordKeyboardInput(event: KeyboardEvent): void {
+    if (event.repeat) return;
+    this.keyDownAtByCode.set(event.code || event.key || '?', performance.now());
+  }
+
+  recordKeyboardRelease(event: KeyboardEvent): void {
+    const key = event.code || event.key || '?';
+    const startedAt = this.keyDownAtByCode.get(key);
+    if (startedAt === undefined) return;
+    this.keyDownAtByCode.delete(key);
+    this.lastKeyDwellMs = Math.max(0, Math.min(INPUT_SHAPE_MAX_VALUE, Math.round(performance.now() - startedAt)));
+  }
+
+  private inputShapeStats(kind: ClientActivityKind): InputShapeStats {
+    if (kind === ClientActivityKind.Keyboard) {
+      return {
+        flags: document.visibilityState !== 'hidden' ? INPUT_SHAPE_VISIBLE : 0,
+        buttons: 0,
+        dwellMs: this.lastKeyDwellMs,
+        moveCount: 0,
+        coalescedCount: 0,
+        pathPx: 0,
+        directPx: 0,
+      };
+    }
+
+    const now = performance.now();
+    this.trimPointerInputSamples(now);
+    let pathPx = 0;
+    let coalescedCount = 0;
+    for (let i = 1; i < this.pointerInputSamples.length; i++) {
+      const prev = this.pointerInputSamples[i - 1];
+      const next = this.pointerInputSamples[i];
+      pathPx += Math.hypot(next.x - prev.x, next.y - prev.y);
+      coalescedCount += next.c;
+    }
+    const first = this.pointerInputSamples[0];
+    const last = this.pointerInputSamples[this.pointerInputSamples.length - 1];
+    const directPx = first && last ? Math.hypot(last.x - first.x, last.y - first.y) : 0;
+    return {
+      flags: this.lastPointerFlags || (document.visibilityState !== 'hidden' ? INPUT_SHAPE_VISIBLE : 0),
+      buttons: this.lastPointerButtons,
+      dwellMs: this.lastPointerDwellMs,
+      moveCount: Math.min(INPUT_SHAPE_MAX_VALUE, this.pointerInputSamples.length),
+      coalescedCount: Math.min(INPUT_SHAPE_MAX_VALUE, coalescedCount),
+      pathPx: Math.min(INPUT_SHAPE_MAX_VALUE, Math.round(pathPx)),
+      directPx: Math.min(INPUT_SHAPE_MAX_VALUE, Math.round(directPx)),
+    };
+  }
+
+  private trimPointerInputSamples(now: number): void {
+    const cutoff = now - INPUT_SHAPE_WINDOW_MS;
+    while (this.pointerInputSamples.length > 0 && this.pointerInputSamples[0].t < cutoff) {
+      this.pointerInputSamples.shift();
+    }
+    if (this.pointerInputSamples.length > INPUT_SHAPE_MAX_POINTER_SAMPLES) {
+      this.pointerInputSamples.splice(0, this.pointerInputSamples.length - INPUT_SHAPE_MAX_POINTER_SAMPLES);
+    }
+  }
+
   private sendInputTicket(kind: ClientActivityKind, x: number, y: number, keepForNextCommand: boolean): number | null {
     if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return null;
     this.activitySeq = (this.activitySeq % 0x7fff) + 1;
     const seq = this.activitySeq;
+    const shape = this.inputShapeStats(kind);
     if (keepForNextCommand) this.pendingInputTicketSeq = seq;
     if (!this.sendRawUnprotected(
-      encodePacket(ClientOpcode.CLIENT_INPUT, kind, seq, x, y),
+      encodePacket(
+        ClientOpcode.CLIENT_INPUT,
+        kind,
+        seq,
+        x,
+        y,
+        shape.flags,
+        shape.buttons,
+        shape.dwellMs,
+        shape.moveCount,
+        shape.coalescedCount,
+        shape.pathPx,
+        shape.directPx,
+      ),
       4005,
       'input ticket send failed',
     )) {

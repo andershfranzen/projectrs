@@ -3,11 +3,11 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Database as SQLiteDB } from 'bun:sqlite';
-import { ClientActivityKind, ClientOpcode } from '@projectrs/shared';
+import { ClientActivityKind, ClientOpcode, encodePacket } from '@projectrs/shared';
 import { BotStats } from '../src/BotStats';
 import { GameDatabase } from '../src/Database';
 import { Player } from '../src/entity/Player';
-import { getOpcodeRateRule, opcodeRequiresBrowserInputTelemetry, rateLimitOverflowIsSuspicious, suspiciousPacketCloseEligible } from '../src/network/GameSocket';
+import { getOpcodeRateRule, handleGameSocketMessage, opcodeRequiresBrowserInputTelemetry, rateLimitOverflowIsSuspicious, suspiciousPacketCloseEligible } from '../src/network/GameSocket';
 
 const fakeWs = {
   sendBinary() {},
@@ -21,6 +21,39 @@ function recordSparseBrowserTelemetry(stats: BotStats, seq: number, now: number)
   const y = 120 + (seq % 7) * 111;
   stats.recordClientActivity(ClientActivityKind.Pointer, (seq + 1) & 0x7fff, x, y, now);
   stats.recordCursorPosition(x, y, now + 15);
+}
+
+function packetBuffer(opcode: number, ...values: number[]): ArrayBuffer {
+  const packet = encodePacket(opcode, ...values);
+  return packet.buffer.slice(packet.byteOffset, packet.byteOffset + packet.byteLength) as ArrayBuffer;
+}
+
+function createSocketHarness(): { player: Player; ws: any; world: any } {
+  const ws = {
+    data: {
+      type: 'game',
+      accountId: 1,
+      username: 'tester',
+      isAdmin: false,
+      isModerator: false,
+      ip: '127.0.0.1',
+      deviceId: 'test-device',
+      token: 'test-token',
+    },
+    sendBinary() {},
+    send() {},
+    close() {},
+  } as any;
+  const player = new Player('tester', 0, 0, ws, 1);
+  player.botStats = BotStats.empty();
+  player.botStats.onLogin({});
+  ws.data.playerId = player.id;
+  const world = {
+    getPlayer(id: number) { return id === player.id ? player : undefined; },
+    getCurrentTick() { return 0; },
+    recordPlayerActivity() {},
+  } as any;
+  return { player, ws, world };
 }
 
 describe('anti-bot guardrails', () => {
@@ -82,6 +115,42 @@ describe('anti-bot guardrails', () => {
     expect(player.recordSuspiciousPacket(0)).toBe(1);
     expect(player.recordSuspiciousPacket(10)).toBe(2);
     expect(player.recordSuspiciousPacket(61_000)).toBe(1);
+  });
+
+  test('global socket rate-limit overflow records socket rate-limit telemetry', () => {
+    const { player, ws, world } = createSocketHarness();
+    player.checkRateLimit = () => false;
+
+    handleGameSocketMessage(ws, packetBuffer(ClientOpcode.MAP_READY), world);
+
+    const summary = player.botStats!.computeSummary({});
+    expect(summary.sessionSuspiciousPacketReasons['rate-limit:socket']).toBe(1);
+    expect(summary.sessionSuspiciousPacketClasses.rateLimit).toBe(1);
+  });
+
+  test('extended client input packets register input-shape stats', () => {
+    const { player, ws, world } = createSocketHarness();
+
+    handleGameSocketMessage(ws, packetBuffer(
+      ClientOpcode.CLIENT_INPUT,
+      ClientActivityKind.Pointer,
+      1,
+      500,
+      500,
+      1 | 2 | 16,
+      1,
+      35,
+      3,
+      2,
+      42,
+      30,
+    ), world);
+
+    const ticket = player.consumeInputTicket(1, performance.now(), 1_000);
+    const summary = player.botStats!.computeSummary({});
+    expect(ticket?.shape?.moveCount).toBe(3);
+    expect(ticket?.shape?.pathPx).toBe(42);
+    expect(summary.sessionSuspiciousPackets).toBe(0);
   });
 
   test('route/action loop signatures flag repeated browser-command loops', () => {

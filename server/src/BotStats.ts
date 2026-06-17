@@ -39,6 +39,8 @@ const MAX_PATH_DESTINATIONS = 100;
 const MAX_ACTION_SIGNATURES = 100;
 const MAX_COMMAND_TIMING_SIGNATURES = 80;
 const MAX_CURSOR_CELLS = 64;
+const MAX_INPUT_TICKET_TARGET_CELLS = 64;
+const MAX_INPUT_TICKET_TARGET_SIGNATURES_PER_CELL = 24;
 const MAX_SUSPICIOUS_REASONS = 80;
 const MAX_SESSION_HISTORY = 12;
 const ACTION_ROUTE_MEMORY_MS = 10_000;
@@ -65,6 +67,20 @@ const MAP_DATA_SCAN_REQUEST_THRESHOLD = 260;
 const LEGACY_RESERVED_ACTION_PREFIX = String.fromCharCode(104, 111, 110, 101, 121, 112, 111, 116);
 const LEGACY_RESERVED_ACTION_REASON = `${LEGACY_RESERVED_ACTION_PREFIX}-action-capability`;
 const LEGACY_RESERVED_ACTION_FLAG = `${LEGACY_RESERVED_ACTION_PREFIX}ActionCapability`;
+const ADMIN_OPCODE_ABUSE_REASONS = new Set(['admin-delete-not-admin', 'bank-delete-not-admin']);
+const MAP_DATA_OUT_OF_SCOPE_REASON = 'map-data-out-of-scope';
+const RESERVED_MAP_DATA_REASON = 'reserved-map-data-path';
+const INPUT_SHAPE_TOUCH = 4;
+
+interface InputShapeRecord {
+  flags: number;
+  buttons: number;
+  dwellMs: number;
+  moveCount: number;
+  coalescedCount: number;
+  pathPx: number;
+  directPx: number;
+}
 
 export interface MapDataScanBurst {
   requests: number;
@@ -177,6 +193,13 @@ export interface SessionSummary {
   topLifetimeActionLoopRepetition: number | null;
   topCursorCellRepetition: number | null;
   cursorUniqueCells: number;
+  sessionInputShapeSamples: number;
+  sessionPointerShapeSamples: number;
+  pointerNoApproachRatio: number | null;
+  sessionInputTicketTargetCommands: number;
+  inputTicketTargetUniqueCells: number;
+  topInputTicketTargetCellRepetition: number | null;
+  topInputTicketTargetCellDistinctTargets: number;
   deviceIdsSeen: number;
   deviceReuseRatio: number | null;
   lifetimeActiveActions: number;
@@ -313,6 +336,12 @@ export class BotStats {
   sessionActionSignatures: Map<string, number> = new Map();
   sessionSuspiciousPacketReasons: Map<string, number> = new Map();
   cursorCells: Map<string, number> = new Map();
+  sessionInputShapeSamples: number = 0;
+  sessionPointerShapeSamples: number = 0;
+  sessionPointerNoApproachSamples: number = 0;
+  sessionInputTicketTargetCommands: number = 0;
+  inputTicketTargetCells: Map<string, number> = new Map();
+  inputTicketTargetSignaturesByCell: Map<string, Set<string>> = new Map();
   private lastMovementDestinationKey: string | null = null;
   private lastMovementTs: number | null = null;
   private lastPingAt: number | null = null;
@@ -461,6 +490,12 @@ export class BotStats {
     this.sessionActionSignatures.clear();
     this.sessionSuspiciousPacketReasons.clear();
     this.cursorCells.clear();
+    this.sessionInputShapeSamples = 0;
+    this.sessionPointerShapeSamples = 0;
+    this.sessionPointerNoApproachSamples = 0;
+    this.sessionInputTicketTargetCommands = 0;
+    this.inputTicketTargetCells.clear();
+    this.inputTicketTargetSignaturesByCell.clear();
     this.activityIntervalSamples = [];
     this.lastMovementDestinationKey = null;
     this.lastMovementTs = null;
@@ -603,6 +638,14 @@ export class BotStats {
     return null;
   }
 
+  recordMapDataOutOfScope(): void {
+    this.recordSuspiciousPacket(MAP_DATA_OUT_OF_SCOPE_REASON);
+  }
+
+  recordReservedMapDataPath(): void {
+    this.recordSuspiciousPacket(RESERVED_MAP_DATA_REASON);
+  }
+
   private recordActiveGameplayEvent(nowMs: number): void {
     const now = Number.isFinite(nowMs) ? nowMs : Date.now();
     const previous = this.lastActiveGameplayAt ?? this.sessionStartedAt;
@@ -730,6 +773,39 @@ export class BotStats {
     }
   }
 
+  recordGameplayCommandInputTicketTarget(
+    kind: ClientActivityKind,
+    xPermille: number,
+    yPermille: number,
+    targetSignature: string,
+  ): void {
+    if (kind !== ClientActivityKind.Pointer && kind !== ClientActivityKind.Touch) return;
+    if (!Number.isFinite(xPermille) || !Number.isFinite(yPermille) || xPermille < 0 || yPermille < 0) return;
+    const x = Math.max(0, Math.min(1000, Math.floor(xPermille)));
+    const y = Math.max(0, Math.min(1000, Math.floor(yPermille)));
+    const cell = `${Math.floor(x / 100)},${Math.floor(y / 100)}`;
+    this.sessionInputTicketTargetCommands++;
+    this.bumpCappedMap(this.inputTicketTargetCells, cell, MAX_INPUT_TICKET_TARGET_CELLS);
+    let signatures = this.inputTicketTargetSignaturesByCell.get(cell);
+    if (!signatures) {
+      signatures = new Set();
+      this.inputTicketTargetSignaturesByCell.set(cell, signatures);
+    }
+    if (signatures.size < MAX_INPUT_TICKET_TARGET_SIGNATURES_PER_CELL) {
+      signatures.add(sanitizeSignaturePart(targetSignature, 64));
+    }
+  }
+
+  recordGameplayCommandInputShape(kind: ClientActivityKind, shape?: InputShapeRecord): void {
+    if (!shape) return;
+    this.sessionInputShapeSamples++;
+    if (kind !== ClientActivityKind.Pointer && kind !== ClientActivityKind.Touch) return;
+    this.sessionPointerShapeSamples++;
+    const isTouch = kind === ClientActivityKind.Touch || (shape.flags & INPUT_SHAPE_TOUCH) !== 0;
+    const hasApproach = shape.moveCount > 0 || shape.coalescedCount > 0 || shape.pathPx > 0 || shape.directPx > 0;
+    if (!isTouch && !hasApproach) this.sessionPointerNoApproachSamples++;
+  }
+
   /** Record timing for validated gameplay commands. This uses server receive
    *  time, not client-reported DOM timing, so a modified client cannot simply
    *  lie about click cadence. Short packet pairs from one click are ignored. */
@@ -851,6 +927,16 @@ export class BotStats {
     const topLifetimePathRepetition = topRatio(this.pathDestinations);
     const topLifetimeActionLoopRepetition = topRatio(this.actionSignatures);
     const topCursorCellRepetition = topRatio(this.cursorCells);
+    const pointerNoApproachRatio = this.sessionPointerShapeSamples > 0
+      ? this.sessionPointerNoApproachSamples / this.sessionPointerShapeSamples
+      : null;
+    const topInputTicketTargetCell = topEntry(this.inputTicketTargetCells);
+    const topInputTicketTargetCellRepetition = this.sessionInputTicketTargetCommands > 0 && topInputTicketTargetCell
+      ? topInputTicketTargetCell[1] / this.sessionInputTicketTargetCommands
+      : null;
+    const topInputTicketTargetCellDistinctTargets = topInputTicketTargetCell
+      ? this.inputTicketTargetSignaturesByCell.get(topInputTicketTargetCell[0])?.size ?? 0
+      : 0;
     const sessionSuspiciousPacketReasons = mapToObject(this.sessionSuspiciousPacketReasons);
     const totalSuspiciousPacketReasons = mapToObject(this.suspiciousPacketReasons);
     const sessionSuspiciousPacketClasses = classifyReasonCounts(this.sessionSuspiciousPacketReasons);
@@ -998,11 +1084,37 @@ export class BotStats {
     if (sessionSuspiciousPacketClasses.automation >= 10) {
       flags.push('automationInvalidPackets');
     }
+    if ((this.sessionSuspiciousPacketReasons.get(MAP_DATA_OUT_OF_SCOPE_REASON) ?? 0) >= 3) {
+      flags.push('mapDataOutOfScope');
+    }
+    if ((this.sessionSuspiciousPacketReasons.get(RESERVED_MAP_DATA_REASON) ?? 0) > 0) {
+      flags.push('reservedMapDataPath');
+    }
+    if (
+      this.sessionPointerShapeSamples >= 20
+      && pointerNoApproachRatio !== null
+      && pointerNoApproachRatio >= 0.9
+    ) {
+      flags.push('pointerNoApproachShape');
+    }
+    if (
+      this.sessionInputTicketTargetCommands >= 30
+      && topInputTicketTargetCell
+      && topInputTicketTargetCell[1] >= 20
+      && topInputTicketTargetCellRepetition !== null
+      && topInputTicketTargetCellRepetition >= 0.8
+      && topInputTicketTargetCellDistinctTargets >= 10
+    ) {
+      flags.push('inputTicketTargetFanout');
+    }
     if (
       (this.sessionSuspiciousPacketReasons.get('reserved-action-capability') ?? 0) > 0
       || (this.sessionSuspiciousPacketReasons.get(LEGACY_RESERVED_ACTION_REASON) ?? 0) > 0
     ) {
       flags.push('reservedActionCapability');
+    }
+    if ([...ADMIN_OPCODE_ABUSE_REASONS].some(reason => (this.sessionSuspiciousPacketReasons.get(reason) ?? 0) > 0)) {
+      flags.push('adminOpcodeAbuse');
     }
     const lifetimeHardInvalidPackets = totalSuspiciousPacketClasses.protocol + totalSuspiciousPacketClasses.rateLimit;
     if (lifetimeHardInvalidPackets >= 25) {
@@ -1199,6 +1311,7 @@ export class BotStats {
       sessionMapDataScanBursts: this.sessionMapDataScanBursts,
       sessionSuspiciousPackets: this.sessionSuspiciousPackets,
       totalSuspiciousPackets: this.totalSuspiciousPackets,
+      sessionSuspiciousPacketReasons,
       sessionSuspiciousPacketClasses,
       totalSuspiciousPacketClasses,
       totalFlagEvents: this.totalFlagEvents,
@@ -1237,6 +1350,13 @@ export class BotStats {
       topLifetimeActionLoopRepetition,
       topCursorCellRepetition,
       cursorUniqueCells: this.cursorCells.size,
+      sessionInputShapeSamples: this.sessionInputShapeSamples,
+      sessionPointerShapeSamples: this.sessionPointerShapeSamples,
+      pointerNoApproachRatio,
+      sessionInputTicketTargetCommands: this.sessionInputTicketTargetCommands,
+      inputTicketTargetUniqueCells: this.inputTicketTargetCells.size,
+      topInputTicketTargetCellRepetition,
+      topInputTicketTargetCellDistinctTargets,
       deviceIdsSeen,
       deviceReuseRatio,
       lifetimeActiveActions,
@@ -1317,6 +1437,13 @@ export class BotStats {
       topLifetimeActionLoopRepetition,
       topCursorCellRepetition,
       cursorUniqueCells: this.cursorCells.size,
+      sessionInputShapeSamples: this.sessionInputShapeSamples,
+      sessionPointerShapeSamples: this.sessionPointerShapeSamples,
+      pointerNoApproachRatio,
+      sessionInputTicketTargetCommands: this.sessionInputTicketTargetCommands,
+      inputTicketTargetUniqueCells: this.inputTicketTargetCells.size,
+      topInputTicketTargetCellRepetition,
+      topInputTicketTargetCellDistinctTargets,
       deviceIdsSeen,
       deviceReuseRatio,
       lifetimeActiveActions,
@@ -1520,6 +1647,14 @@ function topRatio(destinations: Map<string, number>): number | null {
   return total > 0 ? max / total : null;
 }
 
+function topEntry(destinations: Map<string, number>): [string, number] | null {
+  let best: [string, number] | null = null;
+  for (const entry of destinations) {
+    if (!best || entry[1] > best[1]) best = entry;
+  }
+  return best;
+}
+
 function maxLagMatchRatio<T>(values: readonly T[], minLag: number, maxLag: number): number | null {
   const safeMinLag = Math.max(1, Math.floor(minLag));
   const safeMaxLag = Math.max(safeMinLag, Math.floor(maxLag));
@@ -1552,11 +1687,14 @@ const EVIDENCE_SIGNAL_FLAGS = new Set([
   'mechanicalJitter',
   'moderateMechanicalJitter',
   'mapDataScrape',
+  'mapDataOutOfScope',
+  'reservedMapDataPath',
   'browserlessActiveGameplay',
   'commandsWithoutRecentInput',
   'commandsWithoutRecentActivity',
   'fastReaction',
   'reservedActionCapability',
+  'adminOpcodeAbuse',
 ]);
 
 const DIAGNOSTIC_SIGNAL_FLAGS = new Set([
@@ -1627,6 +1765,7 @@ interface BotRiskInput {
   longestActiveGapMinutes: number | null;
   sessionSuspiciousPackets: number;
   totalSuspiciousPackets: number;
+  sessionSuspiciousPacketReasons: Record<string, number>;
   sessionSuspiciousPacketClasses: SuspiciousPacketClassCounts;
   totalSuspiciousPacketClasses: SuspiciousPacketClassCounts;
   totalFlagEvents: number;
@@ -1665,6 +1804,13 @@ interface BotRiskInput {
   topLifetimeActionLoopRepetition: number | null;
   topCursorCellRepetition: number | null;
   cursorUniqueCells: number;
+  sessionInputShapeSamples: number;
+  sessionPointerShapeSamples: number;
+  pointerNoApproachRatio: number | null;
+  sessionInputTicketTargetCommands: number;
+  inputTicketTargetUniqueCells: number;
+  topInputTicketTargetCellRepetition: number | null;
+  topInputTicketTargetCellDistinctTargets: number;
   deviceIdsSeen: number;
   deviceReuseRatio: number | null;
   lifetimeActiveActions: number;
@@ -1718,12 +1864,15 @@ const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
   noIdleBreaks: { label: 'No idle breaks', description: 'Long active session with no 5-minute idle gaps.', threshold: '≥240min, ≥400 actions, 0 breaks', tier: 'soft' },
   marathonNoIdleBreaks: { label: 'Marathon with no idle breaks', description: 'A 6+ hour session with no idle gaps at all.', threshold: '≥360min, ≥800 actions, 0 breaks', tier: 'soft' },
   fastReaction: { label: 'Inhuman re-engage speed', description: 'Median time from an NPC death to the next combat swing is faster than a human reaction.', threshold: '≥10 samples, <200ms median', tier: 'hard' },
-  mapDataScrape: { label: 'Map-data scrape', description: 'Rapid bulk fetching of map files — scraping the world.', threshold: '≥180 files or ≥260 requests in 60s', tier: 'hard' },
-  protocolPackets: { label: 'Malformed protocol packets', description: 'Repeated protocol-invalid packets this session.', threshold: '≥3 this session', tier: 'hard' },
-  rateLimitPackets: { label: 'Rate-limit automation', description: 'Repeated rate-limit-tripping packets — faster-than-human request rate.', threshold: '≥3 this session', tier: 'hard' },
-  automationInvalidPackets: { label: 'Automation-shaped packets', description: 'Many automation-shaped invalid packets.', threshold: '≥10 this session', tier: 'hard' },
-  reservedActionCapability: { label: 'Reserved action replayed', description: 'Client used a reserved action capability that the official UI ignores.', threshold: '≥1 replayed reserved capability', tier: 'hard' },
-  lifetimeHardInvalidPackets: { label: 'Lifetime invalid packets', description: 'Large lifetime volume of protocol / rate-limit packets.', threshold: '≥25 lifetime', tier: 'hard' },
+  mapDataScrape: { label: 'Bulk map-data scrape', description: 'Rapid bulk fetching of many map files.', threshold: '≥180 unique files or ≥260 requests in 60s', tier: 'hard' },
+  mapDataOutOfScope: { label: 'Out-of-scope map data', description: 'Requested gameplay map files outside the character’s allowed streaming window.', threshold: '≥3 denied map-data requests', tier: 'hard' },
+  reservedMapDataPath: { label: 'Invalid map-data endpoint', description: 'Requested a map-data endpoint that normal gameplay never uses.', threshold: '≥1 invalid map-data endpoint request', tier: 'hard' },
+  protocolPackets: { label: 'Malformed protocol traffic', description: 'Repeated malformed or impossible game packets.', threshold: '≥3 this session', tier: 'hard' },
+  rateLimitPackets: { label: 'Too-fast packet flood', description: 'Repeated packet rate-limit overflows.', threshold: '≥3 this session', tier: 'hard' },
+  automationInvalidPackets: { label: 'Automation-shaped invalid traffic', description: 'Many invalid requests shaped like a script or modified client.', threshold: '≥10 this session', tier: 'hard' },
+  reservedActionCapability: { label: 'Invalid action token replayed', description: 'Client sent an action token that was not valid for normal gameplay.', threshold: '≥1 invalid action token', tier: 'hard' },
+  adminOpcodeAbuse: { label: 'Non-admin used admin command', description: 'A non-admin client attempted to send an admin-only game command.', threshold: '≥1 non-admin admin command', tier: 'hard' },
+  lifetimeHardInvalidPackets: { label: 'Repeat hard invalid traffic', description: 'Large lifetime volume of malformed protocol or rate-limit events.', threshold: '≥25 lifetime', tier: 'hard' },
   lifetimeLowSocialHighActivity: { label: 'Low-social high-activity (lifetime)', description: 'Very high lifetime activity with almost no chat.', threshold: '≥600min, ≥10000 actions, <2 chats/hr', tier: 'soft' },
   lifetimeExtremeLowSocialHighActivity: { label: 'Extreme low-social high-activity (lifetime)', description: 'Extreme lifetime activity with virtually no chat.', threshold: '≥1200min, ≥25000 actions, <1 chat/hr', tier: 'soft' },
   xpVelocity: { label: 'Impossible XP rate', description: 'XP/hour exceeds the highest rate a human could plausibly grind for a skill.', threshold: 'over the per-skill XP/hr ceiling', tier: 'hard' },
@@ -1828,6 +1977,8 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('pathTruncationPattern')) add('pathTruncationPattern', 14, `${input.sessionPathTruncations}/${input.sessionMoveCommands} truncated`);
   if (flagSet.has('postDeathRouteLoop')) add('postDeathRouteLoop', 12, `${input.sessionPostDeathMoves}/${input.sessionPlayerDeaths} deaths, ${ratioLabel(input.topPostDeathDestinationRepetition)} one tile`);
   if (flagSet.has('mapDataScrape')) add('mapDataScrape', 34, `${input.sessionUniqueMapDataFiles} files, ${input.sessionMapDataRequests} requests`);
+  if (flagSet.has('mapDataOutOfScope')) add('mapDataOutOfScope', 34, `${input.sessionSuspiciousPacketReasons[MAP_DATA_OUT_OF_SCOPE_REASON] ?? 0} denied`);
+  if (flagSet.has('reservedMapDataPath')) add('reservedMapDataPath', 46, `${input.sessionSuspiciousPacketReasons[RESERVED_MAP_DATA_REASON] ?? 0} request`);
   if (flagSet.has('routeActionLoop')) add('routeActionLoop', 10, `${ratioLabel(input.topActionLoopRepetition)} one signature`);
   if (flagSet.has('lifetimePathConcentration')) add(
     'lifetimePathConcentration',
@@ -1847,6 +1998,7 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('rateLimitPackets')) add('rateLimitPackets', 18, `${input.sessionSuspiciousPacketClasses.rateLimit} this session`);
   if (flagSet.has('automationInvalidPackets')) add('automationInvalidPackets', 10, `${input.sessionSuspiciousPacketClasses.automation} this session`);
   if (flagSet.has('reservedActionCapability')) add('reservedActionCapability', 70, 'replayed');
+  if (flagSet.has('adminOpcodeAbuse')) add('adminOpcodeAbuse', 70, 'non-admin attempt');
   if (flagSet.has('lifetimeHardInvalidPackets')) add(
     'lifetimeHardInvalidPackets',
     input.totalSuspiciousPacketClasses.protocol + input.totalSuspiciousPacketClasses.rateLimit >= 100 ? 22 : 14,
@@ -1945,12 +2097,15 @@ function hasHardBotEvidence(flagSet: Set<string>): boolean {
     || flagSet.has('commandsWithoutRecentInput')
     || flagSet.has('commandsWithoutRecentActivity')
     || flagSet.has('reservedActionCapability')
+    || flagSet.has('adminOpcodeAbuse')
     || flagSet.has('deviceRotating')
     || flagSet.has('protocolPackets')
     || flagSet.has('rateLimitPackets')
     || flagSet.has('automationInvalidPackets')
     || flagSet.has('lifetimeHardInvalidPackets')
     || flagSet.has('mapDataScrape')
+    || flagSet.has('mapDataOutOfScope')
+    || flagSet.has('reservedMapDataPath')
     || flagSet.has('xpVelocity');
 }
 
@@ -2002,7 +2157,7 @@ function classifyReasonCounts(reasons: Map<string, number>): SuspiciousPacketCla
 
 function classifySuspiciousReason(reason: string): SuspiciousPacketClass {
   if (reason.startsWith('rate-limit:')) return 'rateLimit';
-  if (reason === 'reserved-action-capability' || reason === LEGACY_RESERVED_ACTION_REASON) return 'reserved';
+  if (reason === 'reserved-action-capability' || reason === LEGACY_RESERVED_ACTION_REASON || reason === RESERVED_MAP_DATA_REASON) return 'reserved';
   if (
     reason === 'missing-action-capability'
     || reason === 'stale-action-capability'

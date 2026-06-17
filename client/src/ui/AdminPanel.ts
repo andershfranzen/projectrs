@@ -219,6 +219,35 @@ const BAN_DURATIONS = [
   { label: 'Permanent', seconds: 0 },
 ];
 
+const BOT_SIGNAL_LABELS: Record<string, string> = {
+  automationInvalidPackets: 'Automation-shaped invalid traffic',
+  mapDataScrape: 'Bulk map-data scrape',
+  mapDataOutOfScope: 'Out-of-scope map data',
+  reservedMapDataPath: 'Invalid map-data endpoint',
+  protocolPackets: 'Malformed protocol traffic',
+  rateLimitPackets: 'Too-fast packet flood',
+  reservedActionCapability: 'Invalid action token replayed',
+  adminOpcodeAbuse: 'Non-admin used admin command',
+  lifetimeHardInvalidPackets: 'Repeat hard invalid traffic',
+  inputTicketTargetFanout: 'One input location, many targets',
+  pointerNoApproachShape: 'Pointer actions without approach',
+};
+
+function botSignalLabel(flag: string): string {
+  const colon = flag.indexOf(':');
+  const base = colon === -1 ? flag : flag.slice(0, colon);
+  const suffix = colon === -1 ? '' : flag.slice(colon + 1);
+  const label = BOT_SIGNAL_LABELS[base]
+    ?? base
+      .replace(/[-_]+/g, ' ')
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/\b\w/g, letter => letter.toUpperCase())
+      .replace(/\bXp\b/g, 'XP')
+      .replace(/\bNpc\b/g, 'NPC')
+      .replace(/\bIp\b/g, 'IP');
+  return suffix ? `${label}: ${suffix}` : label;
+}
+
 export class AdminPanel {
   private root: HTMLDivElement;
   private summaryEl: HTMLDivElement;
@@ -1686,7 +1715,7 @@ export class AdminPanel {
     if (signals.length === 0) {
       chips.appendChild(this.summaryPill('no current evidence', '#4d5d45'));
     } else {
-      for (const signal of signals) chips.appendChild(this.summaryPill(signal, '#6b3b34'));
+      for (const signal of signals) chips.appendChild(this.summaryPill(botSignalLabel(signal), '#6b3b34'));
     }
     root.appendChild(chips);
 
@@ -1696,10 +1725,10 @@ export class AdminPanel {
       const weakSignals = document.createElement('div');
       weakSignals.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px; min-height: 20px;`;
       for (const signal of contextFlags.slice(0, 6)) {
-        weakSignals.appendChild(this.summaryPill(`ctx ${signal}`, '#564428'));
+        weakSignals.appendChild(this.summaryPill(`ctx ${botSignalLabel(signal)}`, '#564428'));
       }
       for (const signal of diagnosticFlags.slice(0, 6)) {
-        weakSignals.appendChild(this.summaryPill(`diag ${signal}`, '#4d535f'));
+        weakSignals.appendChild(this.summaryPill(`diag ${botSignalLabel(signal)}`, '#4d535f'));
       }
       root.appendChild(this.detailSection('Supporting signals', weakSignals));
     }
@@ -2031,8 +2060,8 @@ export class AdminPanel {
       const evidenceFlags = this.summaryEvidenceFlags(entry);
       const contextFlags = evidenceFlags.length > 0 ? [] : this.summaryStringArray(entry, 'contextFlags');
       const flags = evidenceFlags.length > 0
-        ? evidenceFlags.slice(0, 3).join(', ')
-        : contextFlags.slice(0, 3).map((flag) => `ctx ${flag}`).join(', ');
+        ? evidenceFlags.slice(0, 3).map(botSignalLabel).join(', ')
+        : contextFlags.slice(0, 3).map((flag) => `ctx ${botSignalLabel(flag)}`).join(', ');
       table.append(
         this.tableCell(this.formatTime(this.recordNumber(entry, 'finalizedAt'))),
         this.tableCell(this.formatMinutes(this.recordNumber(entry, 'sessionMinutes') ?? 0)),
@@ -2089,9 +2118,9 @@ export class AdminPanel {
 
   private signalSummary(account: AdminBotAccount): string {
     const flags = this.summaryEvidenceFlags(account.lastSessionSummary);
-    if (flags.length > 0) return flags.slice(0, 3).join(', ');
+    if (flags.length > 0) return flags.slice(0, 3).map(botSignalLabel).join(', ');
     const contextFlags = this.summaryStringArray(account.lastSessionSummary, 'contextFlags');
-    if (contextFlags.length > 0) return `ctx ${contextFlags.slice(0, 2).join(', ')}`;
+    if (contextFlags.length > 0) return `ctx ${contextFlags.slice(0, 2).map(botSignalLabel).join(', ')}`;
     if (account.riskReasons.length > 0) return account.riskReasons.slice(0, 2).join(', ');
     if (account.vpnLikeIp) return `VPN/DC-looking IP: ${account.vpnLikeIp.reason}`;
     if (account.sharedIpAlts.length > 0) return `ever shared IP with ${account.sharedIpAlts.length} account(s)`;

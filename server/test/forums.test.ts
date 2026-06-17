@@ -81,6 +81,23 @@ describe('forums persistence', () => {
     db.close();
   });
 
+  test('forum presence hides staff from public online lists', async () => {
+    const db = new GameDatabase(':memory:');
+    const player = db.loginFallbackAccount('forumplayer', 'device-forum-player');
+    const admin = db.loginFallbackAccount('forumadmin', 'device-forum-admin');
+    const mod = db.loginFallbackAccount('forummod', 'device-forum-mod');
+    db.setAccountAdminRole(admin.accountId, true);
+    db.setAccountModeratorRole(mod.accountId, true);
+
+    db.touchForumPresence(player.accountId, 1_000);
+    db.touchForumPresence(admin.accountId, 1_000);
+    db.touchForumPresence(mod.accountId, 1_000);
+
+    expect(db.listForumOnlineUsers(1_000, 180).map((user) => user.username)).toEqual(['forumplayer']);
+    expect(db.listForumOnlineUsers(1_000, 180, true).map((user) => user.username)).toEqual(['forumadmin', 'forummod', 'forumplayer']);
+    db.close();
+  });
+
   test('Discord emoji cache replaces stale guild emoji rows', () => {
     const db = new GameDatabase(':memory:');
     const guildId = '1504534632799010816';

@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
 import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance, QuestState, EquipSlot } from '@projectrs/shared';
 import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, RUN_ENERGY_MAX, STANCE_KEYS, DEFAULT_APPEARANCE, QUEST_STAGE_COMPLETED, clampRunEnergy, combatLevel, initSkills, isEquipSlot, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
+import { normalizeClientIp } from './network/clientIp';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const OAUTH_ACCESS_TOKEN_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
@@ -1486,6 +1487,7 @@ export class GameDatabase {
     try {
       this.db.exec(`ALTER TABLE ip_bans ADD COLUMN expires_at INTEGER`);
     } catch { /* column already exists */ }
+    this.applyActiveIpBansToKnownAccounts();
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS account_social (
@@ -3579,7 +3581,7 @@ export class GameDatabase {
   recordLogin(accountId: number, ip: string, deviceId: string = ''): number {
     const result = this.db.query(
       `INSERT INTO login_history (account_id, ip_address, login_ts, device_id) VALUES (?, ?, unixepoch(), ?)`
-    ).run(accountId, ip, deviceId);
+    ).run(accountId, normalizeClientIp(ip), deviceId);
     return Number(result.lastInsertRowid);
   }
 
@@ -4375,7 +4377,7 @@ export class GameDatabase {
     return { ok: true };
   }
 
-  listForumOnlineUsers(nowUnix: number = Math.floor(Date.now() / 1000), windowSeconds: number = 180): ForumOnlineUser[] {
+  listForumOnlineUsers(nowUnix: number = Math.floor(Date.now() / 1000), windowSeconds: number = 180, includeStaff: boolean = false): ForumOnlineUser[] {
     const safeNow = Math.max(0, Math.floor(nowUnix));
     const safeWindow = Math.max(30, Math.min(15 * 60, Math.floor(windowSeconds) || 180));
     const rows = this.db.query(`
@@ -4386,9 +4388,10 @@ export class GameDatabase {
       LEFT JOIN forum_profiles fp ON fp.account_id = p.account_id
       LEFT JOIN forum_media avatar ON avatar.id = fp.avatar_media_id
       WHERE p.last_seen_at >= ?
+        AND (? = 1 OR (a.is_admin = 0 AND a.is_moderator = 0))
       ORDER BY p.last_seen_at DESC, lower(a.username) ASC
       LIMIT 100
-    `).all(safeNow - safeWindow) as Array<{
+    `).all(safeNow - safeWindow, includeStaff ? 1 : 0) as Array<{
       account_id: number; last_seen_at: number; username: string; is_admin: number; is_moderator: number; skills: string | null; avatar_url: string | null;
     }>;
     return rows.map((row) => {
@@ -4929,16 +4932,71 @@ export class GameDatabase {
   }
 
   banIp(ip: string, reason: string, bannedBy: string, expiresAt: number | null = null): void {
-    this.upsertBan('ip_bans', 'ip_address', ip, reason, bannedBy, expiresAt);
+    const normalized = normalizeClientIp(ip);
+    if (!normalized) return;
+    this.upsertBan('ip_bans', 'ip_address', normalized, reason, bannedBy, expiresAt);
   }
 
   unbanIp(ip: string): boolean {
-    return this.db.query('DELETE FROM ip_bans WHERE ip_address = ?').run(ip).changes > 0;
+    let removed = 0;
+    for (const alias of this.ipAliases(ip)) {
+      removed += this.db.query('DELETE FROM ip_bans WHERE ip_address = ?').run(alias).changes;
+    }
+    return removed > 0;
   }
 
   isIpBanned(ip: string): BanInfo | null {
-    if (!ip) return null;
-    return this.readBan('ip_bans', 'ip_address', ip);
+    for (const alias of this.ipAliases(ip)) {
+      const ban = this.readBan('ip_bans', 'ip_address', alias);
+      if (ban) return ban;
+    }
+    return null;
+  }
+
+  private ipAliases(ip: string): string[] {
+    const normalized = normalizeClientIp(ip);
+    if (!normalized) return [];
+    const aliases = new Set<string>([normalized]);
+    const raw = ip.trim().toLowerCase();
+    if (raw) aliases.add(raw);
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized)) aliases.add(`::ffff:${normalized}`);
+    return [...aliases];
+  }
+
+  private accountIdsForIp(ip: string): number[] {
+    const aliases = this.ipAliases(ip);
+    if (aliases.length === 0) return [];
+    const placeholders = aliases.map(() => '?').join(',');
+    const rows = this.db.query(`
+      SELECT DISTINCT a.id AS account_id
+      FROM login_history lh
+      JOIN accounts a ON a.id = lh.account_id
+      WHERE lower(lh.ip_address) IN (${placeholders})
+        AND a.is_admin = 0
+      ORDER BY a.id
+    `).all(...aliases) as Array<{ account_id: number }>;
+    return rows.map((row) => row.account_id);
+  }
+
+  banAccountsForIp(ip: string, reason: string, bannedBy: string, expiresAt: number | null = null): number[] {
+    const accountIds = this.accountIdsForIp(ip);
+    for (const accountId of accountIds) this.banAccount(accountId, reason, bannedBy, expiresAt);
+    return accountIds;
+  }
+
+  private applyActiveIpBansToKnownAccounts(): void {
+    const rows = this.db.query(`
+      SELECT ip_address, reason, banned_by, expires_at
+      FROM ip_bans
+      WHERE expires_at IS NULL OR expires_at > unixepoch()
+    `).all() as Array<{ ip_address: string; reason: string; banned_by: string; expires_at: number | null }>;
+    for (const row of rows) {
+      for (const accountId of this.accountIdsForIp(row.ip_address)) {
+        if (!this.isAccountBanned(accountId)) {
+          this.banAccount(accountId, row.reason, row.banned_by, row.expires_at);
+        }
+      }
+    }
   }
 
   muteAccount(accountId: number, reason: string, mutedBy: string, expiresAt: number | null = null): void {
@@ -4959,7 +5017,7 @@ export class GameDatabase {
     const row = this.db.query(
       'SELECT ip_address FROM login_history WHERE account_id = ? ORDER BY login_ts DESC LIMIT 1'
     ).get(accountId) as { ip_address: string } | null;
-    return row?.ip_address ?? null;
+    return row?.ip_address ? normalizeClientIp(row.ip_address) : null;
   }
 
   getAccountBanRecord(accountId: number): AccountBanRecord | null {
@@ -4985,12 +5043,15 @@ export class GameDatabase {
   }
 
   getIpBanRecord(ip: string): IpBanRecord | null {
-    if (!ip) return null;
-    const row = this.db.query('SELECT ip_address, reason, banned_at, expires_at, banned_by FROM ip_bans WHERE ip_address = ?')
-      .get(ip) as { ip_address: string; reason: string; banned_at: number; expires_at: number | null; banned_by: string } | null;
+    let row: { ip_address: string; reason: string; banned_at: number; expires_at: number | null; banned_by: string } | null = null;
+    for (const alias of this.ipAliases(ip)) {
+      row = this.db.query('SELECT ip_address, reason, banned_at, expires_at, banned_by FROM ip_bans WHERE ip_address = ?')
+        .get(alias) as { ip_address: string; reason: string; banned_at: number; expires_at: number | null; banned_by: string } | null;
+      if (row) break;
+    }
     if (!row) return null;
     if (row.expires_at !== null && row.expires_at <= Math.floor(Date.now() / 1000)) {
-      this.unbanIp(ip);
+      this.unbanIp(row.ip_address);
       return null;
     }
     return {

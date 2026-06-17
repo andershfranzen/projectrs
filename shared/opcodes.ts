@@ -165,10 +165,10 @@ export enum ClientOpcode {
    *  server-side bot review signals; it does not reset AFK state. */
   CURSOR_POSITION = 122,
   /** One-shot browser input ticket. Values:
-   *  [kind, seq, xPermille, yPermille]. Every protected gameplay command must
-   *  carry one fresh nonzero seq in its protected-command trailer. The server consumes
-   *  each seq once, so old "one click buys a 15s command window" spoofing is no
-   *  longer enough. */
+   *  [kind, seq, xPermille, yPermille, optional input-shape stats...]. Every
+   *  protected gameplay command must carry one fresh nonzero seq in its
+   *  protected-command trailer. The server consumes each seq once, so old
+   *  "one click buys a 15s command window" spoofing is no longer enough. */
   CLIENT_INPUT = 123,
 }
 

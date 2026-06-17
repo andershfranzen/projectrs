@@ -41,7 +41,7 @@ import {
 } from '@projectrs/shared';
 import { World } from '../World';
 import { Player } from '../entity/Player';
-import type { InputTicketRecord } from '../entity/Player';
+import type { InputShapeRecord, InputTicketRecord } from '../entity/Player';
 import { WORLD_RESPAWN_VERSION } from '../Database';
 import { audit } from '../Audit';
 import { randomBytes } from 'crypto';
@@ -255,11 +255,29 @@ function validateClientActivityValues(values: number[]): PacketValidationResult 
 }
 
 function validateClientInputValues(values: number[]): PacketValidationResult {
-  if (values.length !== 4) return invalid('bad-client-input-shape');
-  const validation = validateClientActivityValues(values);
+  if (values.length !== 4 && values.length !== 11) return invalid('bad-client-input-shape');
+  const validation = validateClientActivityValues(values.slice(0, 4));
   if (!validation.ok) return validation;
   if (!Number.isInteger(values[1]) || values[1] <= 0 || values[1] > 0x7fff) return invalid('bad-client-input-seq');
+  if (values.length === 11) {
+    for (let i = 4; i < 11; i++) {
+      if (!Number.isInteger(values[i]) || values[i] < 0 || values[i] > 32_000) return invalid('bad-client-input-shape');
+    }
+  }
   return OK_PACKET;
+}
+
+function inputShapeFromValues(values: number[]): InputShapeRecord | undefined {
+  if (values.length !== 11) return undefined;
+  return {
+    flags: values[4],
+    buttons: values[5],
+    dwellMs: values[6],
+    moveCount: values[7],
+    coalescedCount: values[8],
+    pathPx: values[9],
+    directPx: values[10],
+  };
 }
 
 function isSlot(slot: number, size: number): boolean {
@@ -493,6 +511,36 @@ function gameplayCommandTimingSignature(opcode: number, values: number[]): strin
       return `combat-ui:${opcode}:${v(0)}`;
     default:
       return `${opcode}:${values.slice(0, 3).map(value => Number.isFinite(value) ? Math.floor(value) : '?').join(':')}`;
+  }
+}
+
+function inputTicketTargetSignature(opcode: number, values: number[]): string | null {
+  const v = (index: number, fallback: string = '?'): string => {
+    const value = values[index];
+    return Number.isFinite(value) ? String(Math.floor(value)) : fallback;
+  };
+
+  switch (opcode) {
+    case ClientOpcode.PLAYER_ATTACK_NPC:
+      return `npc:${v(0)}`;
+    case ClientOpcode.PLAYER_EXAMINE_NPC:
+      return `npc:${v(0)}:examine`;
+    case ClientOpcode.PLAYER_TALK_NPC:
+      return `npc:${v(0)}:talk`;
+    case ClientOpcode.PLAYER_FOLLOW:
+      return `player:${v(0)}:follow`;
+    case ClientOpcode.PLAYER_PICKUP_ITEM:
+      return `ground:${v(0)}`;
+    case ClientOpcode.PLAYER_INTERACT_OBJECT:
+      return `object:${v(0)}:${v(1, '0')}`;
+    case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
+      return `item-object:${v(1)}:${v(2)}`;
+    case ClientOpcode.PLAYER_USE_ITEM_ON_NPC:
+      return `item-npc:${v(1)}:${v(2)}`;
+    case ClientOpcode.PLAYER_CAST_SPELL:
+      return `spell-npc:${v(0)}:${v(1)}`;
+    default:
+      return null;
   }
 }
 
@@ -1329,7 +1377,10 @@ function handleDecryptedGameSocketMessage(
   if (!playerId) return;
   const player = world.getPlayer(playerId);
   if (!player || player.ws !== ws || player.disconnected) return;
-  if (player && !player.checkRateLimit()) return;
+  if (!player.checkRateLimit()) {
+    reportSuspiciousPacket(player, -1, 'rate-limit:socket', [], ws, world);
+    return;
+  }
 
   // Empty / malformed frames blow up decodePacket (view.getUint8(0) RangeError
   // on a 0-byte buffer). Bun's WS layer usually rejects empty frames but a
@@ -1367,6 +1418,7 @@ function handleDecryptedGameSocketMessage(
     return;
   }
   const requiresInputProof = opcodeRequiresBrowserInputTelemetry(opcode, values, player);
+  const requiresPointerTicket = opcodeRequiresPointerInputTicket(opcode, values, player);
   const now = performance.now();
   let hasValidInputTicket = false;
   let inputTicket: InputTicketRecord | null = null;
@@ -1382,7 +1434,7 @@ function handleDecryptedGameSocketMessage(
     }
     hasValidInputTicket = true;
     if (
-      opcodeRequiresPointerInputTicket(opcode, values, player)
+      requiresPointerTicket
       && inputTicket.kind !== ClientActivityKind.Pointer
       && inputTicket.kind !== ClientActivityKind.Touch
     ) {
@@ -1421,6 +1473,11 @@ function handleDecryptedGameSocketMessage(
     const hasRecentActivity = player.botStats.hasRecentClientActivity(now, BROWSER_INPUT_MAX_AGE_MS);
     player.botStats.recordGameplayCommandInputCheck(hasValidInputTicket, hasRecentActivity);
     player.botStats.recordGameplayCommandTiming(gameplayCommandTimingSignature(opcode, values), now);
+    player.botStats.recordGameplayCommandInputShape(inputTicket?.kind ?? ClientActivityKind.Legacy, inputTicket?.shape);
+    const targetSignature = inputTicket && requiresPointerTicket ? inputTicketTargetSignature(opcode, values) : null;
+    if (inputTicket && targetSignature) {
+      player.botStats.recordGameplayCommandInputTicketTarget(inputTicket.kind, inputTicket.x, inputTicket.y, targetSignature);
+    }
     if (!hasValidInputTicket && BLOCK_INPUTLESS_GAMEPLAY) {
       magicOpcodeDebug(player, opcode, values, 'input-telemetry-failed');
       reportSuspiciousPacket(player, opcode, 'missing-input-telemetry', values, ws, world);
@@ -1808,7 +1865,7 @@ function handleDecryptedGameSocketMessage(
     }
 
     case ClientOpcode.CLIENT_INPUT: {
-      player.registerInputTicket(values[0] as ClientActivityKind, values[1] ?? 0, values[2] ?? -1, values[3] ?? -1, performance.now());
+      player.registerInputTicket(values[0] as ClientActivityKind, values[1] ?? 0, values[2] ?? -1, values[3] ?? -1, performance.now(), inputShapeFromValues(values));
       player.botStats?.recordClientActivity(values[0] as ClientActivityKind, values[1], values[2], values[3]);
       if (values[0] === ClientActivityKind.Pointer || values[0] === ClientActivityKind.Touch) {
         player.botStats?.recordCursorPosition(values[2], values[3]);

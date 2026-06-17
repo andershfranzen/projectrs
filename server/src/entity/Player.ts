@@ -66,12 +66,23 @@ export interface ActionCapabilityRecord {
   reserved: boolean;
 }
 
+export interface InputShapeRecord {
+  flags: number;
+  buttons: number;
+  dwellMs: number;
+  moveCount: number;
+  coalescedCount: number;
+  pathPx: number;
+  directPx: number;
+}
+
 export interface InputTicketRecord {
   kind: ClientActivityKind;
   seq: number;
   x: number;
   y: number;
   issuedAt: number;
+  shape?: InputShapeRecord;
 }
 
 const ARROW_TIER_BY_ITEM_ID: Record<number, number> = {
@@ -456,7 +467,7 @@ export class Player extends Entity {
     return this._suspiciousPacketCount;
   }
 
-  registerInputTicket(kind: ClientActivityKind, seq: number, x: number, y: number, nowMs: number): void {
+  registerInputTicket(kind: ClientActivityKind, seq: number, x: number, y: number, nowMs: number, shape?: InputShapeRecord): void {
     if (!Number.isInteger(seq) || seq <= 0 || seq > 0x7fff) return;
     if (
       kind !== ClientActivityKind.Pointer
@@ -468,7 +479,7 @@ export class Player extends Entity {
     } else if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || x > 1000 || y < 0 || y > 1000) {
       return;
     }
-    this._inputTickets.set(seq, { kind, seq, x, y, issuedAt: nowMs });
+    this._inputTickets.set(seq, { kind, seq, x, y, issuedAt: nowMs, shape });
     if (this._inputTickets.size <= 128) return;
     const cutoff = nowMs - 10_000;
     for (const [ticketSeq, ticket] of this._inputTickets) {

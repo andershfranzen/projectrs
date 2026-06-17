@@ -2820,7 +2820,7 @@ async function handleForumApi(req: Request, srv: { requestIP(req: Request): { ad
       return jsonResponse(db.listForumNotifications(maybeSession.accountId), 200, { 'Cache-Control': 'no-store' });
     }
     if (resource === 'online') {
-      return jsonResponse(stripMissingForumAvatarUrls({ users: db.listForumOnlineUsers() }, 'online'), 200, { 'Cache-Control': 'no-store' });
+      return jsonResponse(stripMissingForumAvatarUrls({ users: db.listForumOnlineUsers(undefined, undefined, maybeSession ? isForumStaff(maybeSession) : false) }, 'online'), 200, { 'Cache-Control': 'no-store' });
     }
     if (resource === 'moderation') {
       if (!maybeSession) return forumAuthError();
@@ -2968,6 +2968,10 @@ function isForbiddenMapPath(mapPath: string): boolean {
   const basename = parts[parts.length - 1] ?? '';
   return parts.includes('backups')
     || /^backup(?:[.\-_].*)?\.json$/i.test(basename);
+}
+
+function isReservedMapDataPath(mapPath: string): boolean {
+  return /^[-\w]+\/(?:objects|tiles|heights)\/(?:manifest|index|chunks|all)\.json$/i.test(mapPath);
 }
 
 interface HttpMapDataScanWindow {
@@ -3178,7 +3182,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
     }
 
     if (url.pathname === '/api/status' && req.method === 'GET') {
-      return jsonResponse({ onlinePlayers: world.getOnlinePlayerCount() });
+      return jsonResponse({ onlinePlayers: world.getOnlinePlayerCount(false) });
     }
 
     if (url.pathname.startsWith('/forum-media/')) {
@@ -3928,8 +3932,8 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         if (typeof body.enabled !== 'boolean') return jsonResponse({ ok: false, error: 'Invalid moderator value' }, 400);
         const target = db.setAccountModeratorRole(accountId, body.enabled);
         if (!target) return jsonResponse({ ok: false, error: 'Account not found' }, 404);
-        world.setActiveAccountModerator(accountId, target.isModerator);
         setChatAccountModerator(accountId, target.isModerator);
+        world.setActiveAccountModerator(accountId, target.isModerator);
         return jsonResponse({
           ok: true,
           account: target,
@@ -3950,8 +3954,8 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         if (!Number.isInteger(accountId) || accountId <= 0) return jsonResponse({ ok: false, error: 'Invalid account' }, 400);
         const target = db.setAccountAdminRole(accountId, true);
         if (!target) return jsonResponse({ ok: false, error: 'Account not found' }, 404);
-        world.setActiveAccountAdmin(accountId, target.isAdmin);
         setChatAccountAdmin(accountId, target.isAdmin);
+        world.setActiveAccountAdmin(accountId, target.isAdmin);
         return jsonResponse({
           ok: true,
           account: target,
@@ -3974,11 +3978,14 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         if (!duration.ok) return jsonResponse({ ok: false, error: duration.error }, 400);
         const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
         db.banIp(ip, reason, session.username, duration.expiresAt);
+        const bannedAccountIds = db.banAccountsForIp(ip, reason, session.username, duration.expiresAt);
+        for (const accountId of bannedAccountIds) world.kickAccountIfOnline(accountId);
         const kicked = world.kickPlayersFromIp(ip);
         return jsonResponse({
           ok: true,
-          message: `IP-banned ${ip} (${banLabel(duration.expiresAt)})`,
+          message: `IP-banned ${ip} and banned ${bannedAccountIds.length} known account${bannedAccountIds.length === 1 ? '' : 's'} (${banLabel(duration.expiresAt)})`,
           ban: db.getIpBanRecord(ip),
+          bannedAccountIds,
           kicked,
         });
       } catch {
@@ -5257,6 +5264,13 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
       if (isForbiddenMapPath(mapPath)) {
         return new Response('Forbidden', { status: 403 });
       }
+      if (isReservedMapDataPath(mapPath)) {
+        const session = getBoundBearerSessionForScope(req, 'game');
+        if (isProductionLike() && session && !session.isAdmin) {
+          world.getActivePlayerByAccountId(session.accountId)?.botStats?.recordReservedMapDataPath();
+        }
+        return new Response('Not Found', { status: 404 });
+      }
       if (!isServableMapPath(mapPath)) {
         return new Response('Not Found', { status: 404 });
       }
@@ -5265,8 +5279,12 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         if (isProductionLike() && !boundMapSession) return new Response('Unauthorized', { status: 401 });
         if (boundMapSession && gameplayMapDataPath) recordGameplayMapDataFetch(boundMapSession, mapPath, req, server);
         if (isProductionLike() && boundMapSession && gameplayMapDataPath && !boundMapSession.isAdmin) {
-          if (isGameplayObjectManifestPath(mapPath)) return new Response('Not Found', { status: 404 });
+          if (isGameplayObjectManifestPath(mapPath)) {
+            world.getActivePlayerByAccountId(boundMapSession.accountId)?.botStats?.recordMapDataOutOfScope();
+            return new Response('Not Found', { status: 404 });
+          }
           if (!canFetchScopedGameplayMapDataPath(mapPath, gameplayMapWindowForSession(boundMapSession, mapPath))) {
+            world.getActivePlayerByAccountId(boundMapSession.accountId)?.botStats?.recordMapDataOutOfScope();
             return new Response('Forbidden', { status: 403 });
           }
         }
