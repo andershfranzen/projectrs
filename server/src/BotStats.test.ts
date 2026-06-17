@@ -258,6 +258,9 @@ describe('hard protocol evidence', () => {
     stats.recordSuspiciousPacket('honeypot-action-capability');
 
     const summary = stats.computeSummary({});
+    expect(summary.sessionSuspiciousPacketClasses.honeypot).toBe(1);
+    expect(summary.sessionSuspiciousPacketClasses.automation).toBe(0);
+    expect(summary.flags).not.toContain('automationInvalidPackets');
     expect(summary.flags).toContain('honeypotActionCapability');
     expect(summary.evidenceFlags).toContain('honeypotActionCapability');
     expect(summary.riskHardEvidence).toBe(true);

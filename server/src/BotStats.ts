@@ -69,12 +69,13 @@ export interface MapDataScanBurst {
   sampleFiles: string[];
 }
 
-type SuspiciousPacketClass = 'protocol' | 'rateLimit' | 'automation' | 'state' | 'stale';
+type SuspiciousPacketClass = 'protocol' | 'rateLimit' | 'automation' | 'honeypot' | 'state' | 'stale';
 
 interface SuspiciousPacketClassCounts {
   protocol: number;
   rateLimit: number;
   automation: number;
+  honeypot: number;
   state: number;
   stale: number;
 }
@@ -1981,7 +1982,7 @@ function sanitizeSuspiciousReason(value: string): string {
 }
 
 function emptySuspiciousPacketClassCounts(): SuspiciousPacketClassCounts {
-  return { protocol: 0, rateLimit: 0, automation: 0, state: 0, stale: 0 };
+  return { protocol: 0, rateLimit: 0, automation: 0, honeypot: 0, state: 0, stale: 0 };
 }
 
 function classifyReasonCounts(reasons: Map<string, number>): SuspiciousPacketClassCounts {
@@ -1994,6 +1995,7 @@ function classifyReasonCounts(reasons: Map<string, number>): SuspiciousPacketCla
 
 function classifySuspiciousReason(reason: string): SuspiciousPacketClass {
   if (reason.startsWith('rate-limit:')) return 'rateLimit';
+  if (reason === 'honeypot-action-capability') return 'honeypot';
   if (
     reason === 'missing-action-capability'
     || reason === 'stale-action-capability'
@@ -2008,13 +2010,12 @@ function classifySuspiciousReason(reason: string): SuspiciousPacketClass {
     || reason === 'bad-cursor-y'
   ) return 'protocol';
   if (
-    reason.startsWith('bad-')
-    || reason.startsWith('missing-')
+    reason === 'missing-input-ticket'
     || reason === 'stale-input-ticket'
-    || reason === 'stale-action-capability'
-    || reason === 'honeypot-action-capability'
-    || reason === 'self-use-item'
-    || reason === 'self-move-inventory'
+    || reason === 'bad-input-ticket-kind'
+    || reason === 'missing-input-telemetry'
+    || reason.startsWith('bad-client-activity-')
+    || reason.startsWith('bad-client-input-')
   ) return 'automation';
   if (
     reason.startsWith('stale-')

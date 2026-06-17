@@ -279,14 +279,28 @@ describe('anti-bot guardrails', () => {
     for (let i = 0; i < 25; i++) stats.recordSuspiciousPacket('stale-npc-target');
     for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket('missing-action-capability');
     for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket('bad-action-capability');
+    for (let i = 0; i < 10; i++) stats.recordSuspiciousPacket('bad-buy-quantity');
 
     const summary = stats.computeSummary({});
     expect(summary.sessionSuspiciousPacketClasses.stale).toBe(35);
     expect(summary.sessionSuspiciousPacketClasses.automation).toBe(0);
+    expect(summary.sessionSuspiciousPacketClasses.state).toBe(10);
     expect(summary.flags).not.toContain('protocolPackets');
     expect(summary.flags).not.toContain('rateLimitPackets');
     expect(summary.flags).not.toContain('automationInvalidPackets');
     expect(summary.riskLevel).toBe('low');
+  });
+
+  test('input-proof packet failures are automation-shaped packet evidence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 10; i++) stats.recordSuspiciousPacket('missing-input-ticket');
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionSuspiciousPacketClasses.automation).toBe(10);
+    expect(summary.flags).toContain('automationInvalidPackets');
+    expect(summary.evidenceFlags).toContain('automationInvalidPackets');
   });
 
   test('lifetime low-social high-activity behavior escalates review score', () => {
