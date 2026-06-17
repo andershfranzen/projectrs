@@ -206,8 +206,7 @@ export enum ServerOpcode {
   OPCODE_MAPPING = 3,
   /** Server-issued short-lived action capabilities. String packet: JSON array of
    *  [kind, targetEntityId, actionIndex, capabilityId, capabilityCode, flags].
-   *  The official client ignores entries with the honeypot flag; raw clients
-   *  that replay them prove they are not using the rendered UI. */
+   *  The official client ignores entries with reserved flags. */
   ACTION_CAPABILITIES = 4,
   PLAYER_SYNC = 10,
   /** NPC state. Layout:

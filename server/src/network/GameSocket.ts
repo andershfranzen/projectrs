@@ -586,7 +586,7 @@ export function suspiciousPacketCloseEligible(reason: string): boolean {
     || reason === 'truncated-move-path'
     || reason === 'bad-cursor-x'
     || reason === 'bad-cursor-y'
-    || reason === 'honeypot-action-capability'
+    || reason === 'reserved-action-capability'
   ) return true;
   if (
     reason.startsWith('bad-')
@@ -1354,9 +1354,9 @@ function handleDecryptedGameSocketMessage(
     commandProof
     && commandProof.capabilityId > 0
     && commandProof.capabilityCode > 0
-    && player.consumeHoneypotActionCapability(commandProof.capabilityId, commandProof.capabilityCode, world.getCurrentTick())
+    && player.consumeReservedActionCapability(commandProof.capabilityId, commandProof.capabilityCode, world.getCurrentTick())
   ) {
-    reportSuspiciousPacket(player, opcode, 'honeypot-action-capability', values, ws, world);
+    reportSuspiciousPacket(player, opcode, 'reserved-action-capability', values, ws, world);
     return;
   }
   magicOpcodeDebug(player, opcode, values, 'received');
@@ -1406,8 +1406,8 @@ function handleDecryptedGameSocketMessage(
       world.getCurrentTick(),
     );
     if (capResult !== 'ok') {
-      const reason = capResult === 'honeypot'
-        ? 'honeypot-action-capability'
+      const reason = capResult === 'reserved'
+        ? 'reserved-action-capability'
         : capResult === 'expired'
           ? 'stale-action-capability'
           : 'bad-action-capability';

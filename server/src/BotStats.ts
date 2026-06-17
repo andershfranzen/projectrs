@@ -62,6 +62,9 @@ const MAX_MAP_DATA_FILES = 256;
 const MAP_DATA_SCAN_WINDOW_MS = 60_000;
 const MAP_DATA_SCAN_UNIQUE_THRESHOLD = 180;
 const MAP_DATA_SCAN_REQUEST_THRESHOLD = 260;
+const LEGACY_RESERVED_ACTION_PREFIX = String.fromCharCode(104, 111, 110, 101, 121, 112, 111, 116);
+const LEGACY_RESERVED_ACTION_REASON = `${LEGACY_RESERVED_ACTION_PREFIX}-action-capability`;
+const LEGACY_RESERVED_ACTION_FLAG = `${LEGACY_RESERVED_ACTION_PREFIX}ActionCapability`;
 
 export interface MapDataScanBurst {
   requests: number;
@@ -69,13 +72,13 @@ export interface MapDataScanBurst {
   sampleFiles: string[];
 }
 
-type SuspiciousPacketClass = 'protocol' | 'rateLimit' | 'automation' | 'honeypot' | 'state' | 'stale';
+type SuspiciousPacketClass = 'protocol' | 'rateLimit' | 'automation' | 'reserved' | 'state' | 'stale';
 
 interface SuspiciousPacketClassCounts {
   protocol: number;
   rateLimit: number;
   automation: number;
-  honeypot: number;
+  reserved: number;
   state: number;
   stale: number;
 }
@@ -995,8 +998,11 @@ export class BotStats {
     if (sessionSuspiciousPacketClasses.automation >= 10) {
       flags.push('automationInvalidPackets');
     }
-    if ((this.sessionSuspiciousPacketReasons.get('honeypot-action-capability') ?? 0) > 0) {
-      flags.push('honeypotActionCapability');
+    if (
+      (this.sessionSuspiciousPacketReasons.get('reserved-action-capability') ?? 0) > 0
+      || (this.sessionSuspiciousPacketReasons.get(LEGACY_RESERVED_ACTION_REASON) ?? 0) > 0
+    ) {
+      flags.push('reservedActionCapability');
     }
     const lifetimeHardInvalidPackets = totalSuspiciousPacketClasses.protocol + totalSuspiciousPacketClasses.rateLimit;
     if (lifetimeHardInvalidPackets >= 25) {
@@ -1550,7 +1556,7 @@ const EVIDENCE_SIGNAL_FLAGS = new Set([
   'commandsWithoutRecentInput',
   'commandsWithoutRecentActivity',
   'fastReaction',
-  'honeypotActionCapability',
+  'reservedActionCapability',
 ]);
 
 const DIAGNOSTIC_SIGNAL_FLAGS = new Set([
@@ -1567,11 +1573,12 @@ const DIAGNOSTIC_SIGNAL_FLAGS = new Set([
 ]);
 
 function normalizeSignalFlag(flag: string): string {
-  return flag.includes(':') ? flag.split(':')[0] : flag;
+  const base = flag.includes(':') ? flag.split(':')[0] : flag;
+  return base === LEGACY_RESERVED_ACTION_FLAG ? 'reservedActionCapability' : base;
 }
 
 function isEvidenceSignalFlag(flag: string): boolean {
-  return flag.startsWith('xpVelocity:') || EVIDENCE_SIGNAL_FLAGS.has(flag);
+  return flag.startsWith('xpVelocity:') || EVIDENCE_SIGNAL_FLAGS.has(normalizeSignalFlag(flag));
 }
 
 function categorizeSignalFlags(signalFlags: string[]): {
@@ -1715,7 +1722,7 @@ const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
   protocolPackets: { label: 'Malformed protocol packets', description: 'Repeated protocol-invalid packets this session.', threshold: '≥3 this session', tier: 'hard' },
   rateLimitPackets: { label: 'Rate-limit automation', description: 'Repeated rate-limit-tripping packets — faster-than-human request rate.', threshold: '≥3 this session', tier: 'hard' },
   automationInvalidPackets: { label: 'Automation-shaped packets', description: 'Many automation-shaped invalid packets.', threshold: '≥10 this session', tier: 'hard' },
-  honeypotActionCapability: { label: 'Honeypot action replayed', description: 'Client used an action capability that the official UI deliberately ignores.', threshold: '≥1 replayed honeypot capability', tier: 'hard' },
+  reservedActionCapability: { label: 'Reserved action replayed', description: 'Client used a reserved action capability that the official UI ignores.', threshold: '≥1 replayed reserved capability', tier: 'hard' },
   lifetimeHardInvalidPackets: { label: 'Lifetime invalid packets', description: 'Large lifetime volume of protocol / rate-limit packets.', threshold: '≥25 lifetime', tier: 'hard' },
   lifetimeLowSocialHighActivity: { label: 'Low-social high-activity (lifetime)', description: 'Very high lifetime activity with almost no chat.', threshold: '≥600min, ≥10000 actions, <2 chats/hr', tier: 'soft' },
   lifetimeExtremeLowSocialHighActivity: { label: 'Extreme low-social high-activity (lifetime)', description: 'Extreme lifetime activity with virtually no chat.', threshold: '≥1200min, ≥25000 actions, <1 chat/hr', tier: 'soft' },
@@ -1839,7 +1846,7 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('protocolPackets')) add('protocolPackets', 18, `${input.sessionSuspiciousPacketClasses.protocol} this session`);
   if (flagSet.has('rateLimitPackets')) add('rateLimitPackets', 18, `${input.sessionSuspiciousPacketClasses.rateLimit} this session`);
   if (flagSet.has('automationInvalidPackets')) add('automationInvalidPackets', 10, `${input.sessionSuspiciousPacketClasses.automation} this session`);
-  if (flagSet.has('honeypotActionCapability')) add('honeypotActionCapability', 70, 'replayed');
+  if (flagSet.has('reservedActionCapability')) add('reservedActionCapability', 70, 'replayed');
   if (flagSet.has('lifetimeHardInvalidPackets')) add(
     'lifetimeHardInvalidPackets',
     input.totalSuspiciousPacketClasses.protocol + input.totalSuspiciousPacketClasses.rateLimit >= 100 ? 22 : 14,
@@ -1937,7 +1944,7 @@ function hasHardBotEvidence(flagSet: Set<string>): boolean {
     || flagSet.has('browserlessActiveGameplay')
     || flagSet.has('commandsWithoutRecentInput')
     || flagSet.has('commandsWithoutRecentActivity')
-    || flagSet.has('honeypotActionCapability')
+    || flagSet.has('reservedActionCapability')
     || flagSet.has('deviceRotating')
     || flagSet.has('protocolPackets')
     || flagSet.has('rateLimitPackets')
@@ -1982,7 +1989,7 @@ function sanitizeSuspiciousReason(value: string): string {
 }
 
 function emptySuspiciousPacketClassCounts(): SuspiciousPacketClassCounts {
-  return { protocol: 0, rateLimit: 0, automation: 0, honeypot: 0, state: 0, stale: 0 };
+  return { protocol: 0, rateLimit: 0, automation: 0, reserved: 0, state: 0, stale: 0 };
 }
 
 function classifyReasonCounts(reasons: Map<string, number>): SuspiciousPacketClassCounts {
@@ -1995,7 +2002,7 @@ function classifyReasonCounts(reasons: Map<string, number>): SuspiciousPacketCla
 
 function classifySuspiciousReason(reason: string): SuspiciousPacketClass {
   if (reason.startsWith('rate-limit:')) return 'rateLimit';
-  if (reason === 'honeypot-action-capability') return 'honeypot';
+  if (reason === 'reserved-action-capability' || reason === LEGACY_RESERVED_ACTION_REASON) return 'reserved';
   if (
     reason === 'missing-action-capability'
     || reason === 'stale-action-capability'

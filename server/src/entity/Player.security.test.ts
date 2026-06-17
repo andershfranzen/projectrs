@@ -62,11 +62,11 @@ describe('Player command proof security state', () => {
     expect(player.consumeActionCapability(second.id, second.code, ActionCapabilityKind.Npc, 1234, 0, 13)).toBe('ok');
   });
 
-  test('honeypot capabilities are distinguishable from stale or mismatched caps', () => {
+  test('reserved capabilities are distinguishable from stale or mismatched caps', () => {
     const player = makePlayer();
     const cap = player.issueActionCapability(ActionCapabilityKind.WorldObject, 32760, 13, 15, true, 10);
 
-    expect(player.consumeHoneypotActionCapability(cap.id, cap.code, 11)).toBe(true);
+    expect(player.consumeReservedActionCapability(cap.id, cap.code, 11)).toBe(true);
     expect(player.consumeActionCapability(cap.id, cap.code, ActionCapabilityKind.WorldObject, 32760, 13, 11)).toBe('missing');
   });
 });

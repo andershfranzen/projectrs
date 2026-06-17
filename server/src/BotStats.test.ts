@@ -252,30 +252,42 @@ describe('mechanical-jitter detection (computer-generated randomization)', () =>
 });
 
 describe('hard protocol evidence', () => {
-  test('honeypot action capability replay is immediate hard evidence', () => {
+  test('reserved action capability replay is immediate hard evidence', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
-    stats.recordSuspiciousPacket('honeypot-action-capability');
+    stats.recordSuspiciousPacket('reserved-action-capability');
 
     const summary = stats.computeSummary({});
-    expect(summary.sessionSuspiciousPacketClasses.honeypot).toBe(1);
+    expect(summary.sessionSuspiciousPacketClasses.reserved).toBe(1);
     expect(summary.sessionSuspiciousPacketClasses.automation).toBe(0);
     expect(summary.flags).not.toContain('automationInvalidPackets');
-    expect(summary.flags).toContain('honeypotActionCapability');
-    expect(summary.evidenceFlags).toContain('honeypotActionCapability');
+    expect(summary.flags).toContain('reservedActionCapability');
+    expect(summary.evidenceFlags).toContain('reservedActionCapability');
     expect(summary.riskHardEvidence).toBe(true);
     expect(summary.riskScore).toBeGreaterThanOrEqual(60);
+  });
+
+  test('legacy reserved-capability reason remains hard evidence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.recordSuspiciousPacket(`${String.fromCharCode(104, 111, 110, 101, 121, 112, 111, 116)}-action-capability`);
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionSuspiciousPacketClasses.reserved).toBe(1);
+    expect(summary.flags).toContain('reservedActionCapability');
+    expect(summary.evidenceFlags).toContain('reservedActionCapability');
+    expect(summary.riskHardEvidence).toBe(true);
   });
 
   test('short hard-evidence sessions become the review summary', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
-    stats.recordSuspiciousPacket('honeypot-action-capability');
+    stats.recordSuspiciousPacket('reserved-action-capability');
 
     const db = { saveBotStats() {} } as never;
     const summary = stats.finalize(db, 1, {}, 1);
     expect(summary.riskHardEvidence).toBe(true);
-    expect(stats.lastSessionSummary?.flags).toContain('honeypotActionCapability');
+    expect(stats.lastSessionSummary?.flags).toContain('reservedActionCapability');
   });
 });
 

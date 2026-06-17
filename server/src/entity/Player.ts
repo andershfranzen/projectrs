@@ -63,7 +63,7 @@ export interface ActionCapabilityRecord {
   targetEntityId: number;
   actionIndex: number;
   expiresTick: number;
-  honeypot: boolean;
+  reserved: boolean;
 }
 
 export interface InputTicketRecord {
@@ -518,7 +518,7 @@ export class Player extends Entity {
     targetEntityId: number,
     actionIndex: number,
     expiresTick: number,
-    honeypot: boolean = false,
+    reserved: boolean = false,
     currentTick: number = expiresTick,
   ): ActionCapabilityRecord {
     this.pruneActionCapabilities(currentTick);
@@ -532,10 +532,10 @@ export class Player extends Entity {
       targetEntityId,
       actionIndex,
       expiresTick,
-      honeypot,
+      reserved,
     };
     this._actionCapabilitiesById.set(id, cap);
-    if (!honeypot) this._actionCapabilityIdByKey.set(key, id);
+    if (!reserved) this._actionCapabilityIdByKey.set(key, id);
     return cap;
   }
 
@@ -546,7 +546,7 @@ export class Player extends Entity {
     targetEntityId: number,
     actionIndex: number,
     currentTick: number,
-  ): 'ok' | 'missing' | 'expired' | 'mismatch' | 'honeypot' {
+  ): 'ok' | 'missing' | 'expired' | 'mismatch' | 'reserved' {
     const cap = this._actionCapabilitiesById.get(id);
     if (!cap || cap.code !== code) return 'missing';
     if (cap.expiresTick < currentTick) {
@@ -554,9 +554,9 @@ export class Player extends Entity {
       return 'expired';
     }
     this.pruneActionCapabilities(currentTick);
-    if (cap.honeypot) {
+    if (cap.reserved) {
       this.deleteActionCapability(id, cap);
-      return 'honeypot';
+      return 'reserved';
     }
     if (cap.kind !== kind || cap.targetEntityId !== targetEntityId || cap.actionIndex !== actionIndex) {
       this.deleteActionCapability(id, cap);
@@ -565,14 +565,14 @@ export class Player extends Entity {
     return 'ok';
   }
 
-  consumeHoneypotActionCapability(id: number, code: number, currentTick: number): boolean {
+  consumeReservedActionCapability(id: number, code: number, currentTick: number): boolean {
     const cap = this._actionCapabilitiesById.get(id);
     if (!cap || cap.code !== code) return false;
     if (cap.expiresTick < currentTick) {
       this.deleteActionCapability(id, cap);
       return false;
     }
-    if (!cap.honeypot) return false;
+    if (!cap.reserved) return false;
     this.deleteActionCapability(id, cap);
     return true;
   }

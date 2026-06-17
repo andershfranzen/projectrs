@@ -77,13 +77,15 @@ describe('hiscores exclusions', () => {
     }
   });
 
-  test('omits actively banned accounts from public rankings and profiles', () => {
+  test('omits actively banned accounts from public rankings, profiles, and monster kills', () => {
     const db = new GameDatabase(':memory:');
     try {
       const banned = db.loginFallbackAccount('BannedMiner');
       const visible = db.loginFallbackAccount('VisibleMiner');
       db.savePlayerState(banned.accountId, playerWithSkills(miningSkills(80)), 0);
       db.savePlayerState(visible.accountId, playerWithSkills(miningSkills(20)), 0);
+      for (let i = 0; i < 12; i++) db.recordMobKill(banned.accountId, 100);
+      for (let i = 0; i < 2; i++) db.recordMobKill(visible.accountId, 100);
       db.banAccount(banned.accountId, 'botting', 'test-admin', Math.floor(Date.now() / 1000) + 3600);
 
       const mining = db.getHiscores('mining');
@@ -93,6 +95,13 @@ describe('hiscores exclusions', () => {
       const search = db.getHiscores('overall', 25, 1, 'BannedMiner');
       expect(search.rows).toHaveLength(0);
       expect(db.getHiscoreProfile('BannedMiner')).toBeNull();
+
+      const vampire = db.getMobKillHiscores(100, 25, 1, '', [{ id: 100, name: 'Vampire' }]);
+      expect(vampire.rows.map((row) => row.username.toLowerCase())).not.toContain('bannedminer');
+      expect(vampire.rows.map((row) => [row.rank, row.username, row.kills])).toEqual([[1, 'visibleminer', 2]]);
+
+      const killSearch = db.getMobKillHiscores(100, 25, 1, 'BannedMiner', [{ id: 100, name: 'Vampire' }]);
+      expect(killSearch.rows).toHaveLength(0);
     } finally {
       db.close();
     }

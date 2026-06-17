@@ -68,7 +68,7 @@ export type ActionCapabilityWire = [
   flags: number,
 ];
 
-export const ACTION_CAPABILITY_HONEYPOT_FLAG = 1;
+export const ACTION_CAPABILITY_RESERVED_FLAG = 1;
 
 export function appendCommandProof(packet: Uint8Array, proof: CommandProof): Uint8Array {
   const buffer = packet.buffer.slice(packet.byteOffset, packet.byteOffset + packet.byteLength) as ArrayBuffer;

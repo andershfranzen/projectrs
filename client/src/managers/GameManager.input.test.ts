@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ACTION_CAPABILITY_HONEYPOT_FLAG, ActionCapabilityKind, ClientOpcode } from '@projectrs/shared';
+import { ACTION_CAPABILITY_RESERVED_FLAG, ActionCapabilityKind, ClientOpcode } from '@projectrs/shared';
 import { GameManager, isTrustedBrowserInputEvent } from './GameManager';
 
 function makeManager(): any {
@@ -86,16 +86,16 @@ describe('GameManager world context-menu input', () => {
     expect(manager.hideCount).toBe(2);
   });
 
-  test('drops honeypot action capabilities before command proof resolution', () => {
+  test('drops reserved action capabilities before command proof resolution', () => {
     const manager = Object.create(GameManager.prototype) as any;
     manager.actionCapabilities = new Map();
 
     manager.applyActionCapabilities([
-      [ActionCapabilityKind.WorldObject, 32760, 13, 111, 222, ACTION_CAPABILITY_HONEYPOT_FLAG],
+      [ActionCapabilityKind.WorldObject, 10042, 0, 111, 222, ACTION_CAPABILITY_RESERVED_FLAG],
       [ActionCapabilityKind.WorldObject, 10042, 0, 333, 444, 0],
+      [ActionCapabilityKind.WorldObject, 10042, 0, 555, 666, ACTION_CAPABILITY_RESERVED_FLAG],
     ]);
 
-    expect(manager.resolveActionCapability(ClientOpcode.PLAYER_INTERACT_OBJECT, [32760, 13])).toBeNull();
     expect(manager.resolveActionCapability(ClientOpcode.PLAYER_INTERACT_OBJECT, [10042, 0])).toEqual({ id: 333, code: 444 });
   });
 });
