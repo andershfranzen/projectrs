@@ -133,10 +133,53 @@ export function hasProjectileGridLineOfSight<TContext>(
       tMaxZ += tDeltaZ;
     } else {
       t = tMaxX;
-      tileX += stepX;
-      tileZ += stepZ;
+      const nextTileX = tileX + stepX;
+      const nextTileZ = tileZ + stepZ;
       tMaxX += tDeltaX;
       tMaxZ += tDeltaZ;
+      const projectileY = fromY + (toY - fromY) * t;
+      const blockedViaX = isProjectileWallBlockedBetweenTiles(
+        context,
+        wallBlocksAt,
+        fromTileX,
+        fromTileZ,
+        nextTileX,
+        fromTileZ,
+        floor,
+        projectileY,
+      ) || isProjectileWallBlockedBetweenTiles(
+        context,
+        wallBlocksAt,
+        nextTileX,
+        fromTileZ,
+        nextTileX,
+        nextTileZ,
+        floor,
+        projectileY,
+      );
+      const blockedViaZ = isProjectileWallBlockedBetweenTiles(
+        context,
+        wallBlocksAt,
+        fromTileX,
+        fromTileZ,
+        fromTileX,
+        nextTileZ,
+        floor,
+        projectileY,
+      ) || isProjectileWallBlockedBetweenTiles(
+        context,
+        wallBlocksAt,
+        fromTileX,
+        nextTileZ,
+        nextTileX,
+        nextTileZ,
+        floor,
+        projectileY,
+      );
+      tileX = nextTileX;
+      tileZ = nextTileZ;
+      if (blockedViaX && blockedViaZ) return false;
+      continue;
     }
     const projectileY = fromY + (toY - fromY) * t;
     if (isProjectileWallBlockedBetweenTiles(context, wallBlocksAt, fromTileX, fromTileZ, tileX, tileZ, floor, projectileY)) {

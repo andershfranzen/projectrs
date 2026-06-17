@@ -81,6 +81,7 @@ const NPC_MATERIALIZATION_RETRY_MS = 500;
 const NPC_LOD_HYSTERESIS_TILES = 4;
 const NPC_TARGET_PATH_MAX_SEARCH_TILES = 4096;
 const NPC_TARGET_PATH_MAX_WAYPOINTS = 50;
+const LOCAL_COMBAT_REASSERT_MS = TICK_RATE * 5;
 const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
@@ -655,6 +656,8 @@ export class GameManager {
   private pendingSingleCastSpell: number = -1;
   private _combatPathTimer: number = 0;
   private localCombatWalkUntilMs: number = 0;
+  private lastLocalCombatIntentSentAt: number = 0;
+  private lastLocalCombatServerConfirmAt: number = 0;
 
   // While a COMBAT_HIT splat is delayed to its impact moment, hold off any
   // health-bar updates for the same entity so the bar drops in sync with the
@@ -5044,6 +5047,7 @@ export class GameManager {
       const toolItemId = v[4] ?? 0;
 
       if (entityId === this.localPlayerId) {
+        this.noteLocalCombatServerConfirm(targetId);
         if (kind === PlayerAnimationKind.Attack && this.localPlayer) {
           const animName = this.getPlayerAttackAnimName(entityId);
           this.adoptLocalNpcCombatTargetFromServer(targetId);
@@ -5286,6 +5290,8 @@ export class GameManager {
         return;
       }
 
+      if (attackerId === this.localPlayerId) this.noteLocalCombatServerConfirm(targetId);
+
       const targetEntity = this.resolveTargetableIncludingLocal(targetId);
       const targetHealthBarHost = asHealthBarHost(targetEntity);
 
@@ -5361,6 +5367,7 @@ export class GameManager {
     // Ranged projectile visual
     this.network.on(ServerOpcode.COMBAT_PROJECTILE, (_op, v) => {
       const [attackerId, targetId, projectileType] = v;
+      if (attackerId === this.localPlayerId) this.noteLocalCombatServerConfirm(targetId);
       const attacker = this.resolveTargetableIncludingLocal(attackerId);
       const target = this.resolveTargetableIncludingLocal(targetId);
       if (!attacker || !target) return;
@@ -7798,6 +7805,29 @@ export class GameManager {
     this.magicTargetId = -1;
     this.pendingSingleCastSpell = -1;
     this.localCombatWalkUntilMs = 0;
+    this.lastLocalCombatIntentSentAt = 0;
+    this.lastLocalCombatServerConfirmAt = 0;
+  }
+
+  private sendNpcAttackIntent(npcEntityId: number, now: number = performance.now()): void {
+    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
+    if (npcEntityId === this.combatTargetId || npcEntityId === this.magicTargetId) {
+      this.lastLocalCombatIntentSentAt = now;
+    }
+  }
+
+  private noteLocalCombatServerConfirm(targetId: number, now: number = performance.now()): void {
+    if (targetId <= 0) return;
+    if (targetId === this.combatTargetId || targetId === this.magicTargetId) {
+      this.lastLocalCombatServerConfirmAt = now;
+    }
+  }
+
+  private shouldReassertLocalCombatIntent(targetId: number, now: number = performance.now()): boolean {
+    if (targetId <= 0) return false;
+    if (targetId !== this.combatTargetId && targetId !== this.magicTargetId) return false;
+    const lastActivityAt = Math.max(this.lastLocalCombatIntentSentAt, this.lastLocalCombatServerConfirmAt);
+    return lastActivityAt <= 0 || now - lastActivityAt >= LOCAL_COMBAT_REASSERT_MS;
   }
 
   /** scene.pick returns the closest hit; that lets placed scenery (anvils,
@@ -8069,7 +8099,7 @@ export class GameManager {
       this.combatTargetId = -1;
       this.magicTargetId = npcEntityId;
       this.predictSpellCastMovementToNpc(npcEntityId);
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
+      this.sendNpcAttackIntent(npcEntityId);
       return;
     }
 
@@ -8105,7 +8135,7 @@ export class GameManager {
         }
       }
     }
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
+    this.sendNpcAttackIntent(npcEntityId);
   }
 
   private handleAutocastChange(spellIndex: number): void {
@@ -8123,14 +8153,14 @@ export class GameManager {
       this.combatTargetId = -1;
       this.magicTargetId = targetId;
       this.predictSpellCastMovementToNpc(targetId);
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, targetId));
+      this.sendNpcAttackIntent(targetId);
       return;
     }
 
     this.magicTargetId = -1;
     this.combatTargetId = targetId;
     if (performance.now() >= this.castingUntil) {
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, targetId));
+      this.sendNpcAttackIntent(targetId);
     }
   }
 
@@ -11916,6 +11946,7 @@ export class GameManager {
   private updateCombatFollow(dt: number): void {
     this._combatPathTimer -= dt;
     if (!this.localPlayer) return;
+    const now = performance.now();
     if (this.autoCastSpellIndex >= 0 && this.magicTargetId >= 0) {
       if (this.isNonCombatNpc(this.magicTargetId)) {
         this.clearLocalNpcCombatState();
@@ -11923,7 +11954,7 @@ export class GameManager {
       }
       const npcTarget = this.entities.npcTargets.get(this.magicTargetId);
       if (!npcTarget) return;
-      if (this._combatPathTimer > 0 || performance.now() < this.castingUntil) return;
+      if (this._combatPathTimer > 0 || now < this.castingUntil) return;
       const fp = this.distToNpcFootprint(this.magicTargetId, npcTarget, this.playerX, this.playerZ);
       if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= SPELL_CAST_DISTANCE) return;
       this._combatPathTimer = 0.6;
@@ -11932,7 +11963,7 @@ export class GameManager {
         this.startInteractionPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
-        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.magicTargetId));
+        this.sendNpcAttackIntent(this.magicTargetId);
       }
       return;
     }
@@ -11949,8 +11980,10 @@ export class GameManager {
     const requireRangedLineOfSight = this.isLocalRangedWeapon();
     const inRange = this.isPointInNpcInteractionRange(this.combatTargetId, npcTarget, this.playerX, this.playerZ, attackRange, rangeMode, requireRangedLineOfSight);
     if (inRange) {
-      if (this.trimPredictedPathToCurrentTileStep()) {
-        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
+      const trimmedPath = this.trimPredictedPathToCurrentTileStep();
+      if (trimmedPath || (this._combatPathTimer <= 0 && this.shouldReassertLocalCombatIntent(this.combatTargetId, now))) {
+        this._combatPathTimer = 0.6;
+        this.sendNpcAttackIntent(this.combatTargetId, now);
       }
       return;
     }
@@ -11964,7 +11997,7 @@ export class GameManager {
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
     }
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
+    this.sendNpcAttackIntent(this.combatTargetId);
   }
 
   private shouldKeepLocalCombatWalkLoopAlive(now: number = performance.now()): boolean {

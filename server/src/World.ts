@@ -3904,17 +3904,20 @@ export class World {
   }
 
   private setCombatTarget(playerId: number, npcId: number): void {
-    this.clearCombatTarget(playerId);
-    this.playerCombatTargets.set(playerId, npcId);
-    let set = this.npcTargetedBy.get(npcId);
-    if (!set) { set = new Set(); this.npcTargetedBy.set(npcId, set); }
-    set.add(playerId);
+    const alreadyTargeting = this.playerCombatTargets.get(playerId) === npcId;
+    if (!alreadyTargeting) {
+      this.clearCombatTarget(playerId);
+      this.playerCombatTargets.set(playerId, npcId);
+      let set = this.npcTargetedBy.get(npcId);
+      if (!set) { set = new Set(); this.npcTargetedBy.set(npcId, set); }
+      set.add(playerId);
+    }
     const player = this.players.get(playerId);
     const npc = this.npcs.get(npcId);
     if (player && npc) this.syncPlayerCombatIntent(player, npc);
     if (player) {
       this.magicDebug(player, 'setCombatTarget', { npcId, autocast: player.autocastSpellIndex, cooldown: player.attackCooldown });
-      this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, npcId);
+      if (!alreadyTargeting) this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, npcId);
     }
   }
 
