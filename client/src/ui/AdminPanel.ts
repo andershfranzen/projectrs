@@ -220,7 +220,7 @@ const BAN_DURATIONS = [
 ];
 
 const BOT_SIGNAL_LABELS: Record<string, string> = {
-  automationInvalidPackets: 'Automation-shaped invalid traffic',
+  automationInvalidPackets: 'Malformed client telemetry',
   mapDataScrape: 'Bulk map-data scrape',
   mapDataOutOfScope: 'Out-of-scope map data',
   reservedMapDataPath: 'Invalid map-data endpoint',
@@ -258,6 +258,8 @@ export class AdminPanel {
   private eventTypeChipsEl: HTMLDivElement;
   private diagnosticFilterEl: HTMLDivElement;
   private botSearchInput: HTMLInputElement;
+  private botHideBannedLabel: HTMLLabelElement;
+  private botHideBannedCheckbox: HTMLInputElement;
   private eventSearchInput: HTMLInputElement;
   private eventUserInput: HTMLInputElement;
   private diagnosticSearchInput: HTMLInputElement;
@@ -288,6 +290,7 @@ export class AdminPanel {
   private diagnosticEventFilter = '';
   private diagnosticFilterDebounceTimer: number | null = null;
   private botSearchQuery = '';
+  private hideBannedAccounts = false;
   private botSearchDebounceTimer: number | null = null;
   private accountContextMenuEl: HTMLDivElement | null = null;
   private visible = false;
@@ -366,7 +369,7 @@ export class AdminPanel {
     const toolbar = document.createElement('div');
     toolbar.style.cssText = `
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(170px, 220px) 84px;
+      grid-template-columns: minmax(0, 1fr) minmax(170px, 220px) minmax(96px, 118px) 84px;
       align-items: center;
       gap: 8px;
       min-width: 0;
@@ -408,6 +411,45 @@ export class AdminPanel {
       }
     });
     toolbar.appendChild(this.botSearchInput);
+
+    this.botHideBannedCheckbox = document.createElement('input');
+    this.botHideBannedCheckbox.type = 'checkbox';
+    this.botHideBannedCheckbox.checked = this.hideBannedAccounts;
+    this.botHideBannedCheckbox.style.cssText = `
+      width: 14px;
+      height: 14px;
+      margin: 0;
+      accent-color: #9a332b;
+    `;
+    this.botHideBannedCheckbox.addEventListener('change', () => {
+      this.hideBannedAccounts = this.botHideBannedCheckbox.checked;
+      this.renderBotReview();
+    });
+    this.botHideBannedLabel = document.createElement('label');
+    this.botHideBannedLabel.title = 'Hide accounts with an active account ban or IP ban';
+    this.botHideBannedLabel.style.cssText = `
+      min-width: 0;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      box-sizing: border-box;
+      padding: 0 7px;
+      border: 1px solid rgba(84, 70, 50, 0.82);
+      border-radius: 3px;
+      background: rgba(10, 7, 5, 0.72);
+      color: #d9c6a2;
+      cursor: pointer;
+      font: 700 10px Arial, Helvetica, sans-serif;
+      text-shadow: ${TEXT_SHADOW};
+      white-space: nowrap;
+    `;
+    const hideBannedText = document.createElement('span');
+    hideBannedText.textContent = 'Hide banned';
+    hideBannedText.style.cssText = `overflow: hidden; text-overflow: ellipsis;`;
+    this.botHideBannedLabel.append(this.botHideBannedCheckbox, hideBannedText);
+    toolbar.appendChild(this.botHideBannedLabel);
 
     this.refreshButton = document.createElement('button');
     this.refreshButton.type = 'button';
@@ -672,6 +714,7 @@ export class AdminPanel {
         method: 'GET',
         headers: { Authorization: `Bearer ${this.token}` },
         credentials: 'same-origin',
+        cache: 'no-store',
       });
       if (res.status === 401 || res.status === 403) {
         this.accounts = [];
@@ -880,40 +923,55 @@ export class AdminPanel {
 
   private renderBotReview(): void {
     this.botSearchInput.style.display = '';
+    this.botHideBannedLabel.style.display = 'flex';
     this.clearRiskButton.style.display = '';
     this.eventFilterEl.style.display = 'none';
     this.diagnosticFilterEl.style.display = 'none';
     this.setGridHeader(BOT_GRID_COLUMNS, ['Account', 'Score', 'Risk', 'Signals', 'Network', 'Last login']);
-    const total = this.accounts.length;
-    const high = this.accounts.filter((a) => a.riskLevel === 'high' || a.riskLevel === 'critical').length;
-    const sharedIp = this.accounts.filter((a) => a.sharedIpAlts.length > 0).length;
-    const vpnLike = this.accounts.filter((a) => !!a.vpnLikeIp).length;
-    const flagged = this.accounts.filter((a) => a.riskScore > 0 || a.totalFlagEvents > 0 || a.sharedIpAlts.length > 0 || !!a.vpnLikeIp).length;
-    const suspiciousPackets = this.accounts.reduce((sum, a) => sum + a.totalSuspiciousPackets, 0);
+    const visibleAccounts = this.visibleBotAccounts();
+    const total = visibleAccounts.length;
+    const high = visibleAccounts.filter((a) => a.riskLevel === 'high' || a.riskLevel === 'critical').length;
+    const sharedIp = visibleAccounts.filter((a) => a.sharedIpAlts.length > 0).length;
+    const bannedDevice = visibleAccounts.filter((a) => this.bannedDeviceAlts(a).length > 0).length;
+    const vpnLike = visibleAccounts.filter((a) => !!a.vpnLikeIp).length;
+    const flagged = visibleAccounts.filter((a) => a.riskScore > 0 || a.totalFlagEvents > 0 || a.sharedIpAlts.length > 0 || this.bannedDeviceAlts(a).length > 0 || !!a.vpnLikeIp).length;
+    const suspiciousPackets = visibleAccounts.reduce((sum, a) => sum + a.totalSuspiciousPackets, 0);
     const banned = this.accounts.filter((a) => a.accountBan || a.ipBan).length;
-    this.summaryEl.replaceChildren(
-      this.summaryPill(`${total} accounts`, '#6c5c43'),
+    const hiddenBanned = this.hideBannedAccounts ? this.accounts.length - visibleAccounts.length : 0;
+    const summaryPills = [
+      this.summaryPill(`${this.hideBannedAccounts ? `${total} shown` : `${total} accounts`}`, '#6c5c43'),
       this.summaryPill(`${flagged} flagged`, '#8f6d2d'),
       this.summaryPill(`${high} high/critical`, '#8f2f28'),
       this.summaryPill(`${sharedIp} shared IP`, sharedIp > 0 ? '#6b3b34' : '#4d5d45'),
+      this.summaryPill(`${bannedDevice} banned device`, bannedDevice > 0 ? '#b52f24' : '#4d5d45'),
       this.summaryPill(`${vpnLike} VPN/DC`, vpnLike > 0 ? '#7a5a25' : '#4d5d45'),
       this.summaryPill(`${banned} banned`, banned > 0 ? '#8f2f28' : '#4d5d45'),
       this.summaryPill(`${suspiciousPackets} bad packets`, '#5f4a7d'),
       this.summaryPill(`${this.botSearchQuery ? 'search on' : 'all names'}`, this.botSearchQuery ? '#7a5a25' : '#4d5d45'),
-    );
+    ];
+    if (hiddenBanned > 0) summaryPills.splice(1, 0, this.summaryPill(`${hiddenBanned} hidden banned`, '#4d5d45'));
+    this.summaryEl.replaceChildren(...summaryPills);
 
     this.rowsEl.replaceChildren();
-    for (const account of this.accounts) {
+    for (const account of visibleAccounts) {
       this.rowsEl.appendChild(this.accountRow(account));
     }
 
-    const selected = this.accounts.find((a) => a.accountId === this.selectedAccountId) ?? null;
+    if (this.selectedAccountId === null && visibleAccounts.length > 0) {
+      this.selectedAccountId = visibleAccounts[0].accountId;
+    } else if (this.selectedAccountId !== null && !visibleAccounts.some((a) => a.accountId === this.selectedAccountId)) {
+      this.selectedAccountId = visibleAccounts[0]?.accountId ?? null;
+    }
+    const selected = visibleAccounts.find((a) => a.accountId === this.selectedAccountId) ?? null;
     if (selected) this.renderDetail(selected);
-    else this.renderEmpty('No bot telemetry yet.');
+    else this.renderDetailMessage(this.accounts.length > 0 && this.hideBannedAccounts
+      ? 'All matching accounts are hidden by the banned filter.'
+      : 'No bot telemetry yet.');
   }
 
   private renderGameEvents(): void {
     this.botSearchInput.style.display = 'none';
+    this.botHideBannedLabel.style.display = 'none';
     this.clearRiskButton.style.display = 'none';
     this.eventFilterEl.style.display = 'flex';
     this.diagnosticFilterEl.style.display = 'none';
@@ -951,6 +1009,7 @@ export class AdminPanel {
 
   private renderClientDiagnostics(): void {
     this.botSearchInput.style.display = 'none';
+    this.botHideBannedLabel.style.display = 'none';
     this.clearRiskButton.style.display = 'none';
     this.eventFilterEl.style.display = 'none';
     this.diagnosticFilterEl.style.display = 'grid';
@@ -1352,17 +1411,22 @@ export class AdminPanel {
 
   private accountRow(account: AdminBotAccount): HTMLButtonElement {
     const selected = account.accountId === this.selectedAccountId;
-    const banned = Boolean(account.accountBan || account.ipBan);
+    const banned = this.isBannedAccount(account);
+    const bannedDeviceAlt = this.bannedDeviceAlts(account).length > 0;
     const muted = Boolean(account.accountMute);
     const rowBackground = selected
       ? 'rgba(122, 50, 40, 0.48)'
       : banned
         ? 'rgba(73, 17, 13, 0.56)'
+        : bannedDeviceAlt
+          ? 'rgba(86, 20, 15, 0.48)'
         : 'rgba(22, 16, 12, 0.38)';
     const rowInset = account.accountBan
       ? '#b52f24'
       : account.ipBan
         ? '#b96a2c'
+        : bannedDeviceAlt
+          ? '#b52f24'
         : muted
           ? '#7a5a25'
           : '';
@@ -1439,6 +1503,10 @@ export class AdminPanel {
     if (account.ipBan) {
       cell.appendChild(this.statusPill('IP BAN', '#9a4f24', this.ipBanTitle(account.ipBan)));
     }
+    const bannedDeviceAlts = this.bannedDeviceAlts(account);
+    if (!this.isBannedAccount(account) && bannedDeviceAlts.length > 0) {
+      cell.appendChild(this.statusPill('BAN DEV', '#b52f24', this.bannedDeviceAltTitle(account)));
+    }
     if (account.accountMute) {
       cell.appendChild(this.statusPill('MUTED', '#7a5a25', this.muteTitle(account.accountMute)));
     }
@@ -1457,6 +1525,12 @@ export class AdminPanel {
       flex-wrap: wrap;
       align-self: center;
     `;
+    const bannedDeviceAlts = this.bannedDeviceAlts(account);
+    if (bannedDeviceAlts.length > 0) {
+      cell.appendChild(this.statusPill(`DEV BAN`, '#b52f24', this.bannedDeviceAltTitle(account)));
+    } else if (account.sharedDeviceAlts.length > 0) {
+      cell.appendChild(this.statusPill(`DEV x${account.sharedDeviceAlts.length + 1}`, '#4d535f', `Shares a device with ${account.sharedDeviceAlts.length} account(s)`));
+    }
     if (account.sharedIpAlts.length > 0) {
       cell.appendChild(this.statusPill(`IP x${account.sharedIpAlts.length + 1}`, '#6b3b34', account.lastIp ? `Last IP: ${account.lastIp}` : 'This account has ever shared a login IP with other accounts'));
     } else if (account.lastIp) {
@@ -1690,6 +1764,7 @@ export class AdminPanel {
     const xpPerHour = this.summaryNumberRecord(summary, 'xpPerHour');
     const actions = account.totalSkillingActions + account.totalCombatSwings;
     const activeActions = actions + account.totalMovements;
+    const bannedDeviceAlts = this.bannedDeviceAlts(account);
 
     const root = document.createElement('div');
     root.style.cssText = `display: flex; flex-direction: column; gap: 10px;`;
@@ -1703,12 +1778,22 @@ export class AdminPanel {
     title.appendChild(this.summaryPill(account.online ? 'online' : 'offline', account.online ? '#2f6f4e' : '#5a5146'));
     if (account.isAdmin) title.appendChild(this.summaryPill('admin', '#5f4a7d'));
     if (account.isModerator) title.appendChild(this.summaryPill('moderator', '#2f5f8f'));
+    if (bannedDeviceAlts.length > 0) {
+      const pill = this.summaryPill(`banned device alt: ${bannedDeviceAlts[0].username}${bannedDeviceAlts.length > 1 ? ` +${bannedDeviceAlts.length - 1}` : ''}`, '#b52f24');
+      pill.title = this.bannedDeviceAltTitle(account);
+      title.appendChild(pill);
+    }
     root.appendChild(title);
 
     const chips = document.createElement('div');
     chips.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px; min-height: 20px;`;
     const signals = flags.slice(0, 8);
-    if (signals.length === 0) {
+    for (const alt of bannedDeviceAlts.slice(0, 3)) {
+      const pill = this.summaryPill(`same device as banned ${alt.username}`, '#b52f24');
+      pill.title = this.bannedDeviceAltTitle(account);
+      chips.appendChild(pill);
+    }
+    if (signals.length === 0 && bannedDeviceAlts.length === 0) {
       chips.appendChild(this.summaryPill('no current evidence', '#4d5d45'));
     } else {
       for (const signal of signals) chips.appendChild(this.summaryPill(botSignalLabel(signal), '#6b3b34'));
@@ -2112,7 +2197,30 @@ export class AdminPanel {
     this.detailEl.appendChild(empty);
   }
 
+  private renderDetailMessage(message: string): void {
+    this.detailEl.replaceChildren();
+    const empty = document.createElement('div');
+    empty.textContent = message;
+    empty.style.cssText = `font-size: 12px; color: #d9c6a2; padding: 8px;`;
+    this.detailEl.appendChild(empty);
+  }
+
+  private visibleBotAccounts(): AdminBotAccount[] {
+    if (!this.hideBannedAccounts) return this.accounts;
+    return this.accounts.filter((account) => !this.isBannedAccount(account));
+  }
+
+  private isBannedAccount(account: AdminBotAccount): boolean {
+    return Boolean(account.accountBan || account.ipBan);
+  }
+
+  private bannedDeviceAlts(account: AdminBotAccount): AdminBotAccount['sharedDeviceAlts'] {
+    return account.sharedDeviceAlts.filter((alt) => alt.banned);
+  }
+
   private signalSummary(account: AdminBotAccount): string {
+    const bannedDeviceAlt = this.bannedDeviceAlts(account)[0];
+    if (bannedDeviceAlt) return `banned device alt: ${bannedDeviceAlt.username}`;
     const flags = this.summaryEvidenceFlags(account.lastSessionSummary);
     if (flags.length > 0) return flags.slice(0, 3).map(botSignalLabel).join(', ');
     const contextFlags = this.summaryStringArray(account.lastSessionSummary, 'contextFlags');
@@ -2301,10 +2409,17 @@ export class AdminPanel {
 
   private accountModerationTitle(account: AdminBotAccount): string {
     const statuses: string[] = [];
+    if (this.bannedDeviceAlts(account).length > 0) statuses.push(this.bannedDeviceAltTitle(account));
     if (account.accountBan) statuses.push(this.accountBanTitle(account.accountBan));
     if (account.ipBan) statuses.push(this.ipBanTitle(account.ipBan));
     if (account.accountMute) statuses.push(this.muteTitle(account.accountMute));
     return statuses.length > 0 ? statuses.join('\n') : account.username;
+  }
+
+  private bannedDeviceAltTitle(account: AdminBotAccount): string {
+    const names = this.bannedDeviceAlts(account).map((alt) => alt.username).slice(0, 4).join(', ');
+    const extra = this.bannedDeviceAlts(account).length > 4 ? ` +${this.bannedDeviceAlts(account).length - 4}` : '';
+    return `Shares a browser device with banned account(s): ${names}${extra}`;
   }
 
   private accountBanTitle(ban: AdminAccountBan): string {

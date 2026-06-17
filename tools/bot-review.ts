@@ -505,7 +505,7 @@ function computeReviewRisk(
     if (flags.has('deviceRotating')) add(24, 'rotating browser device IDs');
     if (flags.has('protocolPackets')) add(18, 'malformed/protocol packet abuse');
     if (flags.has('rateLimitPackets')) add(18, 'rate-limit automation packets');
-    if (flags.has('automationInvalidPackets')) add(10, 'automation-shaped invalid packets');
+    if (flags.has('automationInvalidPackets')) add(10, 'malformed client telemetry');
     if (flags.has('lifetimeHardInvalidPackets')) add(14, 'lifetime hard invalid packets');
     if (flags.has('lifetimeExtremeLowSocialHighActivity')) add(22, 'extreme low-social high-activity lifetime');
     else if (flags.has('lifetimeLowSocialHighActivity')) add(12, 'low-social high-activity lifetime');

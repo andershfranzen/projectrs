@@ -360,11 +360,25 @@ describe('anti-bot guardrails', () => {
     expect(summary.riskLevel).toBe('low');
   });
 
-  test('input-proof packet failures are automation-shaped packet evidence', () => {
+  test('input-ticket misses are stale telemetry, not hard packet evidence', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
 
     for (let i = 0; i < 10; i++) stats.recordSuspiciousPacket('missing-input-ticket');
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionSuspiciousPacketClasses.stale).toBe(10);
+    expect(summary.sessionSuspiciousPacketClasses.automation).toBe(0);
+    expect(summary.flags).not.toContain('automationInvalidPackets');
+    expect(summary.evidenceFlags).not.toContain('automationInvalidPackets');
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('malformed client telemetry remains hard packet evidence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 10; i++) stats.recordSuspiciousPacket('bad-client-input-shape');
 
     const summary = stats.computeSummary({});
     expect(summary.sessionSuspiciousPacketClasses.automation).toBe(10);

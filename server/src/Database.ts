@@ -3869,12 +3869,20 @@ export class GameDatabase {
         MAX(lh.login_ts) AS last_seen_ts,
         COALESCE(bs.risk_score, 0) AS risk_score,
         COALESCE(bs.risk_level, 'low') AS risk_level,
-        MAX(CASE WHEN ab.account_id IS NOT NULL THEN 1 ELSE 0 END) AS banned
+        MAX(CASE WHEN ab.account_id IS NOT NULL OR ib.ip_address IS NOT NULL THEN 1 ELSE 0 END) AS banned
       FROM login_history lh
       JOIN my_devices md ON md.device_id = lh.device_id
       JOIN accounts a ON a.id = lh.account_id
       LEFT JOIN bot_stats bs ON bs.account_id = a.id
       LEFT JOIN account_bans ab ON ab.account_id = a.id AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
+      LEFT JOIN login_history latest_lh ON latest_lh.id = (
+        SELECT lh2.id
+        FROM login_history lh2
+        WHERE lh2.account_id = a.id
+        ORDER BY lh2.login_ts DESC, lh2.id DESC
+        LIMIT 1
+      )
+      LEFT JOIN ip_bans ib ON ib.ip_address = latest_lh.ip_address AND (ib.expires_at IS NULL OR ib.expires_at > unixepoch())
       WHERE lh.account_id <> ?
       GROUP BY a.id, a.username, bs.risk_score, bs.risk_level
       ORDER BY banned DESC, risk_score DESC, devices DESC, logins DESC, last_seen_ts DESC
@@ -3923,12 +3931,20 @@ export class GameDatabase {
         ) AS last_ip,
         COALESCE(bs.risk_score, 0) AS risk_score,
         COALESCE(bs.risk_level, 'low') AS risk_level,
-        MAX(CASE WHEN ab.account_id IS NOT NULL THEN 1 ELSE 0 END) AS banned
+        MAX(CASE WHEN ab.account_id IS NOT NULL OR ib.ip_address IS NOT NULL THEN 1 ELSE 0 END) AS banned
       FROM login_history lh
       JOIN my_ips mi ON mi.ip_address = lh.ip_address
       JOIN accounts a ON a.id = lh.account_id
       LEFT JOIN bot_stats bs ON bs.account_id = a.id
       LEFT JOIN account_bans ab ON ab.account_id = a.id AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
+      LEFT JOIN login_history latest_lh ON latest_lh.id = (
+        SELECT lh2.id
+        FROM login_history lh2
+        WHERE lh2.account_id = a.id
+        ORDER BY lh2.login_ts DESC, lh2.id DESC
+        LIMIT 1
+      )
+      LEFT JOIN ip_bans ib ON ib.ip_address = latest_lh.ip_address AND (ib.expires_at IS NULL OR ib.expires_at > unixepoch())
       WHERE lh.account_id <> ?
       GROUP BY a.id, a.username, bs.risk_score, bs.risk_level
       ORDER BY banned DESC, risk_score DESC, ips DESC, logins DESC, last_seen_ts DESC

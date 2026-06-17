@@ -1869,7 +1869,7 @@ const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
   reservedMapDataPath: { label: 'Invalid map-data endpoint', description: 'Requested a map-data endpoint that normal gameplay never uses.', threshold: '≥1 invalid map-data endpoint request', tier: 'hard' },
   protocolPackets: { label: 'Malformed protocol traffic', description: 'Repeated malformed or impossible game packets.', threshold: '≥3 this session', tier: 'hard' },
   rateLimitPackets: { label: 'Too-fast packet flood', description: 'Repeated packet rate-limit overflows.', threshold: '≥3 this session', tier: 'hard' },
-  automationInvalidPackets: { label: 'Automation-shaped invalid traffic', description: 'Many invalid requests shaped like a script or modified client.', threshold: '≥10 this session', tier: 'hard' },
+  automationInvalidPackets: { label: 'Malformed client telemetry', description: 'Repeated malformed client activity/input packets. Noisy input-ticket misses are tracked separately as stale telemetry.', threshold: '≥10 malformed telemetry packets this session', tier: 'hard' },
   reservedActionCapability: { label: 'Invalid action token replayed', description: 'Client sent an action token that was not valid for normal gameplay.', threshold: '≥1 invalid action token', tier: 'hard' },
   adminOpcodeAbuse: { label: 'Non-admin used admin command', description: 'A non-admin client attempted to send an admin-only game command.', threshold: '≥1 non-admin admin command', tier: 'hard' },
   lifetimeHardInvalidPackets: { label: 'Repeat hard invalid traffic', description: 'Large lifetime volume of malformed protocol or rate-limit events.', threshold: '≥25 lifetime', tier: 'hard' },
@@ -2172,15 +2172,15 @@ function classifySuspiciousReason(reason: string): SuspiciousPacketClass {
     || reason === 'bad-cursor-y'
   ) return 'protocol';
   if (
-    reason === 'missing-input-ticket'
-    || reason === 'stale-input-ticket'
-    || reason === 'bad-input-ticket-kind'
-    || reason === 'missing-input-telemetry'
+    reason === 'missing-input-telemetry'
     || reason.startsWith('bad-client-activity-')
     || reason.startsWith('bad-client-input-')
   ) return 'automation';
   if (
-    reason.startsWith('stale-')
+    reason === 'missing-input-ticket'
+    || reason === 'stale-input-ticket'
+    || reason === 'bad-input-ticket-kind'
+    || reason.startsWith('stale-')
     || reason.startsWith('unreachable-')
     || reason.startsWith('unseen-')
     || reason.includes('-not-open')

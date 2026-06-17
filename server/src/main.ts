@@ -3694,7 +3694,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
           ...account,
           online: !!world.getActivePlayerByAccountId(account.accountId),
         })),
-      });
+      }, 200, { 'Cache-Control': 'no-store' });
     }
 
     if (url.pathname === '/api/admin/bot-review/clear' && req.method === 'POST') {
@@ -3708,7 +3708,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         accountId: session.accountId,
         details: { action: 'clear_bot_review_stats', cleared, resetActive },
       });
-      return jsonResponse({ ok: true, cleared, resetActive });
+      return jsonResponse({ ok: true, cleared, resetActive }, 200, { 'Cache-Control': 'no-store' });
     }
 
     if (url.pathname === '/api/admin/bot-review/clear-account' && req.method === 'POST') {
@@ -3728,7 +3728,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
           accountId: session.accountId,
           details: { action: 'clear_account_bot_review_stats', targetAccountId: accountId, cleared, resetActive },
         });
-        return jsonResponse({ ok: true, cleared, resetActive });
+        return jsonResponse({ ok: true, cleared, resetActive }, 200, { 'Cache-Control': 'no-store' });
       } catch (err) {
         if (err instanceof Error && err.message === 'too-large') return tooLarge();
         return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
