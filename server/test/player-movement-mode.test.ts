@@ -109,6 +109,29 @@ describe('player movement modes', () => {
     expect(player.hasMoveQueue()).toBe(false);
   });
 
+  test('replacing a walking active step keeps the first redirected step at walk pace', () => {
+    const player = makePlayer();
+    player.setMovementMode('run');
+    player.setMoveQueue([{ x: 1.5, z: 0.5 }]);
+    expect(player.effectiveMovementModePerTick()).toBe('walk');
+
+    player.setMoveQueue([
+      { x: 1.5, z: 0.5 },
+      { x: 2.5, z: 0.5 },
+      { x: 3.5, z: 0.5 },
+    ], {
+      preserveMovementCredit: true,
+      forceWalkFirstStep: player.effectiveMovementModePerTick() === 'walk',
+    });
+
+    expect(player.effectiveMovementModePerTick()).toBe('walk');
+    expect(player.movementCreditPerTick()).toBe(movementTilesPerTick('walk'));
+    expect(processMovementTick(player, 1)).toBe(1);
+    expect(player.position.x).toBe(1.5);
+    expect(player.effectiveMovementModePerTick()).toBe('run');
+    expect(player.movementCreditPerTick()).toBe(movementTilesPerTick('run'));
+  });
+
   test('run mode reports run for a two-step movement batch', () => {
     const player = makePlayer();
     player.setMovementMode('run');

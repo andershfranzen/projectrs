@@ -153,6 +153,7 @@ test('matchbox and three logs create a temporary fire with Survival XP', () => {
   expect(fire).toBeTruthy();
   expect(messages).toContain('The fire catches and the logs begin to burn.');
   expect(player.hasMoveQueue()).toBe(true);
+  expect(player.moveQueueIntent).toEqual({ kind: 'firemaking-push', fireTileX: 10, fireTileZ: 10 });
   expect(player.peekNextMove()).toEqual({ x: 9.5, z: 10.5 });
   expect(world.blockedObjectTiles.size).toBe(0);
 });
@@ -171,6 +172,61 @@ test('firemaking remains queued on a failed roll without consuming logs', () => 
   expect(player.inventory[1]).toEqual({ itemId: LOGS_ITEM_ID, quantity: FIREMAKING_LOG_COST });
   expect(player.skills.survival.xp).toBe(0);
   expect(world.worldObjects.size).toBe(0);
+});
+
+test('firemaking click during forced fire step replays after movement', () => {
+  const { world, player, messages } = makeHarness();
+  world.worldObjects.set(1234, new WorldObject(fireDef, 10.5, 10.5, 'kcmap', 0, 0));
+  player.setMoveQueue([{ x: 9.5, z: 10.5 }], {
+    intent: { kind: 'firemaking-push', fireTileX: 10, fireTileZ: 10 },
+  });
+  player.movementCredit = 1;
+  world.playerMovementCollision = () => ({
+    canStep: () => true,
+    afterStep: ({ state }: any) => state,
+  });
+  world.updatePlayerRunEnergy = () => {};
+  world.updateEntityChunk = () => {};
+  world.repairOrCompleteSultansMineDoorTransit = () => {};
+  world.sultansMineExportDoorCrossedByStep = () => null;
+  world.sultansMineExportDoorCenteredTileEnteredByStep = () => null;
+  world.markEntityTileOccupantsDirty = () => {};
+  world.checkpointPlayerPosition = () => {};
+
+  world.handlePlayerUseItemOnItem(player.id, 0, MATCHBOX_ITEM_ID, 1, LOGS_ITEM_ID);
+
+  expect(player.pendingUseItemOnItem).toMatchObject({
+    fromSlot: 0,
+    fromItemId: MATCHBOX_ITEM_ID,
+    toSlot: 1,
+    toItemId: LOGS_ITEM_ID,
+  });
+  expect(world.itemProductionActions.has(player.id)).toBe(false);
+  expect(messages).not.toContain("You can't light a fire here.");
+
+  world.currentTick = 1;
+  world.tickPlayerMovement();
+
+  expect(player.position.x).toBe(9.5);
+  expect(player.pendingUseItemOnItem).toBeNull();
+  expect(world.itemProductionActions.get(player.id)).toMatchObject({
+    kind: 'firemaking',
+    tileX: 9,
+    tileZ: 10,
+  });
+  expect(messages).toContain('You attempt to light the logs.');
+});
+
+test('firemaking click during ordinary movement is not replayed at destination', () => {
+  const { world, player, messages } = makeHarness();
+  world.worldObjects.set(1234, new WorldObject(fireDef, 10.5, 10.5, 'kcmap', 0, 0));
+  player.setMoveQueue([{ x: 9.5, z: 10.5 }]);
+
+  world.handlePlayerUseItemOnItem(player.id, 0, MATCHBOX_ITEM_ID, 1, LOGS_ITEM_ID);
+
+  expect(player.pendingUseItemOnItem).toBeNull();
+  expect(world.itemProductionActions.has(player.id)).toBe(false);
+  expect(messages).toContain("You can't light a fire here.");
 });
 
 test('firemaking rejects missing logs before starting', () => {

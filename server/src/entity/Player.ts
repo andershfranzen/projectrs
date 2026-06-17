@@ -14,12 +14,27 @@ import {
   MAPLE_SHORTBOW_HQ_ITEM_ID, YEW_SHORTBOW_HQ_ITEM_ID, MAGIC_SHORTBOW_HQ_ITEM_ID,
   RUN_ENERGY_LEVEL_1_AGILITY, RUN_ENERGY_MAX,
   canRunWithEnergy, clampRunEnergy, effectiveMovementMode, effectiveMovementTilesPerTick,
+  remainingMovementQueueMatches,
+  trimMovementQueueToNextStep,
   movementTilesPerTick, runEnergyDrainPerRunTick, runEnergyPercent, runEnergyRecoverPerTick,
   type PlayerAppearance, type ItemDef, type QuestState, type EquipSlot, type MovementMode,
 } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 
 export type PlayerDelayReason = 'generic' | 'eat';
+
+export type PlayerMoveQueueIntent =
+  | { kind: 'firemaking-push'; fireTileX: number; fireTileZ: number };
+
+export interface PendingUseItemOnItemIntent {
+  fromSlot: number;
+  fromItemId: number;
+  toSlot: number;
+  toItemId: number;
+  quantity: number;
+  recipeIndex: number;
+}
+
 /** 17 ticks at 600ms is 10.2s, so the combat logout block is never shorter
  *  than the requested 10 seconds. */
 export const COMBAT_LOGOUT_BLOCK_TICKS = 17;
@@ -147,10 +162,13 @@ export class Player extends Entity {
   reconnectDeadlineTick: number = 0;
   private moveQueue: { x: number; z: number }[] = [];
   private moveQueueIndex: number = 0;
+  moveQueueIntent: PlayerMoveQueueIntent | null = null;
   movementMode: MovementMode = 'walk';
   moveSpeed: number = movementTilesPerTick('walk');
   movementCredit: number = 0;
   movementCreditUpdatedAtMs: number = 0;
+  /** Keeps the first step of a replaced active queue from becoming a run step. */
+  forceWalkNextMoveStep: boolean = false;
   runEnergy: number = RUN_ENERGY_MAX;
   lastRunEnergyPercent: number = -1;
   pendingPickup: number = -1;
@@ -162,6 +180,7 @@ export class Player extends Entity {
     recipeQuantity?: number;
     expectedDoorOpen?: boolean | null;
   } | null = null;
+  pendingUseItemOnItem: PendingUseItemOnItemIntent | null = null;
   pendingUseItemOnObject: { invSlot: number; itemId: number; objectEntityId: number } | null = null;
   pendingUseItemOnNpc: { invSlot: number; itemId: number; npcEntityId: number } | null = null;
   animationKind: PlayerAnimationKind = PlayerAnimationKind.Idle;
@@ -920,6 +939,7 @@ export class Player extends Entity {
       this.moveTo(target.x, target.z);
       this.lastMovedTick = currentTick;
       this.movementCredit -= 1;
+      this.forceWalkNextMoveStep = false;
       if (!this.hasMoveQueue()) this.clearMoveQueue();
       return true;
     }
@@ -937,10 +957,12 @@ export class Player extends Entity {
   }
 
   movementCreditPerTick(): number {
+    if (this.forceWalkNextMoveStep) return movementTilesPerTick('walk');
     return effectiveMovementTilesPerTick(this.energyQualifiedMovementMode(), this.remainingMoveSteps());
   }
 
   effectiveMovementModePerTick(): MovementMode {
+    if (this.forceWalkNextMoveStep) return 'walk';
     return effectiveMovementMode(this.energyQualifiedMovementMode(), this.remainingMoveSteps());
   }
 
@@ -987,7 +1009,11 @@ export class Player extends Entity {
 
   setMoveQueue(
     path: { x: number; z: number }[],
-    opts: { preserveMovementCredit?: boolean } = {},
+    opts: {
+      preserveMovementCredit?: boolean;
+      forceWalkFirstStep?: boolean;
+      intent?: PlayerMoveQueueIntent | null;
+    } = {},
   ): void {
     const previousCredit = this.movementCredit;
     const previousCreditUpdatedAtMs = this.movementCreditUpdatedAtMs;
@@ -997,6 +1023,8 @@ export class Player extends Entity {
 
     this.moveQueue = path;
     this.moveQueueIndex = 0;
+    this.moveQueueIntent = path.length > 0 ? opts.intent ?? null : null;
+    this.forceWalkNextMoveStep = path.length > 0 && opts.forceWalkFirstStep === true;
     this.movementCredit = preserveMovementCredit ? previousCredit : 0;
     this.movementCreditUpdatedAtMs = path.length > 0
       ? preserveMovementCredit ? previousCreditUpdatedAtMs : performance.now()
@@ -1006,6 +1034,8 @@ export class Player extends Entity {
   clearMoveQueue(): void {
     this.moveQueue = [];
     this.moveQueueIndex = 0;
+    this.moveQueueIntent = null;
+    this.forceWalkNextMoveStep = false;
     this.movementCredit = 0;
     this.movementCreditUpdatedAtMs = 0;
   }
@@ -1014,12 +1044,30 @@ export class Player extends Entity {
     return this.moveQueueIndex < this.moveQueue.length;
   }
 
+  hasMoveQueueIntent(kind: PlayerMoveQueueIntent['kind']): boolean {
+    return this.hasMoveQueue() && this.moveQueueIntent?.kind === kind;
+  }
+
   peekNextMove(): { x: number; z: number } | null {
     return this.moveQueue[this.moveQueueIndex] ?? null;
   }
 
   getMoveDestination(): { x: number; z: number } | null {
     return this.hasMoveQueue() ? this.moveQueue[this.moveQueue.length - 1] ?? null : null;
+  }
+
+  remainingMoveQueueMatches(path: readonly { x: number; z: number }[]): boolean {
+    return remainingMovementQueueMatches(this.moveQueue, this.moveQueueIndex, path);
+  }
+
+  trimMoveQueueToNextStep(): boolean {
+    const trimmed = trimMovementQueueToNextStep(this.moveQueue, this.moveQueueIndex);
+    if (!trimmed) return false;
+    this.setMoveQueue(trimmed, {
+      preserveMovementCredit: true,
+      forceWalkFirstStep: this.effectiveMovementModePerTick() === 'walk',
+    });
+    return true;
   }
 
   trimMoveQueueToFirst(predicate: (step: { x: number; z: number }) => boolean): boolean {

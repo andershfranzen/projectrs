@@ -1794,7 +1794,9 @@ export class CharacterEntity {
   private releaseExpiredAttackFaceLock(now: number): void {
     if (this.attackFaceLockUntilMs <= 0 || now < this.attackFaceLockUntilMs) return;
     this.attackFaceLockUntilMs = 0;
-    this.unlockFaceLock(true);
+    // If the actor has stopped, keep the combat-facing yaw instead of
+    // returning to the stale travel yaw from the walk-in step.
+    this.unlockFaceLock(this.isWalking());
   }
 
   clearFaceLock(force: boolean = false, preserveCurrentFacing: boolean = false): void {

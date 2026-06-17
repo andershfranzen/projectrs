@@ -25,6 +25,7 @@ export * from './npcDisplayName';
 export * from './png';
 export * from './projectile';
 export * from './movementPath';
+export * from './movementQueue';
 export * from './targetPathing';
 export * from './movement';
 export * from './bankNotes';

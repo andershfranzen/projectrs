@@ -4,35 +4,15 @@ import { Scene } from '@babylonjs/core/scene';
 
 const WORLD_CAMERA_MASK = 0x0FFFFFFF;
 
-// 2004Scape/Client camera parameters. Vanilla RS2 uses a 2048-unit circular
-// angle system (`pitch & 0x7ff`), perspective projection with focal length
-// 512 px (~53° HFOV), pitch range 128-383 (= 22.5°–67.36° below horizontal),
-// and a target ~0.39 tiles above ground. See 2004Scape/Client2 src/js/game.ts.
-//
-// RS2 also couples radius to pitch (`distance = pitch * 3 + 600`, game.ts:1697):
-// the low, near-ground pitch is closest and the top-down pitch is furthest.
-// At our world scale the original 1.78x range is too aggressive, so we map
-// pitch into the small locked 8-13 radius range and keep wheel zoom as an
-// offset around that pitch-derived base. When the player explicitly zooms all
-// the way out, pitch is only allowed a small inward pull so max zoom-out never
-// turns into the near-ground close-up.
-//
-// Mapping to Babylon's ArcRotateCamera (beta = angle from +Y axis):
-//   beta = π/2 − rs_pitch_in_radians
-// → RS pitch 128  ⇒ beta ≈ 1.178 rad (most horizontal allowed)
-// → RS pitch 383  ⇒ beta ≈ 0.396 rad (most top-down allowed)
-const RS_PITCH_MIN = 128;
-const RS_PITCH_MAX = 383;
-const RS_UNITS_PER_TILE = 128;
-const RS_TARGET_Y_OFFSET_UNITS = 50;
-const RS_CAMERA_FOLLOW_SNAP_TILES = 500 / RS_UNITS_PER_TILE;
-const RS_CAMERA_FOLLOW_CYCLE_SECONDS = 0.02;
-const RS_CAMERA_FOLLOW_LERP_PER_CYCLE = 1 / 16;
+// EvilQuest camera parameters. The camera is intentionally not a RuneScape
+// clone: it follows the local player with a responsive spring, a tiny dead
+// zone for sub-pixel shimmer, and a hard max-lag clamp so it never feels
+// detached during redirects.
 const LOCKED_FOV = 0.93;  // ~53° HFOV
-const LOCKED_BETA_AT_PITCH_MIN = Math.PI / 2 - (RS_PITCH_MIN / 2048) * 2 * Math.PI;
-const LOCKED_BETA_AT_PITCH_MAX = Math.PI / 2 - (RS_PITCH_MAX / 2048) * 2 * Math.PI;
-const LOCKED_TARGET_Y_OFFSET = RS_TARGET_Y_OFFSET_UNITS / RS_UNITS_PER_TILE;
-const LOCKED_DEFAULT_BETA = LOCKED_BETA_AT_PITCH_MIN;
+const LOCKED_LOWER_BETA = 0.4;
+const LOCKED_UPPER_BETA = 1.18;
+const LOCKED_TARGET_Y_OFFSET = 0.39;
+const LOCKED_DEFAULT_BETA = LOCKED_UPPER_BETA;
 const LOCKED_MIN_RADIUS = 8;
 const LOCKED_MAX_RADIUS = 13;
 const LOCKED_DEFAULT_RADIUS = 11;
@@ -42,6 +22,16 @@ const LOCKED_RADIUS_EPSILON = 0.001;
 const NORTH_ALPHA = Math.PI / 2;
 const TARGET_ALPHA_LERP = 0.16;
 const TARGET_ALPHA_EPSILON = 0.01;
+const CAMERA_FOLLOW_SNAP_TILES = 4;
+const CAMERA_FOLLOW_RESPONSE = 18;
+const CAMERA_FOLLOW_DEADZONE_TILES = 0.03;
+const CAMERA_FOLLOW_MAX_LAG_TILES = 0.45;
+const CAMERA_INPUT_INERTIA = 0.6;
+const CAMERA_PANNING_INERTIA = 0;
+const CAMERA_WHEEL_PRECISION = 8;
+const DEBUG_CAMERA_WHEEL_PRECISION = 10;
+const CAMERA_DRAG_ANGULAR_SENSIBILITY_X = 565;
+const CAMERA_DRAG_ANGULAR_SENSIBILITY_Y = 565;
 
 // Admin (free-camera) limits.
 const FREE_LOWER_BETA = 0.4;
@@ -101,14 +91,17 @@ export class GameCamera {
     this.camera.minZ = 0.1;
     this.camera.maxZ = 60;
 
-    // Smooth camera
-    this.camera.inertia = 0.9;
-    this.camera.panningInertia = 0.9;
+    // Keep input glide short. Player follow is handled by our own spring, so
+    // Babylon should not add a long second layer of input inertia.
+    this.camera.inertia = CAMERA_INPUT_INERTIA;
+    this.camera.panningInertia = CAMERA_PANNING_INERTIA;
 
     // Panning disabled; wheel zoom precision keeps the small locked-mode zoom
     // range usable without making free-camera zoom too twitchy.
     this.camera.panningSensibility = 0;
-    this.camera.wheelPrecision = 30;
+    this.camera.wheelPrecision = CAMERA_WHEEL_PRECISION;
+    this.camera.angularSensibilityX = CAMERA_DRAG_ANGULAR_SENSIBILITY_X;
+    this.camera.angularSensibilityY = CAMERA_DRAG_ANGULAR_SENSIBILITY_Y;
 
     this.camera.attachControl(canvas, true);
     canvas.addEventListener('wheel', this.wheelIntentHandler, { passive: true });
@@ -119,12 +112,13 @@ export class GameCamera {
     // Remove built-in keyboard input — we handle WASD manually
     this.camera.inputs.removeByType('ArcRotateCameraKeyboardMoveInput');
 
-    // Default to locked (non-admin). ADMIN_FLAGS unlocks for admins.
+    // Default to locked (non-admin). ADMIN_FLAGS can unlock pitch/radius
+    // limits for admins, but both modes share the same follow behavior.
     this.applyLockState();
   }
 
-  /** Locked = 2004Scape/Client camera: 22.5°–67.3° pitch, small player
-   *  zoom range, ~53° FOV, +0.39 tile look-at Y offset. Yaw via middle-mouse. */
+  /** Locked = gameplay camera: constrained pitch, small player zoom range,
+   *  ~53° FOV, +0.39 tile look-at Y offset. Yaw via middle-mouse. */
   setLockedMode(locked: boolean): void {
     if (this.locked === locked) return;
     this.locked = locked;
@@ -137,14 +131,14 @@ export class GameCamera {
       const lowerRadius = this.lockedMinRadius();
       const upperRadius = this.lockedMaxRadius();
       this.targetRadius = -1;
-      this.camera.lowerBetaLimit = LOCKED_BETA_AT_PITCH_MAX;
-      this.camera.upperBetaLimit = LOCKED_BETA_AT_PITCH_MIN;
+      this.camera.lowerBetaLimit = LOCKED_LOWER_BETA;
+      this.camera.upperBetaLimit = LOCKED_UPPER_BETA;
       this.camera.lowerRadiusLimit = lowerRadius;
       this.camera.upperRadiusLimit = upperRadius;
       this.camera.fov = LOCKED_FOV;
       this.camera.beta = Math.min(
-        Math.max(this.camera.beta, LOCKED_BETA_AT_PITCH_MAX),
-        LOCKED_BETA_AT_PITCH_MIN,
+        Math.max(this.camera.beta, LOCKED_LOWER_BETA),
+        LOCKED_UPPER_BETA,
       );
       this.camera.radius = Math.min(Math.max(this.camera.radius, lowerRadius), upperRadius);
       this.lastLockedRadiusInitialized = false;
@@ -189,9 +183,9 @@ export class GameCamera {
   }
 
   private lockedPitchRadiusRatio(): number {
-    const range = LOCKED_BETA_AT_PITCH_MIN - LOCKED_BETA_AT_PITCH_MAX;
+    const range = LOCKED_UPPER_BETA - LOCKED_LOWER_BETA;
     if (range <= 0) return 0;
-    return Math.min(Math.max((LOCKED_BETA_AT_PITCH_MIN - this.camera.beta) / range, 0), 1);
+    return Math.min(Math.max((LOCKED_UPPER_BETA - this.camera.beta) / range, 0), 1);
   }
 
   private lockedPitchBaseRadius(): number {
@@ -263,7 +257,7 @@ export class GameCamera {
   }
 
   followTarget(position: Vector3, dt: number = 1 / 60, smooth: boolean = true): CameraFollowResult {
-    // RS2 looks at a point ~0.39 tiles above ground in locked mode.
+    // Look slightly above the ground point so the player remains readable.
     const targetY = this.locked ? position.y + LOCKED_TARGET_Y_OFFSET : position.y;
     const result = this.updateFollowAnchor(position, targetY, dt, smooth);
     this.camera.target.copyFrom(this.targetPosition);
@@ -308,30 +302,13 @@ export class GameCamera {
       y: this.targetPosition.y,
       z: this.targetPosition.z,
     };
-    if (!this.locked) {
-      this.targetPosition.set(position.x, targetY, position.z);
-      this.followTargetInitialized = true;
-      return {
-        snapped: false,
-        reason: null,
-        dx: position.x - previousTarget.x,
-        dz: position.z - previousTarget.z,
-        distance: Math.hypot(position.x - previousTarget.x, position.z - previousTarget.z),
-        smooth,
-        locked: false,
-        dt,
-        previousTarget,
-        target: { x: this.targetPosition.x, y: this.targetPosition.y, z: this.targetPosition.z },
-      };
-    }
-
     const dx = position.x - this.targetPosition.x;
     const dz = position.z - this.targetPosition.z;
     const reason: CameraFollowSnapReason | null = !this.followTargetInitialized
       ? 'initial'
       : !smooth
         ? 'smoothing-disabled'
-        : Math.abs(dx) > RS_CAMERA_FOLLOW_SNAP_TILES || Math.abs(dz) > RS_CAMERA_FOLLOW_SNAP_TILES
+        : Math.abs(dx) > CAMERA_FOLLOW_SNAP_TILES || Math.abs(dz) > CAMERA_FOLLOW_SNAP_TILES
           ? 'large-delta'
           : null;
     if (reason) {
@@ -344,21 +321,30 @@ export class GameCamera {
         dz,
         distance: Math.hypot(dx, dz),
         smooth,
-        locked: true,
+        locked: this.locked,
         dt,
         previousTarget,
         target: { x: this.targetPosition.x, y: this.targetPosition.y, z: this.targetPosition.z },
       };
     }
 
-    const safeDt = Number.isFinite(dt) ? Math.max(0, dt) : 1 / 60;
-    const followT = 1 - Math.pow(
-      1 - RS_CAMERA_FOLLOW_LERP_PER_CYCLE,
-      safeDt / RS_CAMERA_FOLLOW_CYCLE_SECONDS,
-    );
-    this.targetPosition.x += dx * followT;
+    const distance = Math.hypot(dx, dz);
+    if (distance > CAMERA_FOLLOW_DEADZONE_TILES) {
+      const safeDt = Number.isFinite(dt) ? Math.max(0, dt) : 1 / 60;
+      const followT = 1 - Math.exp(-CAMERA_FOLLOW_RESPONSE * safeDt);
+      const moveDistance = (distance - CAMERA_FOLLOW_DEADZONE_TILES) * followT;
+      this.targetPosition.x += (dx / distance) * moveDistance;
+      this.targetPosition.z += (dz / distance) * moveDistance;
+
+      const lagX = position.x - this.targetPosition.x;
+      const lagZ = position.z - this.targetPosition.z;
+      const lagDistance = Math.hypot(lagX, lagZ);
+      if (lagDistance > CAMERA_FOLLOW_MAX_LAG_TILES) {
+        this.targetPosition.x = position.x - (lagX / lagDistance) * CAMERA_FOLLOW_MAX_LAG_TILES;
+        this.targetPosition.z = position.z - (lagZ / lagDistance) * CAMERA_FOLLOW_MAX_LAG_TILES;
+      }
+    }
     this.targetPosition.y = targetY;
-    this.targetPosition.z += dz * followT;
     return {
       snapped: false,
       reason: null,
@@ -366,7 +352,7 @@ export class GameCamera {
       dz,
       distance: Math.hypot(dx, dz),
       smooth,
-      locked: true,
+      locked: this.locked,
       dt,
       previousTarget,
       target: { x: this.targetPosition.x, y: this.targetPosition.y, z: this.targetPosition.z },
@@ -431,14 +417,14 @@ export class GameCamera {
     this.debugZoom = true;
     this.camera.lowerRadiusLimit = 1.5;
     this.camera.upperRadiusLimit = 20;
-    this.camera.wheelPrecision = 20;
+    this.camera.wheelPrecision = DEBUG_CAMERA_WHEEL_PRECISION;
     this.camera.lowerBetaLimit = 0.1;
     this.camera.upperBetaLimit = Math.PI / 1.8;
   }
 
   exitDebugZoom(): void {
     this.debugZoom = false;
-    this.camera.wheelPrecision = 30;
+    this.camera.wheelPrecision = CAMERA_WHEEL_PRECISION;
     if (this.locked) {
       this.targetRadius = -1;
       this.lockedZoomOffset = 0;

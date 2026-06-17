@@ -65,7 +65,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, ActionCapabilityKind, ACTION_CAPABILITY_HONEYPOT_FLAG, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, collectCompressedRouteTileKeys, compressedPathTileSteps, compressedPathTileStepsFromIndex, compressedRouteProgressSteps, compressedRouteSegmentIndexForTile, compressedRouteStepIndexForTile, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, effectiveMovementTilesPerSecondForPath, movementModeFromIndex, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode, type ActionCapabilityWire, type ActionCapabilityProof } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, ActionCapabilityKind, ACTION_CAPABILITY_HONEYPOT_FLAG, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, collectCompressedRouteTileKeys, compressedPathTileSteps, compressedPathTileStepsFromIndex, compressedRouteProgressSteps, compressedRouteSegmentIndexForTile, compressedRouteStepIndexForTile, getActiveMovementStep, normalizeMovementRouteForActiveStep, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, movementModeFromIndex, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode, type ActionCapabilityWire, type ActionCapabilityProof } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -560,6 +560,8 @@ export class GameManager {
   private pathIndex: number = 0;
   private movementMode: MovementMode = 'walk';
   private runEnergyPercent: number = 100;
+  /** Mode of the already-started unit step when a redirect preserves it. */
+  private preservedActiveStepMode: MovementMode | null = null;
   private predictedPathUnitSteps: number = 0;
   private predictedPathStartedAt: number = 0;
   private predictedPathStart: { x: number; z: number } | null = null;
@@ -8215,6 +8217,12 @@ export class GameManager {
     this._combatPathTimer = 0;
     this.followTargetPlayerId = -1;
     this.followPathTimer = 0;
+    if (this.keepCurrentPredictedStepForInteraction()) {
+      this.refreshDuelFacing();
+      this.minimap?.clearDestination();
+      this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
+      return;
+    }
     this.clearPredictedPath(true);
     this.localPlayer?.stopWalking();
     this.refreshDuelFacing();
@@ -8338,6 +8346,7 @@ export class GameManager {
     this.path = [];
     this.pathIndex = 0;
     this.tileProgress = 0;
+    this.preservedActiveStepMode = null;
     this.predictedPathUnitSteps = 0;
     this.predictedPathStartedAt = 0;
     this.predictedPathStart = null;
@@ -8733,7 +8742,10 @@ export class GameManager {
     data: { x: number; z: number; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] },
     def?: WorldObjectDef,
   ): boolean {
-    if (def && this.pathIndex < this.path.length) return this.redirectActiveWalkToObjectInteraction(data, def);
+    if (def && this.pathIndex < this.path.length) {
+      return this.redirectActiveWalkToObjectInteraction(data, def)
+        || this.keepCurrentPredictedStepForInteraction();
+    }
     if (!def && this.keepCurrentPredictedStepForInteraction()) return true;
     this.clearPredictedPath(true, false);
     this.minimap?.clearDestination();
@@ -8743,6 +8755,10 @@ export class GameManager {
   }
 
   private rootLocalPlayerForSpellCast(notifyServer: boolean = true): void {
+    if (this.pathIndex < this.path.length) {
+      this.trimPredictedPathToCurrentTileStep(notifyServer, notifyServer);
+      return;
+    }
     this.clearPredictedPath(true);
     this.localPlayer?.stopWalking();
     if (this.localPlayer) {
@@ -8771,33 +8787,12 @@ export class GameManager {
   }
 
   private getActiveUnitStep(): { from: { x: number; z: number }; target: { x: number; z: number }; progress: number } | null {
-    if (this.pathIndex >= this.path.length) return null;
-    const target = this.path[this.pathIndex];
-    const dx = Math.sign(Math.floor(target.x) - Math.floor(this.tileFrom.x));
-    const dz = Math.sign(Math.floor(target.z) - Math.floor(this.tileFrom.z));
-    const tileSteps = Math.max(
-      Math.abs(Math.floor(target.x) - Math.floor(this.tileFrom.x)),
-      Math.abs(Math.floor(target.z) - Math.floor(this.tileFrom.z)),
-    );
-    if (tileSteps <= 1) {
-      return {
-        from: { x: this.tileFrom.x, z: this.tileFrom.z },
-        target: { x: target.x, z: target.z },
-        progress: this.tileProgress,
-      };
-    }
-
-    const progressedTiles = Math.max(0, Math.min(tileSteps - 0.0001, this.tileProgress * tileSteps));
-    const completedTiles = Math.floor(progressedTiles);
-    const fromTileX = Math.floor(this.tileFrom.x) + dx * completedTiles;
-    const fromTileZ = Math.floor(this.tileFrom.z) + dz * completedTiles;
-    const targetTileX = fromTileX + dx;
-    const targetTileZ = fromTileZ + dz;
-    return {
-      from: { x: fromTileX + 0.5, z: fromTileZ + 0.5 },
-      target: { x: targetTileX + 0.5, z: targetTileZ + 0.5 },
-      progress: progressedTiles - completedTiles,
-    };
+    return getActiveMovementStep({
+      anchor: this.tileFrom,
+      path: this.path,
+      pathIndex: this.pathIndex,
+      tileProgress: this.tileProgress,
+    });
   }
 
   private remainingPredictedUnitSteps(): number {
@@ -8810,6 +8805,13 @@ export class GameManager {
     return this.pathIndex < this.path.length
       ? compressedPathTileStepsFromIndex(this.tileFrom, this.path, this.pathIndex)
       : 0;
+  }
+
+  private activeLocalStepMode(pathUnitSteps?: number, remainingUnitSteps?: number): MovementMode {
+    if (this.preservedActiveStepMode) return this.preservedActiveStepMode;
+    const remainingSteps = remainingUnitSteps ?? this.remainingPredictedUnitSteps();
+    const totalSteps = pathUnitSteps ?? (this.predictedPathUnitSteps || remainingSteps);
+    return effectiveMovementModeForPath(this.movementMode, totalSteps, remainingSteps);
   }
 
   private findPathFromMovementAnchor(goalX: number, goalZ: number, maxSteps: number = 200): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
@@ -9129,6 +9131,18 @@ export class GameManager {
     return coalesceByDestination || this.activePredictedPathMatches(path);
   }
 
+  private normalizePredictedPathForActiveStep(
+    path: { x: number; z: number }[],
+    preserveCurrentStep: boolean = false,
+  ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
+    return normalizeMovementRouteForActiveStep(path, {
+      anchor: this.tileFrom,
+      path: this.path,
+      pathIndex: this.pathIndex,
+      tileProgress: this.tileProgress,
+    }, preserveCurrentStep);
+  }
+
   private startPredictedPath(
     path: { x: number; z: number }[],
     preserveCurrentStep: boolean = false,
@@ -9136,11 +9150,13 @@ export class GameManager {
   ): boolean {
     if (path.length === 0) return false;
     if (this.isControlledMoveActive()) return false;
-    if (this.shouldCoalesceDuplicatePredictedPath(path, options.coalesceDuplicateDestination ?? true)) return false;
+    const normalized = this.normalizePredictedPathForActiveStep(path, preserveCurrentStep);
+    if (normalized.path.length === 0) return false;
+    if (this.shouldCoalesceDuplicatePredictedPath(normalized.path, options.coalesceDuplicateDestination ?? true)) return false;
     this.followTargetPlayerId = -1;
-    if (!this.network.sendMove(path, this.movementMode)) return false;
+    if (!this.network.sendMove(normalized.path, this.movementMode)) return false;
     this.noteLocalMoveCommandSent();
-    this.startLocalPredictedPath(path, preserveCurrentStep, true);
+    this.startLocalPredictedPath(normalized.path, normalized.preserveCurrentStep, true);
     return true;
   }
 
@@ -9156,7 +9172,11 @@ export class GameManager {
     allowAuthorityReanchor: boolean = false,
   ): void {
     if (path.length === 0) return;
+    const normalized = this.normalizePredictedPathForActiveStep(path, preserveCurrentStep);
+    path = normalized.path;
+    preserveCurrentStep = normalized.preserveCurrentStep;
     const activeStep = this.getActiveUnitStep();
+    const activeStepMode = activeStep ? this.activeLocalStepMode() : null;
     const wasPathing = this.pathIndex < this.path.length;
     const now = performance.now();
     const staleRouteTiles = wasPathing ? this.collectPredictedRouteTileKeys() : null;
@@ -9179,11 +9199,13 @@ export class GameManager {
     if (shouldPreserveCurrentStep && activeStep) {
       this.tileProgress = activeStep.progress;
       this.setTileFrom(activeStep.from.x, activeStep.from.z);
+      this.preservedActiveStepMode = activeStepMode;
     } else {
       // Walk from current visual position (often fractional mid-step) to
       // path[0]. Body rotation handles the visible turn — no snap.
       this.tileProgress = 0;
       this.setTileFrom(this.playerX, this.playerZ);
+      this.preservedActiveStepMode = null;
     }
     this.predictedPathStart = { x: this.tileFrom.x, z: this.tileFrom.z };
     const initialSteps = compressedPathTileSteps(this.tileFrom, nextPath);
@@ -9196,7 +9218,7 @@ export class GameManager {
     } else {
       this.clearSelfAuthorityRedirectGrace();
     }
-    this.localPlayer?.setMovementMode(effectiveMovementModeForPath(this.movementMode, initialSteps, initialSteps));
+    this.localPlayer?.setMovementMode(this.activeLocalStepMode(initialSteps, initialSteps));
     if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
     this.refreshLocalPathTravelFacing();
   }
@@ -10939,6 +10961,7 @@ export class GameManager {
   private finishPredictedPathArrival(): void {
     this.clearControlledMoveLock();
     this.tileProgress = 0;
+    this.preservedActiveStepMode = null;
     this.armRecentPredictedArrival();
     this.predictedPathUnitSteps = 0;
     this.predictedPathStartedAt = 0;
@@ -11798,7 +11821,7 @@ export class GameManager {
       this.updateDoorAnimations(dt);
 
       if (this.localPlayer) {
-        this._tempVec.set(this.localPlayer.position.x, this.localPlayer.position.y, this.localPlayer.position.z);
+        this._tempVec.set(this.playerX, this.localPlayer.position.y, this.playerZ);
         const followResult = this.camera.followTarget(this._tempVec, dt, true);
         this.maybeReportCameraSnap(followResult);
       }
@@ -12171,6 +12194,7 @@ export class GameManager {
       this.playerZ = serverZ;
       this.pathIndex = foundIndex + 1;
       this.tileProgress = 0;
+      this.preservedActiveStepMode = null;
       this.setTileFrom(serverX, serverZ);
       if (this.pathIndex >= this.path.length) {
         this.finishPredictedPathArrival();
@@ -12189,6 +12213,7 @@ export class GameManager {
       this.playerZ = serverZ;
       this.pathIndex = segmentIdx;
       this.tileProgress = 0;
+      this.preservedActiveStepMode = null;
       this.setTileFrom(serverX, serverZ);
       this.predictedPathUnitSteps = this.predictedPathRemainingUnitSteps();
       if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
@@ -12340,6 +12365,7 @@ export class GameManager {
       this.playerX = final.x;
       this.playerZ = final.z;
       this.tileProgress = 0;
+      this.preservedActiveStepMode = null;
       this.setTileFrom(final.x, final.z);
     }
 
@@ -12397,7 +12423,7 @@ export class GameManager {
     }
     const remainingUnitSteps = this.remainingPredictedUnitSteps();
     const pathUnitSteps = this.predictedPathUnitSteps || remainingUnitSteps;
-    const effectiveMode = effectiveMovementModeForPath(this.movementMode, pathUnitSteps, remainingUnitSteps);
+    const effectiveMode = this.activeLocalStepMode(pathUnitSteps, remainingUnitSteps);
     this.localPlayer.setMovementMode(effectiveMode);
     if (!this.localPlayer.isWalking()) this.localPlayer.startWalking();
 
@@ -12419,9 +12445,9 @@ export class GameManager {
       } else {
         const currentRemainingSteps = this.remainingPredictedUnitSteps();
         const currentPathSteps = this.predictedPathUnitSteps || currentRemainingSteps;
-        const mode = effectiveMovementModeForPath(this.movementMode, currentPathSteps, currentRemainingSteps);
+        const mode = this.activeLocalStepMode(currentPathSteps, currentRemainingSteps);
         this.localPlayer.setMovementMode(mode);
-        const speed = effectiveMovementTilesPerSecondForPath(this.movementMode, currentPathSteps, currentRemainingSteps)
+        const speed = movementTilesPerSecond(mode)
           * this.localAuthorityCatchupMultiplier();
         const progressTiles = Math.max(0, Math.min(tileSteps, this.tileProgress * tileSteps));
         const nextBoundaryTiles = Math.min(Math.floor(progressTiles + EPSILON) + 1, tileSteps);
@@ -12448,11 +12474,13 @@ export class GameManager {
       if (this.tileProgress < 1 - EPSILON) continue;
 
       const stepTarget = this.path[this.pathIndex];
+      const completedPreservedStep = this.preservedActiveStepMode !== null;
       this.tileProgress = 0;
       this.playerX = stepTarget.x;
       this.playerZ = stepTarget.z;
       this.setTileFrom(stepTarget.x, stepTarget.z);
       this.pathIndex++;
+      if (completedPreservedStep) this.preservedActiveStepMode = null;
 
       if (this.pathIndex >= this.path.length) {
         this.finishPredictedPathArrival();

@@ -3,6 +3,7 @@ import { GameManager } from './GameManager';
 
 type LocalPlayerStub = {
   modes: string[];
+  position: { x: number; y: number; z: number };
   positions: { x: number; y: number; z: number }[];
   directions: { dx: number; dz: number }[];
   walking: boolean;
@@ -20,6 +21,7 @@ type LocalPlayerStub = {
 function makeLocalPlayer(): LocalPlayerStub {
   const player: LocalPlayerStub = {
     modes: [],
+    position: { x: 0.5, y: 0, z: 0.5 },
     positions: [],
     directions: [],
     walking: false,
@@ -31,6 +33,7 @@ function makeLocalPlayer(): LocalPlayerStub {
       player.directions.push({ dx, dz });
     },
     setPositionXYZ: (x: number, y: number, z: number) => {
+      player.position = { x, y, z };
       player.positions.push({ x, y, z });
     },
     clearFaceLock: () => {},
@@ -227,6 +230,34 @@ describe('GameManager local movement prediction', () => {
     });
   });
 
+  test('redirecting during an odd final run tile keeps the preserved step at walk pace', () => {
+    const { manager, player } = makeManager([
+      { x: 3.5, z: 3.5 },
+    ], 3);
+    manager.tileProgress = 0.8;
+    manager.playerX = 2.9;
+    manager.playerZ = 2.9;
+
+    manager.startLocalPredictedPath([
+      { x: 0.5, z: 0.5 },
+    ], true, true);
+
+    expect(player.modes.at(-1)).toBe('walk');
+    expect(manager.path).toEqual([
+      { x: 3.5, z: 3.5 },
+      { x: 0.5, z: 0.5 },
+    ]);
+    expect(manager.tileFrom).toEqual({ x: 2.5, z: 2.5 });
+    expect(manager.tileProgress).toBeCloseTo(0.4, 6);
+
+    manager.updateLocalPlayerMovement(0.1, null);
+
+    expect(player.modes.at(-1)).toBe('walk');
+    expect(manager.pathIndex).toBe(0);
+    expect(manager.playerX).toBeCloseTo(3.066667, 5);
+    expect(manager.playerZ).toBeCloseTo(3.066667, 5);
+  });
+
   test('duplicate active destination clicks do not resend or rewrite local movement', () => {
     const { manager, sentMoves } = makeManager([
       { x: 1.5, z: 0.5 },
@@ -268,6 +299,7 @@ describe('GameManager local movement prediction', () => {
     expect(started).toBe(true);
     expect(sentMoves).toEqual([{
       path: [
+        { x: 1.5, z: 0.5 },
         { x: 1.5, z: 1.5 },
         { x: 10.5, z: 0.5 },
       ],
@@ -278,6 +310,106 @@ describe('GameManager local movement prediction', () => {
       { x: 1.5, z: 1.5 },
       { x: 10.5, z: 0.5 },
     ]);
+  });
+
+  test('mid-step route replacements include the active unit step in the server packet', () => {
+    const { manager, sentMoves } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.tileProgress = 0.05;
+    manager.playerX = 1.0;
+    manager.playerZ = 0.5;
+
+    const started = manager.startPredictedPath([
+      { x: 1.5, z: 8.5 },
+    ]);
+
+    expect(started).toBe(true);
+    expect(sentMoves).toEqual([{
+      path: [
+        { x: 1.5, z: 0.5 },
+        { x: 1.5, z: 8.5 },
+      ],
+      mode: 'run',
+    }]);
+    expect(manager.path).toEqual([
+      { x: 1.5, z: 0.5 },
+      { x: 1.5, z: 8.5 },
+    ]);
+    expect(manager.tileFrom).toEqual({ x: 0.5, z: 0.5 });
+    expect(manager.tileProgress).toBe(0.5);
+  });
+
+  test('local-only mid-step route replacements still finish the active unit step', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.tileProgress = 0.05;
+    manager.playerX = 1.0;
+    manager.playerZ = 0.5;
+
+    manager.startLocalPredictedPath([
+      { x: 1.5, z: 8.5 },
+    ]);
+
+    expect(manager.path).toEqual([
+      { x: 1.5, z: 0.5 },
+      { x: 1.5, z: 8.5 },
+    ]);
+    expect(manager.tileFrom).toEqual({ x: 0.5, z: 0.5 });
+    expect(manager.tileProgress).toBe(0.5);
+    expect(player.directions.at(-1)).toEqual({
+      dx: 1.5 - manager.playerX,
+      dz: 0,
+    });
+  });
+
+  test('diagonal route replacements keep the diagonal unit step before turning', () => {
+    const { manager, sentMoves } = makeManager([
+      { x: 10.5, z: 10.5 },
+    ], 10);
+    manager.tileProgress = 0.05;
+    manager.playerX = 1.0;
+    manager.playerZ = 1.0;
+
+    const started = manager.startPredictedPath([
+      { x: 0.5, z: 8.5 },
+    ]);
+
+    expect(started).toBe(true);
+    expect(sentMoves).toEqual([{
+      path: [
+        { x: 1.5, z: 1.5 },
+        { x: 0.5, z: 8.5 },
+      ],
+      mode: 'run',
+    }]);
+    expect(manager.path[0]).toEqual({ x: 1.5, z: 1.5 });
+    expect(manager.tileFrom).toEqual({ x: 0.5, z: 0.5 });
+    expect(manager.tileProgress).toBe(0.5);
+  });
+
+  test('rooting local movement mid-step stops after the active unit step', () => {
+    const { manager, player, sentMoves } = makeManager([
+      { x: 10.5, z: 10.5 },
+    ], 10);
+    manager.tileProgress = 0.05;
+    manager.playerX = 1.0;
+    manager.playerZ = 1.0;
+    player.walking = true;
+
+    manager.rootLocalPlayerForSpellCast();
+
+    expect(sentMoves).toEqual([{
+      path: [
+        { x: 1.5, z: 1.5 },
+      ],
+      mode: 'run',
+    }]);
+    expect(manager.path).toEqual([{ x: 1.5, z: 1.5 }]);
+    expect(manager.tileFrom).toEqual({ x: 0.5, z: 0.5 });
+    expect(manager.tileProgress).toBe(0.5);
+    expect(player.walking).toBe(true);
   });
 
   test('active interaction redirects still coalesce an identical active route', () => {

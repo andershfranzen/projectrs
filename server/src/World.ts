@@ -4,7 +4,7 @@ import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
 import { addXp, levelFromXp, MAX_SKILL_LEVEL, MAX_SKILL_XP, statRandom, spellSchoolSkill, xpForLevel } from '@projectrs/shared';
 import { GameMap } from './GameMap';
-import { Player, type PlayerAmmo } from './entity/Player';
+import { Player, type PendingUseItemOnItemIntent, type PlayerAmmo } from './entity/Player';
 import { Npc, type NpcOptions } from './entity/Npc';
 import { WorldObject, releaseObjectEntityId } from './entity/WorldObject';
 import { DataLoader } from './data/DataLoader';
@@ -17,7 +17,8 @@ import { broadcastLocalMessage, broadcastPlayerInfo, sendSystemMessageToUser } f
 import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
 import { consumeSpellCosts } from './magic/SpellCosts';
-import { DEFAULT_MAX_SEARCH_TILES, canTravel, expandAndValidateWaypointPath, findPathToAnyTile, findPathToReach, findPathToRectInteraction, findPathToTile, isRectInteractionTileReachable, type PathingCollision } from './pathing/Pathing';
+import { DEFAULT_MAX_SEARCH_TILES, canTravel, findPathToAnyTile, findPathToReach, findPathToRectInteraction, findPathToTile, isRectInteractionTileReachable, type PathingCollision } from './pathing/Pathing';
+import { validateMovementWaypoints, type MovementCollision } from './movement/MovementCollision';
 import { hasTileLineOfSight } from './visibility/LineOfSight';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
@@ -1406,6 +1407,27 @@ export class World {
       height: map.height,
       isTileBlocked: (tileX, tileZ) => this.isPlayerMovementTileBlocked(player, map, tileX, tileZ, floor),
       isWallBlocked: wallBlocked,
+    };
+  }
+
+  private playerMovementCollision(
+    player: Player,
+    map: GameMap = this.getPlayerMap(player),
+  ): MovementCollision<PlayerMovementLayerState> {
+    return {
+      canStep: ({ state, fromTileX, fromTileZ, toTileX, toTileZ }) => {
+        const tileBlocked = this.isPlayerMovementTileBlocked(player, map, toTileX, toTileZ, state.floor);
+        const wallBlocked = state.floor === 0
+          ? map.isWallBlocked(fromTileX, fromTileZ, toTileX, toTileZ, state.y)
+          : map.isWallBlockedOnFloor(fromTileX, fromTileZ, toTileX, toTileZ, state.floor);
+        return !tileBlocked && !wallBlocked;
+      },
+      afterStep: ({ state, toTileX, toTileZ }) => this.resolvePlayerMovementLayerAt(
+        map,
+        toTileX + 0.5,
+        toTileZ + 0.5,
+        state,
+      ),
     };
   }
 
@@ -3019,7 +3041,7 @@ export class World {
   }
 
   private clearQueuedPlayerActions(player: Player): void {
-    this.clearPendingObjectIntents(player);
+    this.clearPendingInteractionIntents(player);
     player.pendingPickup = -1;
     player.pendingSpellCast = null;
     player.pendingTalkNpcId = -1;
@@ -3043,8 +3065,9 @@ export class World {
     this.cancelItemProduction(playerId);
   }
 
-  private clearPendingObjectIntents(player: Player): void {
+  private clearPendingInteractionIntents(player: Player): void {
     player.pendingInteraction = null;
+    player.pendingUseItemOnItem = null;
     player.pendingUseItemOnObject = null;
     player.pendingUseItemOnNpc = null;
   }
@@ -4372,7 +4395,7 @@ export class World {
       this.bumpActionRevision(player);
       this.clearCombatTarget(playerId);
       player.attackTarget = null;
-      player.clearMoveQueue();
+      if (!player.trimMoveQueueToNextStep()) player.clearMoveQueue();
       player.followTargetPlayerId = -1;
       this.clearQueuedPlayerActions(player);
       this.cancelItemProduction(playerId);
@@ -4397,16 +4420,8 @@ export class World {
     if (player.openDialogueState) this.sendDialogueClose(player);
 
     const requestedDestination = path[path.length - 1] ?? null;
-    const activeDestination = player.getMoveDestination();
     const replacingActiveMoveQueue = player.hasMoveQueue();
-    if (
-      requestedDestination
-      && activeDestination
-      && Math.floor(requestedDestination.x) === Math.floor(activeDestination.x)
-      && Math.floor(requestedDestination.z) === Math.floor(activeDestination.z)
-    ) {
-      return;
-    }
+    const replacingWalkingStep = replacingActiveMoveQueue && player.effectiveMovementModePerTick() === 'walk';
 
     const map = this.getPlayerMap(player);
     // Cap path length. Client's sendMove caps at 50 corner waypoints — anything
@@ -4433,7 +4448,7 @@ export class World {
     // the two views half a tile apart, and on the next walk the server's
     // delta calc (floor(step.x) - floor(prevX)) starts from the wrong tile,
     // which can compound into multi-tile drift.
-    const validated = expandAndValidateWaypointPath({
+    const validated = validateMovementWaypoints({
       startX: player.position.x,
       startZ: player.position.y,
       waypoints: path,
@@ -4444,19 +4459,7 @@ export class World {
       },
       maxSegmentTiles: MAX_SEGMENT_TILES,
       maxRequestedTiles: MAX_REQUESTED_TILES,
-      canStep: ({ state, fromTileX, fromTileZ, toTileX, toTileZ }) => {
-        const tileBlocked = this.isPlayerMovementTileBlocked(player, map, toTileX, toTileZ, state.floor);
-        const wallBlocked = state.floor === 0
-          ? map.isWallBlocked(fromTileX, fromTileZ, toTileX, toTileZ, state.y)
-          : map.isWallBlockedOnFloor(fromTileX, fromTileZ, toTileX, toTileZ, state.floor);
-        return !tileBlocked && !wallBlocked;
-      },
-      afterStep: ({ state, toTileX, toTileZ }) => this.resolvePlayerMovementLayerAt(
-        map,
-        toTileX + 0.5,
-        toTileZ + 0.5,
-        state,
-      ),
+      collision: this.playerMovementCollision(player, map),
     });
     let queuedPath = validated.path;
     let recoveredWithAuthoritativePath = false;
@@ -4472,7 +4475,13 @@ export class World {
       }
     }
 
-    player.setMoveQueue(queuedPath, { preserveMovementCredit: replacingActiveMoveQueue });
+    if (replacingActiveMoveQueue && player.remainingMoveQueueMatches(queuedPath)) {
+      return;
+    }
+    player.setMoveQueue(queuedPath, {
+      preserveMovementCredit: replacingActiveMoveQueue,
+      forceWalkFirstStep: replacingWalkingStep,
+    });
     // If we actually dropped tiles vs. what the client asked for, notify it
     // so it can trim its local walk to match. Skip when nothing was
     // requested (zero-distance / empty input) or when the validation
@@ -7142,6 +7151,31 @@ export class World {
     return player;
   }
 
+  private queuePendingUseItemOnItem(player: Player, intent: PendingUseItemOnItemIntent): void {
+    player.pendingUseItemOnItem = intent;
+    this.markQueuedAction(player);
+  }
+
+  private replayPendingUseItemOnItem(playerId: number, player: Player): void {
+    const intent = player.pendingUseItemOnItem;
+    if (!intent) return;
+    player.pendingUseItemOnItem = null;
+    player.pendingActionRevision = -1;
+    this.handlePlayerUseItemOnItem(
+      playerId,
+      intent.fromSlot,
+      intent.fromItemId,
+      intent.toSlot,
+      intent.toItemId,
+      intent.quantity,
+      intent.recipeIndex,
+    );
+  }
+
+  private shouldReplayFiremakingAfterMovement(player: Player): boolean {
+    return player.hasMoveQueueIntent('firemaking-push');
+  }
+
   handlePlayerUseItemOnItem(
     playerId: number,
     fromSlot: number,
@@ -7156,7 +7190,12 @@ export class World {
     if (!player) return;
     if (toSlot < 0 || toSlot >= player.inventory.length) return;
     if (player.inventory[toSlot]?.itemId !== toItemId) return;
+    const firemakingRecipe = this.firemakingRecipeFromItems(fromItemId, toItemId);
     this.interruptPlayerAction(playerId, player);
+    if (firemakingRecipe && this.shouldReplayFiremakingAfterMovement(player)) {
+      this.queuePendingUseItemOnItem(player, { fromSlot, fromItemId, toSlot, toItemId, quantity, recipeIndex });
+      return;
+    }
     if (this.startFiremakingIfRecipe(playerId, player, fromItemId, toItemId)) return;
     const recipe = this.findItemOnItemRecipe(fromItemId, toItemId, recipeIndex);
     if (recipe) {
@@ -9982,7 +10021,7 @@ export class World {
       const x = tileX + dx + 0.5;
       const z = tileZ + dz + 0.5;
       const path = [{ x, z }];
-      player.setMoveQueue(path);
+      player.setMoveQueue(path, { intent: { kind: 'firemaking-push', fireTileX: tileX, fireTileZ: tileZ } });
       this.sendPlayerControlledMove(player, path);
       return;
     }
@@ -10180,15 +10219,20 @@ export class World {
         if (!next) break;
         const map = this.getPlayerMap(player);
         const pFloor = player.currentFloor;
-        // Gate the wall-edge check on the player's authoritative walking
-        // elevation so a wall below an elevated walkable tile doesn't
-        // spuriously truncate the queue — and so an open upper-floor door is
-        // passable. effectiveY is kept current by refreshPlayerEffectiveY
-        // below; mirrors the elevation gating in handlePlayerMove.
-        const wallBlocked = pFloor === 0
-          ? map.isWallBlocked(player.position.x, player.position.y, next.x, next.z, player.effectiveY)
-          : map.isWallBlockedOnFloor(player.position.x, player.position.y, next.x, next.z, pFloor);
-        const tileBlocked = this.isPlayerMovementTileBlocked(player, map, Math.floor(next.x), Math.floor(next.z), pFloor);
+        const movementCollision = this.playerMovementCollision(player, map);
+        const movementStep = {
+          state: {
+            floor: pFloor,
+            y: player.effectiveY,
+            lastFloorChangeTile: player.lastFloorChangeTile,
+          },
+          fromTileX: Math.floor(player.position.x),
+          fromTileZ: Math.floor(player.position.y),
+          toTileX: Math.floor(next.x),
+          toTileZ: Math.floor(next.z),
+          stepX: Math.sign(Math.floor(next.x) - Math.floor(player.position.x)),
+          stepZ: Math.sign(Math.floor(next.z) - Math.floor(player.position.y)),
+        };
         const sultansMineExportDoor = this.sultansMineExportDoorCrossedByStep(player, next);
         const oreBlockedSultansMineDoor = this.playerHasRoyalMineOre(player)
           ? (sultansMineExportDoor ?? this.sultansMineExportDoorCenteredTileEnteredByStep(player, next))
@@ -10204,7 +10248,7 @@ export class World {
           player.movementCredit = 0;
           break;
         }
-        if (tileBlocked || wallBlocked) {
+        if (!movementCollision.canStep(movementStep)) {
           this.clearSultansMineDoorTransit(player);
           player.botStats?.recordPathTruncation();
           this.sendPathTruncated(player, player.position.x, player.position.y, this.currentPlayerMovementLayerState(player));
@@ -10223,16 +10267,18 @@ export class World {
         // Tile changed — re-derive the authoritative walking elevation and
         // floor immediately so the next queued step gates walls/tiles against
         // the layer the player actually reached.
-        this.applyPlayerMovementLayer(player, this.resolvePlayerMovementLayerAt(
-          map,
-          player.position.x,
-          player.position.y,
-          {
-            floor: player.currentFloor,
-            y: player.effectiveY,
-            lastFloorChangeTile: player.lastFloorChangeTile,
-          },
-        ));
+        this.applyPlayerMovementLayer(player, movementCollision.afterStep
+          ? movementCollision.afterStep(movementStep)
+          : this.resolvePlayerMovementLayerAt(
+              map,
+              player.position.x,
+              player.position.y,
+              {
+                floor: player.currentFloor,
+                y: player.effectiveY,
+                lastFloorChangeTile: player.lastFloorChangeTile,
+              },
+            ));
         (movedSteps ??= []).push({
           x: player.position.x,
           z: player.position.y,
@@ -10319,6 +10365,9 @@ export class World {
         player.pendingUseItemOnObject = null;
         player.pendingActionRevision = -1;
         this.handlePlayerUseItemOnObject(playerId, invSlot, itemId, objectEntityId);
+      }
+      if (player.pendingUseItemOnItem && !player.hasMoveQueue()) {
+        this.replayPendingUseItemOnItem(playerId, player);
       }
       if (player.pendingUseItemOnNpc && !player.hasMoveQueue()) {
         const { invSlot, itemId, npcEntityId } = player.pendingUseItemOnNpc;

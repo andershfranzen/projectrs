@@ -96,4 +96,52 @@ describe('player move validation', () => {
     expect(player.movementCredit).toBe(0.8);
     expect(player.movementCreditUpdatedAtMs).toBe(12345);
   });
+
+  test('empty active move request stops after the next queued tile', () => {
+    const { world, player } = makeWorldHarness();
+
+    world.handlePlayerMove(player.id, [
+      { x: 1.5, z: 1.5 },
+      { x: 2.5, z: 2.5 },
+      { x: 3.5, z: 2.5 },
+    ]);
+    player.movementCredit = 0.8;
+    player.movementCreditUpdatedAtMs = 12345;
+
+    world.handlePlayerMove(player.id, []);
+
+    expect(player.hasMoveQueue()).toBe(true);
+    expect(player.remainingMoveSteps()).toBe(1);
+    expect(player.peekNextMove()).toEqual({ x: 1.5, z: 1.5 });
+    expect(player.getMoveDestination()).toEqual({ x: 1.5, z: 1.5 });
+    expect(player.movementCredit).toBe(0.8);
+    expect(player.movementCreditUpdatedAtMs).toBe(12345);
+  });
+
+  test('move validation passes player height through the movement collision adapter', () => {
+    const { world, player } = makeWorldHarness();
+    const map = world.getPlayerMap();
+    const seenHeights: unknown[] = [];
+    player.effectiveY = 2.75;
+    map.isWallBlocked = (_fx: number, _fz: number, _tx: number, _tz: number, y: unknown) => {
+      seenHeights.push(y);
+      return false;
+    };
+
+    world.handlePlayerMove(player.id, [{ x: 1.5, z: 0.5 }]);
+
+    expect(player.getMoveDestination()).toEqual({ x: 1.5, z: 0.5 });
+    expect(seenHeights).toEqual([2.75]);
+  });
+
+  test('move validation truncates when EvilQuest wall edges block a step', () => {
+    const { world, player, packets } = makeWorldHarness();
+    const map = world.getPlayerMap();
+    map.isWallBlocked = () => true;
+
+    world.handlePlayerMove(player.id, [{ x: 1.5, z: 0.5 }]);
+
+    expect(player.hasMoveQueue()).toBe(false);
+    expect(packets.some(packet => packet.opcode === ServerOpcode.PATH_TRUNCATED)).toBe(true);
+  });
 });
