@@ -7,6 +7,7 @@ export interface GameplayMapPlayerWindow {
   currentChunkX: number;
   currentChunkZ: number;
   alternateChunks?: Array<{ chunkX: number; chunkZ: number }>;
+  alternateMapWindows?: GameplayMapPlayerWindow[];
 }
 
 export interface GameplayMapChunkPath {
@@ -42,6 +43,10 @@ export function mapIdFromGameplayMapPath(mapPath: string): string | null {
 
 export function isGameplayObjectManifestPath(mapPath: string): boolean {
   return /^[-\w]+\/objects\/manifest\.json$/.test(mapPath);
+}
+
+export function isReservedGameplayMapDataPath(mapPath: string): boolean {
+  return /^[-\w]+\/(?:objects|tiles|heights)\/(?:index|chunks|all)\.json$/i.test(mapPath);
 }
 
 export function parseGameplayMapChunkPath(mapPath: string): GameplayMapChunkPath | null {
@@ -111,6 +116,7 @@ export function canFetchScopedGameplayMapDataPath(
 
   const chunk = parseGameplayMapChunkPath(mapPath);
   if (!player) return chunk === null;
-  if (player.currentMapLevel !== mapId) return false;
-  return chunk === null || isGameplayMapChunkInPlayerWindow(chunk, player);
+  const allowsWindow = (window: GameplayMapPlayerWindow): boolean =>
+    window.currentMapLevel === mapId && (chunk === null || isGameplayMapChunkInPlayerWindow(chunk, window));
+  return allowsWindow(player) || (player.alternateMapWindows ?? []).some(allowsWindow);
 }

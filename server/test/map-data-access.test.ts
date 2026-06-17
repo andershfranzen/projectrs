@@ -4,6 +4,7 @@ import {
   gameplayMapPlayerWindowFromWorldPosition,
   isGameplayMapChunkInPlayerWindow,
   isGameplayObjectManifestPath,
+  isReservedGameplayMapDataPath,
   parseGameplayMapChunkPath,
   type GameplayMapPlayerWindow,
 } from '../src/data/MapDataAccess';
@@ -18,6 +19,8 @@ describe('map data access hardening', () => {
   test('hides the global object chunk manifest from normal players', () => {
     expect(isGameplayObjectManifestPath('kcmap/objects/manifest.json')).toBe(true);
     expect(isGameplayObjectManifestPath('kcmap/objects/chunk_1_2.json')).toBe(false);
+    expect(isReservedGameplayMapDataPath('kcmap/objects/manifest.json')).toBe(false);
+    expect(isReservedGameplayMapDataPath('kcmap/objects/index.json')).toBe(true);
   });
 
   test('allows nearby runtime object chunks and rejects far scans', () => {
@@ -44,6 +47,22 @@ describe('map data access hardening', () => {
     expect(canFetchScopedGameplayMapDataPath('kcmap/tiles/chunk_1_0.json', savedFarFromWarmStart)).toBe(true);
     expect(canFetchScopedGameplayMapDataPath('kcmap/heights/chunk_3_0.json', savedFarFromWarmStart)).toBe(true);
     expect(canFetchScopedGameplayMapDataPath('kcmap/heights/chunk_20_20.json', savedFarFromWarmStart)).toBe(false);
+  });
+
+  test('allows previous-map chunks during a map-change overlap', () => {
+    const inCaveAfterTransition: GameplayMapPlayerWindow = {
+      currentMapLevel: 'bear_den',
+      currentChunkX: 1,
+      currentChunkZ: 1,
+      alternateMapWindows: [{
+        currentMapLevel: 'kcmap',
+        currentChunkX: 10,
+        currentChunkZ: 20,
+      }],
+    };
+    expect(canFetchScopedGameplayMapDataPath('kcmap/tiles/chunk_7_11.json', inCaveAfterTransition)).toBe(true);
+    expect(canFetchScopedGameplayMapDataPath('kcmap/heights/chunk_20_20.json', inCaveAfterTransition)).toBe(false);
+    expect(canFetchScopedGameplayMapDataPath('the_sultans_mine/tiles/chunk_7_11.json', inCaveAfterTransition)).toBe(false);
   });
 
   test('allows the pre-login warm-start height chunks around the kcmap spawn', () => {

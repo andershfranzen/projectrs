@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto';
 import type { CustomColors, FloorLayerData, GroundType, KCMapFile, KCTile, MapMeta, PlayerAppearance, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, defaultGroundForMap, getObjectInteractionTiles, localSidesToWorldSides, TileType } from '@projectrs/shared';
 import { World } from './World';
-import { canFetchScopedGameplayMapDataPath, gameplayMapPlayerWindowFromWorldPosition, isGameplayObjectManifestPath, mapIdFromGameplayMapPath, type GameplayMapPlayerWindow } from './data/MapDataAccess';
+import { canFetchScopedGameplayMapDataPath, gameplayMapPlayerWindowFromWorldPosition, isGameplayObjectManifestPath, isReservedGameplayMapDataPath, mapIdFromGameplayMapPath, type GameplayMapPlayerWindow } from './data/MapDataAccess';
 import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } from './data/PublicData';
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
@@ -2970,10 +2970,6 @@ function isForbiddenMapPath(mapPath: string): boolean {
     || /^backup(?:[.\-_].*)?\.json$/i.test(basename);
 }
 
-function isReservedMapDataPath(mapPath: string): boolean {
-  return /^[-\w]+\/(?:objects|tiles|heights)\/(?:manifest|index|chunks|all)\.json$/i.test(mapPath);
-}
-
 interface HttpMapDataScanWindow {
   startedAt: number;
   lastSeenAt: number;
@@ -3095,6 +3091,34 @@ function gameplayMapWindowForSession(
     }
   };
 
+  const requestedMapId = mapIdFromGameplayMapPath(mapPath);
+
+  const savedWindowForRequestedMap = (): GameplayMapPlayerWindow | null => {
+    if (!requestedMapId) return null;
+    const saved = db.loadPlayerState(session.accountId);
+    const savedMapId = saved?.mapLevel ?? 'kcmap';
+    if (savedMapId !== requestedMapId) return null;
+
+    try {
+      const map = world.getMap(savedMapId);
+      const useSpawn = !saved
+        || (saved.respawnVersion ?? 0) < WORLD_RESPAWN_VERSION
+        || !Number.isFinite(saved.x)
+        || !Number.isFinite(saved.z)
+        || saved.x < 0
+        || saved.z < 0
+        || saved.x >= map.width
+        || saved.z >= map.height;
+      const spawn = map.findSpawnPoint();
+      const pos = useSpawn ? spawn : { x: saved.x, z: saved.z };
+      let window = gameplayMapPlayerWindowFromWorldPosition(savedMapId, pos.x, pos.z);
+      window = addMapSpawnCenter(window, savedMapId);
+      return window;
+    } catch {
+      return null;
+    }
+  };
+
   const activePlayer = world.getActivePlayerByAccountId(session.accountId);
   if (activePlayer) {
     let window: GameplayMapPlayerWindow | null = {
@@ -3105,34 +3129,14 @@ function gameplayMapWindowForSession(
     const destination = activePlayer.getMoveDestination();
     if (destination) window = addAlternateCenter(window, destination.x, destination.z);
     window = addMapSpawnCenter(window, activePlayer.currentMapLevel);
+    if (window && requestedMapId && requestedMapId !== activePlayer.currentMapLevel) {
+      const previousMapWindow = savedWindowForRequestedMap();
+      if (previousMapWindow) window.alternateMapWindows = [previousMapWindow];
+    }
     return window;
   }
 
-  const requestedMapId = mapIdFromGameplayMapPath(mapPath);
-  if (!requestedMapId) return null;
-
-  const saved = db.loadPlayerState(session.accountId);
-  const savedMapId = saved?.mapLevel ?? 'kcmap';
-  if (savedMapId !== requestedMapId) return null;
-
-  try {
-    const map = world.getMap(savedMapId);
-    const useSpawn = !saved
-      || (saved.respawnVersion ?? 0) < WORLD_RESPAWN_VERSION
-      || !Number.isFinite(saved.x)
-      || !Number.isFinite(saved.z)
-      || saved.x < 0
-      || saved.z < 0
-      || saved.x >= map.width
-      || saved.z >= map.height;
-    const spawn = map.findSpawnPoint();
-    const pos = useSpawn ? spawn : { x: saved.x, z: saved.z };
-    let window = gameplayMapPlayerWindowFromWorldPosition(savedMapId, pos.x, pos.z);
-    window = addAlternateCenter(window, spawn.x, spawn.z);
-    return window;
-  } catch {
-    return null;
-  }
+  return savedWindowForRequestedMap();
 }
 
 // Clean expired sessions every 10 minutes
@@ -5264,7 +5268,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
       if (isForbiddenMapPath(mapPath)) {
         return new Response('Forbidden', { status: 403 });
       }
-      if (isReservedMapDataPath(mapPath)) {
+      if (isReservedGameplayMapDataPath(mapPath)) {
         const session = getBoundBearerSessionForScope(req, 'game');
         if (isProductionLike() && session && !session.isAdmin) {
           world.getActivePlayerByAccountId(session.accountId)?.botStats?.recordReservedMapDataPath();
@@ -5279,10 +5283,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         if (isProductionLike() && !boundMapSession) return new Response('Unauthorized', { status: 401 });
         if (boundMapSession && gameplayMapDataPath) recordGameplayMapDataFetch(boundMapSession, mapPath, req, server);
         if (isProductionLike() && boundMapSession && gameplayMapDataPath && !boundMapSession.isAdmin) {
-          if (isGameplayObjectManifestPath(mapPath)) {
-            world.getActivePlayerByAccountId(boundMapSession.accountId)?.botStats?.recordMapDataOutOfScope();
-            return new Response('Not Found', { status: 404 });
-          }
+          if (isGameplayObjectManifestPath(mapPath)) return new Response('Not Found', { status: 404 });
           if (!canFetchScopedGameplayMapDataPath(mapPath, gameplayMapWindowForSession(boundMapSession, mapPath))) {
             world.getActivePlayerByAccountId(boundMapSession.accountId)?.botStats?.recordMapDataOutOfScope();
             return new Response('Forbidden', { status: 403 });
