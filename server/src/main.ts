@@ -2434,6 +2434,15 @@ function bodyWithinLimit(req: Request, maxBytes: number): boolean {
   return len <= maxBytes;
 }
 
+async function readSmallJsonBody<T extends Record<string, unknown>>(req: Request, maxBytes: number): Promise<T> {
+  const lenHdr = req.headers.get('content-length');
+  if (lenHdr && !bodyWithinLimit(req, maxBytes)) throw new Error('too-large');
+  const text = await req.text();
+  if (text.length > maxBytes) throw new Error('too-large');
+  if (!text.trim()) return {} as T;
+  return JSON.parse(text) as T;
+}
+
 const BODY_LIMIT_AUTH = 4 * 1024;          // 4 KB — username + password JSON
 const BODY_LIMIT_OAUTH = 16 * 1024;        // 16 KB — OAuth form/token params
 const BODY_LIMIT_CLIENT_LOG = 64 * 1024;   // 64 KB — perf snapshots include scene/GPU diagnostics
@@ -3691,7 +3700,6 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
     if (url.pathname === '/api/admin/bot-review/clear' && req.method === 'POST') {
       const session = getBoundBearerSession(req);
       if (!session?.isAdmin) return adminForbidden();
-      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       const cleared = db.clearBotStats();
       const resetActive = world.resetActiveBotStats();
       audit({
@@ -3706,9 +3714,8 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
     if (url.pathname === '/api/admin/bot-review/clear-account' && req.method === 'POST') {
       const session = getBoundBearerSession(req);
       if (!session?.isAdmin) return adminForbidden();
-      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       try {
-        const body = await req.json() as { accountId?: unknown };
+        const body = await readSmallJsonBody<{ accountId?: unknown }>(req, BODY_LIMIT_AUTH);
         const accountId = Number(body.accountId);
         if (!Number.isInteger(accountId) || accountId <= 0) {
           return jsonResponse({ ok: false, error: 'Invalid accountId' }, 400);
@@ -3722,7 +3729,8 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
           details: { action: 'clear_account_bot_review_stats', targetAccountId: accountId, cleared, resetActive },
         });
         return jsonResponse({ ok: true, cleared, resetActive });
-      } catch {
+      } catch (err) {
+        if (err instanceof Error && err.message === 'too-large') return tooLarge();
         return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
       }
     }

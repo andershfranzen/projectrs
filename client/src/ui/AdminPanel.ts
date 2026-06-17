@@ -845,7 +845,7 @@ export class AdminPanel {
   }
 
   private async clearBotRiskLevels(): Promise<void> {
-    if (this.loading || this.eventLoading) return;
+    if (this.loading) return;
     const confirmed = window.confirm('Clear all bot review risk levels and telemetry? Accounts, bans, mutes, and login history stay intact.');
     if (!confirmed) return;
     this.hideAccountContextMenu();
@@ -856,12 +856,8 @@ export class AdminPanel {
     try {
       const res = await fetch('/api/admin/bot-review/clear', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { Authorization: `Bearer ${this.token}` },
         credentials: 'same-origin',
-        body: '{}',
       });
       if (res.status === 401 || res.status === 403) {
         this.accounts = [];
