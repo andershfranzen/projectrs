@@ -1208,19 +1208,6 @@ export class GameManager {
       // down — and once at Y=0 the gate stays failed permanently.
     });
 
-    // Load the default map during pre-auth as a hidden warm start. This does
-    // not send MAP_READY: the server's authoritative placement arrives after
-    // LOGIN_OK via MAP_CHANGE, and only that final placement should trigger
-    // entity bootstrap packets.
-    const warmStartToken = this.token || localStorage.getItem('evilquest_token') || '';
-    if (warmStartToken) {
-      this.chunkManager.loadMap('kcmap').then(async () => {
-        await this.loadBiomes('kcmap');
-        this.applyFog();
-        await this._defsReady;
-        this.repositionWorldObjects();
-      });
-    }
     this._defsReady = this.loadObjectDefs();
     this.objectModels = new WorldObjectModels(this.scene, (x, z) => this.getHeight(x, z), this.objectDefsCache);
     this._objectModelsReady = this.objectModels.loadAll();

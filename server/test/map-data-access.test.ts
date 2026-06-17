@@ -65,7 +65,7 @@ describe('map data access hardening', () => {
     expect(canFetchScopedGameplayMapDataPath('the_sultans_mine/tiles/chunk_7_11.json', inCaveAfterTransition)).toBe(false);
   });
 
-  test('allows the pre-login warm-start height chunks around the kcmap spawn', () => {
+  test('allows height chunks around the kcmap spawn window', () => {
     const spawnWindow = gameplayMapPlayerWindowFromWorldPosition('kcmap', 224.5, 170.5);
     expect(spawnWindow).not.toBeNull();
     expect(canFetchScopedGameplayMapDataPath('kcmap/heights/chunk_2_1.json', spawnWindow)).toBe(true);

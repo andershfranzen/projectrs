@@ -557,10 +557,8 @@ export class ChunkManager {
 
   /** Increments on every loadMap call. After each await inside loadMap, the
    *  function checks `this.loadMapToken === myToken` and returns early if a
-   *  newer load has started. Without this, the initial loadMap('kcmap') in
-   *  GameManager constructor races with handleMapChange's loadMap(actualMap),
-   *  and the older async resumption stomps on the newer state — placed
-   *  objects get wiped, chunks render terrain only. */
+   *  newer load has started. Without this, overlapping map changes can let
+   *  older async resumptions stomp newer state. */
   private loadMapToken: number = 0;
 
   constructor(scene: Scene) {
