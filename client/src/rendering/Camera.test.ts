@@ -70,6 +70,35 @@ describe('GameCamera locked zoom', () => {
     engine.dispose();
   });
 
+  test('derives clip distance from player-centered ground distance as zoom changes', () => {
+    const engine = new NullEngine();
+    const scene = new Scene(engine);
+    const gameCamera = new GameCamera(scene, createTestCanvas());
+    const camera = gameCamera.getCamera();
+
+    const distance = 30;
+    const defaultClip = gameCamera.clipDistanceForTargetPlaneDistance(distance);
+    const expectedClip = () => Math.hypot(
+      camera.radius * Math.sin(camera.beta) + distance,
+      camera.radius * Math.cos(camera.beta),
+    );
+    expect(defaultClip).toBeCloseTo(expectedClip(), 5);
+
+    gameCamera.zoomByFactor(0.5);
+    const zoomedInClip = gameCamera.clipDistanceForTargetPlaneDistance(distance);
+    expect(zoomedInClip).toBeCloseTo(expectedClip(), 5);
+
+    gameCamera.zoomByFactor(10);
+    const zoomedOutClip = gameCamera.clipDistanceForTargetPlaneDistance(distance);
+    expect(zoomedOutClip).toBeCloseTo(expectedClip(), 5);
+
+    expect(zoomedInClip).toBeLessThan(defaultClip);
+    expect(zoomedOutClip).toBeGreaterThan(defaultClip);
+
+    scene.dispose();
+    engine.dispose();
+  });
+
   test('uses a responsive custom follow instead of pinning directly to the player', () => {
     const engine = new NullEngine();
     const scene = new Scene(engine);

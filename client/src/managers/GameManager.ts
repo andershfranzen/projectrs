@@ -482,6 +482,7 @@ export class GameManager {
   private lastCameraSnapTelemetryAt: number = 0;
   private browserZoomWarningHandler: ((event: Event) => void) | null = null;
   private renderDistanceChangeHandler: ((event: Event) => void) | null = null;
+  private renderDistanceViewDistanceTiles: number = renderDistanceOptionFor('low').viewDistanceTiles;
   private gameSettingsChangeHandler: ((event: Event) => void) | null = null;
   private friendAccountIds: Set<number> = new Set();
   private friendNames: Set<string> = new Set();
@@ -1228,6 +1229,7 @@ export class GameManager {
       this.itemDefsCache,
       this.npcDefsCache,
     );
+    this.syncNpcVisibleRenderDistance();
     this.applyGameSettings(getGameSettings());
     // Dev-only console hook for triage (NPC name overrides, entity sprites).
     // Tree-shaken Babylon imports remove the global namespace, so without
@@ -1985,10 +1987,17 @@ export class GameManager {
 
   private applyRenderDistance(value: RenderDistanceValue): void {
     const option = renderDistanceOptionFor(value);
-    this.camera.getCamera().maxZ = option.cameraMaxZ;
+    this.renderDistanceViewDistanceTiles = option.viewDistanceTiles;
+    this.updateRenderDistanceClipPlane();
     this.chunkManager.setRenderDistanceChunkRadius(option.chunkRadius);
+    this.chunkManager.setRenderDistanceTiles(option.viewDistanceTiles);
+    if (this.entities) this.syncNpcVisibleRenderDistance();
     this.chunkManager.forceRefreshPlayerPosition(this.playerX, this.playerZ);
     this.updateEntityRenderVisibility();
+  }
+
+  private updateRenderDistanceClipPlane(): void {
+    this.camera.getCamera().maxZ = this.camera.clipDistanceForTargetPlaneDistance(this.renderDistanceViewDistanceTiles);
   }
 
   private applyGameSettings(settings: GameSettings): void {
@@ -2615,6 +2624,7 @@ export class GameManager {
     }
 
     this.camera.setLockedRadiusScale(radiusScale);
+    this.updateRenderDistanceClipPlane();
   }
 
   private showReconnectOverlay(status: string): void {
@@ -2790,22 +2800,34 @@ export class GameManager {
     if (!meta) return;
 
     const c = new Color3(meta.fogColor[0], meta.fogColor[1], meta.fogColor[2]);
+    const fogRange = this.renderDistanceFogRange(meta.fogStart, meta.fogEnd);
     this.scene.fogMode = Scene.FOGMODE_LINEAR;
     // Apply darkening to BOTH fog and void so the fog→void transition is
     // seamless (same hue, same brightness).
     const voidDarken = 0.5;
     this.scene.fogColor = new Color3(c.r * voidDarken, c.g * voidDarken, c.b * voidDarken);
-    this.scene.fogStart = meta.fogStart;
-    this.scene.fogEnd = meta.fogEnd;
+    this.scene.fogStart = fogRange.start;
+    this.scene.fogEnd = fogRange.end;
     this.scene.clearColor = new Color4(c.r * voidDarken, c.g * voidDarken, c.b * voidDarken, 1.0);
     this.skybox.setConfig(this.skyboxConfigFor(meta));
     // Seed fog state so updateFog has a starting point that matches the map default.
     this.fogTargetColor = c.clone();
     this.fogCurrentColor = c.clone();
-    this.fogTargetStart = meta.fogStart;
-    this.fogCurrentStart = meta.fogStart;
-    this.fogTargetEnd = meta.fogEnd;
-    this.fogCurrentEnd = meta.fogEnd;
+    this.fogTargetStart = fogRange.start;
+    this.fogCurrentStart = fogRange.start;
+    this.fogTargetEnd = fogRange.end;
+    this.fogCurrentEnd = fogRange.end;
+  }
+
+  private renderDistanceFogRange(start: number, end: number): { start: number; end: number } {
+    const safeEnd = Number.isFinite(end) && end > 0 ? end : 1;
+    const safeStart = Number.isFinite(start) && start >= 0
+      ? start
+      : Math.max(0, safeEnd - 1);
+    return {
+      start: Math.min(safeStart, Math.max(0, safeEnd - 1)),
+      end: safeEnd,
+    };
   }
 
   private async loadBiomes(mapId: string): Promise<void> {
@@ -2862,8 +2884,9 @@ export class GameManager {
       }
     }
     this.fogTargetColor.set(targetColor[0], targetColor[1], targetColor[2]);
-    this.fogTargetStart = targetStart;
-    this.fogTargetEnd = targetEnd;
+    const fogRange = this.renderDistanceFogRange(targetStart, targetEnd);
+    this.fogTargetStart = fogRange.start;
+    this.fogTargetEnd = fogRange.end;
 
     // Exponential approach. With per-tile biome cells the player crosses biome
     // boundaries frequently, so transitions are slowed to feel ambient instead
@@ -11329,7 +11352,7 @@ export class GameManager {
     if (now - this.lastNpcMaterializationRetryMs < NPC_MATERIALIZATION_RETRY_MS) return;
     this.lastNpcMaterializationRetryMs = now;
 
-    const dematerializeDistance = NPC_3D_LOD_DISTANCE + NPC_LOD_HYSTERESIS_TILES;
+    const dematerializeDistance = this.syncNpcVisibleRenderDistance() + NPC_LOD_HYSTERESIS_TILES;
     for (const [entityId, sprite] of this.entities.npcSprites) {
       if (!(sprite instanceof CharacterEntity)) continue;
       const target = this.entities.npcTargets.get(entityId);
@@ -11350,19 +11373,28 @@ export class GameManager {
   }
 
   private getEntityRenderDistanceTiles(): number {
+    return this.getEntityVisibleDistanceTiles() + ENTITY_RENDER_PADDING_TILES;
+  }
+
+  private getEntityVisibleDistanceTiles(): number {
     const metaFogEnd = this.chunkManager.getMeta()?.fogEnd ?? 50;
     const fogEnd = Number.isFinite(this.scene.fogEnd) && this.scene.fogEnd > 0
       ? this.scene.fogEnd
       : metaFogEnd;
-    const cameraMaxZ = this.scene.activeCamera?.maxZ ?? Number.POSITIVE_INFINITY;
-    const limitingDistance = Math.min(fogEnd, cameraMaxZ);
+    const limitingDistance = Math.min(fogEnd, this.renderDistanceViewDistanceTiles);
     const baseDistance = Number.isFinite(limitingDistance) ? limitingDistance : fogEnd;
-    return Math.max(NPC_3D_LOD_DISTANCE + NPC_LOD_HYSTERESIS_TILES, baseDistance + ENTITY_RENDER_PADDING_TILES);
+    return Math.max(NPC_3D_LOD_DISTANCE, baseDistance);
+  }
+
+  private syncNpcVisibleRenderDistance(): number {
+    const distance = this.getEntityVisibleDistanceTiles();
+    this.entities.setNpcVisibleRenderDistanceTiles(distance);
+    return distance;
   }
 
   private updateEntityRenderVisibility(): void {
     if (!this.entities) return;
-    const enableDist = this.getEntityRenderDistanceTiles();
+    const enableDist = this.syncNpcVisibleRenderDistance();
     const disableDist = enableDist + ENTITY_RENDER_HYSTERESIS_TILES;
 
     for (const [entityId, sprite] of this.entities.remotePlayers) {
@@ -11853,6 +11885,7 @@ export class GameManager {
       if (this.localPlayer) {
         this._tempVec.set(this.playerX, this.localPlayer.position.y, this.playerZ);
         const followResult = this.camera.followTarget(this._tempVec, dt, true);
+        this.updateRenderDistanceClipPlane();
         this.maybeReportCameraSnap(followResult);
       }
     });

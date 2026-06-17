@@ -1,52 +1,37 @@
-import { CHUNK_LOAD_RADIUS } from '@projectrs/shared';
-
-export type RenderDistanceValue = 'low' | 'medium' | 'max';
+export type RenderDistanceValue = 'low';
 
 export interface RenderDistanceOption {
   value: RenderDistanceValue;
   label: string;
   description: string;
+  viewDistanceTiles: number;
   cameraMaxZ: number;
   chunkRadius: number;
 }
 
 const STORAGE_KEY = 'projectrs_render_distance';
-const DEFAULT_CAMERA_MAX_Z = 60;
 
 export const RENDER_DISTANCE_OPTIONS: readonly RenderDistanceOption[] = [
   {
     value: 'low',
     label: 'Low',
-    description: 'Shorter world view and fewer streamed chunks.',
+    description: 'Short player-centered world view.',
+    viewDistanceTiles: 21,
     cameraMaxZ: 38,
-    chunkRadius: 1,
-  },
-  {
-    value: 'medium',
-    label: 'Med',
-    description: 'Balanced world view and chunk streaming.',
-    cameraMaxZ: 50,
-    chunkRadius: 1,
-  },
-  {
-    value: 'max',
-    label: 'Max',
-    description: 'Current maximum world view.',
-    cameraMaxZ: DEFAULT_CAMERA_MAX_Z,
-    chunkRadius: CHUNK_LOAD_RADIUS,
+    chunkRadius: 2,
   },
 ];
 
-let activeValue: RenderDistanceValue = 'max';
+let activeValue: RenderDistanceValue = 'low';
 let installed = false;
 
-export function normalizeRenderDistanceValue(value: unknown): RenderDistanceValue {
-  return value === 'low' || value === 'medium' || value === 'max' ? value : 'max';
+export function normalizeRenderDistanceValue(_value: unknown): RenderDistanceValue {
+  return 'low';
 }
 
 export function renderDistanceOptionFor(value: RenderDistanceValue): RenderDistanceOption {
   return RENDER_DISTANCE_OPTIONS.find(option => option.value === normalizeRenderDistanceValue(value))
-    ?? RENDER_DISTANCE_OPTIONS[RENDER_DISTANCE_OPTIONS.length - 1];
+    ?? RENDER_DISTANCE_OPTIONS[0];
 }
 
 export function getRenderDistance(): RenderDistanceValue {
@@ -68,6 +53,7 @@ export function applyRenderDistance(): void {
     window.dispatchEvent(new CustomEvent('evilquest:renderdistancechange', {
       detail: {
         value,
+        viewDistanceTiles: option.viewDistanceTiles,
         cameraMaxZ: option.cameraMaxZ,
         chunkRadius: option.chunkRadius,
       },

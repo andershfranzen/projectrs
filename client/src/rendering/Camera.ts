@@ -387,6 +387,13 @@ export class GameCamera {
     }
   }
 
+  clipDistanceForTargetPlaneDistance(distance: number): number {
+    if (!Number.isFinite(distance) || distance <= 0) return this.camera.maxZ;
+    const horizontalOffset = Math.max(0, this.camera.radius * Math.sin(this.camera.beta));
+    const verticalOffset = Math.abs(this.camera.radius * Math.cos(this.camera.beta));
+    return Math.hypot(horizontalOffset + distance, verticalOffset);
+  }
+
   rotate(deltaAlpha: number, deltaBeta: number = 0): void {
     if (deltaAlpha !== 0) this.targetAlpha = null;
     this.camera.alpha += deltaAlpha;

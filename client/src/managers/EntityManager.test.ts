@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
-import type { ItemDef } from '@projectrs/shared';
+import { NPC_3D_LOD_DISTANCE, type ItemDef } from '@projectrs/shared';
 import { EntityManager } from './EntityManager';
 
 function makeFakeNpcSprite(x: number, z: number): any {
@@ -18,6 +18,17 @@ function makeFakeNpcSprite(x: number, z: number): any {
 }
 
 describe('EntityManager NPC interpolation', () => {
+  test('uses the active visible range for humanoid NPC materialization', () => {
+    const manager = Object.create(EntityManager.prototype) as EntityManager;
+    expect(manager.shouldRender3DNpc(1, NPC_3D_LOD_DISTANCE + 1, 0, 0, 0)).toBe(false);
+
+    const visibleDistance = NPC_3D_LOD_DISTANCE + 20;
+    manager.setNpcVisibleRenderDistanceTiles(visibleDistance);
+
+    expect(manager.shouldRender3DNpc(1, visibleDistance - 1, 0, 0, 0)).toBe(true);
+    expect(manager.shouldRender3DNpc(1, visibleDistance + 1, 0, 0, 0)).toBe(false);
+  });
+
   test('fresh final NPC steps use normal one-tile-per-tick speed', () => {
     const manager = Object.create(EntityManager.prototype) as EntityManager;
     const sprite = makeFakeNpcSprite(10.5, 10.5);

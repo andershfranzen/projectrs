@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { CHUNK_LOAD_RADIUS } from '@projectrs/shared';
 import {
   RENDER_DISTANCE_OPTIONS,
   normalizeRenderDistanceValue,
@@ -21,22 +20,23 @@ afterEach(() => {
   if (originalCustomEvent) Object.defineProperty(globalThis, 'CustomEvent', originalCustomEvent);
   else Reflect.deleteProperty(globalThis, 'CustomEvent');
 
-  setRenderDistance('max');
+  setRenderDistance('low');
 });
 
 describe('render distance settings', () => {
-  test('keeps the current render distance as Max', () => {
-    const max = renderDistanceOptionFor('max');
-    expect(max.cameraMaxZ).toBe(60);
-    expect(max.chunkRadius).toBe(CHUNK_LOAD_RADIUS);
-    expect(RENDER_DISTANCE_OPTIONS.map(option => option.value)).toEqual(['low', 'medium', 'max']);
+  test('uses Low as the only render distance', () => {
+    const low = renderDistanceOptionFor('low');
+    expect(low.viewDistanceTiles).toBe(21);
+    expect(low.cameraMaxZ).toBe(38);
+    expect(low.chunkRadius).toBe(2);
+    expect(RENDER_DISTANCE_OPTIONS.map(option => option.value)).toEqual(['low']);
   });
 
-  test('defaults invalid persisted values to Max', () => {
+  test('defaults invalid and legacy persisted values to Low', () => {
     expect(normalizeRenderDistanceValue('low')).toBe('low');
-    expect(normalizeRenderDistanceValue('medium')).toBe('medium');
-    expect(normalizeRenderDistanceValue('max')).toBe('max');
-    expect(normalizeRenderDistanceValue('wide-open')).toBe('max');
+    expect(normalizeRenderDistanceValue('medium')).toBe('low');
+    expect(normalizeRenderDistanceValue('max')).toBe('low');
+    expect(normalizeRenderDistanceValue('wide-open')).toBe('low');
   });
 
   test('persists the selected value and broadcasts runtime details', () => {
@@ -77,8 +77,9 @@ describe('render distance settings', () => {
     expect(events[0].type).toBe('evilquest:renderdistancechange');
     expect(events[0].detail).toEqual({
       value: 'low',
+      viewDistanceTiles: 21,
       cameraMaxZ: 38,
-      chunkRadius: 1,
+      chunkRadius: 2,
     });
   });
 });

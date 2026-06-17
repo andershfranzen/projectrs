@@ -66,6 +66,7 @@ export class EntityManager {
   private getHeight: (x: number, z: number, floor?: number, currentY?: number) => number;
   private itemDefsCache: Map<number, ItemDef>;
   private npcDefsCache: Map<number, NpcDef>;
+  private npcVisibleRenderDistanceTiles: number = NPC_3D_LOD_DISTANCE;
 
   // Remote players — 3D CharacterEntities. Equipment is loaded by GameManager
   // on PLAYER_REMOTE_EQUIPMENT (cached in remoteEquipment until the entity is
@@ -181,13 +182,25 @@ export class EntityManager {
     return character;
   }
 
+  setNpcVisibleRenderDistanceTiles(distance: number): void {
+    if (!Number.isFinite(distance) || distance <= 0) return;
+    this.npcVisibleRenderDistanceTiles = Math.max(NPC_3D_LOD_DISTANCE, distance);
+  }
+
+  private getNpcVisibleRenderDistanceTiles(): number {
+    const distance = this.npcVisibleRenderDistanceTiles;
+    return Number.isFinite(distance) && distance > 0
+      ? Math.max(NPC_3D_LOD_DISTANCE, distance)
+      : NPC_3D_LOD_DISTANCE;
+  }
+
   /** Humanoid NPC visibility gate. These NPCs have no sprite fallback: when
    *  this returns false, they are literally invisible. Keep the mobile budget
-   *  out of the authoring/debug path and gate only by distance. */
+   *  out of the authoring/debug path and gate by the active visible range. */
   shouldRender3DNpc(_entityId: number, npcX: number, npcZ: number, playerX: number, playerZ: number): boolean {
     const dx = npcX - playerX;
     const dz = npcZ - playerZ;
-    if (Math.max(Math.abs(dx), Math.abs(dz)) > NPC_3D_LOD_DISTANCE) return false;
+    if (Math.max(Math.abs(dx), Math.abs(dz)) > this.getNpcVisibleRenderDistanceTiles()) return false;
     return true;
   }
 
@@ -876,8 +889,7 @@ export class EntityManager {
 
   private static readonly SERVER_TICK_MS = 600;
   private static readonly NPC_TILES_PER_SEC = 1000 / EntityManager.SERVER_TICK_MS;
-  private static readonly NPC_ANIMATION_LOD_ENABLE_DISTANCE = NPC_3D_LOD_DISTANCE + 2;
-  private static readonly NPC_ANIMATION_LOD_DISABLE_DISTANCE = NPC_3D_LOD_DISTANCE + 4;
+  private static readonly NPC_ANIMATION_LOD_HYSTERESIS_TILES = 4;
 
   interpolateNpcs(dt: number, camPos: Vector3 | null, localPlayerId: number, localPlayerPos: Vector3 | null): void {
     const now = performance.now();
@@ -896,9 +908,10 @@ export class EntityManager {
         const playerDx = target.x - localPlayerPos.x;
         const playerDz = target.z - localPlayerPos.z;
         const dist = Math.max(Math.abs(playerDx), Math.abs(playerDz));
+        const animationDistance = this.getNpcVisibleRenderDistanceTiles();
         const threshold = sprite.isAnimationEnabled()
-          ? EntityManager.NPC_ANIMATION_LOD_DISABLE_DISTANCE
-          : EntityManager.NPC_ANIMATION_LOD_ENABLE_DISTANCE;
+          ? animationDistance + EntityManager.NPC_ANIMATION_LOD_HYSTERESIS_TILES
+          : animationDistance;
         sprite.setAnimationEnabled(dist <= threshold);
       }
 

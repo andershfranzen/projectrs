@@ -41,8 +41,10 @@ const HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS = 220;
 // multi-minute chain. 6 keeps within HTTP/1.1's per-origin cap while letting
 // the browser overlap downloads.
 const OBJECT_GLB_LOAD_CONCURRENCY = 6;
-const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 1.25;
+const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 0.5;
 const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
+const TERRAIN_VISIBILITY_BUCKET_TILES = 2;
+const MIN_TERRAIN_STREAM_CHUNK_RADIUS = 2;
 const ROOF_REVEAL_CONNECTED_TILE_LIMIT = 2048;
 const ROOF_REVEAL_LAYER_HEIGHT_TOLERANCE = 1.25;
 const ROOF_REVEAL_NEARBY_TILE_PADDING = 2;
@@ -379,6 +381,8 @@ export class ChunkManager {
   private chunks: Map<string, ChunkMeshes> = new Map();
   private lastChunkX: number = -999;
   private lastChunkZ: number = -999;
+  private lastTerrainBucketX: number = -999;
+  private lastTerrainBucketZ: number = -999;
   private lastRenderDistanceBucket: number = -999;
   private lastObjectBucketX: number = -999;
   private lastObjectBucketZ: number = -999;
@@ -407,6 +411,7 @@ export class ChunkManager {
   private desiredGameChunks: Set<string> = new Set();
   private residentGameChunks: Set<string> = new Set();
   private renderDistanceChunkRadius = CHUNK_LOAD_RADIUS;
+  private renderDistanceTiles = CHUNK_SIZE;
   private desiredObjectChunks: Set<string> = new Set();
   private objectLoadChunks: Set<string> = new Set();
   private chunkCacheTick: number = 0;
@@ -656,11 +661,14 @@ export class ChunkManager {
   }
 
   setRenderDistanceChunkRadius(radius: number): void {
-    const next = Math.min(CHUNK_LOAD_RADIUS, Math.max(1, Math.round(radius)));
+    const maxClientRadius = Math.max(CHUNK_LOAD_RADIUS, MIN_TERRAIN_STREAM_CHUNK_RADIUS);
+    const next = Math.min(maxClientRadius, Math.max(1, Math.round(radius)));
     if (this.renderDistanceChunkRadius === next) return;
     this.renderDistanceChunkRadius = next;
     this.lastChunkX = -999;
     this.lastChunkZ = -999;
+    this.lastTerrainBucketX = -999;
+    this.lastTerrainBucketZ = -999;
     this.lastObjectBucketX = -999;
     this.lastObjectBucketZ = -999;
     this.lastObjectDistanceBucket = -999;
@@ -668,6 +676,17 @@ export class ChunkManager {
 
   getRenderDistanceChunkRadius(): number {
     return this.renderDistanceChunkRadius;
+  }
+
+  setRenderDistanceTiles(distance: number): void {
+    if (!Number.isFinite(distance) || distance <= 0) return;
+    const next = Math.max(CHUNK_MIN_RENDER_DISTANCE_TILES, distance);
+    if (Math.abs(this.renderDistanceTiles - next) < 0.001) return;
+    this.renderDistanceTiles = next;
+    this.lastRenderDistanceBucket = -999;
+    this.lastObjectBucketX = -999;
+    this.lastObjectBucketZ = -999;
+    this.lastObjectDistanceBucket = -999;
   }
 
   private getTerrainChunkCacheRadius(): number {
@@ -683,8 +702,7 @@ export class ChunkManager {
     const sceneFogEnd = Number.isFinite(this.scene.fogEnd) && this.scene.fogEnd > 0
       ? this.scene.fogEnd
       : metaFogEnd;
-    const cameraMaxZ = this.scene.activeCamera?.maxZ ?? Number.POSITIVE_INFINITY;
-    const limitingDistance = Math.min(sceneFogEnd, cameraMaxZ);
+    const limitingDistance = Math.min(sceneFogEnd, this.renderDistanceTiles);
     const baseDistance = Number.isFinite(limitingDistance) ? limitingDistance : sceneFogEnd;
     return Math.max(CHUNK_MIN_RENDER_DISTANCE_TILES, baseDistance + paddingTiles);
   }
@@ -1140,6 +1158,8 @@ export class ChunkManager {
     this.loaded = true;
     this.lastChunkX = -999;
     this.lastChunkZ = -999;
+    this.lastTerrainBucketX = -999;
+    this.lastTerrainBucketZ = -999;
     this.lastRenderDistanceBucket = -999;
     if (import.meta.env.DEV) console.log(`[ChunkManager] Loaded map '${mapId}': ${this.mapWidth}x${this.mapHeight}, tiles: ${this.mapData?.tiles?.length}, heights: ${this.mapData?.heights?.length}, waterLevel: ${this.mapData?.waterLevel}`);
   }
@@ -1436,11 +1456,15 @@ export class ChunkManager {
     this.chunkCacheTick++;
     const cx = Math.floor(playerX / CHUNK_SIZE);
     const cz = Math.floor(playerZ / CHUNK_SIZE);
+    const terrainBucketX = Math.floor(playerX / TERRAIN_VISIBILITY_BUCKET_TILES);
+    const terrainBucketZ = Math.floor(playerZ / TERRAIN_VISIBILITY_BUCKET_TILES);
     const renderDistance = this.getRenderDistanceTiles();
     const renderDistanceBucket = this.getRenderDistanceBucket(renderDistance);
     if (
       cx === this.lastChunkX &&
       cz === this.lastChunkZ &&
+      terrainBucketX === this.lastTerrainBucketX &&
+      terrainBucketZ === this.lastTerrainBucketZ &&
       renderDistanceBucket === this.lastRenderDistanceBucket
     ) {
       const objectChanged = this.updateObjectChunkVisibility(playerX, playerZ, cx, cz);
@@ -1452,6 +1476,8 @@ export class ChunkManager {
     }
     this.lastChunkX = cx;
     this.lastChunkZ = cz;
+    this.lastTerrainBucketX = terrainBucketX;
+    this.lastTerrainBucketZ = terrainBucketZ;
     this.lastRenderDistanceBucket = renderDistanceBucket;
 
     // `resident` = stable local scene window whose tile/height data and meshes
@@ -1572,6 +1598,8 @@ export class ChunkManager {
   forceRefreshPlayerPosition(playerX: number, playerZ: number): boolean {
     this.lastChunkX = -999;
     this.lastChunkZ = -999;
+    this.lastTerrainBucketX = -999;
+    this.lastTerrainBucketZ = -999;
     this.lastObjectBucketX = -999;
     this.lastObjectBucketZ = -999;
     this.lastObjectDistanceBucket = -999;
@@ -6820,6 +6848,14 @@ export class ChunkManager {
     this.editorChunkApplyTail = Promise.resolve();
     this.lastVisibleGameChunkBuildAt = 0;
     this.lastHiddenGameChunkBuildAt = 0;
+    this.lastChunkX = -999;
+    this.lastChunkZ = -999;
+    this.lastTerrainBucketX = -999;
+    this.lastTerrainBucketZ = -999;
+    this.lastRenderDistanceBucket = -999;
+    this.lastObjectBucketX = -999;
+    this.lastObjectBucketZ = -999;
+    this.lastObjectDistanceBucket = -999;
     this.lastUpdateTerrainChanged = false;
     this.lastUpdateObjectsChanged = false;
     this.loaded = false;
