@@ -81,27 +81,37 @@ describe('hiscores exclusions', () => {
     const db = new GameDatabase(':memory:');
     try {
       const banned = db.loginFallbackAccount('BannedMiner');
+      const ipBanned = db.loginFallbackAccount('IpBannedMiner');
       const visible = db.loginFallbackAccount('VisibleMiner');
       db.savePlayerState(banned.accountId, playerWithSkills(miningSkills(80)), 0);
+      db.savePlayerState(ipBanned.accountId, playerWithSkills(miningSkills(70)), 0);
       db.savePlayerState(visible.accountId, playerWithSkills(miningSkills(20)), 0);
       for (let i = 0; i < 12; i++) db.recordMobKill(banned.accountId, 100);
+      for (let i = 0; i < 10; i++) db.recordMobKill(ipBanned.accountId, 100);
       for (let i = 0; i < 2; i++) db.recordMobKill(visible.accountId, 100);
+      db.recordLogin(ipBanned.accountId, '203.0.113.77');
       db.banAccount(banned.accountId, 'botting', 'test-admin', Math.floor(Date.now() / 1000) + 3600);
+      db.banIp('203.0.113.77', 'bot network', 'test-admin', Math.floor(Date.now() / 1000) + 3600);
 
       const mining = db.getHiscores('mining');
       expect(mining.rows.map((row) => row.username.toLowerCase())).not.toContain('bannedminer');
+      expect(mining.rows.map((row) => row.username.toLowerCase())).not.toContain('ipbannedminer');
       expect(mining.rows[0]?.username).toBe('visibleminer');
 
       const search = db.getHiscores('overall', 25, 1, 'BannedMiner');
       expect(search.rows).toHaveLength(0);
       expect(db.getHiscoreProfile('BannedMiner')).toBeNull();
+      expect(db.getHiscores('overall', 25, 1, 'IpBannedMiner').rows).toHaveLength(0);
+      expect(db.getHiscoreProfile('IpBannedMiner')).toBeNull();
 
       const vampire = db.getMobKillHiscores(100, 25, 1, '', [{ id: 100, name: 'Vampire' }]);
       expect(vampire.rows.map((row) => row.username.toLowerCase())).not.toContain('bannedminer');
+      expect(vampire.rows.map((row) => row.username.toLowerCase())).not.toContain('ipbannedminer');
       expect(vampire.rows.map((row) => [row.rank, row.username, row.kills])).toEqual([[1, 'visibleminer', 2]]);
 
       const killSearch = db.getMobKillHiscores(100, 25, 1, 'BannedMiner', [{ id: 100, name: 'Vampire' }]);
       expect(killSearch.rows).toHaveLength(0);
+      expect(db.getMobKillHiscores(100, 25, 1, 'IpBannedMiner', [{ id: 100, name: 'Vampire' }]).rows).toHaveLength(0);
     } finally {
       db.close();
     }

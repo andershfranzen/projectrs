@@ -71,6 +71,22 @@ const SHARED_IP_PUBLIC_FILTER_SQL = `
   AND lower(ip_address) NOT LIKE 'fc%'
   AND lower(ip_address) NOT LIKE 'fd%'
 `;
+// ponytail: per-row latest-IP lookup is fine for current hiscore size; denormalize latest_ip if this turns hot.
+const HISCORE_VISIBLE_ACCOUNT_SQL = `
+  ab.account_id IS NULL
+  AND COALESCE((
+    SELECT 1
+    FROM ip_bans ib
+    WHERE ib.ip_address = (
+      SELECT lh.ip_address
+      FROM login_history lh
+      WHERE lh.account_id = a.id
+      ORDER BY lh.login_ts DESC, lh.id DESC
+      LIMIT 1
+    )
+    AND (ib.expires_at IS NULL OR ib.expires_at > unixepoch())
+  ), 0) = 0
+`;
 
 function vpnLikePtrReason(reverseDns: string): string | null {
   const tokens = new Set(reverseDns.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
@@ -2912,7 +2928,7 @@ export class GameDatabase {
       LEFT JOIN account_bans ab
         ON ab.account_id = a.id
        AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
-      WHERE ab.account_id IS NULL
+      WHERE ${HISCORE_VISIBLE_ACCOUNT_SQL}
         ${adminFilter}
     `).all() as Array<{ account_id: number; username: string; is_admin: number; is_moderator: number; skills: string }>;
 
@@ -2963,7 +2979,7 @@ export class GameDatabase {
       LEFT JOIN account_bans ab
         ON ab.account_id = a.id
        AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
-      WHERE hs.category = ? AND ab.account_id IS NULL AND a.is_admin = 0
+      WHERE hs.category = ? AND ${HISCORE_VISIBLE_ACCOUNT_SQL} AND a.is_admin = 0
     `).all(categoryId, cutoff, categoryId) as Array<{ account_id: number; username: string; level: number; xp: number }>;
 
     const ranks = new Map<number, number>();
@@ -2999,7 +3015,7 @@ export class GameDatabase {
       LEFT JOIN account_bans ab
         ON ab.account_id = a.id
        AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
-      WHERE mk.npc_def_id = ? AND mk.kills > 0 AND ab.account_id IS NULL AND a.is_admin = 0
+      WHERE mk.npc_def_id = ? AND mk.kills > 0 AND ${HISCORE_VISIBLE_ACCOUNT_SQL} AND a.is_admin = 0
     `).all(npcDefId) as Array<{ account_id: number; username: string; kills: number }>;
 
     const rank = rows
@@ -3470,8 +3486,8 @@ export class GameDatabase {
    *  supplied by the caller from the NPC defs; the response echoes it so the
    *  client can build its mob picker from one request. When `npcDefId` is null
    *  or not a known mob, falls back to the first mob in the (name-sorted) list.
-   *  Reuses the same ban + excluded-username filtering as the skill hiscores so
-   *  test/banned accounts never leak into public rankings. */
+   *  Reuses the same account/IP-ban + excluded-username filtering as the skill
+   *  hiscores so test/banned accounts never leak into public rankings. */
   getMobKillHiscores(
     npcDefId: number | null,
     limit: number = 25,
@@ -3498,7 +3514,7 @@ export class GameDatabase {
       LEFT JOIN account_bans ab
         ON ab.account_id = a.id
        AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
-      WHERE mk.npc_def_id = ? AND ab.account_id IS NULL AND a.is_admin = 0 AND mk.kills > 0
+      WHERE mk.npc_def_id = ? AND ${HISCORE_VISIBLE_ACCOUNT_SQL} AND a.is_admin = 0 AND mk.kills > 0
     `).all(effectiveId) as Array<{ username: string; is_moderator: number; kills: number }>;
 
     const ranked = rows
