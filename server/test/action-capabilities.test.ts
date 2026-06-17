@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ACTION_CAPABILITY_RESERVED_FLAG, ActionCapabilityKind, decodeStringPacket } from '@projectrs/shared';
+import { ActionCapabilityKind, decodeStringPacket } from '@projectrs/shared';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { WorldObject } from '../src/entity/WorldObject';
@@ -12,6 +12,7 @@ const fakeWs = {
 function makeWorld(): any {
   const world = Object.create(World.prototype) as any;
   world.currentTick = 100;
+  world.players = new Map();
   world.npcs = new Map();
   world.worldObjects = new Map();
   world.groundItems = new Map();
@@ -21,7 +22,7 @@ function makeWorld(): any {
 }
 
 describe('action capabilities', () => {
-  test('reserved capability shadows the primary visible object action', () => {
+  test('reserved capability is not labeled in the public wire packet', () => {
     const world = makeWorld();
     const player = new Player('tester', 0, 0, fakeWs, 1);
     const obj = new WorldObject({
@@ -42,15 +43,24 @@ describe('action capabilities', () => {
     const caps = JSON.parse(str);
     const firstReserved = caps[0];
     const lastReserved = caps.at(-1);
-    const expectedTarget = [
+    expect(firstReserved[5]).toBe(0);
+    expect(lastReserved[5]).toBe(0);
+    expect(firstReserved[1]).not.toBe(obj.id);
+    expect(lastReserved[1]).not.toBe(obj.id);
+    expect(player.consumeReservedActionCapability(firstReserved[3], firstReserved[4], world.currentTick)).toBe(true);
+    expect(player.consumeReservedActionCapability(lastReserved[3], lastReserved[4], world.currentTick)).toBe(true);
+
+    const visibleObjectCap = caps.find((cap: number[]) => cap[0] === ActionCapabilityKind.WorldObject && cap[1] === obj.id && cap[2] === 0);
+    expect(visibleObjectCap).toBeTruthy();
+    if (!visibleObjectCap) throw new Error('missing visible object capability');
+    expect(visibleObjectCap?.[5]).toBe(0);
+    expect(player.consumeActionCapability(
+      visibleObjectCap[3],
+      visibleObjectCap[4],
       ActionCapabilityKind.WorldObject,
       obj.id,
       0,
-    ];
-    expect(firstReserved.slice(0, 3)).toEqual(expectedTarget);
-    expect(lastReserved.slice(0, 3)).toEqual(expectedTarget);
-    expect(firstReserved[5]).toBe(ACTION_CAPABILITY_RESERVED_FLAG);
-    expect(lastReserved[5]).toBe(ACTION_CAPABILITY_RESERVED_FLAG);
-    expect(caps.some((cap: number[]) => cap[1] === obj.id && cap[2] === 0 && cap[5] === 0)).toBe(true);
+      world.currentTick,
+    )).toBe('ok');
   });
 });

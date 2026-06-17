@@ -1103,7 +1103,7 @@ function hasLegacyBotRiskReasons(reasons: string[]): boolean {
 function hardInvalidPacketCount(reasons: Record<string, number>): number {
   let total = 0;
   for (const [reason, count] of Object.entries(reasons)) {
-    if (reason.startsWith('rate-limit:')
+    if (reason === 'rate-limit:socket'
       || reason === 'malformed-frame'
       || reason === 'unknown-opcode'
       || reason === 'bad-move-path-length'

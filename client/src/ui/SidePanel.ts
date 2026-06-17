@@ -243,7 +243,7 @@ export class SidePanel {
   private bankDepositCallback: ((slot: number, itemId: number, quantity: number) => void) | null = null;
   private requestQuantity: QuantityInputRequester | null = null;
   private privateMessageTargetCallback: ((username: string) => void) | null = null;
-  private adminItemDeletionEnabled: boolean = false;
+  private privilegedItemDeletionEnabled: boolean = false;
 
   // Social state
   private friends: SocialClientEntry[] = [];
@@ -760,7 +760,7 @@ export class SidePanel {
     }
   }
 
-  setAdminControls(enabled: boolean, onOpen: () => void): void {
+  setToolsControls(enabled: boolean, onOpen: () => void): void {
     if (!this.accountActionsRow || !this.logoutButton) return;
     if (!enabled) {
       this.adminButton?.remove();
@@ -772,8 +772,8 @@ export class SidePanel {
     if (!this.adminButton) {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'eq-action-button side-action-button side-admin-button';
-      button.textContent = 'Admin';
+      button.className = 'eq-action-button side-action-button side-tools-button';
+      button.textContent = 'Tools';
       button.style.cssText = `
         background: rgba(50,45,90,0.52);
         border: 1px solid rgba(120,110,190,0.45);
@@ -794,8 +794,8 @@ export class SidePanel {
     this.accountActionsRow.style.width = '';
   }
 
-  setAdminItemDeletionEnabled(enabled: boolean): void {
-    this.adminItemDeletionEnabled = enabled;
+  setPrivilegedItemDeletionEnabled(enabled: boolean): void {
+    this.privilegedItemDeletionEnabled = enabled;
   }
 
   private buildUI(): HTMLDivElement {
@@ -1153,8 +1153,8 @@ export class SidePanel {
     panel.appendChild(contentArea);
     panel.appendChild(bottomTabs);
 
-    // Account actions float over the minimap. Admin is inserted only after the
-    // server sends the admin flag for this session.
+    // Account actions float over the minimap. Staff tools are inserted only
+    // after the server marks this session as eligible.
     const accountActions = document.createElement('div');
     accountActions.className = 'side-account-actions';
     this.accountActionsRow = accountActions;
@@ -4143,7 +4143,7 @@ export class SidePanel {
       label: `Drop ${name}`,
       action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index, slot.itemId)),
     });
-    if (this.adminItemDeletionEnabled) {
+    if (this.privilegedItemDeletionEnabled) {
       options.push({
         label: `Delete ${name}`,
         action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DELETE_ITEM, index, slot.itemId)),

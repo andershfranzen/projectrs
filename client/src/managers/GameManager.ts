@@ -65,7 +65,7 @@ import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, ActionCapabilityKind, ACTION_CAPABILITY_RESERVED_FLAG, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, collectCompressedRouteTileKeys, compressedPathTileSteps, compressedPathTileStepsFromIndex, compressedRouteProgressSteps, compressedRouteSegmentIndexForTile, compressedRouteStepIndexForTile, getActiveMovementStep, normalizeMovementRouteForActiveStep, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, movementModeFromIndex, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode, type ActionCapabilityWire, type ActionCapabilityProof } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, ActionCapabilityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, collectCompressedRouteTileKeys, compressedPathTileSteps, compressedPathTileStepsFromIndex, compressedRouteProgressSteps, compressedRouteSegmentIndexForTile, compressedRouteStepIndexForTile, getActiveMovementStep, normalizeMovementRouteForActiveStep, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, movementModeFromIndex, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode, type ActionCapabilityWire, type ActionCapabilityProof } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -811,7 +811,7 @@ export class GameManager {
   private currentDuelPartnerName: string = '';
   private currentDuelOpponentEntityId: number = -1;
   private duelActive = false;
-  private adminPanel: import('../ui/AdminPanel').AdminPanel | null = null;
+  private m0Surface: import('../ui/m0').M0 | null = null;
 
   // Spell effect runtime. Catalogue is lazy-loaded from /api/spells on first /spell command.
   // spellsByIndex mirrors the server's alphabetical order so binary protocol
@@ -1044,7 +1044,7 @@ export class GameManager {
     // HUD
     this.createHUD();
     this.sidePanel = new SidePanel(this.network, this.token);
-    this.sidePanel.setAdminItemDeletionEnabled(this.isAdmin);
+    this.sidePanel.setPrivilegedItemDeletionEnabled(this.isAdmin);
     this.sidePanel.setSpellCastCallback((spellIndex) => this.sidePanel!.setTargetingSpell(spellIndex));
     this.sidePanel.setAutocastChangeCallback((spellIndex) => this.handleAutocastChange(spellIndex));
     this.sidePanel.setRenderQualityControls(this.renderQualityMode, (mode) => this.setRenderQualityMode(mode, true));
@@ -1088,7 +1088,7 @@ export class GameManager {
     });
     this.smithingPanel = new SmithingPanel();
     this.bankPanel = new BankPanel(this.network, { requestQuantity });
-    this.bankPanel.setAdminItemDeletionEnabled(this.isAdmin);
+    this.bankPanel.setPrivilegedItemDeletionEnabled(this.isAdmin);
     this.tradePanel = new TradePanel(this.network, {
       onClose: () => this.sidePanel?.setTradeOfferCallback(null),
       requestQuantity,
@@ -4585,7 +4585,7 @@ export class GameManager {
     this.actionCapabilities.clear();
     for (const cap of caps) {
       const [kind, targetEntityId, actionIndex, id, code, flags] = cap;
-      if ((flags & ACTION_CAPABILITY_RESERVED_FLAG) !== 0) continue;
+      if ((flags & 1) !== 0) continue;
       if (
         kind !== ActionCapabilityKind.Npc
         && kind !== ActionCapabilityKind.WorldObject
@@ -6644,13 +6644,13 @@ export class GameManager {
     }
 
     const button = document.createElement('button');
-    button.id = 'mobile-admin-button';
+    button.id = 'mobile-tools-button';
     button.type = 'button';
-    button.textContent = 'Admin';
-    button.title = 'Admin';
+    button.textContent = 'Tools';
+    button.title = 'Tools';
     button.addEventListener('click', (event) => {
       event.preventDefault();
-      void this.openAdminPanel();
+      void this.openM0Surface();
     });
 
     frame.appendChild(button);
@@ -6662,33 +6662,33 @@ export class GameManager {
       this.inputManager.setTeleportClickHandler((worldX, worldZ) => {
         this.network.sendChat(`/tp ${worldX.toFixed(1)} ${worldZ.toFixed(1)}`);
       });
-      this.sidePanel?.setAdminControls(false, () => {});
-      this.sidePanel?.setAdminItemDeletionEnabled(true);
-      this.bankPanel?.setAdminItemDeletionEnabled(true);
-      this.chatPanel?.setAdminControls(true, () => void this.openAdminPanel());
+      this.sidePanel?.setToolsControls(false, () => {});
+      this.sidePanel?.setPrivilegedItemDeletionEnabled(true);
+      this.bankPanel?.setPrivilegedItemDeletionEnabled(true);
+      this.chatPanel?.setToolsControls(true, () => void this.openM0Surface());
       this.mobileAdminButton?.remove();
       this.mobileAdminButton = null;
       return;
     }
 
     this.inputManager.setTeleportClickHandler(null);
-    this.sidePanel?.setAdminControls(false, () => {});
-    this.sidePanel?.setAdminItemDeletionEnabled(false);
-    this.bankPanel?.setAdminItemDeletionEnabled(false);
-    this.chatPanel?.setAdminControls(false, () => {});
+    this.sidePanel?.setToolsControls(false, () => {});
+    this.sidePanel?.setPrivilegedItemDeletionEnabled(false);
+    this.bankPanel?.setPrivilegedItemDeletionEnabled(false);
+    this.chatPanel?.setToolsControls(false, () => {});
     this.mobileAdminButton?.remove();
     this.mobileAdminButton = null;
-    this.adminPanel?.hide();
+    this.m0Surface?.hide();
   }
 
-  private async openAdminPanel(): Promise<void> {
+  private async openM0Surface(): Promise<void> {
     if (!this.isAdmin) return;
-    if (!this.adminPanel) {
-      const { AdminPanel } = await import('../ui/AdminPanel');
+    if (!this.m0Surface) {
+      const { M0 } = await import('../ui/m0');
       if (!this.isAdmin || this.destroyed) return;
-      this.adminPanel = new AdminPanel(this.token);
+      this.m0Surface = new M0(this.token);
     }
-    this.adminPanel.show();
+    this.m0Surface.show();
   }
 
   private createMobileStatusItem(key: 'hp' | 'good' | 'evil', label: string, colorClass: string): HTMLDivElement {
@@ -9854,7 +9854,7 @@ export class GameManager {
 
   private async handleRotateDebugCommand(msg: string): Promise<void> {
     if (!this.isAdmin) {
-      this.chatPanel?.addSystemMessage('/rotatedebug is admin only.');
+      this.chatPanel?.addSystemMessage('Unknown command.');
       return;
     }
 
@@ -11198,8 +11198,8 @@ export class GameManager {
     this.mobileLogoutButton = null;
     this.mobileAdminButton?.remove();
     this.mobileAdminButton = null;
-    this.adminPanel?.destroy();
-    this.adminPanel = null;
+    this.m0Surface?.destroy();
+    this.m0Surface = null;
     this.rotateDebugPanel?.destroy();
     this.rotateDebugPanel = null;
     this.mobilePanelButtons = {};

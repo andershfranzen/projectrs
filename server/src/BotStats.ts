@@ -50,6 +50,7 @@ const MIN_COMMAND_TIMING_INTERVAL_MS = 250;
 const MAX_COMMAND_TIMING_INTERVAL_MS = 60_000;
 const COMMAND_INTERVAL_PATTERN_BIN_MS = 100;
 const MIN_RAPID_COMMAND_INTERVAL_SAMPLES = 16;
+const MIN_MOBILE_RAPID_COMMAND_INTERVAL_SAMPLES = 32;
 const MIN_MEANINGFUL_SESSION_MINUTES = 5;
 const MIN_ROUTE_ACTION_LOOP_SIGNATURES = 20;
 const MIN_XP_VELOCITY_SESSION_MINUTES = 5;
@@ -1033,7 +1034,10 @@ export class BotStats {
     ) {
       flags.push('gameplayCommandCadenceRegular');
     }
-    if (this.longestRapidCommandIntervalRun >= MIN_RAPID_COMMAND_INTERVAL_SAMPLES) {
+    const rapidCommandIntervalThreshold = isLikelyMobile
+      ? MIN_MOBILE_RAPID_COMMAND_INTERVAL_SAMPLES
+      : MIN_RAPID_COMMAND_INTERVAL_SAMPLES;
+    if (this.longestRapidCommandIntervalRun >= rapidCommandIntervalThreshold) {
       flags.push('rapidGameplayCommandCadence');
     }
     // Computer "humanized" jitter: nonzero variance (slips past the cadence gate)
@@ -1252,6 +1256,7 @@ export class BotStats {
       flags.push('moderateMechanicalJitter');
     }
     for (const flag of this.sessionLatchedEvidenceFlags) {
+      if (flag === 'rapidGameplayCommandCadence' && this.longestRapidCommandIntervalRun < rapidCommandIntervalThreshold) continue;
       if (!flags.includes(flag)) flags.push(flag);
     }
     // marathonSession: > 8hr session
@@ -1837,7 +1842,7 @@ const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
   sameCommandCadenceRegular: { label: 'Robotic repeated-click cadence', description: 'The same command repeats on a near-perfect interval.', threshold: '≥12 repeats, <75ms stddev', tier: 'hard' },
   gameplayCommandSequencePattern: { label: 'Repeated command order', description: 'Commands repeat in a fixed order (e.g. ABAB) regardless of timing.', threshold: '≥30 commands, ≥85% lag-match', tier: 'soft' },
   gameplayCommandIntervalPattern: { label: 'Repeated interval pattern', description: 'Command intervals repeat in a fixed pattern even with added jitter.', threshold: '≥24 intervals, ≥85% lag-match', tier: 'hard' },
-  rapidGameplayCommandCadence: { label: 'Rapid click stream', description: 'Gameplay commands arrive in a sustained sub-human rapid stream.', threshold: '≥16 intervals between 50ms and 249ms', tier: 'hard' },
+  rapidGameplayCommandCadence: { label: 'Rapid click stream', description: 'Gameplay commands arrive in a sustained sub-human rapid stream.', threshold: '≥16 desktop or ≥32 touch-dominant intervals between 50ms and 249ms', tier: 'hard' },
   mechanicalJitter: { label: 'Computer-generated timing jitter', description: 'Command timing has small randomization but a tight, tail-less spread no human sustains — the "humanize" setting of an auto-clicker. Catches jitter that slips past the regular-cadence gate.', threshold: '≥40 commands, CV 0.02–0.15, p90/median ≤1.5', tier: 'hard' },
   moderateMechanicalJitter: { label: 'Tail-less randomized clicking', description: 'Command timing uses wider randomization but still lacks human pauses, paired with another automation-shaped signal.', threshold: '≥50 commands, CV 0.15–0.30, p90/median ≤1.65 plus route/cursor/order context', tier: 'hard' },
   legacyActivityTelemetry: { label: 'Legacy-only activity telemetry', description: 'Client sends only old-format activity packets (no kind/seq) — common for spoofed telemetry.', threshold: '≥10 events, ≤20% detailed', tier: 'soft' },
@@ -1868,11 +1873,11 @@ const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
   mapDataOutOfScope: { label: 'Out-of-scope map data', description: 'Requested gameplay map files outside the character’s allowed streaming window.', threshold: '≥3 denied map-data requests', tier: 'hard' },
   reservedMapDataPath: { label: 'Invalid map-data endpoint', description: 'Requested a map-data endpoint that normal gameplay never uses.', threshold: '≥1 invalid map-data endpoint request', tier: 'hard' },
   protocolPackets: { label: 'Malformed protocol traffic', description: 'Repeated malformed or impossible game packets.', threshold: '≥3 this session', tier: 'hard' },
-  rateLimitPackets: { label: 'Too-fast packet flood', description: 'Repeated packet rate-limit overflows.', threshold: '≥3 this session', tier: 'hard' },
+  rateLimitPackets: { label: 'Socket packet flood', description: 'Repeated global socket rate-limit overflows. Per-action spam is throttled but not treated as hard bot evidence.', threshold: '≥3 socket floods this session', tier: 'hard' },
   automationInvalidPackets: { label: 'Malformed client telemetry', description: 'Repeated malformed client activity/input packets. Noisy input-ticket misses are tracked separately as stale telemetry.', threshold: '≥10 malformed telemetry packets this session', tier: 'hard' },
   reservedActionCapability: { label: 'Invalid action token replayed', description: 'Client sent an action token that was not valid for normal gameplay.', threshold: '≥1 invalid action token', tier: 'hard' },
   adminOpcodeAbuse: { label: 'Non-admin used admin command', description: 'A non-admin client attempted to send an admin-only game command.', threshold: '≥1 non-admin admin command', tier: 'hard' },
-  lifetimeHardInvalidPackets: { label: 'Repeat hard invalid traffic', description: 'Large lifetime volume of malformed protocol or rate-limit events.', threshold: '≥25 lifetime', tier: 'hard' },
+  lifetimeHardInvalidPackets: { label: 'Repeat hard invalid traffic', description: 'Large lifetime volume of malformed protocol or socket-flood events.', threshold: '≥25 lifetime', tier: 'hard' },
   lifetimeLowSocialHighActivity: { label: 'Low-social high-activity (lifetime)', description: 'Very high lifetime activity with almost no chat.', threshold: '≥600min, ≥10000 actions, <2 chats/hr', tier: 'soft' },
   lifetimeExtremeLowSocialHighActivity: { label: 'Extreme low-social high-activity (lifetime)', description: 'Extreme lifetime activity with virtually no chat.', threshold: '≥1200min, ≥25000 actions, <1 chat/hr', tier: 'soft' },
   xpVelocity: { label: 'Impossible XP rate', description: 'XP/hour exceeds the highest rate a human could plausibly grind for a skill.', threshold: 'over the per-skill XP/hr ceiling', tier: 'hard' },
@@ -2156,7 +2161,8 @@ function classifyReasonCounts(reasons: Map<string, number>): SuspiciousPacketCla
 }
 
 function classifySuspiciousReason(reason: string): SuspiciousPacketClass {
-  if (reason.startsWith('rate-limit:')) return 'rateLimit';
+  if (reason === 'rate-limit:socket') return 'rateLimit';
+  if (reason.startsWith('rate-limit:')) return 'state';
   if (reason === 'reserved-action-capability' || reason === LEGACY_RESERVED_ACTION_REASON || reason === RESERVED_MAP_DATA_REASON) return 'reserved';
   if (
     reason === 'missing-action-capability'

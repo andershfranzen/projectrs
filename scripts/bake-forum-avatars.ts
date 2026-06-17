@@ -45,7 +45,10 @@ try {
       '--use-gl=swiftshader',
     ],
   });
-  const page = await browser.newPage({ viewport: { width: 900, height: 760 } });
+  const page = await browser.newPage({
+    viewport: { width: 900, height: 760 },
+    extraHTTPHeaders: bakeSecret ? { 'X-Forum-Avatar-Bake-Secret': bakeSecret } : undefined,
+  });
   if (bakeSecret) {
     await page.addInitScript((secret) => {
       window.__forumAvatarBakeSecret = secret;

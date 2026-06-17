@@ -1,5 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { requiresAuthenticatedGameStaticAsset, staticGameAssetCacheControl } from './StaticAssetAccess';
+import { requiresAdminStaticAsset, requiresAuthenticatedGameStaticAsset, staticGameAssetCacheControl } from './StaticAssetAccess';
+
+describe('requiresAdminStaticAsset', () => {
+  test('protects opaque and legacy admin chunks', () => {
+    expect(requiresAdminStaticAsset('/assets/m0-AbCd1234.js')).toBe(true);
+    expect(requiresAdminStaticAsset('/assets/m1-AbCd1234.js')).toBe(true);
+    expect(requiresAdminStaticAsset('/assets/AdminPanel-AbCd1234.js')).toBe(true);
+    expect(requiresAdminStaticAsset('/assets/admin-panel-AbCd1234.css')).toBe(true);
+    expect(requiresAdminStaticAsset('/assets/BakeApp-AbCd1234.js')).toBe(true);
+    expect(requiresAdminStaticAsset('/assets/GameManager-AbCd1234.js')).toBe(false);
+  });
+});
 
 describe('staticGameAssetCacheControl', () => {
   test('production caches protected game art privately (no per-load re-download)', () => {

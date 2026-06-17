@@ -12,7 +12,7 @@ function isPublicBundle(pathname: string): boolean {
 
 export function requiresAdminStaticAsset(pathname: string): boolean {
   const decoded = decodePathname(pathname);
-  return /^\/assets\/(?:admin-panel|AdminPanel)-[\w.-]+\.(?:js|css)$/i.test(decoded);
+  return /^\/assets\/(?:m0|m1|admin-panel|AdminPanel|BakeApp)-[\w.-]+\.(?:js|css)$/i.test(decoded);
 }
 
 export function requiresAuthenticatedGameStaticAsset(pathname: string): boolean {

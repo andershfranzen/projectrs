@@ -123,6 +123,23 @@ describe('BotStats command cadence detection', () => {
     expect(summary.riskLevel).toBe('high');
   });
 
+  test('touch-dominant sessions need a longer rapid stream', () => {
+    const stats = BotStats.empty();
+
+    for (let i = 0; i < 40; i++) {
+      stats.recordClientActivity(ClientActivityKind.Touch, i + 1, 500, 500, i * 1000);
+    }
+    for (let i = 0; i < 22; i++) {
+      recordCommand(stats, `object:${10000 + (i % 2)}:0:-1`, i * 200);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.isLikelyMobile).toBe(true);
+    expect(summary.rapidCommandIntervalSamples).toBeGreaterThanOrEqual(16);
+    expect(summary.flags).not.toContain('rapidGameplayCommandCadence');
+    expect(summary.riskSignals.some(signal => signal.flag === 'rapidGameplayCommandCadence')).toBe(false);
+  });
+
   test('does not accumulate scattered rapid bursts into sustained auto-click evidence', () => {
     const stats = BotStats.empty();
     let now = 0;

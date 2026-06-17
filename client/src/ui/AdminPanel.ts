@@ -225,13 +225,17 @@ const BOT_SIGNAL_LABELS: Record<string, string> = {
   mapDataOutOfScope: 'Out-of-scope map data',
   reservedMapDataPath: 'Invalid map-data endpoint',
   protocolPackets: 'Malformed protocol traffic',
-  rateLimitPackets: 'Too-fast packet flood',
+  rateLimitPackets: 'Socket packet flood',
   reservedActionCapability: 'Invalid action token replayed',
   adminOpcodeAbuse: 'Non-admin used admin command',
   lifetimeHardInvalidPackets: 'Repeat hard invalid traffic',
   inputTicketTargetFanout: 'One input location, many targets',
   pointerNoApproachShape: 'Pointer actions without approach',
 };
+
+function privateEndpointDenied(status: number): boolean {
+  return status === 401 || status === 403 || status === 404;
+}
 
 function botSignalLabel(flag: string): string {
   const colon = flag.indexOf(':');
@@ -311,9 +315,9 @@ export class AdminPanel {
 
   constructor(private readonly token: string) {
     const { root, header, subtitle, closeButton } = createModalPanel({
-      id: 'admin-panel',
-      title: 'Admin',
-      subtitle: 'Bot review',
+      id: 'm0-panel',
+      title: 'Tools',
+      subtitle: 'Review',
       geometry: {
         kind: 'game-canvas',
         width: 'min(1260px, calc(100% - var(--right-rail-width, 300px) - 18px))',
@@ -716,7 +720,7 @@ export class AdminPanel {
         credentials: 'same-origin',
         cache: 'no-store',
       });
-      if (res.status === 401 || res.status === 403) {
+      if (privateEndpointDenied(res.status)) {
         this.accounts = [];
         this.renderEmpty('');
         this.hide();
@@ -801,7 +805,7 @@ export class AdminPanel {
         headers: { Authorization: `Bearer ${this.token}` },
         credentials: 'same-origin',
       });
-      if (res.status === 401 || res.status === 403) {
+      if (privateEndpointDenied(res.status)) {
         this.events = [];
         this.renderEmpty('');
         this.hide();
@@ -859,7 +863,7 @@ export class AdminPanel {
         headers: { Authorization: `Bearer ${this.token}` },
         credentials: 'same-origin',
       });
-      if (res.status === 401 || res.status === 403) {
+      if (privateEndpointDenied(res.status)) {
         this.diagnostics = [];
         this.renderEmpty('');
         this.hide();
@@ -902,7 +906,7 @@ export class AdminPanel {
         headers: { Authorization: `Bearer ${this.token}` },
         credentials: 'same-origin',
       });
-      if (res.status === 401 || res.status === 403) {
+      if (privateEndpointDenied(res.status)) {
         this.accounts = [];
         this.renderEmpty('');
         this.hide();
@@ -1644,6 +1648,10 @@ export class AdminPanel {
         credentials: 'same-origin',
         body: JSON.stringify({ accountId: account.accountId }),
       });
+      if (privateEndpointDenied(res.status)) {
+        this.hide();
+        return;
+      }
       const payload = await res.json() as { ok?: boolean; error?: string };
       if (!res.ok || !payload.ok) throw new Error(payload.error || `Clear failed (${res.status})`);
       this.selectedAccountId = account.accountId;
@@ -1664,6 +1672,10 @@ export class AdminPanel {
         credentials: 'same-origin',
         body: JSON.stringify({ accountId: account.accountId, direction }),
       });
+      if (privateEndpointDenied(res.status)) {
+        this.hide();
+        return;
+      }
       const payload = await res.json() as { ok?: boolean; error?: string };
       if (!res.ok || !payload.ok) throw new Error(payload.error || `Teleport failed (${res.status})`);
       await this.refreshBotReview();
@@ -2096,6 +2108,10 @@ export class AdminPanel {
         credentials: 'same-origin',
         body: JSON.stringify(body),
       });
+      if (privateEndpointDenied(res.status)) {
+        this.hide();
+        return;
+      }
       const payload = await res.json() as { ok?: boolean; error?: string };
       if (!res.ok || !payload.ok) throw new Error(payload.error || `Request failed (${res.status})`);
       await this.refresh();

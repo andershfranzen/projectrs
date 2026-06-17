@@ -71,7 +71,7 @@ function makeInventoryPanel(): any {
   panel.tradeOfferCallback = null;
   panel.bankDepositCallback = null;
   panel.sellCallback = null;
-  panel.adminItemDeletionEnabled = false;
+  panel.privilegedItemDeletionEnabled = false;
   panel.using = null;
   panel.container = {
     classList: {
@@ -165,9 +165,9 @@ describe('SidePanel inventory shortcuts', () => {
     });
   });
 
-  test('admin delete option sends the clicked inventory stack to the server', () => {
+  test('privileged delete option sends the clicked inventory stack to the server', () => {
     const panel = makeInventoryPanel();
-    panel.setAdminItemDeletionEnabled(true);
+    panel.setPrivilegedItemDeletionEnabled(true);
 
     const options = panel.getInvSlotOptions(3);
     const deleteOption = options.find((option: { label: string }) => option.label === 'Delete Test Item');

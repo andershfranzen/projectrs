@@ -188,7 +188,7 @@ export async function installGameSocketEncryption(ws: ServerWebSocket<GameSocket
       originalSendBinary(frame);
     }).catch((e) => {
       console.warn('[ws] encryption send failed:', e instanceof Error ? e.message : e);
-      try { ws.close(1011, 'encryption failed'); } catch {}
+      try { ws.close(1011, ''); } catch {}
     });
     return 0;
   }) as typeof ws.sendBinary;
@@ -609,15 +609,8 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
 }
 
 export function rateLimitOverflowIsSuspicious(opcode: number): boolean {
-  switch (opcode) {
-    case ClientOpcode.CLIENT_ACTIVITY:
-    case ClientOpcode.CURSOR_POSITION:
-    case ClientOpcode.CLIENT_POSITION_Y:
-    case ClientOpcode.CLIENT_INPUT:
-      return false;
-    default:
-      return true;
-  }
+  void opcode;
+  return false;
 }
 
 export function suspiciousPacketCloseEligible(reason: string): boolean {
@@ -1076,7 +1069,7 @@ function reportSuspiciousPacket(
     });
   }
   if (count >= INVALID_PACKET_CLOSE_THRESHOLD) {
-    try { ws.close(1008, 'too many invalid packets'); } catch { /* connection closed */ }
+    try { ws.close(1008, ''); } catch { /* connection closed */ }
   }
 }
 
@@ -1341,7 +1334,7 @@ export function handleGameSocketMessage(
   // encrypted; 4 KB is a generous ceiling that still bounds a decrypt-CPU flood.
   if (message.byteLength > MAX_GAME_FRAME_BYTES) {
     console.warn(`[ws] oversized game frame ${message.byteLength}B account=${ws.data.accountId}`);
-    try { ws.close(1009, 'frame too large'); } catch {}
+    try { ws.close(1009, ''); } catch {}
     return;
   }
   const cryptoState = ws.data.crypto;
@@ -1357,7 +1350,7 @@ export function handleGameSocketMessage(
       })
       .catch((e) => {
         console.warn(`[ws] encrypted packet failed account=${ws.data.accountId}:`, e instanceof Error ? e.message : e);
-        try { ws.close(1008, 'bad encrypted packet'); } catch {}
+        try { ws.close(1008, ''); } catch {}
       });
     return;
   }
@@ -1393,7 +1386,7 @@ function handleDecryptedGameSocketMessage(
   } catch (e) {
     console.warn(`[ws] malformed packet from playerId=${ws.data.playerId ?? '?'}: ${e instanceof Error ? e.message : e}`);
     reportSuspiciousPacket(player, -1, 'malformed-frame', [], ws, world);
-    try { ws.close(1003, 'malformed packet'); } catch {}
+    try { ws.close(1003, ''); } catch {}
     return;
   }
 

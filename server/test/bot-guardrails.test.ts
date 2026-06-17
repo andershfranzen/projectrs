@@ -76,13 +76,14 @@ describe('anti-bot guardrails', () => {
     expect(opcodeRequiresBrowserInputTelemetry(ClientOpcode.PLAYER_INTERACT_OBJECT, [10000], player)).toBe(true);
   });
 
-  test('low-risk telemetry overflow is dropped without suspicious strikes', () => {
+  test('per-action rate-limit overflow is throttling only, not bot evidence', () => {
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.CURSOR_POSITION)).toBe(false);
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.CLIENT_ACTIVITY)).toBe(false);
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.CLIENT_INPUT)).toBe(false);
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.CLIENT_POSITION_Y)).toBe(false);
-    expect(rateLimitOverflowIsSuspicious(ClientOpcode.PLAYER_MOVE)).toBe(true);
-    expect(rateLimitOverflowIsSuspicious(ClientOpcode.TRADE_OFFER_ITEM)).toBe(true);
+    expect(rateLimitOverflowIsSuspicious(ClientOpcode.PLAYER_MOVE)).toBe(false);
+    expect(rateLimitOverflowIsSuspicious(ClientOpcode.PLAYER_INTERACT_OBJECT)).toBe(false);
+    expect(rateLimitOverflowIsSuspicious(ClientOpcode.TRADE_OFFER_ITEM)).toBe(false);
   });
 
   test('state-race packet telemetry does not qualify for disconnects', () => {
@@ -357,6 +358,20 @@ describe('anti-bot guardrails', () => {
     expect(summary.flags).not.toContain('protocolPackets');
     expect(summary.flags).not.toContain('rateLimitPackets');
     expect(summary.flags).not.toContain('automationInvalidPackets');
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('world-action spam rate limits are noisy state, not hard packet flood evidence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 10; i++) stats.recordSuspiciousPacket('rate-limit:world-action');
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionSuspiciousPacketClasses.state).toBe(10);
+    expect(summary.sessionSuspiciousPacketClasses.rateLimit).toBe(0);
+    expect(summary.flags).not.toContain('rateLimitPackets');
+    expect(summary.evidenceFlags).not.toContain('rateLimitPackets');
     expect(summary.riskLevel).toBe('low');
   });
 

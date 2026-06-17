@@ -554,7 +554,7 @@ async function bootstrap() {
 // path and instead renders every item GLB into a PNG, POSTing each to the
 // server. Run once after adding new item GLBs; see client/src/bake/BakeApp.ts.
 if (new URLSearchParams(window.location.search).get('bake') === '1') {
-  void import('./bake/BakeApp').then(({ runBake }) => runBake()).catch((err) => {
+  void import('./bake/m1').then(({ runBake }) => runBake()).catch((err) => {
     console.error('[bake] failed to load bake module:', err);
   });
 } else {

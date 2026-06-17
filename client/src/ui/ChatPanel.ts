@@ -248,7 +248,7 @@ export class ChatPanel {
       '#trade-panel',
       '#duel-panel',
       '#character-creator',
-      '#admin-panel',
+      '#m0-panel',
       '#login-screen',
       '[role="dialog"]',
       '.modal',
@@ -303,10 +303,10 @@ export class ChatPanel {
       this.tabButtons.push(btn);
     }
 
-    this.adminButton = createTextTabButton('Admin', () => {});
+    this.adminButton = createTextTabButton('Tools', () => {});
     this.adminButton.style.display = 'none';
-    this.adminButton.title = 'Admin';
-    this.adminButton.setAttribute('aria-label', 'Open admin panel');
+    this.adminButton.title = 'Tools';
+    this.adminButton.setAttribute('aria-label', 'Open tools');
     tabBar.appendChild(this.adminButton);
 
     panel.appendChild(tabBar);
@@ -717,7 +717,7 @@ export class ChatPanel {
     this.onPrivateSend = handler;
   }
 
-  setAdminControls(enabled: boolean, onOpen: () => void): void {
+  setToolsControls(enabled: boolean, onOpen: () => void): void {
     if (!this.adminButton) return;
     this.adminButton.style.display = enabled ? '' : 'none';
     this.adminButton.onclick = (event) => {

@@ -49,7 +49,7 @@ export class BankPanel {
   private touchDrag: BankTouchDragState | null = null;
   private suppressClickUntil: number = 0;
   private requestQuantity: QuantityInputRequester | null;
-  private adminItemDeletionEnabled: boolean = false;
+  private privilegedItemDeletionEnabled: boolean = false;
   private withdrawMode: 'item' | 'note' = 'item';
   private withdrawItemButton: HTMLButtonElement | null = null;
   private withdrawNoteButton: HTMLButtonElement | null = null;
@@ -108,8 +108,8 @@ export class BankPanel {
   }
   isVisible(): boolean { return this.visible; }
 
-  setAdminItemDeletionEnabled(enabled: boolean): void {
-    this.adminItemDeletionEnabled = enabled;
+  setPrivilegedItemDeletionEnabled(enabled: boolean): void {
+    this.privilegedItemDeletionEnabled = enabled;
   }
 
   private buildUI(): { root: HTMLDivElement; bankGrid: HTMLDivElement } {
@@ -588,7 +588,7 @@ export class BankPanel {
       { label: 'Withdraw X', n: 0 },
       { label: 'Withdraw All', n: -1 },
     ];
-    if (this.adminItemDeletionEnabled) {
+    if (this.privilegedItemDeletionEnabled) {
       options.push({
         label: `Delete ${name}`,
         action: () => this.network.sendRaw(encodePacket(ClientOpcode.BANK_DELETE, slot, s.itemId)),

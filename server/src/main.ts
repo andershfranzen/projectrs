@@ -1327,6 +1327,13 @@ const RUNTIME_DATA_DIR = process.env.PROJECTRS_RUNTIME_DATA_DIR ? resolve(proces
 const FORUM_MEDIA_DIR = resolve(RUNTIME_DATA_DIR, 'forum-media');
 const FORUM_AVATAR_DIR = resolve(RUNTIME_DATA_DIR, 'forum-avatars');
 const FORUM_AVATAR_BAKE_SECRET = process.env.FORUM_AVATAR_BAKE_SECRET || randomUUID();
+const PRIVATE_WEBSITE_STATIC_MARKERS = [
+  'ForumAvatarBakeApp',
+  '/api/dev/forum-avatar',
+  'X-Forum-Avatar-Bake-Secret',
+  '__forumAvatarBakeSecret',
+] as const;
+const PRIVATE_WEBSITE_STATIC_PATHS = collectPrivateWebsiteStaticPaths();
 const DEFAULT_DISCORD_GUILD_ID = '1504534632799010816';
 const CLIENT_DIAGNOSTICS_DEFAULT_LIMIT = 50;
 const CLIENT_DIAGNOSTICS_MAX_LIMIT = 500;
@@ -1410,9 +1417,64 @@ function getMimeType(path: string): string {
   return MIME_TYPES[ext] || 'application/octet-stream';
 }
 
+function hasForbiddenStaticExtension(pathname: string): boolean {
+  return /\.(?:map|txt|ts|tsx|jsx)$/i.test(decodeURIComponent(pathname));
+}
+
 function gameStaticAssetCacheControl(decodedPath: string): string {
   if (requiresAdminStaticAsset(decodedPath)) return 'private, no-store';
   return staticGameAssetCacheControl(decodedPath, isProductionLike());
+}
+
+function collectPrivateWebsiteStaticPaths(): Set<string> {
+  const paths = new Set<string>();
+  const stack = [WEBSITE_DIST];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    if (!dir) break;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const filePath = resolve(dir, entry);
+      let stat;
+      try {
+        stat = statSync(filePath);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        stack.push(filePath);
+        continue;
+      }
+      if (!stat.isFile() || stat.size > 5 * 1024 * 1024) continue;
+      const rel = relative(WEBSITE_DIST, filePath).split(sep).join('/');
+      if (!/\.(?:html|js|css|txt|json)$/i.test(rel)) continue;
+      let text = '';
+      try {
+        text = readFileSync(filePath, 'utf-8');
+      } catch {
+        continue;
+      }
+      if (PRIVATE_WEBSITE_STATIC_MARKERS.some(marker => text.includes(marker))) {
+        paths.add(`/${rel}`);
+      }
+    }
+  }
+  return paths;
+}
+
+function isPrivateWebsitePath(pathname: string): boolean {
+  const decoded = decodeURIComponent(pathname);
+  const normalized = decoded !== '/' && decoded.endsWith('/') ? decoded.slice(0, -1) : decoded;
+  return normalized === '/forums/avatar-bake'
+    || normalized.includes('/forums/avatar-bake')
+    || normalized.includes('ForumAvatarBakeApp')
+    || normalized.startsWith('/forums/avatar-bake/')
+    || PRIVATE_WEBSITE_STATIC_PATHS.has(normalized);
 }
 
 interface StaticFileCacheEntry {
@@ -1452,7 +1514,8 @@ function shouldServeWebsiteNotFound(req: Request, pathname: string): boolean {
 
 function serveStatic(req: Request, pathname: string, allowIndexFallback = false): Response | null {
   const decoded = decodeURIComponent(pathname);
-  if (isProductionLike() && requiresAdminStaticAsset(decoded) && !getStaticAssetAdminSession(req)) {
+  if (hasForbiddenStaticExtension(decoded)) return new Response('Not Found', { status: 404 });
+  if (requiresAdminStaticAsset(decoded) && !getStaticAssetAdminSession(req)) {
     return new Response('Not Found', { status: 404 });
   }
   let filePath = resolvePossiblyMissingWithinBase(CLIENT_DIST, decoded.startsWith('/') ? decoded.slice(1) : decoded);
@@ -1523,6 +1586,8 @@ function serveWebsiteNotFound(): Response {
 function serveWebsite(req: Request, pathname: string): Response | null {
   const decoded = decodeURIComponent(pathname);
   const normalized = decoded !== '/' && decoded.endsWith('/') ? decoded.slice(0, -1) : decoded;
+  if (hasForbiddenStaticExtension(decoded)) return new Response('Not Found', { status: 404 });
+  if (isPrivateWebsitePath(decoded) && !hasPrivateWebsiteAccess(req)) return new Response('Not Found', { status: 404 });
   if (
     normalized !== '/'
     && normalized !== '/hiscores'
@@ -1579,8 +1644,10 @@ function serveWebsite(req: Request, pathname: string): Response | null {
   }
 }
 
-function serveWebsitePublic(pathname: string): Response | null {
+function serveWebsitePublic(req: Request, pathname: string): Response | null {
   const decoded = decodeURIComponent(pathname);
+  if (hasForbiddenStaticExtension(decoded)) return new Response('Not Found', { status: 404 });
+  if (isPrivateWebsitePath(decoded) && !hasPrivateWebsiteAccess(req)) return new Response('Not Found', { status: 404 });
   const normalizedPath = decoded.startsWith('/') ? decoded.slice(1) : decoded;
   const publicPath = resolvePossiblyMissingWithinBase(WEBSITE_PUBLIC, normalizedPath);
   const exportedPath = resolvePossiblyMissingWithinBase(WEBSITE_DIST, normalizedPath);
@@ -1619,6 +1686,9 @@ function isWebsiteDevProxyRoute(pathname: string): boolean {
 
 async function serveWebsiteDev(req: Request, pathname: string): Promise<Response | null> {
   if (!WEBSITE_DEV_ORIGIN || !isWebsiteDevProxyRoute(pathname)) return null;
+  if (isPrivateWebsitePath(pathname) && !hasPrivateWebsiteAccess(req)) {
+    return new Response('Not Found', { status: 404 });
+  }
 
   const target = new URL(req.url);
   const origin = new URL(WEBSITE_DEV_ORIGIN);
@@ -2363,28 +2433,17 @@ function startForumDiscordEmojiSync(): void {
 startForumDiscordEmojiSync();
 
 // --- Admin authorization for editor / dev APIs ---
-// A request is admin-authorized if:
-//   1. It originates from loopback (local dev / SSH-tunneled use), OR
-//   2. It carries a valid `Authorization: Bearer <token>` whose session belongs
-//      to an account flagged is_admin=1 in the DB.
-// NOTE: behind a reverse proxy, requestIP() will report the proxy's address.
-// When a reverse proxy lands, switch to a trusted X-Forwarded-For check
-// (or terminate TLS in Bun directly). Until then, loopback ≡ same machine.
-const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+function hasForumAvatarBakeSecret(req: Request): boolean {
+  const bakeSecret = req.headers.get('x-forum-avatar-bake-secret') || '';
+  return bakeSecret.length > 0 && bakeSecret === FORUM_AVATAR_BAKE_SECRET;
+}
+
+function hasPrivateWebsiteAccess(req: Request): boolean {
+  return hasForumAvatarBakeSecret(req) || !!getStaticAssetAdminSession(req);
+}
 
 function isAdminRequest(req: Request, srv: { requestIP: (r: Request) => { address: string } | null }): boolean {
-  const bakeSecret = req.headers.get('x-forum-avatar-bake-secret') || '';
-  if (bakeSecret && bakeSecret === FORUM_AVATAR_BAKE_SECRET) return true;
-
-  const ip = srv.requestIP(req)?.address ?? '';
-  if (LOOPBACK_IPS.has(ip)) {
-    const host = (req.headers.get('host') || '').toLowerCase().split(':')[0];
-    const explicitLoopbackAdmin = process.env.ALLOW_LOOPBACK_ADMIN === '1';
-    // Behind a reverse proxy the app often sees public traffic as 127.0.0.1.
-    // Only treat loopback as admin for actual localhost hosts, or when an
-    // operator explicitly opts in for an SSH-tunneled maintenance session.
-    if (explicitLoopbackAdmin || host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
-  }
+  void srv;
   const auth = req.headers.get('Authorization') || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
   if (!m) return false;
@@ -2393,7 +2452,10 @@ function isAdminRequest(req: Request, srv: { requestIP: (r: Request) => { addres
 }
 
 function adminForbidden(): Response {
-  return jsonResponse({ ok: false, error: 'Forbidden — admin authorization required' }, 403);
+  return new Response('Not Found', {
+    status: 404,
+    headers: { 'Cache-Control': 'no-store' },
+  });
 }
 
 function parseBanExpiresAt(rawDurationSeconds: unknown): { ok: true; expiresAt: number | null } | { ok: false; error: string } {
@@ -3270,6 +3332,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
     }
 
     if (url.pathname === '/api/forum-avatar-bake-status' && req.method === 'GET') {
+      if (!hasPrivateWebsiteAccess(req)) return new Response('Not Found', { status: 404 });
       const targets = db.listForumAvatarBakeTargets();
       let baked = 0;
       for (const target of targets) {
@@ -3281,7 +3344,6 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         targetCount: targets.length,
         baked,
         missing: Math.max(0, targets.length - baked),
-        log: forumAvatarBakeLog.slice(-30),
       }, 200, { 'Cache-Control': 'no-store' });
     }
 
@@ -4209,7 +4271,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
     }
 
     if (url.pathname === '/api/dev/forum-avatar-targets' && req.method === 'GET') {
-      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!hasForumAvatarBakeSecret(req) && !isAdminRequest(req, server)) return adminForbidden();
       const targets = db.listForumAvatarBakeTargets().map((target) => {
         const filePath = resolve(FORUM_AVATAR_DIR, `${target.accountId}-${target.hash}.webp`);
         return { ...target, baked: existsSync(filePath) };
@@ -4218,7 +4280,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
     }
 
     if (url.pathname === '/api/dev/forum-avatar' && req.method === 'POST') {
-      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!hasForumAvatarBakeSecret(req) && !isAdminRequest(req, server)) return adminForbidden();
       if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
       try {
         const body = await req.json() as { accountId?: unknown; hash?: unknown; dataUrl?: unknown };
@@ -5294,14 +5356,14 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
           if (isGameplayObjectManifestPath(mapPath)) return new Response('Not Found', { status: 404 });
           if (!canFetchScopedGameplayMapDataPath(mapPath, gameplayMapWindowForSession(boundMapSession, mapPath))) {
             world.getActivePlayerByAccountId(boundMapSession.accountId)?.botStats?.recordMapDataOutOfScope();
-            return new Response('Forbidden', { status: 403 });
+            return new Response('Not Found', { status: 404 });
           }
         }
         if (isProductionLike() && boundMapSession && isLegacyMapTexturePath(mapPath) && !boundMapSession.isAdmin) {
           const mapId = mapIdFromGameplayMapPath(mapPath);
           const playerWindow = gameplayMapWindowForSession(boundMapSession, mapPath);
           if (!mapId || playerWindow?.currentMapLevel !== mapId) {
-            return new Response('Forbidden', { status: 403 });
+            return new Response('Not Found', { status: 404 });
           }
         }
       }
@@ -5359,10 +5421,10 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
 
     if (url.pathname.startsWith('/assets/')) {
       const decodedPath = decodeURIComponent(url.pathname);
-      if (hasForbiddenStaticSourceExtension(decodedPath)) {
+      if (hasForbiddenStaticExtension(decodedPath) || hasForbiddenStaticSourceExtension(decodedPath)) {
         return new Response('Not Found', { status: 404 });
       }
-      if (isProductionLike() && requiresAdminStaticAsset(decodedPath) && !getStaticAssetAdminSession(req)) {
+      if (requiresAdminStaticAsset(decodedPath) && !getStaticAssetAdminSession(req)) {
         return new Response('Not Found', { status: 404 });
       }
       if (isProductionLike() && requiresAuthenticatedGameStaticAsset(decodedPath) && !getStaticAssetSessionForScope(req, 'game')) {
@@ -5429,7 +5491,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
 
     // --- Static File Serving ---
 
-    const websitePublicResponse = serveWebsitePublic(url.pathname);
+    const websitePublicResponse = serveWebsitePublic(req, url.pathname);
     if (websitePublicResponse) return websitePublicResponse;
 
     const websiteDevResponse = await serveWebsiteDev(req, url.pathname);
@@ -5438,7 +5500,7 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
     const websiteResponse = serveWebsite(req, url.pathname);
     if (websiteResponse) return websiteResponse;
 
-    if (isProductionLike() && requiresAdminStaticAsset(url.pathname) && !getStaticAssetAdminSession(req)) {
+    if (requiresAdminStaticAsset(url.pathname) && !getStaticAssetAdminSession(req)) {
       return new Response('Not Found', { status: 404 });
     }
     if (isProductionLike() && requiresAuthenticatedGameStaticAsset(url.pathname) && !getStaticAssetSessionForScope(req, 'game')) {
