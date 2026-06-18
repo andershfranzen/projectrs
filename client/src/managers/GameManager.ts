@@ -13014,7 +13014,7 @@ export class GameManager {
     const nextSet = new Set<TransformNode>();
     for (const node of this.hoverHiddenRoofNodes) {
       if (node.isDisposed()) continue;
-      if (node.isEnabled(false)) node.setEnabled(false);
+      this.setPlacedWorldObjectEnabled(node, false);
       next.push(node);
       nextSet.add(node);
       retainedCount++;
@@ -13052,7 +13052,7 @@ export class GameManager {
     const next: TransformNode[] = [];
     for (const node of newSet) {
       if (node.isDisposed()) continue;
-      if ((reapplyExisting || !oldSet.has(node)) && node.isEnabled(false)) node.setEnabled(false);
+      if (reapplyExisting || !oldSet.has(node)) this.setPlacedWorldObjectEnabled(node, false);
       next.push(node);
     }
     this.hoverHiddenRoofNodes = next;
@@ -13091,7 +13091,7 @@ export class GameManager {
       for (const node of list) {
         if (node.isDisposed() || seen.has(node)) continue;
         seen.add(node);
-        if (node.isEnabled(false)) node.setEnabled(false);
+        this.setPlacedWorldObjectEnabled(node, false);
       }
     }
   }
@@ -13128,7 +13128,7 @@ export class GameManager {
     // Disable nodes that ENTERED the hidden set (don't touch ones already in).
     const next: TransformNode[] = [];
     for (const node of newSet) {
-      if (!oldSet.has(node)) node.setEnabled(false);
+      if (!oldSet.has(node)) this.setPlacedWorldObjectEnabled(node, false);
       next.push(node);
     }
     this.hiddenRoofNodes = next;
