@@ -10,8 +10,16 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
+import type { Observer } from '@babylonjs/core/Misc/observable';
 import '@babylonjs/loaders/glTF';
 import { worldAABB, worldAABBForMaterials } from './MeshBounds';
+import {
+  type FishingSpotEffectResources,
+  createFishingSpotEffectPlane,
+  createFishingSpotEffectResources,
+  isFishingSpotEffectAssetId,
+  updateFishingSpotEffectTexture,
+} from './FishingSpotEffect';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, createObjectShadowCaster, createWallEdgeShadowCaster, isLinearCasterCoveredByWallRuns, isLinearShadowAsset, objectShadowBounds, objectShadowFactorAt, wallShadowRunsFromEntries, placedObjectInteractionsWithSignText } from '@projectrs/shared';
 import { groundDetailFamily } from '@projectrs/shared';
@@ -29,7 +37,7 @@ const CHUNK_MESH_CACHE_MAX_CHUNKS = 96;
 const VISIBLE_CHUNK_BUILD_INTERVAL_MS = 12;
 const HIDDEN_CHUNK_BUILD_INTERVAL_MS = 180;
 const OBJECT_RENDER_PADDING_TILES = 0;
-const OBJECT_PREFETCH_PADDING_TILES = 8;
+const OBJECT_PREFETCH_PADDING_TILES = 0;
 const OBJECT_CHUNK_CACHE_MAX_CHUNKS = 96;
 const OBJECT_RENDER_HYSTERESIS_TILES = 8;
 const OBJECT_VISIBILITY_BUCKET_TILES = 4;
@@ -502,6 +510,8 @@ export class ChunkManager {
   private loadedModelCache: Map<string, TransformNode | null> = new Map();
   private loadingModelPromises: Map<string, Promise<TransformNode | null>> = new Map();
   private modelAnimationGroups: Map<string, AnimationGroup[]> = new Map();
+  private fishingSpotEffectResources: FishingSpotEffectResources | null = null;
+  private fishingSpotEffectObserver: Observer<Scene> | null = null;
   private placedObjectAnimationGroups: WeakMap<TransformNode, AnimationGroup[]> = new WeakMap();
   private placedObjectVisualRefs: WeakMap<TransformNode, BatchedPlacedVisualRef[]> = new WeakMap();
   private oneShotPlacedAnimationGroups: WeakSet<AnimationGroup> = new WeakSet();
@@ -1424,9 +1434,9 @@ export class ChunkManager {
       changed = this.setChunkPlacedObjectsEnabled(key, objectDesired.has(key)) || changed;
     }
 
-    // Hidden prefetch warms nearby object chunks once their terrain exists.
-    // This shifts one-time GLB instantiation away from the exact visibility
-    // edge and prevents walking back over that edge from reloading anything.
+    // Queue object chunks only inside the active object window. Dense town
+    // chunks can contain hundreds of placements, so hidden prefetch creates
+    // visible login/frame stalls when it pulls in nearby heavy chunks.
     for (const key of objectLoad) {
       if (this.chunks.has(key) && !this.chunkPlacedNodes.has(key) && !this.loadingObjectChunks.has(key)) {
         this.touchObjectChunk(key);
@@ -4159,6 +4169,7 @@ export class ChunkManager {
   }
 
   private isAlphaBlendAsset(assetId: string): boolean {
+    if (isFishingSpotEffectAssetId(assetId)) return false;
     return this.assetRegistry.get(assetId)?.alphaBlend === true;
   }
 
@@ -4230,6 +4241,11 @@ export class ChunkManager {
       console.warn(`[ChunkManager] Unknown asset: ${assetId}`);
       this.loadedModelCache.set(assetId, null);
       return null;
+    }
+    if (isFishingSpotEffectAssetId(assetId)) {
+      const template = this.createFishingSpotEffectTemplate(assetId);
+      this.loadedModelCache.set(assetId, template);
+      return template;
     }
     try {
       const path = assetDef.path;
@@ -4312,6 +4328,32 @@ export class ChunkManager {
       }
       return null;
     }
+  }
+
+  private createFishingSpotEffectTemplate(assetId: string): TransformNode {
+    const template = new TransformNode(`template_${assetId}`, this.scene);
+    const { material } = this.getFishingSpotEffectResources();
+    const mesh = createFishingSpotEffectPlane(this.scene, `${assetId}_effectPlane`, material);
+    mesh.parent = template;
+    template.setEnabled(false);
+    this.ensureFishingSpotEffectTextureLoop();
+    return template;
+  }
+
+  private getFishingSpotEffectResources(): FishingSpotEffectResources {
+    if (!this.fishingSpotEffectResources) {
+      this.fishingSpotEffectResources = createFishingSpotEffectResources(this.scene, 'chunkFishingSpotEffect');
+    }
+    return this.fishingSpotEffectResources;
+  }
+
+  private ensureFishingSpotEffectTextureLoop(): void {
+    if (this.fishingSpotEffectObserver) return;
+    this.fishingSpotEffectObserver = this.scene.onBeforeRenderObservable.add(() => {
+      const texture = this.fishingSpotEffectResources?.texture;
+      if (!texture) return;
+      updateFishingSpotEffectTexture(texture, performance.now() * 0.001);
+    });
   }
 
   private async importMeshWithSlowWarning(dir: string, file: string, slowWarnMs: number = 20_000): Promise<Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>> {
@@ -4448,6 +4490,10 @@ export class ChunkManager {
   private getPlacedObjectScaleBoost(assetId: string): number {
     const assetDef = this.assetRegistry.get(assetId);
     return assetDef?.path?.toLowerCase().includes('tree') ? 1.15 : 1.0;
+  }
+
+  private getPlacedObjectVisualAssetId(assetId: string): string {
+    return isFishingSpotEffectAssetId(assetId) ? 'FishingSpotBubbles' : assetId;
   }
 
   private getThinVisibilityClass(obj: PlacedObject): 'ground' | 'elevated' | 'roof' {
@@ -4842,7 +4888,7 @@ export class ChunkManager {
         for (const objects of lists) {
           if (!objects) continue;
           for (const obj of objects) {
-            if (!isGroundItemSpawnAssetId(obj.assetId)) assetIds.add(obj.assetId);
+            if (!isGroundItemSpawnAssetId(obj.assetId)) assetIds.add(this.getPlacedObjectVisualAssetId(obj.assetId));
           }
         }
         await mapWithConcurrency([...assetIds], OBJECT_GLB_LOAD_CONCURRENCY, (assetId) =>
@@ -4936,7 +4982,7 @@ export class ChunkManager {
     // Need to load templates first so canThinInstance can check for animations.
     const templateAssetIds = new Set<string>();
     for (const obj of renderableObjects) {
-      templateAssetIds.add(obj.assetId);
+      templateAssetIds.add(this.getPlacedObjectVisualAssetId(obj.assetId));
     }
     // Fetch this chunk's GLB templates with bounded concurrency rather than
     // one-at-a-time. loadGLBModel dedupes in-flight loads, so templates the
@@ -4964,22 +5010,23 @@ export class ChunkManager {
     const thinGroups = new Map<string, ThinGroup>();
     const batchedVisualGroups = new Map<string, ThinGroup>();
     for (const obj of renderableObjects) {
-      if (!this.loadedModelCache.get(obj.assetId)) continue;
+      const visualAssetId = this.getPlacedObjectVisualAssetId(obj.assetId);
+      if (!this.loadedModelCache.get(visualAssetId)) continue;
       if (this.canBatchPlacedObjectVisual(obj)) {
         const visibility = this.getThinVisibilityClass(obj);
-        const groupKey = placedObjectThinGroupKey(obj.assetId, visibility, obj.position.y);
+        const groupKey = placedObjectThinGroupKey(visualAssetId, visibility, obj.position.y);
         let group = batchedVisualGroups.get(groupKey);
         if (!group) {
-          group = { assetId: obj.assetId, visibility, placements: [] };
+          group = { assetId: visualAssetId, visibility, placements: [] };
           batchedVisualGroups.set(groupKey, group);
         }
         group.placements.push(obj);
       } else if (this.canThinInstance(obj)) {
         const visibility = this.getThinVisibilityClass(obj);
-        const groupKey = placedObjectThinGroupKey(obj.assetId, visibility, obj.position.y);
+        const groupKey = placedObjectThinGroupKey(visualAssetId, visibility, obj.position.y);
         let group = thinGroups.get(groupKey);
         if (!group) {
-          group = { assetId: obj.assetId, visibility, placements: [] };
+          group = { assetId: visualAssetId, visibility, placements: [] };
           thinGroups.set(groupKey, group);
         }
         group.placements.push(obj);
@@ -6850,6 +6897,15 @@ export class ChunkManager {
     this.textureOverlayMeshesByChunk.clear();
     for (const [, m] of this.loadedModelCache) m?.dispose();
     this.loadedModelCache.clear();
+    if (this.fishingSpotEffectObserver) {
+      this.scene.onBeforeRenderObservable.remove(this.fishingSpotEffectObserver);
+      this.fishingSpotEffectObserver = null;
+    }
+    if (this.fishingSpotEffectResources) {
+      this.fishingSpotEffectResources.material.dispose(false, false);
+      this.fishingSpotEffectResources.texture.dispose();
+      this.fishingSpotEffectResources = null;
+    }
     this.loadingModelPromises.clear();
     for (const [, t] of this.textureCache) t.dispose();
     this.textureCache.clear();

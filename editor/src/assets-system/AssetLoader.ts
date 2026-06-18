@@ -25,11 +25,24 @@ interface CloneAssetOptions {
 
 const cache = new Map<string, CacheEntry>()
 const STALL_FRAME_MATERIAL_NAMES = new Set(['material.001', 'material.002', 'material.003'])
+const FISHING_SPOT_BUBBLES_PATH = '/assets/models/fishingspotbubbles.glb'
 
 let _scene: Scene | null = null
 
 function shouldUseStallFrameBounds(path: string): boolean {
   return path.toLowerCase().includes('stall')
+}
+
+function isFishingSpotPlaceholderPath(path: string): boolean {
+  return path.toLowerCase() === FISHING_SPOT_BUBBLES_PATH
+}
+
+function buildFishingSpotPlaceholderTemplate(): TransformNode {
+  const pivot = new TransformNode('fishing-spot-placeholder-pivot', _scene!)
+  pivot.metadata = {
+    bounds: { width: 1, height: 0.12, depth: 1 }
+  } as BoundsMetadata
+  return pivot
 }
 
 function worldAABBForMaterials(meshes: AbstractMesh[], materialNames: ReadonlySet<string>): {
@@ -152,6 +165,13 @@ export async function loadAssetModel(path: string, options: CloneAssetOptions = 
   if (!_scene) throw new Error('AssetLoader not initialized — call initAssetLoader(scene) first')
 
   if (!cache.has(path)) {
+    if (isFishingSpotPlaceholderPath(path)) {
+      const template = buildFishingSpotPlaceholderTemplate()
+      template.setEnabled(false)
+      cache.set(path, { template, animGroups: [] })
+      return cloneFromCache(path, options)
+    }
+
     const encodedPath = path.split('/').map(s => encodeURIComponent(s)).join('/')
     const lastSlash = encodedPath.lastIndexOf('/')
     const dir = encodedPath.substring(0, lastSlash + 1)
