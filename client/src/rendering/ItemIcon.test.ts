@@ -355,6 +355,8 @@ describe('item thumbnail families', () => {
       [14, '/assets/models/BeefRat.glb'],
       [15, '/assets/models/BeefRatCooked.glb'],
       [16, '/assets/models/BeefCooked.glb'],
+      [27, '/assets/models/Food/ShrimpRaw.glb'],
+      [28, '/assets/models/Food/ShrimpCooked.glb'],
       [230, '/assets/models/RiceRaw.glb'],
       [231, '/assets/models/RiceCooked.glb'],
     ]);

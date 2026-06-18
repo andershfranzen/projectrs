@@ -78,7 +78,7 @@ export const PLAYER_ANIMATIONS: readonly CharacterAnimationDef[] = [
   { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
   { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
   { name: 'fish_net',                path: `${CHARACTER_ANIM_DIR}/fish_net.glb` },
-  { name: 'fish_rod',                path: `${CHARACTER_ANIM_DIR}/fish_rod.glb` },
+  { name: 'fish_rod',                path: `${CHARACTER_ANIM_DIR}/fish_rod.glb`, animName: 'Armature.001Action_manual_poses' },
   { name: 'fish_harpoon',            path: `${CHARACTER_ANIM_DIR}/fish_harpoon.glb`, animName: 'Armature.001Action', optional: true },
   // Two-handed spell cast — driven by spell-system playSpellEffect()
   // (SPELL_CAST broadcasts + the spellbook tab's click handler).

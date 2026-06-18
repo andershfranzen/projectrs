@@ -11,7 +11,7 @@ const fakeWs = {
 function makeWorldHarness() {
   const player = new Player('runner', 0.5, 0.5, fakeWs, 1);
   const packets: { opcode: ServerOpcode; values: number[] }[] = [];
-  const counters = { actionRevisions: 0 };
+  const counters = { actionRevisions: 0, skillingCancels: 0 };
   const map = {
     width: 32,
     height: 32,
@@ -26,7 +26,7 @@ function makeWorldHarness() {
   world.bumpActionRevision = () => { counters.actionRevisions++; };
   world.clearCombatTarget = () => {};
   world.clearQueuedPlayerActions = () => {};
-  world.cancelSkilling = () => {};
+  world.cancelSkilling = () => { counters.skillingCancels++; };
   world.cancelItemProduction = () => {};
   world.closeOpenInterface = () => {};
   world.closeShopForPlayer = () => {};
@@ -53,6 +53,7 @@ describe('player move validation', () => {
     expect(player.hasMoveQueue()).toBe(true);
     expect(player.getMoveDestination()).toEqual({ x: 5.5, z: 1.5 });
     expect(packets.some(packet => packet.opcode === ServerOpcode.PATH_TRUNCATED)).toBe(false);
+    expect(packets.some(packet => packet.opcode === ServerOpcode.PLAYER_CONTROLLED_MOVE)).toBe(true);
   });
 
   test('coalesces duplicate active move requests without resetting movement credit', () => {
@@ -97,8 +98,19 @@ describe('player move validation', () => {
     expect(player.movementCreditUpdatedAtMs).toBe(12345);
   });
 
-  test('empty active move request stops after the next queued tile', () => {
+  test('new move requests are credited from the server tick clock for next-tick movement', () => {
     const { world, player } = makeWorldHarness();
+    world.currentTickStartMs = 6000;
+
+    world.handlePlayerMove(player.id, [{ x: 1.5, z: 0.5 }]);
+
+    expect(player.getMoveDestination()).toEqual({ x: 1.5, z: 0.5 });
+    expect(player.movementCredit).toBe(0);
+    expect(player.movementCreditUpdatedAtMs).toBe(5400);
+  });
+
+  test('empty active move request stops after the next queued tile', () => {
+    const { world, player, counters } = makeWorldHarness();
 
     world.handlePlayerMove(player.id, [
       { x: 1.5, z: 1.5 },
@@ -107,6 +119,7 @@ describe('player move validation', () => {
     ]);
     player.movementCredit = 0.8;
     player.movementCreditUpdatedAtMs = 12345;
+    counters.skillingCancels = 0;
 
     world.handlePlayerMove(player.id, []);
 
@@ -116,6 +129,7 @@ describe('player move validation', () => {
     expect(player.getMoveDestination()).toEqual({ x: 1.5, z: 1.5 });
     expect(player.movementCredit).toBe(0.8);
     expect(player.movementCreditUpdatedAtMs).toBe(12345);
+    expect(counters.skillingCancels).toBe(1);
   });
 
   test('move validation passes player height through the movement collision adapter', () => {

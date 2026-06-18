@@ -50,6 +50,10 @@ const TRANSLATION_BONE_WHITELIST = new Set([
   'mixamorig:Spine2',
 ]);
 const RUN_HIPS_BOB_SCALE = 0.7;
+const PRESERVE_HIPS_VERTICAL_DELTA = new Set([
+  'fish_net',
+  'fish_harpoon',
+]);
 
 const sceneTemplateCaches = new WeakMap<Scene, Map<string, Promise<HumanoidAnimationTemplate | null>>>();
 const warnedTemplateFailures = new Set<string>();
@@ -272,11 +276,16 @@ function stripUnsafeHipsTranslation(ta: AnimationGroup['targetedAnimations'][num
 
   const isInPlaceCycle = isWalkVariant(animName) || animName === 'run';
   const preserveVerticalBob = animName === 'run';
+  const preserveVerticalDelta = PRESERVE_HIPS_VERTICAL_DELTA.has(animName);
   const restY = typeof target.position?.y === 'number' ? target.position.y : 0;
   for (const k of ta.animation.getKeys()) {
     const v = k.value as any;
     if (v && typeof v.y === 'number') {
-      v.y = preserveVerticalBob ? (v.y - restY) * RUN_HIPS_BOB_SCALE : 0;
+      v.y = preserveVerticalBob
+        ? (v.y - restY) * RUN_HIPS_BOB_SCALE
+        : preserveVerticalDelta
+          ? v.y - restY
+          : 0;
     }
     if (isInPlaceCycle && v) {
       if (typeof v.x === 'number') v.x = 0;

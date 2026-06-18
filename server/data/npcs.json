@@ -2780,5 +2780,31 @@
       }
     ],
     "modelNpcId": 20
+  },
+  {
+    "id": 126,
+    "name": "Giles",
+    "examineText": "A custom-built stranger with a look that says someone is still editing.",
+    "health": 10,
+    "attack": 3,
+    "defence": 2,
+    "strength": 2,
+    "attackSpeed": 4,
+    "respawnTime": 30,
+    "aggressive": false,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 301,
+        "quantity": 1,
+        "chance": 0.25
+      },
+      {
+        "itemId": 224,
+        "quantity": 1,
+        "chance": 0.006666666666666666
+      }
+    ],
+    "modelNpcId": 102
   }
 ]

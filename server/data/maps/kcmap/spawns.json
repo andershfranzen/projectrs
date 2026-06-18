@@ -1858,10 +1858,10 @@
     },
     {
       "id": 86,
-      "npcId": 102,
-      "x": 342.5,
-      "z": 176.5,
-      "wanderRange": 3,
+      "npcId": 126,
+      "x": 343.5,
+      "z": 175.5,
+      "wanderRange": 2,
       "appearance": {
         "shirtColor": 11,
         "pantsColor": 12,
@@ -1883,7 +1883,6 @@
         0,
         0
       ],
-      "name": "man",
       "customColors": {
         "shirtColor": [
           0.27450980392156865,

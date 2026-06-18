@@ -130,9 +130,9 @@ test('stall assets resolve to roguery stall object definitions', () => {
 
 test('fishing bubble assets resolve to fishing spot object definitions', () => {
   expect(objectDefIdForPlacedAsset('FishingSpotBubbles')).toBe(5);
-  expect(objectDefIdForPlacedAsset('FishingSpotBubblesNet')).toBe(61);
-  expect(objectDefIdForPlacedAsset('FishingSpotBubblesRod')).toBe(62);
-  expect(objectDefIdForPlacedAsset('FishingSpotBubblesHarpoon')).toBe(63);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesNet')).toBe(5);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesRod')).toBe(46);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesHarpoon')).toBe(48);
 });
 
 test('trapdoor assets resolve to the teleport object definition', () => {

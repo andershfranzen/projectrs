@@ -253,7 +253,7 @@
     "stackable": false,
     "equippable": false,
     "value": 3,
-    "icon": "Raw_Shrimp_349.png"
+    "model": "/assets/models/Food/ShrimpRaw.glb"
   },
   {
     "id": 28,
@@ -263,7 +263,7 @@
     "equippable": false,
     "healAmount": 3,
     "value": 8,
-    "icon": "Shrimp_350.png"
+    "model": "/assets/models/Food/ShrimpCooked.glb"
   },
   {
     "id": 29,

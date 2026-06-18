@@ -3324,10 +3324,48 @@ export class ChunkManager {
     return heights.sort((a, b) => a - b);
   }
 
-  getStairAt(x: number, z: number): StairData | undefined {
+  getWalkableFloorTargetsAt(x: number, z: number): { floor: number; y: number }[] {
+    const tx = Math.floor(x), tz = Math.floor(z);
+    if (tx < 0 || tx >= this.mapWidth || tz < 0 || tz >= this.mapHeight) return [];
+    const tileIdx = tz * this.mapWidth + tx;
+    const targets: { floor: number; y: number }[] = [];
+    const add = (floor: number, y: number | undefined | null): void => {
+      if (y == null || !Number.isFinite(y)) return;
+      if (!targets.some(existing => existing.floor === floor && Math.abs(existing.y - y) < 0.1)) {
+        targets.push({ floor, y });
+      }
+    };
+
+    if (this.tileTypes && !this.holeTiles.has(tileIdx) && !BLOCKING_TILES.has(this.tileTypes[tileIdx] as TileType)) {
+      add(0, this.getInterpolatedHeight(x, z));
+    }
+    add(0, this.floorHeights.get(tileIdx));
+    if (this.bridgeFloorTiles.has(tileIdx)) add(0, this.elevatedFloorHeights.get(tileIdx));
+    const stair = this.stairData.get(tileIdx);
+    if (stair) {
+      add(0, stair.baseHeight);
+      add(0, stair.topHeight);
+      add(0, this.getEffectiveHeight(x, z, 0, Number.POSITIVE_INFINITY));
+    }
+    for (const floor of this.floorLayerData.keys()) {
+      if (!this.isBlockedOnFloor(tx, tz, floor)) {
+        add(floor, this.getEffectiveHeight(x, z, floor, Number.POSITIVE_INFINITY));
+      }
+    }
+
+    return targets.sort((a, b) => (a.y - b.y) || (a.floor - b.floor));
+  }
+
+  getStairOnFloor(x: number, z: number, floor: number): StairData | undefined {
     const tx = Math.floor(x), tz = Math.floor(z);
     if (tx < 0 || tx >= this.mapWidth || tz < 0 || tz >= this.mapHeight) return undefined;
-    return this.stairData.get(tz * this.mapWidth + tx);
+    const tileIdx = tz * this.mapWidth + tx;
+    if (floor === 0) return this.stairData.get(tileIdx);
+    return this.floorLayerData.get(floor)?.stairs.get(tileIdx);
+  }
+
+  getStairAt(x: number, z: number): StairData | undefined {
+    return this.getStairOnFloor(x, z, 0);
   }
 
   private getTileTypeRaw(x: number, z: number): TileType {
@@ -5184,7 +5222,9 @@ export class ChunkManager {
     for (const obj of regularObjects) {
       const template = this.loadedModelCache.get(obj.assetId)!;
 
+      const sourceToClone = new Map<any, any>();
       const instance = template.instantiateHierarchy(null, undefined, (source, cloned) => {
+        sourceToClone.set(source, cloned);
         cloned.name = `placed_${chunkKey}_${placedNodeIndex}_${source.name}`;
       });
       if (!instance) continue;
@@ -5202,21 +5242,47 @@ export class ChunkManager {
       if (templateAnims) {
         const oneShotAnimation = this.isOneShotPlacedAnimationAsset(obj.assetId);
         const clonedNodes = new Map<string, any>();
-        instance.getChildMeshes(false).forEach(m => clonedNodes.set(m.name, m));
+        instance.getChildMeshes(false).forEach(m => {
+          clonedNodes.set(m.name, m);
+          for (const bone of m.skeleton?.bones ?? []) {
+            clonedNodes.set(bone.name, bone);
+            clonedNodes.set(`placed_${chunkKey}_${placedNodeIndex}_${bone.name}`, bone);
+          }
+        });
         instance.getChildTransformNodes(false).forEach(n => clonedNodes.set(n.name, n));
         clonedNodes.set(instance.name, instance);
+        for (const sourceMesh of template.getChildMeshes(false)) {
+          const clonedMesh = sourceToClone.get(sourceMesh);
+          if (!clonedMesh?.skeleton || !sourceMesh.skeleton) continue;
+          sourceMesh.skeleton.bones.forEach((sourceBone, boneIndex) => {
+            const clonedBone = clonedMesh.skeleton?.bones[boneIndex]
+              ?? clonedMesh.skeleton?.bones.find((bone: any) => bone.name === sourceBone.name);
+            if (!clonedBone) return;
+            sourceToClone.set(sourceBone, clonedBone);
+            const sourceNode = sourceBone.getTransformNode?.();
+            const clonedNode = sourceNode ? sourceToClone.get(sourceNode) : undefined;
+            if (clonedNode && typeof clonedBone.linkTransformNode === 'function') {
+              clonedBone.linkTransformNode(clonedNode);
+            }
+            clonedNodes.set(sourceBone.name, clonedBone);
+            clonedNodes.set(`placed_${chunkKey}_${placedNodeIndex}_${sourceBone.name}`, clonedBone);
+          });
+        }
 
         for (const srcGroup of templateAnims) {
-          const clonedGroup = new AnimationGroup(`${srcGroup.name}_${chunkKey}_${placedNodeIndex}`, this.scene);
-          for (const ta of srcGroup.targetedAnimations) {
-            const srcName = ta.target?.name as string;
-            const clonedTarget = srcName
-              ? clonedNodes.get(`placed_${chunkKey}_${placedNodeIndex}_${srcName}`)
-              : null;
-            if (clonedTarget) {
-              clonedGroup.addTargetedAnimation(ta.animation, clonedTarget);
-            }
-          }
+          const clonedGroup = srcGroup.clone(
+            `${srcGroup.name}_${chunkKey}_${placedNodeIndex}`,
+            target => {
+              const clonedTarget = sourceToClone.get(target);
+              if (clonedTarget) return clonedTarget;
+              const srcName = target?.name as string | undefined;
+              return srcName
+                ? clonedNodes.get(`placed_${chunkKey}_${placedNodeIndex}_${srcName}`)
+                  ?? clonedNodes.get(srcName)
+                  ?? null
+                : null;
+            },
+          );
           if (clonedGroup.targetedAnimations.length > 0) {
             if (oneShotAnimation) {
               clonedGroup.stop();

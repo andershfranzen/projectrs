@@ -2,6 +2,29 @@ import { describe, expect, test } from 'bun:test';
 import { GameManager } from './GameManager';
 import type { GroundItemData } from './EntityManager';
 
+function installMovementLayerPathingStubs(manager: any): void {
+  manager.currentFloor = manager.currentFloor ?? 0;
+  manager.localPlayer = manager.localPlayer ?? { position: { y: 0 } };
+  manager.blockedObjectTiles = manager.blockedObjectTiles ?? new Set();
+  manager.isCenteredDoorTileBlockedKey = manager.isCenteredDoorTileBlockedKey ?? (() => false);
+  manager.chunkManager.getWalkableFloorTargetsAt = manager.chunkManager.getWalkableFloorTargetsAt ?? (() => []);
+  manager.chunkManager.getStairOnFloor = manager.chunkManager.getStairOnFloor ?? (() => undefined);
+  manager.chunkManager.isBlockedOnFloor = manager.chunkManager.isBlockedOnFloor ?? (() => false);
+  manager.chunkManager.isWallBlockedOnFloor = manager.chunkManager.isWallBlockedOnFloor ?? (() => false);
+  manager.isTileBlockedOnFloorForPath = (x: number, z: number, floor: number) =>
+    floor === 0 ? manager.isTileBlocked(x, z) : manager.chunkManager.isBlockedOnFloor(x, z, floor);
+  manager.isWallBlockedForPathOnFloor = (
+    fx: number,
+    fz: number,
+    tx: number,
+    tz: number,
+    floor: number,
+    y: number,
+  ) => floor === 0
+    ? manager.isWallBlockedForPath(fx, fz, tx, tz, y)
+    : manager.chunkManager.isWallBlockedOnFloor(fx, fz, tx, tz, floor);
+}
+
 describe('GameManager ground item picking', () => {
   test('resolves live tile stack when picked ground item id is stale', () => {
     const manager = Object.create(GameManager.prototype) as GameManager;
@@ -236,6 +259,7 @@ describe('GameManager ground item picking', () => {
       getMapHeight: () => 20,
       getEffectiveHeight: () => 0,
     };
+    installMovementLayerPathingStubs(manager);
 
     const result = (manager as any).findPathToGroundItem(item) as { path: { x: number; z: number }[] };
 
@@ -256,6 +280,7 @@ describe('GameManager ground item picking', () => {
       getMapHeight: () => 20,
       getEffectiveHeight: () => 0,
     };
+    installMovementLayerPathingStubs(manager);
 
     expect((manager as any).canReachGroundItemTileFrom(6, 5, 7, 5, true)).toBe(false);
     expect((manager as any).canReachGroundItemTileFrom(6, 5, 7, 5, true, true)).toBe(true);

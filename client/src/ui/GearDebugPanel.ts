@@ -12,7 +12,7 @@ type ItemInfoGetter = (slot: string) => { id: number; name: string; toolType?: s
 type SaveCallback = (itemId: number, override: GearOverride) => Promise<void>;
 type BulkSaveCallback = (sourceItemId: number, slot: string, override: GearOverride) => Promise<number>;
 type LoadGlbCallback = (slot: string, path: string, itemId?: number, override?: GearOverride) => Promise<void>;
-type AnimCallback = (anim: string) => void;
+type AnimCallback = (anim: string, phase?: number) => void;
 type UnequipCallback = (slot: string) => void;
 type OverrideGetter = (itemId: number) => GearOverride | null;
 type SkinnedChecker = (slot: string) => boolean;
@@ -77,6 +77,7 @@ const SLOT_COLORS: Record<string, string> = {
 
 const MOVE_NUDGE_STEPS = [0.001, 0.01, 0.05];
 const ROTATION_NUDGE_STEPS = [
+  { label: '1', value: Math.PI / 180 },
   { label: '5', value: Math.PI / 36 },
   { label: '15', value: Math.PI / 12 },
   { label: '45', value: Math.PI / 4 },
@@ -108,6 +109,9 @@ export class GearDebugPanel {
   private overrideStatusEl!: HTMLSpanElement;
   private glbInput!: HTMLInputElement;
   private centerOriginInput!: HTMLInputElement;
+  private frameHoldInput!: HTMLInputElement;
+  private frameSlider!: HTMLInputElement;
+  private frameNumberInput!: HTMLInputElement;
   private thumbGrid!: HTMLDivElement;
   private thumbToggleBtn!: HTMLButtonElement;
   private headHairSection!: HTMLDivElement;
@@ -137,7 +141,8 @@ export class GearDebugPanel {
   private loadedPreviewOverride: GearOverride | null = null;
   private previewReloadSeq = 0;
   private moveNudgeStep = 0.01;
-  private rotationNudgeStep = Math.PI / 12;
+  private rotationNudgeStep = Math.PI / 180;
+  private activeAnim = 'idle';
   private moveStepButtons: HTMLButtonElement[] = [];
   private rotationStepButtons: HTMLButtonElement[] = [];
   private meshOffsetBaseTarget: TransformNode | null = null;
@@ -382,6 +387,51 @@ export class GearDebugPanel {
     }
     body.appendChild(animRow);
 
+    const frameRow = document.createElement('div');
+    frameRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin:-5px 0 10px;';
+
+    const holdLabel = document.createElement('label');
+    holdLabel.style.cssText = 'display:flex;align-items:center;gap:3px;width:46px;flex-shrink:0;color:#888;font-size:9px;font-weight:bold;';
+    this.frameHoldInput = document.createElement('input');
+    this.frameHoldInput.type = 'checkbox';
+    this.frameHoldInput.style.cssText = 'margin:0;accent-color:#8cf;';
+    this.frameHoldInput.addEventListener('change', () => this.playAnim(this.activeAnim));
+    const holdText = document.createElement('span');
+    holdText.textContent = 'HOLD';
+    holdLabel.appendChild(this.frameHoldInput);
+    holdLabel.appendChild(holdText);
+    frameRow.appendChild(holdLabel);
+
+    const frameLabel = document.createElement('span');
+    frameLabel.style.cssText = 'width:38px;flex-shrink:0;color:#777;font-size:9px;font-weight:bold;';
+    frameLabel.textContent = 'FRAME';
+    frameRow.appendChild(frameLabel);
+
+    this.frameSlider = document.createElement('input');
+    this.frameSlider.type = 'range';
+    this.frameSlider.min = '0';
+    this.frameSlider.max = '100';
+    this.frameSlider.step = '1';
+    this.frameSlider.value = '50';
+    this.frameSlider.style.cssText = 'flex:1;height:14px;cursor:pointer;accent-color:#8cf;';
+    this.frameSlider.addEventListener('input', () => this.setFramePercent(parseFloat(this.frameSlider.value)));
+    frameRow.appendChild(this.frameSlider);
+
+    this.frameNumberInput = document.createElement('input');
+    this.frameNumberInput.type = 'number';
+    this.frameNumberInput.min = '0';
+    this.frameNumberInput.max = '100';
+    this.frameNumberInput.step = '1';
+    this.frameNumberInput.value = '50';
+    Object.assign(this.frameNumberInput.style, {
+      width: '46px', flexShrink: '0', background: '#1a1510', color: '#ddd',
+      border: '1px solid #3a3530', borderRadius: '2px', padding: '1px 3px',
+      fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '10px', textAlign: 'right',
+    });
+    this.frameNumberInput.addEventListener('input', () => this.setFramePercent(parseFloat(this.frameNumberInput.value)));
+    frameRow.appendChild(this.frameNumberInput);
+    body.appendChild(frameRow);
+
     // Action buttons
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;';
@@ -510,6 +560,14 @@ export class GearDebugPanel {
       header.appendChild(btn);
     }
     section.appendChild(header);
+    section.appendChild(this.buildNudgeButtonRow('LOCAL', [
+      { text: 'X-', title: 'Move along local -X', onClick: () => this.nudgeLocalPosition('x', -1) },
+      { text: 'X+', title: 'Move along local +X', onClick: () => this.nudgeLocalPosition('x', 1) },
+      { text: 'Y-', title: 'Move along local -Y', onClick: () => this.nudgeLocalPosition('y', -1) },
+      { text: 'Y+', title: 'Move along local +Y', onClick: () => this.nudgeLocalPosition('y', 1) },
+      { text: 'Z-', title: 'Move along local -Z', onClick: () => this.nudgeLocalPosition('z', -1) },
+      { text: 'Z+', title: 'Move along local +Z', onClick: () => this.nudgeLocalPosition('z', 1) },
+    ]));
     section.appendChild(this.buildNudgeButtonRow('VIEW', [
       { text: 'L', title: 'Move left on screen', onClick: () => this.nudgeViewPosition('right', -1) },
       { text: 'R', title: 'Move right on screen', onClick: () => this.nudgeViewPosition('right', 1) },
@@ -578,6 +636,14 @@ export class GearDebugPanel {
       { text: 'CENTER', title: 'Move mesh so its bounds center sits on the attachment pivot', onClick: () => this.snapMeshOffsetToBounds('center') },
       { text: 'BOTTOM', title: 'Move mesh so its lower bounds center sits on the attachment pivot', onClick: () => this.snapMeshOffsetToBounds('bottom') },
       { text: 'RESET', title: 'Clear visual offset', onClick: () => this.resetMeshOffset() },
+    ]));
+    section.appendChild(this.buildNudgeButtonRow('LOCAL', [
+      { text: 'X-', title: 'Move mesh along local -X without moving the attachment pivot', onClick: () => this.nudgeLocalMeshOffset('x', -1) },
+      { text: 'X+', title: 'Move mesh along local +X without moving the attachment pivot', onClick: () => this.nudgeLocalMeshOffset('x', 1) },
+      { text: 'Y-', title: 'Move mesh along local -Y without moving the attachment pivot', onClick: () => this.nudgeLocalMeshOffset('y', -1) },
+      { text: 'Y+', title: 'Move mesh along local +Y without moving the attachment pivot', onClick: () => this.nudgeLocalMeshOffset('y', 1) },
+      { text: 'Z-', title: 'Move mesh along local -Z without moving the attachment pivot', onClick: () => this.nudgeLocalMeshOffset('z', -1) },
+      { text: 'Z+', title: 'Move mesh along local +Z without moving the attachment pivot', onClick: () => this.nudgeLocalMeshOffset('z', 1) },
     ]));
     section.appendChild(this.buildNudgeButtonRow('VIEW', [
       { text: 'L', title: 'Move mesh left on screen without moving the attachment pivot', onClick: () => this.nudgeViewMeshOffset('right', -1) },
@@ -672,6 +738,12 @@ export class GearDebugPanel {
     this.applyWorldPositionDelta(delta);
   }
 
+  private nudgeLocalPosition(axis: 'x' | 'y' | 'z', sign: -1 | 1): void {
+    this.setVal(`pos.${axis}`, this.getVal(`pos.${axis}`) + this.moveNudgeStep * sign);
+    this.applyToTarget();
+    this.updateOverrideStatus();
+  }
+
   private nudgeViewPosition(axis: 'right' | 'up' | 'forward', sign: -1 | 1): void {
     const worldDirection = this.getViewDirection(axis);
     if (!worldDirection) return;
@@ -698,6 +770,12 @@ export class GearDebugPanel {
   private nudgeWorldMeshOffset(axis: 'x' | 'y' | 'z', sign: -1 | 1): void {
     const delta = this.worldAxisVector(axis).scaleInPlace(this.moveNudgeStep * sign);
     this.applyWorldMeshOffsetDelta(delta);
+  }
+
+  private nudgeLocalMeshOffset(axis: 'x' | 'y' | 'z', sign: -1 | 1): void {
+    this.setVal(`mesh.${axis}`, this.getVal(`mesh.${axis}`) + this.moveNudgeStep * sign);
+    this.applyToTarget();
+    this.updateOverrideStatus();
   }
 
   private nudgeViewMeshOffset(axis: 'right' | 'up' | 'forward', sign: -1 | 1): void {
@@ -1705,8 +1783,24 @@ export class GearDebugPanel {
     }
   }
 
+  private setFramePercent(value: number): void {
+    const clamped = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
+    if (this.frameSlider) this.frameSlider.value = String(clamped);
+    if (this.frameNumberInput) this.frameNumberInput.value = Math.round(clamped).toString();
+    if (this.frameHoldInput?.checked) this.playAnim(this.activeAnim);
+  }
+
+  private currentFramePhase(): number {
+    const value = parseFloat(this.frameNumberInput?.value ?? this.frameSlider?.value ?? '0');
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(100, value)) / 100;
+  }
+
   private playAnim(anim: string): void {
-    if (this.animCallback) this.animCallback(anim);
+    this.activeAnim = anim;
+    if (this.animCallback) {
+      this.animCallback(anim, this.frameHoldInput?.checked ? this.currentFramePhase() : undefined);
+    }
 
     for (const [name, btn] of this.animButtons) {
       const isActive = name === anim;

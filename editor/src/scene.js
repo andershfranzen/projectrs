@@ -421,6 +421,79 @@ function tuneModelLighting(model, assetOrPath = null) {
     for (const mesh of meshes) mesh.isPickable = pickable
   }
 
+  function isFishingBubbleAssetId(assetId) {
+    return String(assetId || '').startsWith('FishingSpotBubbles')
+  }
+
+  let fishingSpotEditorMarkerMaterial = null
+  function getFishingSpotEditorMarkerMaterial() {
+    if (fishingSpotEditorMarkerMaterial) return fishingSpotEditorMarkerMaterial
+    const mat = new StandardMaterial('fishing-spot-editor-marker', scene)
+    mat.diffuseColor = new Color3(0.18, 0.72, 1.0)
+    mat.emissiveColor = new Color3(0.08, 0.34, 0.52)
+    mat.specularColor = new Color3(0.1, 0.18, 0.22)
+    mat.alpha = 0.82
+    mat.backFaceCulling = false
+    if (mat.transparencyMode !== undefined) mat.transparencyMode = 2 // ALPHABLEND
+    fishingSpotEditorMarkerMaterial = mat
+    return mat
+  }
+
+  function removeFishingSpotEditorMarker(model) {
+    const children = model?.getChildren ? model.getChildren() : []
+    for (const child of children) {
+      if (child.metadata?.editorFishingSpotMarker) child.dispose()
+    }
+  }
+
+  function attachFishingSpotEditorMarker(model, { pickable = true } = {}) {
+    const assetId = model?.userData?.assetId
+    if (!isFishingBubbleAssetId(assetId)) {
+      removeFishingSpotEditorMarker(model)
+      return
+    }
+
+    removeFishingSpotEditorMarker(model)
+
+    const group = new TransformNode('fishingSpotEditorMarker', scene)
+    group.metadata = { editorFishingSpotMarker: true }
+    group.userData = { editorFishingSpotMarker: true }
+    group.parent = model
+    group.position.set(0, 0.08, 0)
+    group.doNotSerialize = true
+
+    const mat = getFishingSpotEditorMarkerMaterial()
+    const rings = [
+      { diameter: 0.48, thickness: 0.018, y: 0 },
+      { diameter: 0.28, thickness: 0.014, y: 0.01 },
+    ]
+    for (const cfg of rings) {
+      const ring = MeshBuilder.CreateTorus('fishingSpotEditorMarkerRing', {
+        diameter: cfg.diameter,
+        thickness: cfg.thickness,
+        tessellation: 28,
+      }, scene)
+      ring.parent = group
+      ring.position.y = cfg.y
+      ring.rotation.x = Math.PI / 2
+      ring.material = mat
+      ring.isPickable = pickable
+      ring.doNotSerialize = true
+      ring.metadata = { editorFishingSpotMarker: true }
+    }
+
+    const dot = MeshBuilder.CreateSphere('fishingSpotEditorMarkerDot', {
+      diameter: 0.075,
+      segments: 8,
+    }, scene)
+    dot.parent = group
+    dot.position.y = 0.025
+    dot.material = mat
+    dot.isPickable = pickable
+    dot.doNotSerialize = true
+    dot.metadata = { editorFishingSpotMarker: true }
+  }
+
   function setHierarchyWorldMatrixFrozen(node, frozen) {
     if (!node) return
     const descendants = node.getDescendants ? node.getDescendants(false) : (node.getChildMeshes ? node.getChildMeshes() : [])
@@ -499,6 +572,7 @@ function tuneModelLighting(model, assetOrPath = null) {
     setHierarchyPickable(model, true)
     updatePlacedModelDerivedData(model)
     model.parent = placedGroup
+    attachFishingSpotEditorMarker(model, { pickable: true })
     _spatialRegister(model)
     freezePlacedModel(model)
     if (invalidateShadow) invalidateShadowCache()
@@ -12705,6 +12779,7 @@ function applyToolAtTile(tile, eventLike = null) {
     previewObject.rotation.set(previewRotation.x, previewRotation.y, previewRotation.z)
     previewObject.scaling.set(previewScale, previewScale, previewScale)
     previewObject.userData.assetId = asset.id
+    attachFishingSpotEditorMarker(previewObject, { pickable: false })
     setHierarchyPickable(previewObject, false)
     // previewObject is already in the scene from makeGhostMaterial
 

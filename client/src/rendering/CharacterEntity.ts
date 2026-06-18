@@ -202,7 +202,7 @@ type SkillLoopWindow = {
 const BLENDER_ANIMATION_FPS = 30;
 
 const SKILL_LOOP_WINDOWS: Record<string, SkillLoopWindow> = {
-  fish_rod: { from: 30, to: 142, sourceFps: BLENDER_ANIMATION_FPS },
+  fish_rod: { from: 30, to: 124, sourceFps: BLENDER_ANIMATION_FPS },
 };
 
 
@@ -1367,6 +1367,63 @@ export class CharacterEntity {
   // ---------------------------------------------------------------------------
   // Public animation API (mirrors SpriteEntity interface)
   // ---------------------------------------------------------------------------
+
+  /** Debug helper: evaluate one animation at a fixed phase and leave the
+   *  skeleton posed there. Gear fitting uses this to align held items against
+   *  a specific action frame instead of chasing a looping animation. */
+  previewAnimationFrame(name: string, phase: number): boolean {
+    const candidates = name === 'attack'
+      ? this.getAnimNamesForState(AnimState.Attack)
+      : name === 'walk'
+        ? [this.movementAnimName(), 'walk']
+        : name === 'idle'
+          ? ['idle']
+          : (name === 'chop' || name === 'mine' || name.startsWith('fish_'))
+            ? this.getAnimNamesForState(AnimState.Skill, name)
+            : [name];
+    const resolvedName = candidates.find((candidate) => this.animGroups.has(candidate));
+    const group = resolvedName ? this.animGroups.get(resolvedName) : null;
+    if (!group || !resolvedName) {
+      if (!this.missingAnimationWarnings.has(name)) {
+        this.missingAnimationWarnings.add(name);
+        console.warn(`[CharacterEntity] Missing animation '${name}'`);
+      }
+      return false;
+    }
+
+    this.clearLayeredOneShot();
+    this.clearSkillLoopWindow();
+    this.oneShotCallback = null;
+    for (const candidate of this.animGroups.values()) {
+      if (candidate.isPlaying) candidate.stop();
+    }
+
+    const from = Number.isFinite(group.from) ? group.from : 0;
+    const to = Number.isFinite(group.to) ? group.to : from;
+    const clampedPhase = Number.isFinite(phase) ? Math.max(0, Math.min(1, phase)) : 0;
+    const frame = from + (to - from) * clampedPhase;
+
+    this.currentAnimName = resolvedName;
+    this.currentAnimLoop = false;
+    this.queuedState = AnimState.Idle;
+    this.queuedAnimName = '';
+    this.currentState = isMovementAnimation(resolvedName)
+      ? AnimState.Walk
+      : (resolvedName === 'chop' || resolvedName === 'mine' || resolvedName.startsWith('fish_'))
+        ? AnimState.Skill
+        : AnimState.Idle;
+
+    if (this.renderEnabled) {
+      for (const ta of group.targetedAnimations) {
+        ta.animation.enableBlending = false;
+        ta.animation.blendingSpeed = 0;
+      }
+      group.start(false, 1, frame, frame, false);
+      group.goToFrame(frame);
+      group.stop();
+    }
+    return true;
+  }
 
   setMovementMode(mode: MovementMode): void {
     if (this.movementMode === mode) return;

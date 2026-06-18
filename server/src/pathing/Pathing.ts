@@ -98,6 +98,7 @@ export function expandAndValidateWaypointPath<State>(
     const stepZ = Math.sign(dzTotal);
     const distance = Math.max(Math.abs(dxTotal), Math.abs(dzTotal));
     if (distance === 0) continue;
+    requestedTileCount += distance;
     if (distance > maxSegmentTiles) {
       truncated = true;
       break;
@@ -107,7 +108,6 @@ export function expandAndValidateWaypointPath<State>(
       break;
     }
 
-    requestedTileCount += distance;
     if (requestedTileCount > maxRequestedTiles) {
       truncated = true;
       break;
@@ -127,6 +127,30 @@ export function expandAndValidateWaypointPath<State>(
         stepX,
         stepZ,
       };
+      if (stepX !== 0 && stepZ !== 0) {
+        const horizontalStep: WaypointStep<State> = {
+          state,
+          fromTileX: curTileX,
+          fromTileZ: curTileZ,
+          toTileX,
+          toTileZ: curTileZ,
+          stepX,
+          stepZ: 0,
+        };
+        const verticalStep: WaypointStep<State> = {
+          state,
+          fromTileX: curTileX,
+          fromTileZ: curTileZ,
+          toTileX: curTileX,
+          toTileZ,
+          stepX: 0,
+          stepZ,
+        };
+        if (!options.canStep(horizontalStep) || !options.canStep(verticalStep)) {
+          truncated = true;
+          break outer;
+        }
+      }
       if (!options.canStep(waypointStep)) {
         truncated = true;
         break outer;

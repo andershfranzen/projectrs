@@ -39,8 +39,8 @@ const CROP_DEF = {
 };
 
 const FISHING_SPOT_DEF = {
-  id: 61,
-  name: 'Net Fishing Test Spot',
+  id: 5,
+  name: 'Shallow Fishing Spot',
   category: 'fishingspot',
   width: 0.6,
   height: 0.6,
@@ -476,7 +476,7 @@ describe('GameManager world object pick proxies', () => {
     expect(interactions).toEqual([]);
   });
 
-  test('skilling start queues until a matching predicted object-arrival path drains', () => {
+  test('skilling start queues until a matching predicted object-arrival path drains', async () => {
     const manager = makeManager();
     let clearedPath = 0;
     let stoppedWalking = 0;
@@ -513,18 +513,20 @@ describe('GameManager world object pick proxies', () => {
     manager.isSkilling = true;
     manager.skillingObjectId = 45678;
 
-    manager.queueOrStartLocalSkillingVisual(45678, undefined, true);
+    manager.queueOrStartLocalSkillingVisual(45678, undefined, true, 0);
+    await Promise.resolve();
 
     expect(manager.playerX).toBe(106.5);
     expect(manager.playerZ).toBe(95.5);
     expect(manager.pathIndex).toBe(0);
     expect(clearedPath).toBe(0);
     expect(stoppedWalking).toBe(0);
-    expect(manager.pendingLocalSkillingVisual).toEqual({ objectId: 45678, variant: undefined, stationary: true });
+    expect(manager.pendingLocalSkillingVisual).toEqual({ objectId: 45678, variant: undefined, stationary: true, toolItemId: 0 });
 
     manager.pathIndex = 1;
     manager.playerX = 107.5;
     manager.flushPendingLocalSkillingVisual();
+    await Promise.resolve();
 
     expect(manager.pendingLocalSkillingVisual).toBe(null);
     expect(clearedPath).toBe(1);

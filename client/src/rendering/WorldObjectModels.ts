@@ -4,6 +4,8 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { Material } from '@babylonjs/core/Materials/material';
 import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
+import type { Bone } from '@babylonjs/core/Bones/bone';
+import type { Observer } from '@babylonjs/core/Misc/observable';
 import type { WorldObjectDef } from '@projectrs/shared';
 import { worldAABB } from './MeshBounds';
 
@@ -12,6 +14,27 @@ interface ModelTemplate {
   scale: number;
   alphaBlend?: boolean;
   animationGroups?: AnimationGroup[];
+}
+
+interface FishingSpotRuntimeElement {
+  bone: Bone;
+  node: TransformNode | null;
+  basePosition: Vector3;
+  baseScaling: Vector3;
+  baseRotation: Quaternion;
+  phase: number;
+  cycleSeconds: number;
+  activeWindow: number;
+  maxScale: number;
+  driftX: number;
+  driftZ: number;
+  rise: number;
+  spinSpeed: number;
+}
+
+interface FishingSpotRuntimeAnimation {
+  root: TransformNode;
+  elements: FishingSpotRuntimeElement[];
 }
 
 const TREE_MODEL_CONFIG: { defId: number; files: string[]; targetHeight: number; stumpFile: string }[] = [
@@ -43,6 +66,8 @@ export class WorldObjectModels {
   private depletedAssetModels: Map<string, ModelTemplate> = new Map();
 
   private stumps: Map<number, TransformNode> = new Map();
+  private fishingSpotRuntimeAnimations: Map<number, FishingSpotRuntimeAnimation> = new Map();
+  private fishingSpotAnimationObserver: Observer<Scene> | null = null;
 
   constructor(scene: Scene, getHeight: (x: number, z: number) => number, objectDefsCache: Map<number, WorldObjectDef>) {
     this.scene = scene;
@@ -82,6 +107,10 @@ export class WorldObjectModels {
   /** Runtime-spawned objects, keyed by WorldObjectDef.modelAssetId. */
   private static readonly ACTIVE_ASSET_FILES: Record<string, { rootUrl: string; file: string; alphaBlend?: boolean }> = {
     fire: { rootUrl: '/assets/models/', file: 'fire.glb', alphaBlend: true },
+    FishingSpotBubbles: { rootUrl: '/assets/models/', file: 'FishingSpotBubbles.glb', alphaBlend: true },
+    FishingSpotBubblesNet: { rootUrl: '/assets/models/', file: 'FishingSpotBubbles.glb', alphaBlend: true },
+    FishingSpotBubblesRod: { rootUrl: '/assets/models/', file: 'FishingSpotBubbles.glb', alphaBlend: true },
+    FishingSpotBubblesHarpoon: { rootUrl: '/assets/models/', file: 'FishingSpotBubbles.glb', alphaBlend: true },
   };
 
   /** Map a `depletedAssetId` (e.g. "open tier 1 chest") to a GLB file to
@@ -217,9 +246,16 @@ export class WorldObjectModels {
   }
 
   private async loadActiveAssetModels(): Promise<void> {
+    const templatePromises = new Map<string, Promise<ModelTemplate>>();
     await Promise.all(Object.entries(WorldObjectModels.ACTIVE_ASSET_FILES).map(async ([assetId, cfg]) => {
       try {
-        this.activeAssetModels.set(assetId, await this.loadModelTemplate(cfg.rootUrl, cfg.file, `activeTemplate_${assetId}`, cfg.alphaBlend === true));
+        const key = `${cfg.rootUrl}\0${cfg.file}\0${cfg.alphaBlend === true ? 'alpha' : 'opaque'}`;
+        let promise = templatePromises.get(key);
+        if (!promise) {
+          promise = this.loadModelTemplate(cfg.rootUrl, cfg.file, `activeTemplate_${assetId}`, cfg.alphaBlend === true);
+          templatePromises.set(key, promise);
+        }
+        this.activeAssetModels.set(assetId, await promise);
       } catch (e) {
         console.warn(`[WorldObjectModels] Failed to load active model '${cfg.file}':`, e);
       }
@@ -393,13 +429,154 @@ export class WorldObjectModels {
       child.metadata = { ...(child.metadata ?? {}), objectEntityId };
       child.material = this.cloneActiveMaterial(child.material, materialClones, objectEntityId, model.alphaBlend === true);
     }
+    for (const sourceMesh of model.template.getChildMeshes(false)) {
+      const clonedMesh = sourceToClone.get(sourceMesh) as { skeleton?: { bones: any[] } } | undefined;
+      if (!clonedMesh?.skeleton || !sourceMesh.skeleton) continue;
+      sourceMesh.skeleton.bones.forEach((sourceBone, boneIndex) => {
+        const clonedBone = clonedMesh.skeleton?.bones[boneIndex]
+          ?? clonedMesh.skeleton?.bones.find((bone: any) => bone.name === sourceBone.name);
+        if (!clonedBone) return;
+        sourceToClone.set(sourceBone, clonedBone);
+        const sourceNode = sourceBone.getTransformNode?.();
+        const clonedNode = sourceNode ? sourceToClone.get(sourceNode) : undefined;
+        if (clonedNode && typeof clonedBone.linkTransformNode === 'function') {
+          clonedBone.linkTransformNode(clonedNode);
+        }
+      });
+    }
     if (materialClones.size > 0) this.activeMaterialClonesByObjectId.set(objectEntityId, [...new Set(materialClones.values())]);
     const s = model.scale;
     clone.scaling.set(s, s, s);
     clone.position.set(x, y ?? this.getHeight(x, z), z);
     clone.metadata = { ...(clone.metadata ?? {}), objectEntityId, assetId, runtimeWorldObject: true };
-    this.startActiveModelAnimations(objectEntityId, model, sourceToClone, !isDepleted);
+    if (!this.startFishingSpotRuntimeAnimation(objectEntityId, assetId, clone)) {
+      this.startActiveModelAnimations(objectEntityId, model, sourceToClone, !isDepleted);
+    }
     return clone;
+  }
+
+  private static isFishingSpotAsset(assetId: string): boolean {
+    return assetId === 'FishingSpotBubbles' || assetId.startsWith('FishingSpotBubbles');
+  }
+
+  private static hash01(value: string): number {
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0) / 0xFFFFFFFF;
+  }
+
+  private startFishingSpotRuntimeAnimation(objectEntityId: number, assetId: string, root: TransformNode): boolean {
+    if (!WorldObjectModels.isFishingSpotAsset(assetId)) return false;
+
+    const elements: FishingSpotRuntimeElement[] = [];
+    const seenBones = new Set<Bone>();
+    for (const mesh of root.getChildMeshes(false)) {
+      const skeleton = mesh.skeleton;
+      if (!skeleton) continue;
+      for (const bone of skeleton.bones) {
+        if (seenBones.has(bone)) continue;
+        seenBones.add(bone);
+        const name = bone.name ?? '';
+        if (!name.startsWith('FishingSpotBone_') || name.includes('_Root')) continue;
+
+        const node = bone.getTransformNode();
+        const seedA = WorldObjectModels.hash01(`${assetId}:${name}:a`);
+        const seedB = WorldObjectModels.hash01(`${assetId}:${name}:b`);
+        const seedC = WorldObjectModels.hash01(`${assetId}:${name}:c`);
+        const isRipple = name.includes('_Ripple_');
+        const isFoam = name.includes('_Foam_');
+        const angle = seedA * Math.PI * 2;
+        const driftDistance = isRipple ? 0.095 : isFoam ? 0.055 : 0.04;
+        const baseRotation = node
+          ? (node.rotationQuaternion?.clone() ?? Quaternion.FromEulerAngles(node.rotation.x, node.rotation.y, node.rotation.z))
+          : bone.rotationQuaternion.clone();
+
+        elements.push({
+          bone,
+          node,
+          basePosition: node ? node.position.clone() : bone.position.clone(),
+          baseScaling: node ? node.scaling.clone() : bone.scaling.clone(),
+          baseRotation,
+          phase: seedA,
+          cycleSeconds: isRipple ? 0.95 + seedB * 0.55 : isFoam ? 0.55 + seedB * 0.35 : 0.42 + seedB * 0.28,
+          activeWindow: isRipple ? 0.68 : isFoam ? 0.48 : 0.38,
+          maxScale: isRipple ? 1.2 + seedC * 0.45 : isFoam ? 0.85 + seedC * 0.35 : 0.7 + seedC * 0.3,
+          driftX: Math.cos(angle) * driftDistance,
+          driftZ: Math.sin(angle) * driftDistance,
+          rise: isRipple ? 0.015 : isFoam ? 0.05 : 0.11,
+          spinSpeed: (seedC - 0.5) * Math.PI * 1.4,
+        });
+      }
+    }
+
+    if (elements.length === 0) return false;
+    this.fishingSpotRuntimeAnimations.set(objectEntityId, { root, elements });
+    this.ensureFishingSpotAnimationLoop();
+    return true;
+  }
+
+  private ensureFishingSpotAnimationLoop(): void {
+    if (this.fishingSpotAnimationObserver) return;
+    this.fishingSpotAnimationObserver = this.scene.onBeforeRenderObservable.add(() => {
+      this.updateFishingSpotRuntimeAnimations();
+    });
+  }
+
+  private stopFishingSpotAnimationLoopIfIdle(): void {
+    if (this.fishingSpotRuntimeAnimations.size > 0 || !this.fishingSpotAnimationObserver) return;
+    this.scene.onBeforeRenderObservable.remove(this.fishingSpotAnimationObserver);
+    this.fishingSpotAnimationObserver = null;
+  }
+
+  private updateFishingSpotRuntimeAnimations(): void {
+    const timeSeconds = performance.now() * 0.001;
+    for (const [objectEntityId, animation] of this.fishingSpotRuntimeAnimations) {
+      if (animation.root.isDisposed()) {
+        this.fishingSpotRuntimeAnimations.delete(objectEntityId);
+        continue;
+      }
+      if (!animation.root.isEnabled(false)) continue;
+
+      for (const element of animation.elements) {
+        const cycle = ((timeSeconds / element.cycleSeconds + element.phase) % 1 + 1) % 1;
+        let life = 0;
+        if (cycle < element.activeWindow) life = cycle / element.activeWindow;
+
+        const fade = life > 0 ? Math.max(0, 1 - Math.max(0, life - 0.72) / 0.28) : 0;
+        const grow = life > 0 ? (0.16 + life * 1.12) * fade : 0;
+        const scale = Math.max(0.001, grow * element.maxScale);
+        const lift = life > 0 ? Math.sin(life * Math.PI) : 0;
+        const drift = life * life;
+        const position = new Vector3(
+          element.basePosition.x + element.driftX * drift,
+          element.basePosition.y + element.rise * lift,
+          element.basePosition.z + element.driftZ * drift,
+        );
+        const scaling = new Vector3(
+          element.baseScaling.x * scale,
+          element.baseScaling.y * scale,
+          element.baseScaling.z * scale,
+        );
+        const spin = Quaternion.FromEulerAngles(0, element.spinSpeed * life, 0);
+        const rotation = element.baseRotation.multiply(spin);
+
+        if (element.node) {
+          element.node.position.copyFrom(position);
+          element.node.scaling.copyFrom(scaling);
+          if (!element.node.rotationQuaternion) element.node.rotationQuaternion = rotation;
+          else element.node.rotationQuaternion.copyFrom(rotation);
+        } else {
+          element.bone.position = position;
+          element.bone.scaling = scaling;
+          element.bone.rotationQuaternion = rotation;
+          element.bone.markAsDirty();
+        }
+      }
+    }
+    this.stopFishingSpotAnimationLoopIfIdle();
   }
 
   private startActiveModelAnimations(
@@ -412,11 +589,10 @@ export class WorldObjectModels {
     if (!templateGroups || templateGroups.length === 0) return;
     const groups: AnimationGroup[] = [];
     for (const srcGroup of templateGroups) {
-      const clonedGroup = new AnimationGroup(`${srcGroup.name}_active_${objectEntityId}`, this.scene);
-      for (const targeted of srcGroup.targetedAnimations) {
-        const clonedTarget = sourceToClone.get(targeted.target);
-        if (clonedTarget) clonedGroup.addTargetedAnimation(targeted.animation, clonedTarget as any);
-      }
+      const clonedGroup = srcGroup.clone(
+        `${srcGroup.name}_active_${objectEntityId}`,
+        target => sourceToClone.get(target) ?? null,
+      );
       if (clonedGroup.targetedAnimations.length === 0) {
         clonedGroup.dispose();
         continue;
@@ -429,6 +605,9 @@ export class WorldObjectModels {
   }
 
   deleteActiveModelAnimations(objectEntityId: number): void {
+    if (this.fishingSpotRuntimeAnimations.delete(objectEntityId)) {
+      this.stopFishingSpotAnimationLoopIfIdle();
+    }
     const groups = this.activeAnimationGroupsByObjectId.get(objectEntityId);
     if (groups) {
       for (const group of groups) group.dispose();
@@ -519,6 +698,11 @@ export class WorldObjectModels {
       for (const material of materials) material.dispose(false, false);
     }
     this.activeMaterialClonesByObjectId.clear();
+    this.fishingSpotRuntimeAnimations.clear();
+    if (this.fishingSpotAnimationObserver) {
+      this.scene.onBeforeRenderObservable.remove(this.fishingSpotAnimationObserver);
+      this.fishingSpotAnimationObserver = null;
+    }
     for (const [, m] of this.treeModels) WorldObjectModels.disposeModelTemplate(m);
     this.treeModels.clear();
     this.treeModelVariants.clear();

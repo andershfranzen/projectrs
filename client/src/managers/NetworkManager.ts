@@ -604,11 +604,12 @@ export class NetworkManager {
       return false;
     }
 
+    if (path.length > 50) return false;
+
     // Encode: [opcode, pathLength, x1*10, z1*10, x2*10, z2*10, ..., modeIdx?]
     // modeIdx is optional for compatibility with pre-run-mode-bound servers.
-    const maxSteps = Math.min(path.length, 50); // Cap path length
-    const values = [maxSteps];
-    for (let i = 0; i < maxSteps; i++) {
+    const values = [path.length];
+    for (let i = 0; i < path.length; i++) {
       values.push(Math.round(path[i].x * 10));
       values.push(Math.round(path[i].z * 10));
     }

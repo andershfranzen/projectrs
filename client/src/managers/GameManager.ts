@@ -81,6 +81,7 @@ const NPC_MATERIALIZATION_RETRY_MS = 500;
 const NPC_LOD_HYSTERESIS_TILES = 4;
 const NPC_TARGET_PATH_MAX_SEARCH_TILES = 4096;
 const NPC_TARGET_PATH_MAX_WAYPOINTS = 50;
+const PLAYER_MOVE_MAX_WAYPOINTS = 50;
 const LOCAL_COMBAT_REASSERT_MS = TICK_RATE * 5;
 const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
@@ -730,7 +731,8 @@ export class GameManager {
   private fogCurrentEnd = 100;
   private objectModels!: WorldObjectModels;
   private isSkilling: boolean = false;
-  private pendingLocalSkillingVisual: { objectId: number; variant?: string; stationary: boolean } | null = null;
+  private pendingLocalSkillingVisual: { objectId: number; variant?: string; stationary: boolean; toolItemId: number } | null = null;
+  private localSkillingVisualStartInFlight: boolean = false;
   private isIndoors: boolean = false;
   private hiddenRoofNodes: TransformNode[] = [];
   private hiddenRoofNodeSet: Set<TransformNode> = new Set();
@@ -3353,7 +3355,8 @@ export class GameManager {
 
   private linkPlacedObjectsToWorldObjectsInBounds(minX: number, maxX: number, minZ: number, maxZ: number): void {
     for (const [objectEntityId, data] of this.worldObjectDefs) {
-      if (this.worldObjectModels.has(objectEntityId)) continue;
+      const existingModel = this.worldObjectModels.get(objectEntityId);
+      if (existingModel && this.chunkManager.isPlacedObjectNode(existingModel)) continue;
       if (data.x < minX || data.x > maxX || data.z < minZ || data.z > maxZ) continue;
       const placedNode = this.chunkManager.findPlacedObjectNear(
         data.x,
@@ -3416,6 +3419,10 @@ export class GameManager {
       this.disposeDoorVisualState(objectEntityId);
       this.disposeCropPickProxy(objectEntityId);
       this.disposeWorldObjectPickProxy(objectEntityId);
+      this.objectModels.deleteActiveModelAnimations(objectEntityId);
+      if (!this.chunkManager.isPlacedObjectNode(previous) && !previous.isDisposed()) {
+        previous.dispose(false, false);
+      }
     }
     const currentEntityId = this.worldObjectIdByNode.get(node);
     if (currentEntityId != null && currentEntityId !== objectEntityId) {
@@ -5763,15 +5770,7 @@ export class GameManager {
       const skipAnim = objDef?.category === 'chest';
 
       const objectId = v[0];
-      void (async () => {
-        const player = this.localPlayer;
-        if (player && toolItemId > 0) {
-          await this.applySkillingTool(this.localPlayerId, player, toolItemId);
-        }
-        if (!this.isSkilling || this.skillingObjectId !== objectId) return;
-        if (player && this.localPlayer !== player) return;
-        this.queueOrStartLocalSkillingVisual(objectId, variant, skipAnim);
-      })();
+      this.queueOrStartLocalSkillingVisual(objectId, variant, skipAnim, toolItemId);
     });
 
     this.network.on(ServerOpcode.SKILLING_STOP, (_op, _v) => {
@@ -6096,41 +6095,7 @@ export class GameManager {
       const lastZ = (v[1] ?? 0) / 10;
       const authoritativeFloor = Number.isInteger(v[2]) ? Math.trunc(v[2]!) : null;
       const authoritativeY = Number.isFinite(v[3]) ? v[3]! / 10 : null;
-      const tx = Math.floor(lastX);
-      const tz = Math.floor(lastZ);
-      // Find the path waypoint matching the server's final reachable tile.
-      // Cut everything *after* it. If the player's already past that tile,
-      // leave the path alone and let divergence-snap handle the rest.
-      let cutIdx = -1;
-      for (let i = this.pathIndex; i < this.path.length; i++) {
-        const wp = this.path[i];
-        if (Math.floor(wp.x) === tx && Math.floor(wp.z) === tz) {
-          cutIdx = i + 1;
-          break;
-        }
-      }
-      if (cutIdx >= 0 && cutIdx < this.path.length) {
-        this.path = this.path.slice(0, cutIdx);
-        this.refreshPredictedDestinationFromPath();
-        if (this.pathIndex >= this.path.length || (Math.floor(this.playerX) === tx && Math.floor(this.playerZ) === tz)) {
-          this.applyLocalVerticalAuthority(authoritativeFloor, authoritativeY);
-        }
-      } else if (cutIdx < 0) {
-        const segmentIdx = this.findPathSegmentContainingTile(tx, tz);
-        if (segmentIdx >= 0) {
-          this.path = [
-            ...this.path.slice(0, segmentIdx),
-            { x: lastX, z: lastZ },
-          ];
-          this.refreshPredictedDestinationFromPath();
-          if (this.pathIndex >= this.path.length || (Math.floor(this.playerX) === tx && Math.floor(this.playerZ) === tz)) {
-            this.applyLocalVerticalAuthority(authoritativeFloor, authoritativeY);
-          }
-        } else {
-          this.reconcileLocalPlayerToServer(lastX, lastZ, false);
-          this.applyLocalVerticalAuthority(authoritativeFloor, authoritativeY);
-        }
-      }
+      this.applyPathTruncated(lastX, lastZ, authoritativeFloor, authoritativeY);
     });
 
     this.network.on(ServerOpcode.PLAYER_CONTROLLED_MOVE, (_op, v) => {
@@ -8361,6 +8326,90 @@ export class GameManager {
     return Math.floor(a.x) === Math.floor(b.x) && Math.floor(a.z) === Math.floor(b.z);
   }
 
+  private compressedSegmentTileSteps(from: { x: number; z: number }, to: { x: number; z: number }): number {
+    return Math.max(
+      Math.abs(Math.floor(to.x) - Math.floor(from.x)),
+      Math.abs(Math.floor(to.z) - Math.floor(from.z)),
+    );
+  }
+
+  private applyPathTruncated(
+    lastX: number,
+    lastZ: number,
+    authoritativeFloor: number | null = null,
+    authoritativeY: number | null = null,
+  ): void {
+    const tx = Math.floor(lastX);
+    const tz = Math.floor(lastZ);
+    const applyVerticalIfAtStop = (): void => {
+      if (
+        this.pathIndex >= this.path.length
+        || (Math.floor(this.playerX) === tx && Math.floor(this.playerZ) === tz)
+      ) {
+        this.applyLocalVerticalAuthority(authoritativeFloor, authoritativeY);
+      }
+    };
+
+    // Find an explicit waypoint matching the server's final reachable tile and
+    // cut everything after it.
+    let cutIdx = -1;
+    for (let i = this.pathIndex; i < this.path.length; i++) {
+      const wp = this.path[i];
+      if (Math.floor(wp.x) === tx && Math.floor(wp.z) === tz) {
+        cutIdx = i + 1;
+        break;
+      }
+    }
+    if (cutIdx >= 0) {
+      if (cutIdx < this.path.length) {
+        this.path = this.path.slice(0, cutIdx);
+        this.refreshPredictedDestinationFromPath();
+        applyVerticalIfAtStop();
+      }
+      return;
+    }
+
+    const segmentIdx = this.findPathSegmentContainingTile(tx, tz);
+    if (segmentIdx < 0) {
+      this.reconcileLocalPlayerToServer(lastX, lastZ, false);
+      this.applyLocalVerticalAuthority(authoritativeFloor, authoritativeY);
+      return;
+    }
+
+    if (segmentIdx === this.pathIndex) {
+      const activeTarget = this.path[this.pathIndex];
+      const activeStart = { x: this.tileFrom.x, z: this.tileFrom.z };
+      const oldSegmentSteps = this.compressedSegmentTileSteps(activeStart, activeTarget);
+      const stopSegmentSteps = this.compressedSegmentTileSteps(activeStart, { x: lastX, z: lastZ });
+      const currentProgressSteps = Math.max(0, Math.min(oldSegmentSteps, this.tileProgress * oldSegmentSteps));
+
+      // The server stop is behind our current visual progress. Snap now instead
+      // of reinterpreting the same tileProgress on a shorter segment, which
+      // would render a backslide before the next self-sync correction.
+      if (stopSegmentSteps <= 0 || currentProgressSteps > stopSegmentSteps + 0.0001) {
+        this.reconcileLocalPlayerToServer(lastX, lastZ, false);
+        this.applyLocalVerticalAuthority(authoritativeFloor, authoritativeY);
+        return;
+      }
+
+      this.path = [
+        ...this.path.slice(0, segmentIdx),
+        { x: lastX, z: lastZ },
+      ];
+      this.tileProgress = stopSegmentSteps > 0
+        ? Math.max(0, Math.min(1, currentProgressSteps / stopSegmentSteps))
+        : 0;
+    } else {
+      this.path = [
+        ...this.path.slice(0, segmentIdx),
+        { x: lastX, z: lastZ },
+      ];
+    }
+
+    this.refreshPredictedDestinationFromPath();
+    applyVerticalIfAtStop();
+  }
+
   private findPathSegmentContainingTile(tx: number, tz: number): number {
     return compressedRouteSegmentIndexForTile(this.tileFrom, this.path, tx, tz, this.pathIndex);
   }
@@ -8707,7 +8756,7 @@ export class GameManager {
   }
 
   private armControlledMoveLock(path: { x: number; z: number }[]): void {
-    this.controlledMoveUntilMs = performance.now() + Math.max(TICK_RATE, path.length * TICK_RATE + 600);
+    this.controlledMoveUntilMs = performance.now() + TICK_RATE;
   }
 
   private clearControlledMoveLock(): void {
@@ -8855,13 +8904,110 @@ export class GameManager {
     return effectiveMovementModeForPath(this.movementMode, totalSteps, remainingSteps);
   }
 
+  private inferLocalMovementFloorFromY(x: number, z: number, effectiveY: number, currentFloor: number): number {
+    const targets = this.chunkManager.getWalkableFloorTargetsAt?.(x, z) ?? [];
+    if (targets.length === 0) return currentFloor;
+
+    let best = targets[0];
+    let bestDist = Math.abs(best.y - effectiveY);
+    for (let i = 1; i < targets.length; i++) {
+      const candidate = targets[i];
+      const dist = Math.abs(candidate.y - effectiveY);
+      const tied = Math.abs(dist - bestDist) < 0.05;
+      if (dist < bestDist - 0.05 || (tied && candidate.floor === currentFloor)) {
+        best = candidate;
+        bestDist = dist;
+      }
+    }
+
+    return bestDist <= 0.75 ? best.floor : currentFloor;
+  }
+
+  private resolveLocalMovementLayerAt(
+    x: number,
+    z: number,
+    state: { floor: number; y: number; lastFloorChangeTile: number },
+    refreshY: boolean = true,
+  ): { floor: number; y: number; lastFloorChangeTile: number } {
+    let floor = state.floor;
+    let y = refreshY ? this.getHeightAtFloor(x, z, floor, state.y) : state.y;
+    let lastFloorChangeTile = state.lastFloorChangeTile;
+    const tx = Math.floor(x);
+    const tz = Math.floor(z);
+    const width = this.chunkManager.getMapWidth();
+    const tileIdx = width > 0 ? tz * width + tx : -1;
+
+    if (lastFloorChangeTile !== -1 && lastFloorChangeTile !== tileIdx) {
+      lastFloorChangeTile = -1;
+    }
+
+    const oldFloor = floor;
+    const onPlacedGroundStair = !!this.chunkManager.getStairOnFloor?.(tx, tz, 0);
+    const stairCurrent = this.chunkManager.getStairOnFloor?.(tx, tz, floor);
+    if (stairCurrent && lastFloorChangeTile !== tileIdx) {
+      const stairAbove = this.chunkManager.getStairOnFloor?.(tx, tz, floor + 1);
+      const stairBelow = this.chunkManager.getStairOnFloor?.(tx, tz, floor - 1);
+      if (stairAbove) {
+        floor += 1;
+        lastFloorChangeTile = tileIdx;
+      } else if (stairBelow) {
+        floor -= 1;
+        lastFloorChangeTile = tileIdx;
+      }
+    }
+
+    if (floor === oldFloor && !onPlacedGroundStair) {
+      floor = this.inferLocalMovementFloorFromY(x, z, y, floor);
+    }
+
+    if (floor !== oldFloor) {
+      y = this.getHeightAtFloor(x, z, floor, y);
+    }
+
+    return { floor, y, lastFloorChangeTile };
+  }
+
+  private findPathOnMovementLayer(
+    startX: number,
+    startZ: number,
+    goalX: number,
+    goalZ: number,
+    floor: number,
+    y: number,
+    maxSteps: number,
+  ): { x: number; z: number }[] {
+    return findPath(
+      startX,
+      startZ,
+      goalX,
+      goalZ,
+      (x, z) => this.isTileBlockedOnFloorForPath(x, z, floor),
+      this.chunkManager.getMapWidth(),
+      this.chunkManager.getMapHeight(),
+      maxSteps,
+      (fx, fz, tx, tz) => this.isWallBlockedForPathOnFloor(fx, fz, tx, tz, floor, y),
+    );
+  }
+
   private findPathFromMovementAnchor(goalX: number, goalZ: number, maxSteps: number = 200): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
     const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
     if (activeStep) {
-      const tail = findPath(activeStep.target.x, activeStep.target.z, goalX, goalZ,
-        this.isTileBlocked,
-        this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
-        this.isWallBlockedForPath);
+      const currentY = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
+      const layer = this.resolveLocalMovementLayerAt(activeStep.target.x, activeStep.target.z, {
+        floor: this.currentFloor,
+        y: currentY,
+        lastFloorChangeTile: -1,
+      });
+      const tailMaxSteps = Math.max(0, maxSteps - 1);
+      const tail = this.findPathOnMovementLayer(
+        activeStep.target.x,
+        activeStep.target.z,
+        goalX,
+        goalZ,
+        layer.floor,
+        layer.y,
+        tailMaxSteps,
+      );
       if (tail.length === 0) {
         const currentTileIsGoal = Math.floor(activeStep.target.x) === Math.floor(goalX)
           && Math.floor(activeStep.target.z) === Math.floor(goalZ);
@@ -8873,11 +9019,17 @@ export class GameManager {
         preserveCurrentStep: true,
       };
     }
+    const currentY = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
     return {
-      path: findPath(this.playerX, this.playerZ, goalX, goalZ,
-        this.isTileBlocked,
-        this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
-        this.isWallBlockedForPath),
+      path: this.findPathOnMovementLayer(
+        this.playerX,
+        this.playerZ,
+        goalX,
+        goalZ,
+        this.currentFloor,
+        currentY,
+        maxSteps,
+      ),
       preserveCurrentStep: false,
     };
   }
@@ -9190,14 +9342,17 @@ export class GameManager {
     options: { coalesceDuplicateDestination?: boolean } = {},
   ): boolean {
     if (path.length === 0) return false;
-    if (this.isControlledMoveActive()) return false;
+    if (this.controlledMoveUntilMs > 0) this.clearControlledMoveLock();
     const normalized = this.normalizePredictedPathForActiveStep(path, preserveCurrentStep);
-    if (normalized.path.length === 0) return false;
-    if (this.shouldCoalesceDuplicatePredictedPath(normalized.path, options.coalesceDuplicateDestination ?? true)) return false;
+    const sendPath = normalized.path.length > PLAYER_MOVE_MAX_WAYPOINTS
+      ? normalized.path.slice(0, PLAYER_MOVE_MAX_WAYPOINTS)
+      : normalized.path;
+    if (sendPath.length === 0) return false;
+    if (this.shouldCoalesceDuplicatePredictedPath(sendPath, options.coalesceDuplicateDestination ?? true)) return false;
     this.followTargetPlayerId = -1;
-    if (!this.network.sendMove(normalized.path, this.movementMode)) return false;
+    if (!this.network.sendMove(sendPath, this.movementMode)) return false;
     this.noteLocalMoveCommandSent();
-    this.startLocalPredictedPath(normalized.path, normalized.preserveCurrentStep, true);
+    this.startLocalPredictedPath(sendPath, normalized.preserveCurrentStep, true);
     return true;
   }
 
@@ -9700,7 +9855,7 @@ export class GameManager {
   }
 
   private interactObject(objectEntityId: number, actionIndex: number): void {
-    if (this.isControlledMoveActive()) return;
+    if (this.controlledMoveUntilMs > 0) this.clearControlledMoveLock();
     this.combatTargetId = -1;
     this.magicTargetId = -1;
     this.pendingSingleCastSpell = -1;
@@ -10078,12 +10233,15 @@ export class GameManager {
             target.detachGear(slot);
             target.detachSkinnedArmor(slot);
           });
-          this.gearDebugPanel.setAnimCallback((anim) => {
+          this.gearDebugPanel.setAnimCallback((anim, phase) => {
             const target = this.getGearDebugCharacter();
             if (!target) return;
+            if (phase != null) {
+              target.previewAnimationFrame(anim, phase);
+              return;
+            }
             if (anim === 'idle') {
-              target.stopWalking();
-              target.stopSkillAnimation();
+              target.resetTransientAnimation();
             } else if (anim === 'walk') {
               target.stopSkillAnimation();
               target.startWalking();
@@ -10919,12 +11077,17 @@ export class GameManager {
 
   /** Tile blocked check that includes world objects (trees, rocks, etc.) */
   private isTileBlocked = (x: number, z: number): boolean => {
-    if (this.currentFloor === 0) {
-      const key = this.blockedObjectKey(0, x, z);
-      return this.chunkManager.isBlocked(x, z) || this.blockedObjectTiles.has(key) || this.isCenteredDoorTileBlockedKey(key);
+    return this.isTileBlockedOnFloorForPath(x, z, this.currentFloor);
+  };
+
+  private isTileBlockedOnFloorForPath = (x: number, z: number, floor: number): boolean => {
+    const key = this.blockedObjectKey(floor, x, z);
+    if (floor === 0) {
+      return this.chunkManager.isBlocked(x, z)
+        || this.blockedObjectTiles.has(key)
+        || this.isCenteredDoorTileBlockedKey(key);
     }
-    const key = this.blockedObjectKey(this.currentFloor, x, z);
-    return this.chunkManager.isBlockedOnFloor(x, z, this.currentFloor)
+    return this.chunkManager.isBlockedOnFloor(x, z, floor)
       || this.blockedObjectTiles.has(key)
       || this.isCenteredDoorTileBlockedKey(key);
   };
@@ -10935,12 +11098,21 @@ export class GameManager {
   };
 
   private isWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number): boolean => {
-    if (this.currentFloor !== 0) {
-      return this.chunkManager.isWallBlockedOnFloor(fx, fz, tx, tz, this.currentFloor);
-    }
-    // Pass player height so walls below the player don't block
     const playerY = this.localPlayer?.position?.y ?? this.getHeight(this.playerX, this.playerZ);
-    return this.chunkManager.isWallBlocked(fx, fz, tx, tz, playerY);
+    return this.isWallBlockedForPathOnFloor(fx, fz, tx, tz, this.currentFloor, playerY);
+  };
+
+  private isWallBlockedForPathOnFloor = (
+    fx: number,
+    fz: number,
+    tx: number,
+    tz: number,
+    floor: number,
+    y: number,
+  ): boolean => {
+    if (floor !== 0) return this.chunkManager.isWallBlockedOnFloor(fx, fz, tx, tz, floor);
+    // Pass player height so walls below the player don't block.
+    return this.chunkManager.isWallBlocked(fx, fz, tx, tz, y);
   };
 
   private isGroundWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number): boolean => {
@@ -10973,17 +11145,35 @@ export class GameManager {
     return true;
   }
 
-  private beginLocalSkillingVisualNow(objectId: number, variant: string | undefined, stationary: boolean): boolean {
+  private async beginLocalSkillingVisualNow(objectId: number, variant: string | undefined, stationary: boolean, toolItemId: number): Promise<boolean> {
+    if (this.localSkillingVisualStartInFlight) return true;
     if (!this.prepareSkillingAtObject(objectId)) return false;
-    if (!stationary) this.localPlayer?.startSkillAnimation(variant);
-    return true;
+
+    const player = this.localPlayer;
+    this.localSkillingVisualStartInFlight = true;
+    try {
+      if (player && toolItemId > 0 && !stationary) {
+        await this.applySkillingTool(this.localPlayerId, player, toolItemId);
+      }
+      if (!this.isSkilling || this.skillingObjectId !== objectId || (player && this.localPlayer !== player)) {
+        if (player && toolItemId > 0 && !stationary) this.restoreSkillingTool(this.localPlayerId, player);
+        return false;
+      }
+      if (!stationary) this.localPlayer?.startSkillAnimation(variant);
+      return true;
+    } finally {
+      this.localSkillingVisualStartInFlight = false;
+    }
   }
 
-  private queueOrStartLocalSkillingVisual(objectId: number, variant: string | undefined, stationary: boolean): void {
+  private queueOrStartLocalSkillingVisual(objectId: number, variant: string | undefined, stationary: boolean, toolItemId: number): void {
     this.pendingLocalSkillingVisual = null;
     if (!this.isSkilling || this.skillingObjectId !== objectId) return;
-    if (this.beginLocalSkillingVisualNow(objectId, variant, stationary)) return;
-    this.pendingLocalSkillingVisual = { objectId, variant, stationary };
+    void (async () => {
+      if (await this.beginLocalSkillingVisualNow(objectId, variant, stationary, toolItemId)) return;
+      if (!this.isSkilling || this.skillingObjectId !== objectId) return;
+      this.pendingLocalSkillingVisual = { objectId, variant, stationary, toolItemId };
+    })();
   }
 
   private flushPendingLocalSkillingVisual(): void {
@@ -10994,9 +11184,12 @@ export class GameManager {
       return;
     }
     if (this.pathIndex < this.path.length) return;
-    if (this.beginLocalSkillingVisualNow(pending.objectId, pending.variant, pending.stationary)) {
-      this.pendingLocalSkillingVisual = null;
-    }
+    this.pendingLocalSkillingVisual = null;
+    void (async () => {
+      if (await this.beginLocalSkillingVisualNow(pending.objectId, pending.variant, pending.stationary, pending.toolItemId)) return;
+      if (!this.isSkilling || this.skillingObjectId !== pending.objectId) return;
+      this.pendingLocalSkillingVisual = pending;
+    })();
   }
 
   private finishPredictedPathArrival(): void {
@@ -11036,11 +11229,11 @@ export class GameManager {
   private handleGroundClick(
     worldX: number,
     worldZ: number,
-    markerTarget: { worldX: number; worldZ: number } | null = null,
+    _markerTarget: { worldX: number; worldZ: number } | null = null,
   ): void {
     if (this.duelActive) return;
     if (this.isSpellMovementLocked()) return;
-    if (this.isControlledMoveActive()) return;
+    if (this.controlledMoveUntilMs > 0) this.clearControlledMoveLock();
     if ((this.sidePanel?.getTargetingSpell() ?? -1) >= 0) this.sidePanel!.clearTargetingSpell();
     const tx = Math.floor(worldX), tz = Math.floor(worldZ);
     const clickedOwnTile = tx === Math.floor(this.playerX) && tz === Math.floor(this.playerZ);
@@ -11090,12 +11283,11 @@ export class GameManager {
     }
 
     const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(worldX, worldZ);
-    if (path.length > 0) {
-      this.startPredictedPath(path, preserveCurrentStep);
-      const dest = path[path.length - 1];
+    if (path.length > 0 && this.startPredictedPath(path, preserveCurrentStep)) {
+      const dest = this.activePredictedDestination() ?? path[path.length - 1];
       // Yellow ground destination disc removed in favor of the cursor burst.
       // Minimap arrow still indicates where you're heading.
-      this.minimap?.setDestination(markerTarget?.worldX ?? dest.x, markerTarget?.worldZ ?? dest.z);
+      this.minimap?.setDestination(dest.x, dest.z);
     }
   }
 
@@ -12328,7 +12520,7 @@ export class GameManager {
         32,
         this.isWallBlockedForPath,
       );
-      if (bridge.length === 0) return false;
+      if (bridge.length === 0 || !this.pathReachesGoal(bridge, firstAuthority.x, firstAuthority.z)) return false;
       for (const point of bridge) this.appendUniquePathPoint(nextPath, point);
     }
 
@@ -12346,7 +12538,7 @@ export class GameManager {
         200,
         this.isWallBlockedForPath,
       );
-      if (tail.length === 0) return false;
+      if (tail.length === 0 || !this.pathReachesGoal(tail, destination.x, destination.z)) return false;
       for (const point of tail) this.appendUniquePathPoint(nextPath, point);
     }
 

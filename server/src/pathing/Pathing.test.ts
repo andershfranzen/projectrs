@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildNaiveInteractionPath,
   canTravel,
+  expandAndValidateWaypointPath,
   findPathToAnyTile,
   findPathToRectInteraction,
   isRectInteractionTileReachable,
@@ -142,5 +143,35 @@ describe('server pathing', () => {
     const collision = openCollision(new Set(['11,9']));
 
     expect(canTravel(collision, 10, 10, 1, 0, 2)).toBe(false);
+  });
+
+  test('waypoint validation rejects diagonal corner cutting through blocked side tiles', () => {
+    const blocked = new Set(['1,0']);
+    const validated = expandAndValidateWaypointPath({
+      startX: 0.5,
+      startZ: 0.5,
+      waypoints: [{ x: 1.5, z: 1.5 }],
+      initialState: null,
+      canStep: step => !blocked.has(`${step.toTileX},${step.toTileZ}`),
+    });
+
+    expect(validated.path).toEqual([]);
+    expect(validated.truncated).toBe(true);
+    expect(validated.requestedTileCount).toBe(1);
+  });
+
+  test('waypoint validation reports attempted distance when the first segment is too long', () => {
+    const validated = expandAndValidateWaypointPath({
+      startX: 0.5,
+      startZ: 0.5,
+      waypoints: [{ x: 100.5, z: 0.5 }],
+      initialState: null,
+      maxSegmentTiles: 64,
+      canStep: () => true,
+    });
+
+    expect(validated.path).toEqual([]);
+    expect(validated.truncated).toBe(true);
+    expect(validated.requestedTileCount).toBe(100);
   });
 });

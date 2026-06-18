@@ -81,6 +81,33 @@ describe('InputManager object picking', () => {
     expect(pickedRayYs.some(y => y > 100)).toBe(true);
   });
 
+  test('ray-plane fallback only accepts tiles with a walkable height on the player plane', () => {
+    const makeScene = () => ({
+      activeCamera: {},
+      onPointerObservable: { add: () => {} },
+      createPickingRay: () => ({
+        origin: { x: 10, y: 5, z: 20 },
+        direction: { x: 0.2, y: -1, z: 0.1 },
+      }),
+      multiPick: () => [],
+      pick: () => ({ hit: false, pickedMesh: null }),
+    });
+    const makeChunkManager = (walkableHeights: number[]) => ({
+      pickAuthoredFlatTexturePlane: () => null,
+      getCurrentFloor: () => 0,
+      getEffectiveHeight: () => 0,
+      getWalkableHeightsAt: () => walkableHeights,
+      getMapWidth: () => 1000,
+      getMapHeight: () => 1000,
+    });
+
+    const unloadedManager = new InputManager(makeScene() as any, makeChunkManager([]) as any);
+    const loadedManager = new InputManager(makeScene() as any, makeChunkManager([0]) as any);
+
+    expect(unloadedManager.pickGround(300, 200)).toBeNull();
+    expect(loadedManager.pickGround(300, 200)).toEqual({ x: 11.5, z: 20.5 });
+  });
+
   test('routes batched crop proxy thin-instance picks to object clicks', () => {
     const batchMesh = {
       metadata: {

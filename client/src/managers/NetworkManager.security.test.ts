@@ -53,4 +53,20 @@ describe('NetworkManager command proof protection', () => {
     expect(first).toMatchObject({ capabilityId: 123, capabilityCode: 456 });
     expect(second).toMatchObject({ capabilityId: 123, capabilityCode: 456 });
   });
+
+  test('move packets fail instead of silently truncating overlong paths', () => {
+    const manager = makeManager();
+    let sent = false;
+    manager.connected = true;
+    manager.gameSocket = { readyState: WebSocket.OPEN, bufferedAmount: 0 };
+    manager.sendRaw = () => {
+      sent = true;
+      return true;
+    };
+    manager.failGameSocket = () => {};
+    const path = Array.from({ length: 51 }, (_, index) => ({ x: index + 0.5, z: 0.5 }));
+
+    expect(manager.sendMove(path)).toBe(false);
+    expect(sent).toBe(false);
+  });
 });

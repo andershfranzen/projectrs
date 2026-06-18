@@ -57,12 +57,11 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'SilverRock3': 25,
   'ClayRock2': 33,
   'ClayRock3': 33,
-  // Fishing spots. The three editor aliases use the same bubble GLB but map
-  // to level-1 test object defs with different animation variants.
+  // Fishing spots.
   'FishingSpotBubbles': 5,
-  'FishingSpotBubblesNet': 61,
-  'FishingSpotBubblesRod': 62,
-  'FishingSpotBubblesHarpoon': 63,
+  'FishingSpotBubblesNet': 5,
+  'FishingSpotBubblesRod': 46,
+  'FishingSpotBubblesHarpoon': 48,
   // Crafting stations
   'forge': 6,        // Furnace
   'cookingrange': 7, // Cooking Range

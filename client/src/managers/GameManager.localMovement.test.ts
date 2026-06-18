@@ -63,6 +63,7 @@ function makeManager(
   manager.predictedPathStartedAt = 1;
   manager.predictedPathStart = { x: 0.5, z: 0.5 };
   manager.predictedPathDestination = null;
+  manager.controlledMoveUntilMs = 0;
   manager.recentPredictedArrivalUntil = 0;
   manager.recentPredictedArrivalDestination = null;
   manager.recentPredictedArrivalRouteTiles = new Set();
@@ -79,6 +80,9 @@ function makeManager(
   manager.entities = { npcTargets: new Map() };
   manager.destMarker = null;
   manager.minimap = null;
+  manager.sidePanel = null;
+  manager.interactMarker = null;
+  manager.blockedObjectTiles = new Set();
   manager.localPlayer = player;
   manager.network = {
     sendMove: (movePath: { x: number; z: number }[], mode: string) => {
@@ -92,10 +96,39 @@ function makeManager(
     getMapWidth: () => 128,
     getMapHeight: () => 128,
     getEffectiveHeight: () => 0,
+    getWalkableFloorTargetsAt: () => [],
+    getStairOnFloor: () => undefined,
+    isBlocked: () => false,
+    isBlockedOnFloor: () => false,
+    isWallBlocked: () => false,
+    isWallBlockedOnFloor: () => false,
   };
   manager.getHeight = () => 0;
-  manager.isTileBlocked = () => false;
-  manager.isWallBlockedForPath = () => false;
+  manager.isCenteredDoorTileBlockedKey = () => false;
+  manager.isTileBlockedOnFloorForPath = (x: number, z: number, floor: number) => {
+    const key = manager.blockedObjectKey(floor, x, z);
+    return (floor === 0 ? manager.chunkManager.isBlocked(x, z) : manager.chunkManager.isBlockedOnFloor(x, z, floor))
+      || manager.blockedObjectTiles.has(key)
+      || manager.isCenteredDoorTileBlockedKey(key);
+  };
+  manager.isWallBlockedForPathOnFloor = (
+    fx: number,
+    fz: number,
+    tx: number,
+    tz: number,
+    floor: number,
+    y: number,
+  ) => floor === 0
+    ? manager.chunkManager.isWallBlocked(fx, fz, tx, tz, y)
+    : manager.chunkManager.isWallBlockedOnFloor(fx, fz, tx, tz, floor);
+  manager.isTileBlocked = (x: number, z: number) => manager.isTileBlockedOnFloorForPath(x, z, manager.currentFloor);
+  manager.isWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number) => {
+    const y = manager.localPlayer?.position?.y ?? manager.getHeight(manager.playerX, manager.playerZ);
+    return manager.isWallBlockedForPathOnFloor(fx, fz, tx, tz, manager.currentFloor, y);
+  };
+  manager.clearLocalNpcCombatState = () => {};
+  manager.isSpellMovementLocked = () => false;
+  manager.isControlledMoveActive = () => false;
   manager.refreshHoverHiddenRoofs = () => {};
   manager.shouldKeepLocalCombatWalkLoopAlive = () => false;
   manager.refreshLocalCombatFacing = () => {};
@@ -338,6 +371,50 @@ describe('GameManager local movement prediction', () => {
     ]);
     expect(manager.tileFrom).toEqual({ x: 0.5, z: 0.5 });
     expect(manager.tileProgress).toBe(0.5);
+  });
+
+  test('mid-step route replacements cap after preserving the active unit step', () => {
+    const { manager, sentMoves } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.tileProgress = 0.05;
+    manager.playerX = 1.0;
+    manager.playerZ = 0.5;
+    manager.network.sendMove = (movePath: { x: number; z: number }[], mode: string) => {
+      if (movePath.length > 50) return false;
+      sentMoves.push({ path: movePath, mode });
+      return true;
+    };
+
+    const started = manager.startPredictedPath(
+      Array.from({ length: 50 }, (_unused, index) => ({ x: index + 2.5, z: 0.5 })),
+      true,
+    );
+
+    expect(started).toBe(true);
+    expect(sentMoves).toHaveLength(1);
+    const sent = sentMoves[0]!;
+    expect(sent.path).toHaveLength(50);
+    expect(sent.path[0]).toEqual({ x: 1.5, z: 0.5 });
+    expect(sent.path.at(-1)).toEqual({ x: 50.5, z: 0.5 });
+    expect(manager.path).toHaveLength(50);
+    expect(manager.path.at(-1)).toEqual({ x: 50.5, z: 0.5 });
+  });
+
+  test('predicted redirects can override a server correction move lock', () => {
+    const { manager, sentMoves } = makeManager([
+      { x: 5.5, z: 0.5 },
+    ], 5);
+    manager.controlledMoveUntilMs = performance.now() + 60_000;
+
+    const started = manager.startPredictedPath([
+      { x: 2.5, z: 0.5 },
+    ]);
+
+    expect(started).toBe(true);
+    expect(manager.controlledMoveUntilMs).toBe(0);
+    expect(sentMoves).toEqual([{ path: [{ x: 2.5, z: 0.5 }], mode: 'run' }]);
+    expect(manager.path).toEqual([{ x: 2.5, z: 0.5 }]);
   });
 
   test('local-only mid-step route replacements still finish the active unit step', () => {
@@ -770,6 +847,163 @@ describe('GameManager local movement prediction', () => {
     expect(manager.playerX).toBe(30.5);
     expect(manager.playerZ).toBe(30.5);
     expect(player.positions.at(-1)).toEqual({ x: 30.5, y: 0, z: 30.5 });
+  });
+
+  test('path truncation inside the active compressed segment preserves visual progress when stop is ahead', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.tileProgress = 0.2;
+    manager.playerX = 2.5;
+    manager.playerZ = 0.5;
+
+    manager.applyPathTruncated(5.5, 0.5, 0, 0);
+
+    expect(manager.path).toEqual([{ x: 5.5, z: 0.5 }]);
+    expect(manager.pathIndex).toBe(0);
+    expect(manager.tileProgress).toBeCloseTo(0.4, 5);
+    expect(manager.playerX).toBe(2.5);
+    expect(manager.playerZ).toBe(0.5);
+    expect(player.positions).toEqual([]);
+  });
+
+  test('path truncation inside the active compressed segment snaps when visual progress already passed the stop', () => {
+    const { manager, player } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    manager.tileProgress = 0.5;
+    manager.playerX = 5.5;
+    manager.playerZ = 0.5;
+
+    manager.applyPathTruncated(3.5, 0.5, 0, 0);
+
+    expect(manager.path).toEqual([]);
+    expect(manager.pathIndex).toBe(0);
+    expect(manager.tileProgress).toBe(0);
+    expect(manager.playerX).toBe(3.5);
+    expect(manager.playerZ).toBe(0.5);
+    expect(player.positions.at(-1)).toEqual({ x: 3.5, y: 0, z: 0.5 });
+  });
+
+  test('ground clicks follow closest-approach paths that do not reach the clicked tile', () => {
+    const { manager, sentMoves } = makeManager([], 0);
+    const minimapDestinations: Array<{ x: number; z: number }> = [];
+    manager.minimap = {
+      setDestination: (x: number, z: number) => { minimapDestinations.push({ x, z }); },
+    };
+    manager.findPathFromMovementAnchor = () => ({
+      path: [{ x: 1.5, z: 0.5 }],
+      preserveCurrentStep: false,
+    });
+
+    manager.handleGroundClick(3.5, 0.5);
+
+    expect(sentMoves).toEqual([{ path: [{ x: 1.5, z: 0.5 }], mode: 'run' }]);
+    expect(manager.path).toEqual([{ x: 1.5, z: 0.5 }]);
+    expect(minimapDestinations).toEqual([{ x: 1.5, z: 0.5 }]);
+  });
+
+  test('ground clicks mark the capped route destination after mid-step route normalization', () => {
+    const { manager, sentMoves } = makeManager([
+      { x: 10.5, z: 0.5 },
+    ], 10);
+    const minimapDestinations: Array<{ x: number; z: number }> = [];
+    manager.tileProgress = 0.05;
+    manager.playerX = 1.0;
+    manager.playerZ = 0.5;
+    manager.minimap = {
+      setDestination: (x: number, z: number) => { minimapDestinations.push({ x, z }); },
+    };
+    manager.network.sendMove = (movePath: { x: number; z: number }[], mode: string) => {
+      if (movePath.length > 50) return false;
+      sentMoves.push({ path: movePath, mode });
+      return true;
+    };
+    manager.findPathFromMovementAnchor = () => ({
+      path: Array.from({ length: 51 }, (_unused, index) => ({ x: index + 1.5, z: 0.5 })),
+      preserveCurrentStep: true,
+    });
+
+    manager.handleGroundClick(99.5, 0.5);
+
+    expect(sentMoves).toHaveLength(1);
+    expect(sentMoves[0]!.path).toHaveLength(50);
+    expect(sentMoves[0]!.path.at(-1)).toEqual({ x: 50.5, z: 0.5 });
+    expect(manager.path.at(-1)).toEqual({ x: 50.5, z: 0.5 });
+    expect(minimapDestinations).toEqual([{ x: 50.5, z: 0.5 }]);
+  });
+
+  test('ground clicks can override a server correction move lock', () => {
+    const { manager, sentMoves } = makeManager([
+      { x: 5.5, z: 0.5 },
+    ], 5);
+    manager.controlledMoveUntilMs = performance.now() + 60_000;
+    manager.findPathFromMovementAnchor = () => ({
+      path: [{ x: 2.5, z: 0.5 }],
+      preserveCurrentStep: false,
+    });
+
+    manager.handleGroundClick(2.5, 0.5);
+
+    expect(manager.controlledMoveUntilMs).toBe(0);
+    expect(sentMoves).toEqual([{ path: [{ x: 2.5, z: 0.5 }], mode: 'run' }]);
+    expect(manager.path).toEqual([{ x: 2.5, z: 0.5 }]);
+  });
+
+  test('active-step pathfinding reserves one requested tile for the preserved step', () => {
+    const { manager } = makeManager([{ x: 10.5, z: 0.5 }], 10);
+    let observedMaxSteps = -1;
+    manager.tileProgress = 0.25;
+    manager.playerX = 0.75;
+    manager.findPathOnMovementLayer = (
+      _startX: number,
+      _startZ: number,
+      _goalX: number,
+      _goalZ: number,
+      _floor: number,
+      _y: number,
+      maxSteps: number,
+    ) => {
+      observedMaxSteps = maxSteps;
+      return [];
+    };
+
+    manager.findPathFromMovementAnchor(20.5, 0.5, 200);
+
+    expect(observedMaxSteps).toBe(199);
+  });
+
+  test('active-step redirects path from the predicted floor after a stair step', () => {
+    const { manager } = makeManager([{ x: 1.5, z: 0.5 }], 1);
+    manager.tileProgress = 0.5;
+    manager.playerX = 1.0;
+    manager.playerZ = 0.5;
+    manager.localPlayer.position = { x: 1.0, y: 0, z: 0.5 };
+    manager.chunkManager = {
+      ...manager.chunkManager,
+      getMapWidth: () => 8,
+      getMapHeight: () => 8,
+      getEffectiveHeight: (_x: number, _z: number, floor: number) => floor === 1 ? 3 : 0,
+      getWalkableFloorTargetsAt: (x: number, z: number) => (
+        Math.floor(x) === 1 && Math.floor(z) === 0
+          ? [{ floor: 0, y: 0 }, { floor: 1, y: 3 }]
+          : []
+      ),
+      getStairOnFloor: (x: number, z: number, floor: number) => (
+        x === 1 && z === 0 && (floor === 0 || floor === 1)
+          ? { direction: 'N', baseHeight: 0, topHeight: 3 }
+          : undefined
+      ),
+      isBlocked: (x: number, z: number) => Math.floor(x) === 2 && Math.floor(z) === 0,
+      isBlockedOnFloor: (x: number, z: number, floor: number) => floor !== 1 || Math.floor(z) !== 0,
+      isWallBlocked: () => false,
+      isWallBlockedOnFloor: () => false,
+    };
+
+    const result = manager.findPathFromMovementAnchor(2.5, 0.5);
+
+    expect(result.preserveCurrentStep).toBe(true);
+    expect(result.path).toEqual([{ x: 1.5, z: 0.5 }, { x: 2.5, z: 0.5 }]);
   });
 
   test('nearby off-route authority retargets instead of resetting an active prediction', () => {

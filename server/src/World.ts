@@ -4403,6 +4403,7 @@ export class World {
       if (!player.trimMoveQueueToNextStep()) player.clearMoveQueue();
       player.followTargetPlayerId = -1;
       this.clearQueuedPlayerActions(player);
+      this.cancelSkilling(playerId);
       this.cancelItemProduction(playerId);
       return;
     }
@@ -4487,6 +4488,15 @@ export class World {
       preserveMovementCredit: replacingActiveMoveQueue,
       forceWalkFirstStep: replacingWalkingStep,
     });
+    if (!replacingActiveMoveQueue && player.hasMoveQueue()) {
+      const tickAnchor = Number.isFinite(this.currentTickStartMs) && this.currentTickStartMs > 0
+        ? this.currentTickStartMs
+        : performance.now();
+      player.movementCreditUpdatedAtMs = tickAnchor - TICK_RATE;
+    }
+    if (recoveredWithAuthoritativePath) {
+      this.sendPlayerControlledMove(player, queuedPath);
+    }
     // If we actually dropped tiles vs. what the client asked for, notify it
     // so it can trim its local walk to match. Skip when nothing was
     // requested (zero-distance / empty input) or when the validation
@@ -12187,6 +12197,7 @@ export class World {
       newCm.registerPlayer(player.id);
     }
     this.markEntityTileOccupantsDirty();
+    this.savePlayerState(player);
 
     // Send MAP_CHANGE packet
     this.sendMapChange(player, newMap);

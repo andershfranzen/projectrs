@@ -299,10 +299,16 @@ export class InputManager {
     const t = (this.playerY - ray.origin.y) / ray.direction.y;
     if (t <= 0) return null;
 
-    return this.snapProjectedGroundPoint(
-      ray.origin.x + ray.direction.x * t,
-      ray.origin.z + ray.direction.z * t,
-    );
+    const worldX = ray.origin.x + ray.direction.x * t;
+    const worldZ = ray.origin.z + ray.direction.z * t;
+    if (!this.hasWalkableHeightNearPlayerPlane(worldX, worldZ)) return null;
+
+    return this.snapProjectedGroundPoint(worldX, worldZ);
+  }
+
+  private hasWalkableHeightNearPlayerPlane(worldX: number, worldZ: number): boolean {
+    const walkableHeights = this.chunkManager.getWalkableHeightsAt(worldX, worldZ);
+    return walkableHeights.some(height => Math.abs(height - this.playerY) <= SAME_PLANE_PICK_Y_TOLERANCE);
   }
 
   private snapProjectedGroundPoint(worldX: number, worldZ: number): { x: number; z: number } | null {

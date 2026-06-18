@@ -10,7 +10,7 @@ const SEARCH_SIZE = 128;
 const SEARCH_HALF = 64;
 const QUEUE_SIZE = SEARCH_SIZE * SEARCH_SIZE;
 const MAX_APPROACH_DISTANCE = 10;
-const MAX_WAYPOINTS = 25;
+const MAX_WAYPOINTS = 50;
 const UNVISITED_DISTANCE = 99999;
 
 const directions = new Uint8Array(SEARCH_SIZE * SEARCH_SIZE);
@@ -39,12 +39,17 @@ export function findPath(
   _maxSteps: number = 500,
   isWallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean
 ): { x: number; z: number }[] {
+  const maxSteps = Math.max(0, Math.floor(_maxSteps));
   const sx = Math.floor(startX);
   const sz = Math.floor(startZ);
   const gx = Math.floor(goalX);
   const gz = Math.floor(goalZ);
 
+  if (mapWidth <= 0 || mapHeight <= 0) return [];
   if (sx === gx && sz === gz) return [];
+
+  const clampedGoalX = Math.max(0, Math.min(mapWidth - 1, gx));
+  const clampedGoalZ = Math.max(0, Math.min(mapHeight - 1, gz));
 
   // Local grid origin (source is at center of 128x128 search area)
   const baseX = sx - SEARCH_HALF;
@@ -53,11 +58,8 @@ export function findPath(
   // Local coordinates
   const srcLX = sx - baseX;
   const srcLZ = sz - baseZ;
-  const dstLX = gx - baseX;
-  const dstLZ = gz - baseZ;
-
-  // Check if destination is in search area
-  if (dstLX < 0 || dstLX >= SEARCH_SIZE || dstLZ < 0 || dstLZ >= SEARCH_SIZE) return [];
+  const dstLX = Math.max(0, Math.min(SEARCH_SIZE - 1, clampedGoalX - baseX));
+  const dstLZ = Math.max(0, Math.min(SEARCH_SIZE - 1, clampedGoalZ - baseZ));
 
   directions.fill(0);
   distances.fill(UNVISITED_DISTANCE);
@@ -131,6 +133,7 @@ export function findPath(
     }
 
     const dist = distances[idx(cx, cz)] + 1;
+    if (dist > maxSteps) continue;
 
     // Cardinal directions
     // West
@@ -267,10 +270,5 @@ export function findPath(
     }
   }
 
-  // Cap to max waypoints
-  if (compressed.length > MAX_WAYPOINTS) {
-    compressed.length = MAX_WAYPOINTS;
-  }
-
-  return compressed;
+  return compressed.length > MAX_WAYPOINTS ? compressed.slice(0, MAX_WAYPOINTS) : compressed;
 }
