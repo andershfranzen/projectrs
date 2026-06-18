@@ -17,6 +17,7 @@ import { broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSock
 import { normalizeClientIp } from './network/clientIp';
 import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
+import { BotReplayRecorder, type BotReplayClientCommandDetails } from './BotReplayRecorder';
 import { consumeSpellCosts } from './magic/SpellCosts';
 import { DEFAULT_MAX_SEARCH_TILES, canTravel, findPathToAnyTile, findPathToReach, findPathToRectInteraction, findPathToTile, isRectInteractionTileReachable, type PathingCollision } from './pathing/Pathing';
 import { validateMovementWaypoints, type MovementCollision } from './movement/MovementCollision';
@@ -578,10 +579,12 @@ const DEFAULT_SHOP_RESTOCK_TICKS = 100;
 const MAX_SHOP_WIRE_VALUE = 0x7FFF;
 const ACTION_CAPABILITY_SYNC_INTERVAL_TICKS = 3;
 const ACTION_CAPABILITY_EXPIRES_TICKS = 8;
+const ACTION_CAPABILITY_REAL_TOKENS_PER_ACTION = 3;
 let nextGroundItemId = GROUND_ITEM_ENTITY_ID_MIN;
 
 export type WorldOptions = {
   onPlayerAvatarDirty?: (accountId: number, username: string) => void;
+  botReplayRecorder?: BotReplayRecorder;
 };
 
 export class World {
@@ -591,6 +594,7 @@ export class World {
   readonly db: GameDatabase;
   private readonly options: WorldOptions;
   private readonly quests: QuestService;
+  private readonly botReplayRecorder?: BotReplayRecorder;
   readonly players: Map<number, Player> = new Map();
   private maxThievingGuardWanderRange: number = STALL_GUARD_MIN_QUERY_RANGE_TILES;
 
@@ -782,6 +786,7 @@ export class World {
   constructor(db: GameDatabase, options: WorldOptions = {}) {
     this.db = db;
     this.options = options;
+    this.botReplayRecorder = options.botReplayRecorder;
     this.data = new DataLoader();
     this.quests = new QuestService(this.data, {
       sendToPlayer: (player, opcode, ...values) => this.sendToPlayer(player, opcode, ...values),
@@ -2672,6 +2677,38 @@ export class World {
     return this.currentTick;
   }
 
+  recordBotReplayServerPacket(playerId: number | undefined, data: Bun.BufferSource): void {
+    if (!playerId || !this.botReplayRecorder) return;
+    const player = this.players.get(playerId);
+    if (!player || player.disconnected) return;
+    this.botReplayRecorder.recordServerPacket(player, this.currentTick, data);
+  }
+
+  recordBotReplayClientCommand(player: Player, command: BotReplayClientCommandDetails): void {
+    this.botReplayRecorder?.recordClientCommand(player, this.currentTick, command);
+  }
+
+  recordBotReplaySuspiciousPacket(player: Player, opcode: number, reason: string, values: number[], persist: boolean): void {
+    const recorder = this.botReplayRecorder;
+    if (!recorder) return;
+    recorder.recordFlag(player, this.currentTick, opcode, reason, values);
+    if (persist) recorder.persistPlayer(player, this.currentTick, reason, [reason]);
+  }
+
+  persistBotReplayForAccount(accountId: number, triggerReason: string = 'manual-admin-review'): number | null {
+    const player = this.getActivePlayerByAccountId(accountId);
+    if (!player || !this.botReplayRecorder) return null;
+    this.botReplayRecorder.recordSnapshot(player, this.currentTick, triggerReason);
+    return this.botReplayRecorder.persistPlayer(
+      player,
+      this.currentTick,
+      triggerReason,
+      triggerReason.startsWith('manual') ? [] : [triggerReason],
+      player.botStats?.riskScore ?? 0,
+      true,
+    );
+  }
+
   recordPlayerActivity(playerId: number): void {
     const player = this.players.get(playerId);
     if (!player || player.disconnected || player.requestIdleLogout) return;
@@ -2782,15 +2819,16 @@ export class World {
       }
       this.markEntityTileOccupantsDirty();
 
-      audit({
-        type: 'account.reconnect',
-        tick: this.currentTick,
-        accountId: player.accountId,
-        details: { name: player.name, ip: player.ip, deviceId: player.deviceId, loginRowId: player.loginRowId },
-      });
+	      audit({
+	        type: 'account.reconnect',
+	        tick: this.currentTick,
+	        accountId: player.accountId,
+	        details: { name: player.name, ip: player.ip, deviceId: player.deviceId, loginRowId: player.loginRowId },
+	      });
 
-      this.sendLoginBootstrap(player);
-      broadcastPlayerInfo(player.id, player.name);
+	      this.botReplayRecorder?.startPlayer(player, this.currentTick, 'reconnect');
+	      this.sendLoginBootstrap(player);
+	      broadcastPlayerInfo(player.id, player.name);
       for (const [, other] of this.players) {
         if (other.id !== player.id) broadcastPlayerInfo(other.id, other.name);
       }
@@ -2822,8 +2860,8 @@ export class World {
     // correlation). The IP was captured at WS upgrade and stamped onto
     // Player just before addPlayer was called. Also emit an audit event
     // so account.login lines sit alongside other actions in audit.log.
-    if (player.ip) {
-      player.loginRowId = this.db.recordLogin(player.accountId, player.ip, player.deviceId);
+	    if (player.ip) {
+	      player.loginRowId = this.db.recordLogin(player.accountId, player.ip, player.deviceId);
       audit({
         type: 'account.login',
         tick: this.currentTick,
@@ -2834,10 +2872,12 @@ export class World {
       // for residential CGNAT and most consumer IPs — null is the expected
       // common outcome. When the PTR DOES resolve (datacenter, VPN, mobile
       // carrier), the bot-review CLI uses substring matching to flag it.
-      this.lookupReverseDns(player.ip, player.loginRowId);
-    }
+	      this.lookupReverseDns(player.ip, player.loginRowId);
+	    }
 
-    // Register with chunk manager
+	    this.botReplayRecorder?.startPlayer(player, this.currentTick, 'login');
+
+	    // Register with chunk manager
     const cm = this.chunkManagers.get(player.currentMapLevel)!;
     cm.addEntity(player.id, player.position.x, player.position.y, 'player');
     cm.registerPlayer(player.id);
@@ -3101,6 +3141,7 @@ export class World {
   removePlayer(playerId: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    this.botReplayRecorder?.endPlayer(player, this.currentTick, 'removed');
 
     // Clear every cross-entity reference BEFORE deleting the player entity so
     // the helper can still look up the player. Wipes player→NPC combat target,
@@ -3165,6 +3206,7 @@ export class World {
     this.cancelItemProduction(playerId);
     this.clearCombatTarget(playerId);
     this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
+    this.botReplayRecorder?.recordSnapshot(player, this.currentTick, combatLogout ? 'disconnect-combat' : 'disconnect');
     player.disconnected = true;
     if (combatLogout) {
       player.reconnectDeadlineTick = this.currentTick + DISCONNECTED_COMBAT_LOGOUT_TICKS;
@@ -3188,6 +3230,9 @@ export class World {
       for (const skill of ALL_SKILLS) xpNow[skill] = player.skills[skill].xp;
       const summary = player.botStats.finalize(this.db, player.accountId, xpNow, this.currentTick);
       sessionMinutes = summary.sessionMinutes;
+      if (summary.riskHardEvidence) {
+        this.botReplayRecorder?.persistPlayer(player, this.currentTick, 'session-hard-evidence', summary.evidenceFlags, summary.riskScore, true);
+      }
       player.botStats = null;
     }
     // Finalize login_history row regardless of botStats (the IP-correlation
@@ -12401,11 +12446,16 @@ export class World {
       caps.push(wire);
       return wire;
     };
+    const pushRealCaps = (kind: ActionCapabilityKind, targetEntityId: number, actionIndex: number): void => {
+      for (let i = 0; i < ACTION_CAPABILITY_REAL_TOKENS_PER_ACTION; i++) {
+        pushCap(kind, targetEntityId, actionIndex);
+      }
+    };
 
     for (const eid of visibleEntityIds) {
       const npc = this.npcs.get(eid);
       if (npc && this.canPlayerSyncNpc(viewer, npc)) {
-        pushCap(ActionCapabilityKind.Npc, eid, 0);
+        pushRealCaps(ActionCapabilityKind.Npc, eid, 0);
         continue;
       }
       const obj = this.worldObjects.get(eid);
@@ -12415,13 +12465,13 @@ export class World {
           : this.currentObjectActionsForPlayer(viewer, obj);
         const count = Math.min(actions.length, 21);
         for (let actionIndex = 0; actionIndex < count; actionIndex++) {
-          if (actions[actionIndex]) pushCap(ActionCapabilityKind.WorldObject, eid, actionIndex);
+          if (actions[actionIndex]) pushRealCaps(ActionCapabilityKind.WorldObject, eid, actionIndex);
         }
         continue;
       }
       const item = this.groundItems.get(eid);
       if (item && this.canPlayerTargetGroundItem(viewer, item)) {
-        pushCap(ActionCapabilityKind.GroundItem, eid, 0);
+        pushRealCaps(ActionCapabilityKind.GroundItem, eid, 0);
       }
     }
 
@@ -12434,15 +12484,22 @@ export class World {
     }
 
     viewer.lastActionCapabilitySyncHadCaps = true;
+    const wireKey = (wire: ActionCapabilityWire): string => `${wire[0]}:${wire[1]}:${wire[2]}`;
     const reservedDuplicate = (source: ActionCapabilityWire, flags = 1): ActionCapabilityWire => {
       const [kind, targetEntityId, actionIndex] = source;
       const cap = viewer.issueActionCapability(kind, targetEntityId, actionIndex, expiresTick, true, this.currentTick);
       return [kind, targetEntityId, actionIndex, cap.id, cap.code, flags];
     };
-    const firstCap = caps[0];
-    if (firstCap) {
-      caps.unshift(reservedDuplicate(firstCap, 0));
-      caps.unshift(reservedDuplicate(firstCap));
+    const canaryStarts: number[] = [];
+    for (let i = 0; i < caps.length; i++) {
+      if (i === 0 || wireKey(caps[i - 1]) !== wireKey(caps[i])) canaryStarts.push(i);
+    }
+    const canaryIndex = canaryStarts.length > 0
+      ? canaryStarts[Math.floor(Math.random() * canaryStarts.length)]
+      : -1;
+    const canaryCap = canaryIndex >= 0 ? caps[canaryIndex] : undefined;
+    if (canaryCap) {
+      caps.splice(canaryIndex, 0, reservedDuplicate(canaryCap), reservedDuplicate(canaryCap, 0));
     }
     let lastRealCap: ActionCapabilityWire | undefined;
     for (let i = caps.length - 1; i >= 0; i--) {
@@ -12451,7 +12508,7 @@ export class World {
         break;
       }
     }
-    if (lastRealCap && lastRealCap !== firstCap) caps.push(reservedDuplicate(lastRealCap));
+    if (lastRealCap) caps.push(reservedDuplicate(lastRealCap));
     this.queueEncodedSyncPacket(out, encodeStringPacket(ServerOpcode.ACTION_CAPABILITIES, JSON.stringify(caps)));
   }
 

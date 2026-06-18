@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import type { CustomColors, FloorLayerData, GroundType, KCMapFile, KCTile, MapMeta, PlayerAppearance, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, defaultGroundForMap, getObjectInteractionTiles, localSidesToWorldSides, TileType } from '@projectrs/shared';
 import { World } from './World';
+import { BotReplayRecorder } from './BotReplayRecorder';
 import { canFetchScopedGameplayMapDataPath, gameplayMapPlayerWindowFromWorldPosition, isGameplayObjectManifestPath, isReservedGameplayMapDataPath, mapIdFromGameplayMapPath, type GameplayMapPlayerWindow } from './data/MapDataAccess';
 import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } from './data/PublicData';
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
@@ -2351,8 +2352,10 @@ if (!ALLOW_EMPTY_DEV_DB && !db.isAdminUsername(REQUIRED_ADMIN_USERNAME)) {
     `Set PROJECTRS_DB_PATH to the populated database, restore the DB backup, or set ALLOW_EMPTY_DEV_DB=1 for intentional fresh-db work.`
   );
 }
+const botReplayRecorder = new BotReplayRecorder(db);
 const world = new World(db, {
   onPlayerAvatarDirty: (_accountId, username) => scheduleForumAvatarBake(`logout:${username}`),
+  botReplayRecorder,
 });
 world.start();
 try {
@@ -3763,6 +3766,59 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
           online: !!world.getActivePlayerByAccountId(account.accountId),
         })),
       }, 200, { 'Cache-Control': 'no-store' });
+    }
+
+    if (url.pathname === '/api/admin/bot-replays' && req.method === 'GET') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      const limit = boundedIntegerParam(url.searchParams.get('limit'), 100, 1, 500);
+      const accountId = boundedIntegerParam(url.searchParams.get('accountId'), 0, 0, 1_000_000_000);
+      const query = url.searchParams.get('q') ?? url.searchParams.get('query') ?? '';
+      return jsonResponse({
+        ok: true,
+        generatedAt: Math.floor(Date.now() / 1000),
+        replays: db.listAdminBotReplays(limit, accountId, query),
+      }, 200, { 'Cache-Control': 'no-store' });
+    }
+
+    if (url.pathname === '/api/admin/bot-replay' && req.method === 'GET') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      const id = boundedIntegerParam(url.searchParams.get('id'), 0, 0, 1_000_000_000);
+      const replay = db.getAdminBotReplay(id);
+      if (!replay) return jsonResponse({ ok: false, error: 'Replay not found' }, 404, { 'Cache-Control': 'no-store' });
+      return jsonResponse({
+        ok: true,
+        generatedAt: Math.floor(Date.now() / 1000),
+        ...replay,
+      }, 200, { 'Cache-Control': 'no-store' });
+    }
+
+    if (url.pathname === '/api/admin/bot-replay/record' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      try {
+        const body = await readSmallJsonBody<{ accountId?: unknown; reason?: unknown }>(req, BODY_LIMIT_AUTH);
+        const accountId = Number(body.accountId);
+        if (!Number.isInteger(accountId) || accountId <= 0) {
+          return jsonResponse({ ok: false, error: 'Invalid accountId' }, 400, { 'Cache-Control': 'no-store' });
+        }
+        const reason = typeof body.reason === 'string' && body.reason.trim()
+          ? body.reason.trim().slice(0, 120)
+          : 'manual-admin-review';
+        const replayId = world.persistBotReplayForAccount(accountId, reason);
+        if (!replayId) return jsonResponse({ ok: false, error: 'Target player is not online or has no replay buffer' }, 404, { 'Cache-Control': 'no-store' });
+        audit({
+          type: 'admin',
+          tick: world.getCurrentTick(),
+          accountId: session.accountId,
+          details: { action: 'record_bot_replay', targetAccountId: accountId, replayId, reason },
+        });
+        return jsonResponse({ ok: true, replayId }, 200, { 'Cache-Control': 'no-store' });
+      } catch (err) {
+        if (err instanceof Error && err.message === 'too-large') return tooLarge();
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400, { 'Cache-Control': 'no-store' });
+      }
     }
 
     if (url.pathname === '/api/admin/bot-review/clear' && req.method === 'POST') {

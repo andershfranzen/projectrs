@@ -136,7 +136,7 @@ function toPacketBytes(data: Bun.BufferSource): Uint8Array {
         : new Uint8Array(data as unknown as ArrayBuffer);
 }
 
-export async function installGameSocketEncryption(ws: ServerWebSocket<GameSocketData>): Promise<void> {
+export async function installGameSocketEncryption(ws: ServerWebSocket<GameSocketData>, world?: World): Promise<void> {
   if (ws.data.crypto) return;
   const serverKeyPair = await generateGameEcdhKeyPair();
   const serverPublicKey = await exportGamePublicKey(serverKeyPair.publicKey);
@@ -164,6 +164,9 @@ export async function installGameSocketEncryption(ws: ServerWebSocket<GameSocket
   cryptoState.originalSendBinary = originalSendBinary;
   ws.data.crypto = cryptoState;
   ws.sendBinary = ((data: Bun.BufferSource) => {
+    try {
+      world?.recordBotReplayServerPacket?.(ws.data.playerId, data);
+    } catch { /* replay capture must not break gameplay sends */ }
     const packet = toPacketBytes(data);
     const shouldEncrypt = cryptoState.encryptEnabled && !!cryptoState.keys;
     const serverOpcodeMap = cryptoState.opcodeMappingEnabled
@@ -628,6 +631,7 @@ export function suspiciousPacketCloseEligible(reason: string): boolean {
     || reason === 'bad-cursor-x'
     || reason === 'bad-cursor-y'
     || reason === 'reserved-action-capability'
+    || reason === 'replayed-action-capability'
   ) return true;
   if (
     reason.startsWith('bad-')
@@ -1050,8 +1054,10 @@ function reportSuspiciousPacket(
   ws: ServerWebSocket<GameSocketData>,
   world: World,
 ): void {
+  const closeEligible = suspiciousPacketCloseEligible(reason);
+  world.recordBotReplaySuspiciousPacket?.(player, opcode, reason, values, closeEligible);
   player.botStats?.recordSuspiciousPacket(reason);
-  if (!suspiciousPacketCloseEligible(reason)) return;
+  if (!closeEligible) return;
 
   const count = player.recordSuspiciousPacket();
   if (INVALID_PACKET_AUDIT_COUNTS.has(count)) {
@@ -1162,9 +1168,9 @@ function clearOpcodeMappingRotation(ws: ServerWebSocket<GameSocketData>): void {
 
 export async function handleGameSocketOpen(
   ws: ServerWebSocket<GameSocketData>,
-  _world: World
+  world: World
 ): Promise<void> {
-  await installGameSocketEncryption(ws);
+  await installGameSocketEncryption(ws, world);
 }
 
 function completeGameSocketLogin(
@@ -1451,10 +1457,12 @@ function handleDecryptedGameSocketMessage(
       world.getCurrentTick(),
     );
     if (capResult !== 'ok') {
-      const reason = capResult === 'reserved'
-        ? 'reserved-action-capability'
-        : capResult === 'expired'
-          ? 'stale-action-capability'
+    const reason = capResult === 'reserved'
+      ? 'reserved-action-capability'
+      : capResult === 'expired'
+        ? 'stale-action-capability'
+        : capResult === 'replayed'
+          ? 'replayed-action-capability'
           : 'bad-action-capability';
       reportSuspiciousPacket(player, opcode, reason, values, ws, world);
       return;
@@ -1477,6 +1485,28 @@ function handleDecryptedGameSocketMessage(
       return;
     }
   }
+  world.recordBotReplayClientCommand?.(player, {
+    opcode,
+    values,
+    proof: commandProof ? {
+      inputSeq: commandProof.inputSeq,
+      capabilityId: commandProof.capabilityId,
+      hasCapability: commandProof.capabilityId > 0 && commandProof.capabilityCode > 0,
+    } : null,
+    requiresInputProof,
+    hasValidInputTicket,
+    inputTicket: inputTicket ? {
+      kind: inputTicket.kind,
+      x: inputTicket.x,
+      y: inputTicket.y,
+      shape: inputTicket.shape ? { ...inputTicket.shape } : undefined,
+    } : null,
+    actionCapability: expectedCapability ? {
+      kind: expectedCapability.kind,
+      targetEntityId: expectedCapability.targetEntityId,
+      actionIndex: expectedCapability.actionIndex,
+    } : null,
+  });
   if (opcodeCountsAsActivity(opcode)) world.recordPlayerActivity(playerId);
 
   switch (opcode) {

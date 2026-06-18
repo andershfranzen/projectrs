@@ -36,13 +36,14 @@ describe('NetworkManager command proof protection', () => {
     expect(proofSeq(manager.protectOutgoingPacket(encodePacket(ClientOpcode.PLAYER_PICKUP_ITEM, 124)))).toBe(null);
   });
 
-  test('action capabilities can protect repeated clicks on the same visible target', () => {
+  test('action capabilities can protect repeated clicks with fresh target proofs', () => {
     const manager = makeManager();
     manager.pendingInputTicketSeq = null;
     manager.inputTicketBurst.remaining = 2;
+    const caps = [{ id: 123, code: 456 }, { id: 789, code: 987 }];
     manager.actionCapabilityResolver = (opcode: ClientOpcode, values: number[]) => {
       if (opcode === ClientOpcode.PLAYER_INTERACT_OBJECT && values[0] === 10042 && values[1] === 0) {
-        return { id: 123, code: 456 };
+        return caps.shift() ?? null;
       }
       return null;
     };
@@ -51,7 +52,7 @@ describe('NetworkManager command proof protection', () => {
     const second = commandProof(manager.protectOutgoingPacket(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, 10042, 0)));
 
     expect(first).toMatchObject({ capabilityId: 123, capabilityCode: 456 });
-    expect(second).toMatchObject({ capabilityId: 123, capabilityCode: 456 });
+    expect(second).toMatchObject({ capabilityId: 789, capabilityCode: 987 });
   });
 
   test('move packets fail instead of silently truncating overlong paths', () => {

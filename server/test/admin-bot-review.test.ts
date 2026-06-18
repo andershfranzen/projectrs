@@ -3,6 +3,80 @@ import { BotStats } from '../src/BotStats';
 import { GameDatabase } from '../src/Database';
 
 describe('admin bot review data', () => {
+  test('saves and reads bot replay traces in event order', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const session = db.loginFallbackAccount('replay-target', '11111111-1111-4111-8111-111111111111');
+      const loginRowId = db.recordLogin(session.accountId, '203.0.113.30', session.wsSecret);
+      const replayId = db.saveBotReplayTrace({
+        accountId: session.accountId,
+        username: 'replay-target',
+        playerId: 42,
+        loginRowId,
+        triggerReason: 'replayed-action-capability',
+        riskScore: 31,
+        hardFlags: ['replayed-action-capability'],
+        startedAt: 1_700_000_000,
+        endedAt: 1_700_000_012,
+        mapLevel: 'kcmap',
+        floor: 0,
+        startX: 12.5,
+        startZ: 18.5,
+        events: [
+          { kind: 'client', t: 1_700_000_000_100, tick: 10, opcode: 40, values: [10001, 0], result: 'accepted', x: 12.5, z: 18.5, mapLevel: 'kcmap', floor: 0, details: { proof: { inputSeq: 7 } } },
+          { kind: 'flag', t: 1_700_000_000_700, tick: 11, opcode: 40, values: [10001, 0], result: 'rejected', reason: 'replayed-action-capability', x: 12.5, z: 18.5, mapLevel: 'kcmap', floor: 0, details: { riskScore: 31 } },
+        ],
+      });
+
+      const summaries = db.listAdminBotReplays(20, session.accountId);
+      const detail = db.getAdminBotReplay(replayId);
+
+      expect(replayId).toBeGreaterThan(0);
+      expect(summaries[0]?.id).toBe(replayId);
+      expect(summaries[0]?.username).toBe('replay-target');
+      expect(summaries[0]?.hardFlags).toEqual(['replayed-action-capability']);
+      expect(summaries[0]?.eventCount).toBe(2);
+      expect(detail?.events.map(event => event.kind)).toEqual(['client', 'flag']);
+      expect(detail?.events[1]?.reason).toBe('replayed-action-capability');
+      expect(detail?.events[0]?.details).toEqual({ proof: { inputSeq: 7 } });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('clamps bot replay event payloads for admin reads', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const session = db.loginFallbackAccount('replay-clamp', '11111111-1111-4111-8111-111111111111');
+      const values = Array.from({ length: 180 }, (_, index) => index);
+      const replayId = db.saveBotReplayTrace({
+        accountId: session.accountId,
+        username: 'replay-clamp',
+        playerId: 43,
+        loginRowId: null,
+        triggerReason: 'manual-admin-review',
+        riskScore: 0,
+        hardFlags: ['manual-admin-review'],
+        startedAt: 1,
+        endedAt: 3,
+        mapLevel: 'kcmap',
+        floor: 0,
+        startX: 1,
+        startZ: 2,
+        events: [
+          { kind: 'server', t: 1000, tick: 1, opcode: 10, values, byteLength: 1, rawBase64: 'AA==', details: { huge: 'x'.repeat(20_000) } },
+        ],
+      });
+
+      const detail = db.getAdminBotReplay(replayId);
+
+      expect(detail?.events[0]?.values).toHaveLength(128);
+      expect(detail?.events[0]?.details.truncated).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
   test('playtime timeline splits sessions across real hour buckets', () => {
     const db = new GameDatabase(':memory:');
     try {

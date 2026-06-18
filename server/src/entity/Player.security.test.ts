@@ -46,20 +46,21 @@ describe('Player command proof security state', () => {
     const okCap = player.issueActionCapability(ActionCapabilityKind.WorldObject, 10042, 2, 15, false, 11);
     expect(player.consumeActionCapability(okCap.id, okCap.code + 1, ActionCapabilityKind.WorldObject, 10042, 2, 12)).toBe('missing');
     expect(player.consumeActionCapability(okCap.id, okCap.code, ActionCapabilityKind.WorldObject, 10042, 2, 12)).toBe('ok');
-    expect(player.consumeActionCapability(okCap.id, okCap.code, ActionCapabilityKind.WorldObject, 10042, 2, 12)).toBe('ok');
+    expect(player.consumeActionCapability(okCap.id, okCap.code, ActionCapabilityKind.WorldObject, 10042, 2, 12)).toBe('replayed');
+    expect(player.consumeActionCapability(okCap.id, okCap.code, ActionCapabilityKind.WorldObject, 10042, 2, 12)).toBe('missing');
 
     const expiredCap = player.issueActionCapability(ActionCapabilityKind.WorldObject, 10042, 2, 15, false, 12);
     expect(player.consumeActionCapability(expiredCap.id, expiredCap.code, ActionCapabilityKind.WorldObject, 10042, 2, 16)).toBe('expired');
   });
 
-  test('action capability snapshots rotate reusable target proofs', () => {
+  test('action capability snapshots rotate one-shot target proofs', () => {
     const player = makePlayer();
     const first = player.issueActionCapability(ActionCapabilityKind.Npc, 1234, 0, 15, false, 10);
     const second = player.issueActionCapability(ActionCapabilityKind.Npc, 1234, 0, 18, false, 12);
 
     expect(second.id).not.toBe(first.id);
     expect(player.consumeActionCapability(second.id, second.code, ActionCapabilityKind.Npc, 1234, 0, 13)).toBe('ok');
-    expect(player.consumeActionCapability(second.id, second.code, ActionCapabilityKind.Npc, 1234, 0, 13)).toBe('ok');
+    expect(player.consumeActionCapability(second.id, second.code, ActionCapabilityKind.Npc, 1234, 0, 13)).toBe('replayed');
   });
 
   test('reserved capabilities are distinguishable from stale or mismatched caps', () => {

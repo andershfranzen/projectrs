@@ -10,7 +10,7 @@ import {
 } from '@projectrs/shared';
 
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
-type AdminTab = 'bots' | 'playtime' | 'events' | 'diagnostics';
+type AdminTab = 'bots' | 'replays' | 'playtime' | 'events' | 'diagnostics';
 
 interface AdminBotAccount {
   accountId: number;
@@ -125,6 +125,60 @@ interface BotReviewResponse {
   error?: string;
 }
 
+interface AdminBotReplaySummary {
+  id: number;
+  accountId: number;
+  username: string;
+  playerId: number;
+  loginRowId: number | null;
+  startedAt: number;
+  endedAt: number;
+  createdAt: number;
+  triggerReason: string;
+  riskScore: number;
+  hardFlags: string[];
+  eventCount: number;
+  durationSeconds: number;
+  mapLevel: string | null;
+  floor: number | null;
+  startX: number | null;
+  startZ: number | null;
+}
+
+interface AdminBotReplayEvent {
+  id: number;
+  seq: number;
+  t: number;
+  tick: number;
+  kind: string;
+  opcode: number | null;
+  values: number[];
+  result: string | null;
+  reason: string | null;
+  rawBase64: string | null;
+  byteLength: number | null;
+  mapLevel: string | null;
+  floor: number | null;
+  x: number | null;
+  z: number | null;
+  details: Record<string, unknown>;
+}
+
+interface BotReplayListResponse {
+  ok: boolean;
+  generatedAt: number;
+  replays: AdminBotReplaySummary[];
+  error?: string;
+}
+
+interface BotReplayDetailResponse {
+  ok: boolean;
+  generatedAt: number;
+  replay: AdminBotReplaySummary;
+  events: AdminBotReplayEvent[];
+  error?: string;
+}
+
 interface GameEventLogEntry {
   id: number;
   createdAt: number;
@@ -201,6 +255,7 @@ interface DiagnosticBrowserGap {
 
 const TEXT_SHADOW = '1px 1px 0 #000';
 const BOT_GRID_COLUMNS = 'minmax(132px, 1.2fr) 44px 66px minmax(150px, 1.4fr) minmax(82px, 0.75fr) 86px';
+const REPLAY_GRID_COLUMNS = '70px minmax(120px, 1fr) minmax(110px, 1fr) 72px 64px 76px';
 const PLAYTIME_GRID_COLUMNS = 'minmax(118px, 1.2fr) minmax(82px, 0.85fr) 68px 58px 58px';
 const EVENT_GRID_COLUMNS = '72px 92px minmax(104px, 0.85fr) minmax(220px, 2fr) 106px';
 const DIAGNOSTIC_GRID_COLUMNS = '74px 110px minmax(96px, 0.75fr) minmax(220px, 2fr) 58px';
@@ -272,6 +327,11 @@ function botSignalLabel(flag: string): string {
   return suffix ? `${label}: ${suffix}` : label;
 }
 
+function suspiciousPacketReasonLabel(reason: string): string {
+  if (reason === 'reserved-action-capability' || reason === 'replayed-action-capability') return 'Invalid action token replayed';
+  return reason;
+}
+
 export class AdminPanel {
   private root: HTMLDivElement;
   private summaryEl: HTMLDivElement;
@@ -296,6 +356,9 @@ export class AdminPanel {
   private readonly tabButtons = new Map<AdminTab, HTMLButtonElement>();
   private accounts: AdminBotAccount[] = [];
   private selectedAccountId: number | null = null;
+  private botReplays: AdminBotReplaySummary[] = [];
+  private selectedReplayId: number | null = null;
+  private replayEvents: AdminBotReplayEvent[] = [];
   private playtimeBuckets: AdminPlaytimeBucket[] = [];
   private playtimeBucketMinutes = 60;
   private selectedPlaytimeStartTs: number | null = null;
@@ -307,6 +370,7 @@ export class AdminPanel {
   private eventAfterId = 0;
   private eventPollTimer: number | null = null;
   private eventLoading = false;
+  private replayLoading = false;
   private playtimeLoading = false;
   private diagnosticLoading = false;
   private readonly hiddenEventTypes = new Set<string>();
@@ -377,7 +441,7 @@ export class AdminPanel {
       min-width: 0;
       margin-left: auto;
     `;
-    for (const [tab, label] of [['bots', 'Bot review'], ['playtime', 'Playtime'], ['events', 'Game log'], ['diagnostics', 'Diagnostics']] as const) {
+    for (const [tab, label] of [['bots', 'Bot review'], ['replays', 'Replays'], ['playtime', 'Playtime'], ['events', 'Game log'], ['diagnostics', 'Diagnostics']] as const) {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = label;
@@ -723,6 +787,7 @@ export class AdminPanel {
 
   private async refresh(): Promise<void> {
     if (this.activeTab === 'events') return this.refreshGameEvents(true);
+    if (this.activeTab === 'replays') return this.refreshBotReplays();
     if (this.activeTab === 'playtime') return this.refreshPlaytime();
     if (this.activeTab === 'diagnostics') return this.refreshClientDiagnostics();
     return this.refreshBotReview();
@@ -770,6 +835,80 @@ export class AdminPanel {
       this.clearRiskButton.disabled = false;
       this.refreshButton.textContent = 'Refresh';
     }
+  }
+
+  private async refreshBotReplays(): Promise<void> {
+    if (this.replayLoading) return;
+    this.replayLoading = true;
+    this.refreshButton.disabled = true;
+    this.clearRiskButton.disabled = true;
+    this.refreshButton.textContent = 'Loading';
+    try {
+      const res = await fetch('/api/admin/bot-replays?limit=200', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.token}` },
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (privateEndpointDenied(res.status)) {
+        this.botReplays = [];
+        this.replayEvents = [];
+        this.renderEmpty('');
+        this.hide();
+        return;
+      }
+      const payload = await res.json() as BotReplayListResponse;
+      if (!res.ok || !payload.ok) {
+        throw new Error(payload.error || `Bot replays failed (${res.status})`);
+      }
+      this.botReplays = payload.replays ?? [];
+      if (this.botReplays.length === 0) {
+        this.selectedReplayId = null;
+        this.replayEvents = [];
+        this.renderBotReplays();
+        return;
+      }
+      if (!this.botReplays.some(replay => replay.id === this.selectedReplayId)) {
+        this.selectedReplayId = this.botReplays[0].id;
+      }
+      await this.refreshSelectedBotReplay();
+      this.renderBotReplays();
+    } catch (err) {
+      this.renderEmpty(err instanceof Error ? err.message : 'Unable to load bot replays.');
+    } finally {
+      this.replayLoading = false;
+      this.refreshButton.disabled = false;
+      this.clearRiskButton.disabled = false;
+      this.refreshButton.textContent = 'Refresh';
+    }
+  }
+
+  private async refreshSelectedBotReplay(): Promise<void> {
+    if (this.selectedReplayId === null) {
+      this.replayEvents = [];
+      return;
+    }
+    const res = await fetch(`/api/admin/bot-replay?id=${encodeURIComponent(String(this.selectedReplayId))}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${this.token}` },
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (privateEndpointDenied(res.status)) {
+      this.botReplays = [];
+      this.replayEvents = [];
+      this.renderEmpty('');
+      this.hide();
+      return;
+    }
+    const payload = await res.json() as BotReplayDetailResponse;
+    if (!res.ok || !payload.ok) {
+      throw new Error(payload.error || `Replay detail failed (${res.status})`);
+    }
+    this.selectedReplayId = payload.replay.id;
+    const index = this.botReplays.findIndex(replay => replay.id === payload.replay.id);
+    if (index >= 0) this.botReplays[index] = payload.replay;
+    this.replayEvents = payload.events ?? [];
   }
 
   private async refreshPlaytime(): Promise<void> {
@@ -834,6 +973,8 @@ export class AdminPanel {
     if (this.subtitleEl) {
       this.subtitleEl.textContent = this.activeTab === 'events'
         ? 'Game log'
+        : this.activeTab === 'replays'
+          ? 'Bot replays'
         : this.activeTab === 'playtime'
           ? 'Playtime'
         : this.activeTab === 'diagnostics'
@@ -1040,6 +1181,270 @@ export class AdminPanel {
     else this.renderDetailMessage(this.accounts.length > 0 && this.hideBannedAccounts
       ? 'All matching accounts are hidden by the banned filter.'
       : 'No bot telemetry yet.');
+  }
+
+  private renderBotReplays(): void {
+    this.botSearchInput.style.display = 'none';
+    this.botHideBannedLabel.style.display = 'none';
+    this.clearRiskButton.style.display = 'none';
+    this.eventFilterEl.style.display = 'none';
+    this.diagnosticFilterEl.style.display = 'none';
+    this.setGridHeader(REPLAY_GRID_COLUMNS, ['Replay', 'Account', 'Trigger', 'Score', 'Events', 'Saved']);
+
+    const hard = this.botReplays.filter(replay => replay.hardFlags.length > 0).length;
+    const totalEvents = this.botReplays.reduce((sum, replay) => sum + replay.eventCount, 0);
+    this.summaryEl.replaceChildren(
+      this.summaryPill(`${this.botReplays.length} traces`, '#6c5c43'),
+      this.summaryPill(`${hard} hard flags`, hard > 0 ? '#8f2f28' : '#4d5d45'),
+      this.summaryPill(`${this.formatNumber(totalEvents)} events`, '#2f5f8f'),
+      this.summaryPill('server-authored', '#5f4a7d'),
+    );
+
+    this.rowsEl.replaceChildren();
+    for (const replay of this.botReplays) {
+      this.rowsEl.appendChild(this.botReplayRow(replay));
+    }
+
+    const selected = this.botReplays.find(replay => replay.id === this.selectedReplayId) ?? null;
+    if (selected) this.renderBotReplayDetail(selected);
+    else this.renderDetailMessage('No bot replay traces yet.');
+  }
+
+  private botReplayRow(replay: AdminBotReplaySummary): HTMLButtonElement {
+    const selected = replay.id === this.selectedReplayId;
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.style.cssText = `
+      appearance: none;
+      width: 100%;
+      display: grid;
+      grid-template-columns: ${REPLAY_GRID_COLUMNS};
+      gap: 8px;
+      padding: 7px 8px;
+      border: 0;
+      border-bottom: 1px solid rgba(74, 64, 53, 0.55);
+      background: ${selected ? 'rgba(122, 50, 40, 0.48)' : 'rgba(22, 16, 12, 0.38)'};
+      color: #f1d6b6;
+      font: 11px Arial, Helvetica, sans-serif;
+      text-align: left;
+      cursor: pointer;
+      text-shadow: ${TEXT_SHADOW};
+      transition: background 120ms ease, filter 120ms ease;
+    `;
+    this.installRowHover(row, selected ? 'rgba(122, 50, 40, 0.48)' : 'rgba(22, 16, 12, 0.38)');
+    row.addEventListener('click', () => {
+      this.selectedReplayId = replay.id;
+      this.replayEvents = [];
+      this.renderBotReplays();
+      void this.refreshSelectedBotReplay()
+        .then(() => this.renderBotReplays())
+        .catch((err) => this.renderDetailMessage(err instanceof Error ? err.message : 'Unable to load replay.'));
+    });
+    row.append(
+      this.truncateCell(`#${replay.id}`),
+      this.truncateCell(replay.username),
+      this.truncateCell(replay.triggerReason),
+      this.truncateCell(String(replay.riskScore)),
+      this.truncateCell(String(replay.eventCount)),
+      this.truncateCell(this.formatClock(replay.createdAt)),
+    );
+    return row;
+  }
+
+  private renderBotReplayDetail(replay: AdminBotReplaySummary): void {
+    const root = document.createElement('div');
+    root.style.cssText = `display: flex; flex-direction: column; gap: 8px; min-width: 0;`;
+
+    const title = document.createElement('div');
+    title.style.cssText = `display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13px; font-weight: bold; color: #f4ded5;`;
+    title.append(
+      document.createTextNode(`#${replay.id} ${replay.username}`),
+      this.summaryPill(replay.triggerReason, replay.triggerReason.includes('capability') || replay.triggerReason.includes('hard') ? '#8f2f28' : '#7a5a25'),
+    );
+    root.appendChild(title);
+
+    const metrics = document.createElement('div');
+    metrics.style.cssText = `display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); gap: 6px;`;
+    metrics.append(
+      this.metricCell('Started', this.formatTime(replay.startedAt)),
+      this.metricCell('Saved', this.formatTime(replay.createdAt)),
+      this.metricCell('Duration', `${replay.durationSeconds}s`),
+      this.metricCell('Trigger', replay.triggerReason),
+      this.metricCell('Risk score', String(replay.riskScore)),
+      this.metricCell('Events', String(replay.eventCount)),
+      this.metricCell('Map', replay.mapLevel ?? '-'),
+      this.metricCell('Floor', replay.floor == null ? '-' : String(replay.floor)),
+      this.metricCell('Start', replay.startX == null || replay.startZ == null ? '-' : `${replay.startX.toFixed(1)}, ${replay.startZ.toFixed(1)}`),
+    );
+    root.appendChild(metrics);
+
+    if (replay.hardFlags.length > 0) {
+      const flags = document.createElement('div');
+      flags.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px;`;
+      for (const flag of replay.hardFlags.slice(0, 12)) {
+        flags.appendChild(this.summaryPill(suspiciousPacketReasonLabel(flag), '#8f2f28'));
+      }
+      root.appendChild(this.detailSection('Evidence flags', flags));
+    }
+
+    root.appendChild(this.detailSection('Movement path', this.renderReplayPath(this.replayEvents)));
+
+    const timeline = document.createElement('div');
+    timeline.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      max-height: 260px;
+      overflow: auto;
+      border: 1px solid rgba(84, 70, 50, 0.6);
+      background: rgba(8, 6, 5, 0.38);
+    `;
+    const events = this.replayEvents.slice(0, 500);
+    if (events.length === 0) {
+      const empty = document.createElement('div');
+      empty.textContent = 'Loading replay events...';
+      empty.style.cssText = `padding: 8px; color: #d9c6a2; font-size: 12px;`;
+      timeline.appendChild(empty);
+    } else {
+      for (const event of events) timeline.appendChild(this.replayTimelineRow(event));
+      if (this.replayEvents.length > events.length) {
+        const clipped = document.createElement('div');
+        clipped.textContent = `${this.replayEvents.length - events.length} later events hidden in this view`;
+        clipped.style.cssText = `padding: 7px 8px; color: #b8a17d; font-size: 10px;`;
+        timeline.appendChild(clipped);
+      }
+    }
+    root.appendChild(this.detailSection('Timeline', timeline));
+
+    this.detailEl.replaceChildren(root);
+  }
+
+  private renderReplayPath(events: AdminBotReplayEvent[]): HTMLDivElement {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = `display: flex; flex-direction: column; gap: 6px;`;
+    const points = events
+      .filter(event => typeof event.x === 'number' && typeof event.z === 'number')
+      .map(event => ({ x: event.x as number, z: event.z as number, kind: event.kind }));
+    if (points.length < 2) {
+      const empty = document.createElement('div');
+      empty.textContent = 'Not enough position samples yet.';
+      empty.style.cssText = `font-size: 12px; color: #d9c6a2;`;
+      wrap.appendChild(empty);
+      return wrap;
+    }
+
+    const width = 520;
+    const height = 210;
+    const pad = 18;
+    const minX = Math.min(...points.map(point => point.x));
+    const maxX = Math.max(...points.map(point => point.x));
+    const minZ = Math.min(...points.map(point => point.z));
+    const maxZ = Math.max(...points.map(point => point.z));
+    const spanX = Math.max(1, maxX - minX);
+    const spanZ = Math.max(1, maxZ - minZ);
+    const project = (point: { x: number; z: number }) => ({
+      x: pad + ((point.x - minX) / spanX) * (width - pad * 2),
+      y: height - pad - ((point.z - minZ) / spanZ) * (height - pad * 2),
+    });
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.style.cssText = `
+      width: 100%;
+      height: auto;
+      min-height: 170px;
+      border: 1px solid rgba(84, 70, 50, 0.56);
+      background: rgba(8, 6, 5, 0.42);
+      box-sizing: border-box;
+    `;
+    const projected = points.map(project);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    line.setAttribute('points', projected.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '));
+    line.setAttribute('fill', 'none');
+    line.setAttribute('stroke', '#c85f45');
+    line.setAttribute('stroke-width', '2');
+    line.setAttribute('stroke-linejoin', 'round');
+    line.setAttribute('stroke-linecap', 'round');
+    svg.appendChild(line);
+    for (const [index, point] of projected.entries()) {
+      if (index !== 0 && index !== projected.length - 1 && points[index].kind !== 'flag') continue;
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', point.x.toFixed(1));
+      dot.setAttribute('cy', point.y.toFixed(1));
+      dot.setAttribute('r', points[index].kind === 'flag' ? '4.2' : '3.2');
+      dot.setAttribute('fill', index === 0 ? '#6aa15f' : points[index].kind === 'flag' ? '#d34636' : '#d9c6a2');
+      svg.appendChild(dot);
+    }
+    wrap.appendChild(svg);
+    return wrap;
+  }
+
+  private replayTimelineRow(event: AdminBotReplayEvent): HTMLDivElement {
+    const row = document.createElement('div');
+    row.style.cssText = `
+      display: grid;
+      grid-template-columns: 74px 58px minmax(0, 1fr) 86px;
+      gap: 7px;
+      padding: 6px 8px;
+      border-bottom: 1px solid rgba(74, 64, 53, 0.48);
+      color: #f1d6b6;
+      font-size: 10px;
+      min-width: 0;
+    `;
+    row.append(
+      this.truncateCell(this.formatReplayEventTime(event.t)),
+      this.replayKindPill(event.kind),
+      this.truncateCell(this.replayEventText(event)),
+      this.truncateCell(this.replayEventMeta(event)),
+    );
+    row.title = JSON.stringify(event.details ?? {}, null, 2);
+    return row;
+  }
+
+  private replayKindPill(kind: string): HTMLDivElement {
+    const pill = document.createElement('div');
+    pill.textContent = kind;
+    pill.style.cssText = `
+      min-width: 0;
+      width: fit-content;
+      max-width: 100%;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: ${this.replayKindColor(kind)};
+      color: #f4ded5;
+      font: 700 10px Arial, Helvetica, sans-serif;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    `;
+    return pill;
+  }
+
+  private replayKindColor(kind: string): string {
+    if (kind === 'flag') return '#8f2f28';
+    if (kind === 'client') return '#2f5f8f';
+    if (kind === 'server') return '#5f4a7d';
+    if (kind === 'snapshot') return '#4d5d45';
+    return '#6c5c43';
+  }
+
+  private replayEventText(event: AdminBotReplayEvent): string {
+    if (event.kind === 'flag') return `${event.reason ?? 'flag'} opcode ${event.opcode ?? '-'}`;
+    if (event.kind === 'client') return `client opcode ${event.opcode ?? '-'} ${event.result ?? ''}`.trim();
+    if (event.kind === 'server') return `server opcode ${event.opcode ?? '-'} ${event.byteLength ?? 0}B`;
+    if (event.kind === 'snapshot') return `snapshot ${event.result ?? ''}`.trim();
+    return `${event.kind} ${event.result ?? ''}`.trim();
+  }
+
+  private replayEventMeta(event: AdminBotReplayEvent): string {
+    const loc = event.x == null || event.z == null ? '-' : `${event.x.toFixed(1)},${event.z.toFixed(1)}`;
+    if (event.values.length > 0) return `[${event.values.slice(0, 4).join(',')}] ${loc}`;
+    return loc;
+  }
+
+  private formatReplayEventTime(ms: number): string {
+    if (!Number.isFinite(ms) || ms <= 0) return '-';
+    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
   private renderPlaytime(): void {
@@ -2158,7 +2563,7 @@ export class AdminPanel {
       const packets = document.createElement('div');
       packets.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px;`;
       for (const entry of account.suspiciousPacketReasons.slice(0, 8)) {
-        packets.appendChild(this.summaryPill(`${entry.reason}: ${this.formatNumber(entry.count)}`, '#4d355f'));
+        packets.appendChild(this.summaryPill(`${suspiciousPacketReasonLabel(entry.reason)}: ${this.formatNumber(entry.count)}`, '#4d355f'));
       }
       root.appendChild(this.detailSection('Suspicious packets', packets));
     }
@@ -2248,6 +2653,11 @@ export class AdminPanel {
     const clearRisk = this.smallButton('Clear risk', '#5d4930');
     clearRisk.onclick = () => void this.clearBotRiskForAccount(account);
 
+    const recordReplay = this.smallButton('Record replay', '#5f4a7d');
+    recordReplay.disabled = !account.online;
+    recordReplay.title = account.online ? `Save ${account.username}'s current rolling replay buffer` : 'Player is offline';
+    recordReplay.onclick = () => void this.recordBotReplayForAccount(account);
+
     const teleportTo = this.smallButton('Teleport to', '#2f5f8f');
     teleportTo.disabled = !account.online;
     teleportTo.title = account.online ? `Teleport to ${account.username}` : 'Player is offline';
@@ -2329,7 +2739,7 @@ export class AdminPanel {
       min-width: 0;
     `;
     groups.append(
-      this.actionGroup('Review', clearRisk),
+      this.actionGroup('Review', clearRisk, recordReplay),
       this.actionGroup('Movement', teleportTo, teleportHere),
       this.actionGroup('Account', accountBan, accountUnban, accountMute, accountUnmute, adminGrant, moderatorToggle),
       this.actionGroup('IP', ipBan, ipUnban, groupBan),
@@ -2358,6 +2768,37 @@ export class AdminPanel {
       await this.refresh();
     } catch (err) {
       this.renderActionError(err instanceof Error ? err.message : 'Moderation request failed.');
+    }
+  }
+
+  private async recordBotReplayForAccount(account: AdminBotAccount): Promise<void> {
+    try {
+      const res = await fetch('/api/admin/bot-replay/record', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          accountId: account.accountId,
+          reason: 'manual-admin-review',
+        }),
+      });
+      if (privateEndpointDenied(res.status)) {
+        this.hide();
+        return;
+      }
+      const payload = await res.json() as { ok?: boolean; replayId?: number; error?: string };
+      if (!res.ok || !payload.ok || typeof payload.replayId !== 'number') {
+        throw new Error(payload.error || `Record failed (${res.status})`);
+      }
+      this.selectedReplayId = payload.replayId;
+      this.activeTab = 'replays';
+      this.updateTabButtons();
+      await this.refreshBotReplays();
+    } catch (err) {
+      this.renderActionError(err instanceof Error ? err.message : 'Unable to record replay.');
     }
   }
 

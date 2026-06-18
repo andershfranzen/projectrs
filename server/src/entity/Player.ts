@@ -64,6 +64,7 @@ export interface ActionCapabilityRecord {
   actionIndex: number;
   expiresTick: number;
   reserved: boolean;
+  used: boolean;
 }
 
 export interface InputShapeRecord {
@@ -544,6 +545,7 @@ export class Player extends Entity {
       actionIndex,
       expiresTick,
       reserved,
+      used: false,
     };
     this._actionCapabilitiesById.set(id, cap);
     if (!reserved) this._actionCapabilityIdByKey.set(key, id);
@@ -557,7 +559,7 @@ export class Player extends Entity {
     targetEntityId: number,
     actionIndex: number,
     currentTick: number,
-  ): 'ok' | 'missing' | 'expired' | 'mismatch' | 'reserved' {
+  ): 'ok' | 'missing' | 'expired' | 'mismatch' | 'reserved' | 'replayed' {
     const cap = this._actionCapabilitiesById.get(id);
     if (!cap || cap.code !== code) return 'missing';
     if (cap.expiresTick < currentTick) {
@@ -569,10 +571,15 @@ export class Player extends Entity {
       this.deleteActionCapability(id, cap);
       return 'reserved';
     }
+    if (cap.used) {
+      this.deleteActionCapability(id, cap);
+      return 'replayed';
+    }
     if (cap.kind !== kind || cap.targetEntityId !== targetEntityId || cap.actionIndex !== actionIndex) {
       this.deleteActionCapability(id, cap);
       return 'mismatch';
     }
+    cap.used = true;
     return 'ok';
   }
 

@@ -476,6 +476,84 @@ export interface GameEventLogListOptions {
   query?: string | null;
 }
 
+export interface BotReplayEventInput {
+  t: number;
+  tick: number;
+  kind: string;
+  opcode?: number | null;
+  values?: number[];
+  result?: string | null;
+  reason?: string | null;
+  rawBase64?: string | null;
+  byteLength?: number | null;
+  mapLevel?: string | null;
+  floor?: number | null;
+  x?: number | null;
+  z?: number | null;
+  details?: Record<string, unknown> | null;
+}
+
+export interface BotReplayTraceInput {
+  accountId: number;
+  username: string;
+  playerId: number;
+  loginRowId: number | null;
+  triggerReason: string;
+  riskScore: number;
+  hardFlags: string[];
+  startedAt: number;
+  endedAt: number;
+  mapLevel: string | null;
+  floor: number | null;
+  startX: number | null;
+  startZ: number | null;
+  events: BotReplayEventInput[];
+}
+
+export interface AdminBotReplaySummary {
+  id: number;
+  accountId: number;
+  username: string;
+  playerId: number;
+  loginRowId: number | null;
+  startedAt: number;
+  endedAt: number;
+  createdAt: number;
+  triggerReason: string;
+  riskScore: number;
+  hardFlags: string[];
+  eventCount: number;
+  durationSeconds: number;
+  mapLevel: string | null;
+  floor: number | null;
+  startX: number | null;
+  startZ: number | null;
+}
+
+export interface AdminBotReplayEvent {
+  id: number;
+  seq: number;
+  t: number;
+  tick: number;
+  kind: string;
+  opcode: number | null;
+  values: number[];
+  result: string | null;
+  reason: string | null;
+  rawBase64: string | null;
+  byteLength: number | null;
+  mapLevel: string | null;
+  floor: number | null;
+  x: number | null;
+  z: number | null;
+  details: Record<string, unknown>;
+}
+
+export interface AdminBotReplayDetail {
+  replay: AdminBotReplaySummary;
+  events: AdminBotReplayEvent[];
+}
+
 export interface AdminPlaytimeBucket {
   startTs: number;
   endTs: number;
@@ -494,6 +572,26 @@ export interface AdminPlaytimeTimeline {
 
 interface PendingGameEventLogEntry extends Omit<GameEventLogEntry, 'id'> {
   detailsJson: string;
+}
+
+interface BotReplaySummaryRow {
+  id: number;
+  account_id: number;
+  username: string;
+  login_row_id: number | null;
+  player_id: number;
+  started_at: number;
+  ended_at: number;
+  created_at: number;
+  trigger_reason: string;
+  risk_score: number;
+  hard_flags: string;
+  event_count: number;
+  duration_seconds: number;
+  map_level: string | null;
+  floor: number | null;
+  start_x: number | null;
+  start_z: number | null;
 }
 
 /** Bump this constant to force every existing account to spawn at the map's
@@ -1066,6 +1164,24 @@ function trimmedText(value: string | null | undefined, maxLength: number): strin
   return trimmed ? trimmed.slice(0, maxLength) : null;
 }
 
+function jsonForStorage(value: unknown, fallback: string, maxLength: number): string {
+  try {
+    const json = JSON.stringify(value);
+    if (json.length <= maxLength) return json;
+    return JSON.stringify({ truncated: true, originalLength: json.length });
+  } catch {
+    return fallback;
+  }
+}
+
+function jsonNumberArrayForStorage(values: number[] | null | undefined, maxItems: number = 128): string {
+  if (!Array.isArray(values)) return '[]';
+  const out = values
+    .filter((value) => Number.isInteger(value) && value >= -32768 && value <= 0xffff)
+    .slice(0, maxItems);
+  return JSON.stringify(out);
+}
+
 function sqlLikePattern(value: string): string {
   return `%${value.toLowerCase().replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
 }
@@ -1451,14 +1567,63 @@ export class GameDatabase {
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_oauth_codes_account ON oauth_authorization_codes(account_id)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_oauth_refresh_account ON oauth_refresh_tokens(account_id)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_oauth_refresh_client ON oauth_refresh_tokens(client_id)`);
-    try {
-      this.db.exec(`ALTER TABLE login_history ADD COLUMN device_id TEXT NOT NULL DEFAULT ''`);
-    } catch { /* column already exists */ }
-    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_login_history_device ON login_history(device_id)`);
+	    try {
+	      this.db.exec(`ALTER TABLE login_history ADD COLUMN device_id TEXT NOT NULL DEFAULT ''`);
+	    } catch { /* column already exists */ }
+	    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_login_history_device ON login_history(device_id)`);
 
-    // Browser-held device signing keys. The private key stays in IndexedDB on
-    // the client; the server stores only the public JWK and requires it to sign
-    // each game-channel ECDH transcript before a player is spawned.
+	    this.db.exec(`
+	      CREATE TABLE IF NOT EXISTS bot_replay_sessions (
+	        id INTEGER PRIMARY KEY AUTOINCREMENT,
+	        account_id INTEGER NOT NULL REFERENCES accounts(id),
+	        login_row_id INTEGER REFERENCES login_history(id),
+	        player_id INTEGER NOT NULL DEFAULT 0,
+	        username TEXT NOT NULL DEFAULT '',
+	        started_at INTEGER NOT NULL,
+	        ended_at INTEGER NOT NULL,
+	        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+	        trigger_reason TEXT NOT NULL,
+	        risk_score INTEGER NOT NULL DEFAULT 0,
+	        hard_flags TEXT NOT NULL DEFAULT '[]',
+	        event_count INTEGER NOT NULL DEFAULT 0,
+	        duration_seconds INTEGER NOT NULL DEFAULT 0,
+	        map_level TEXT,
+	        floor INTEGER,
+	        start_x REAL,
+	        start_z REAL
+	      );
+	      CREATE INDEX IF NOT EXISTS idx_bot_replay_sessions_account_created
+	        ON bot_replay_sessions(account_id, created_at DESC, id DESC);
+	      CREATE INDEX IF NOT EXISTS idx_bot_replay_sessions_created
+	        ON bot_replay_sessions(created_at DESC, id DESC);
+
+	      CREATE TABLE IF NOT EXISTS bot_replay_events (
+	        id INTEGER PRIMARY KEY AUTOINCREMENT,
+	        replay_id INTEGER NOT NULL REFERENCES bot_replay_sessions(id) ON DELETE CASCADE,
+	        seq INTEGER NOT NULL,
+	        t INTEGER NOT NULL,
+	        tick INTEGER NOT NULL,
+	        kind TEXT NOT NULL,
+	        opcode INTEGER,
+	        result TEXT,
+	        reason TEXT,
+	        values_json TEXT NOT NULL DEFAULT '[]',
+	        raw_base64 TEXT,
+	        byte_length INTEGER,
+	        map_level TEXT,
+	        floor INTEGER,
+	        x REAL,
+	        z REAL,
+	        details TEXT NOT NULL DEFAULT '{}',
+	        UNIQUE(replay_id, seq)
+	      );
+	      CREATE INDEX IF NOT EXISTS idx_bot_replay_events_replay_seq
+	        ON bot_replay_events(replay_id, seq);
+	    `);
+
+	    // Browser-held device signing keys. The private key stays in IndexedDB on
+	    // the client; the server stores only the public JWK and requires it to sign
+	    // each game-channel ECDH transcript before a player is spawned.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS account_device_keys (
         account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -3500,6 +3665,181 @@ export class GameDatabase {
       z: row.z,
       details: parseJsonObject(row.details) ?? {},
     }));
+  }
+
+  saveBotReplayTrace(input: BotReplayTraceInput): number {
+    const account = this.db.query('SELECT 1 FROM accounts WHERE id = ?').get(input.accountId);
+    if (!account) return 0;
+    const events = input.events.slice(0, 50_000);
+    const startedAt = Math.max(0, Math.floor(input.startedAt));
+    const endedAt = Math.max(startedAt, Math.floor(input.endedAt));
+    const insertSession = this.db.query(`
+      INSERT INTO bot_replay_sessions (
+        account_id, login_row_id, player_id, username,
+        started_at, ended_at, trigger_reason, risk_score, hard_flags,
+        event_count, duration_seconds, map_level, floor, start_x, start_z
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const insertEvent = this.db.query(`
+      INSERT INTO bot_replay_events (
+        replay_id, seq, t, tick, kind, opcode, result, reason,
+        values_json, raw_base64, byte_length, map_level, floor, x, z, details
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const tx = this.db.transaction(() => {
+      const result = insertSession.run(
+        input.accountId,
+        nullableInteger(input.loginRowId),
+        nullableInteger(input.playerId) ?? 0,
+        trimmedText(input.username, 80) ?? '',
+        startedAt,
+        endedAt,
+        trimmedText(input.triggerReason, 120) ?? 'manual',
+        Math.max(0, Math.min(100, Math.floor(Number(input.riskScore) || 0))),
+        jsonForStorage([...new Set(input.hardFlags.filter((flag) => typeof flag === 'string').map(flag => flag.slice(0, 80)))], '[]', 2000),
+        events.length,
+        Math.max(0, endedAt - startedAt),
+        trimmedText(input.mapLevel, 80),
+        nullableInteger(input.floor),
+        nullableFiniteNumber(input.startX),
+        nullableFiniteNumber(input.startZ),
+      );
+      const replayId = Number(result.lastInsertRowid);
+      events.forEach((event, index) => {
+        const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+          ? event.details
+          : {};
+        const rawBase64 = typeof event.rawBase64 === 'string' && event.rawBase64.length <= 96_000
+          ? event.rawBase64
+          : null;
+        insertEvent.run(
+          replayId,
+          index,
+          Math.max(0, Math.floor(Number(event.t) || 0)),
+          Math.floor(Number(event.tick) || 0),
+          trimmedText(event.kind, 24) ?? 'event',
+          nullableInteger(event.opcode),
+          trimmedText(event.result, 40),
+          trimmedText(event.reason, 120),
+          jsonNumberArrayForStorage(event.values),
+          rawBase64,
+          nullableInteger(event.byteLength),
+          trimmedText(event.mapLevel, 80),
+          nullableInteger(event.floor),
+          nullableFiniteNumber(event.x),
+          nullableFiniteNumber(event.z),
+          jsonForStorage(details, '{}', 12_000),
+        );
+      });
+      return replayId;
+    });
+    return tx();
+  }
+
+  listAdminBotReplays(limit: number = 100, accountId: number = 0, query: string = ''): AdminBotReplaySummary[] {
+    const safeLimit = Math.max(1, Math.min(500, Math.floor(Number.isFinite(limit) ? limit : 100)));
+    const safeAccountId = Number.isInteger(accountId) && accountId > 0 ? accountId : 0;
+    const search = query.trim().slice(0, 80);
+    const rows = this.db.query(`
+      SELECT br.id, br.account_id, COALESCE(a.username, br.username) AS username,
+             br.login_row_id, br.player_id, br.started_at, br.ended_at, br.created_at,
+             br.trigger_reason, br.risk_score, br.hard_flags, br.event_count,
+             br.duration_seconds, br.map_level, br.floor, br.start_x, br.start_z
+      FROM bot_replay_sessions br
+      LEFT JOIN accounts a ON a.id = br.account_id
+      WHERE (? = 0 OR br.account_id = ?)
+        AND (
+          ? = ''
+          OR instr(lower(COALESCE(a.username, br.username)), lower(?)) > 0
+          OR instr(lower(br.trigger_reason), lower(?)) > 0
+        )
+      ORDER BY br.created_at DESC, br.id DESC
+      LIMIT ?
+    `).all(safeAccountId, safeAccountId, search, search, search, safeLimit) as BotReplaySummaryRow[];
+    return rows.map((row) => this.botReplaySummaryFromRow(row));
+  }
+
+  getAdminBotReplay(replayId: number): AdminBotReplayDetail | null {
+    const safeReplayId = Math.max(0, Math.floor(Number(replayId) || 0));
+    if (safeReplayId <= 0) return null;
+    const row = this.db.query(`
+      SELECT br.id, br.account_id, COALESCE(a.username, br.username) AS username,
+             br.login_row_id, br.player_id, br.started_at, br.ended_at, br.created_at,
+             br.trigger_reason, br.risk_score, br.hard_flags, br.event_count,
+             br.duration_seconds, br.map_level, br.floor, br.start_x, br.start_z
+      FROM bot_replay_sessions br
+      LEFT JOIN accounts a ON a.id = br.account_id
+      WHERE br.id = ?
+    `).get(safeReplayId) as BotReplaySummaryRow | null;
+    if (!row) return null;
+    const events = this.db.query(`
+      SELECT id, seq, t, tick, kind, opcode, result, reason, values_json,
+             raw_base64, byte_length, map_level, floor, x, z, details
+      FROM bot_replay_events
+      WHERE replay_id = ?
+      ORDER BY seq ASC
+    `).all(safeReplayId) as Array<{
+      id: number;
+      seq: number;
+      t: number;
+      tick: number;
+      kind: string;
+      opcode: number | null;
+      result: string | null;
+      reason: string | null;
+      values_json: string | null;
+      raw_base64: string | null;
+      byte_length: number | null;
+      map_level: string | null;
+      floor: number | null;
+      x: number | null;
+      z: number | null;
+      details: string | null;
+    }>;
+    return {
+      replay: this.botReplaySummaryFromRow(row),
+      events: events.map((event) => ({
+        id: event.id,
+        seq: event.seq,
+        t: event.t,
+        tick: event.tick,
+        kind: event.kind,
+        opcode: event.opcode,
+        values: parseJsonNumberArray(event.values_json),
+        result: event.result,
+        reason: event.reason,
+        rawBase64: event.raw_base64,
+        byteLength: event.byte_length,
+        mapLevel: event.map_level,
+        floor: event.floor,
+        x: event.x,
+        z: event.z,
+        details: parseJsonObject(event.details) ?? {},
+      })),
+    };
+  }
+
+  private botReplaySummaryFromRow(row: BotReplaySummaryRow): AdminBotReplaySummary {
+    return {
+      id: row.id,
+      accountId: row.account_id,
+      username: row.username,
+      playerId: row.player_id,
+      loginRowId: row.login_row_id,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+      createdAt: row.created_at,
+      triggerReason: row.trigger_reason,
+      riskScore: row.risk_score,
+      hardFlags: parseJsonStringArray(row.hard_flags),
+      eventCount: row.event_count,
+      durationSeconds: row.duration_seconds,
+      mapLevel: row.map_level,
+      floor: row.floor,
+      startX: row.start_x,
+      startZ: row.start_z,
+    };
   }
 
   /** Per-mob kill leaderboard. `mobs` is the selectable mob list (id+name)

@@ -1113,6 +1113,7 @@ export class BotStats {
     }
     if (
       (this.sessionSuspiciousPacketReasons.get('reserved-action-capability') ?? 0) > 0
+      || (this.sessionSuspiciousPacketReasons.get('replayed-action-capability') ?? 0) > 0
       || (this.sessionSuspiciousPacketReasons.get(LEGACY_RESERVED_ACTION_REASON) ?? 0) > 0
     ) {
       flags.push('reservedActionCapability');
@@ -2160,7 +2161,12 @@ function classifyReasonCounts(reasons: Map<string, number>): SuspiciousPacketCla
 function classifySuspiciousReason(reason: string): SuspiciousPacketClass {
   if (reason === 'rate-limit:socket') return 'rateLimit';
   if (reason.startsWith('rate-limit:')) return 'state';
-  if (reason === 'reserved-action-capability' || reason === LEGACY_RESERVED_ACTION_REASON || reason === RESERVED_MAP_DATA_REASON) return 'reserved';
+  if (
+    reason === 'reserved-action-capability'
+    || reason === 'replayed-action-capability'
+    || reason === LEGACY_RESERVED_ACTION_REASON
+    || reason === RESERVED_MAP_DATA_REASON
+  ) return 'reserved';
   if (
     reason === 'missing-action-capability'
     || reason === 'stale-action-capability'

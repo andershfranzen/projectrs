@@ -376,6 +376,17 @@ describe('anti-bot guardrails', () => {
     expect(summary.riskLevel).toBe('low');
   });
 
+  test('replayed action capability is hard reserved-token evidence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.recordSuspiciousPacket('replayed-action-capability');
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionSuspiciousPacketClasses.reserved).toBe(1);
+    expect(summary.flags).toContain('reservedActionCapability');
+    expect(summary.riskHardEvidence).toBe(true);
+  });
+
   test('input-ticket misses are stale telemetry, not hard packet evidence', () => {
     const stats = BotStats.empty();
     stats.onLogin({});

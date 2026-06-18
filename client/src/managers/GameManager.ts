@@ -474,6 +474,7 @@ type GroundItemPickRef = {
 };
 
 export class GameManager {
+  private static readonly ACTION_CAPABILITY_POOL_SIZE = 3;
   private engine: Engine;
   private scene: Scene;
   private camera: GameCamera;
@@ -729,7 +730,8 @@ export class GameManager {
   private objectDefsCache: Map<number, WorldObjectDef> = new Map();
   private itemDefsCache: Map<number, ItemDef> = new Map();
   private npcDefsCache: Map<number, NpcDef> = new Map();
-  private actionCapabilities: Map<string, ActionCapabilityProof> = new Map();
+  private actionCapabilities: Map<string, ActionCapabilityProof[]> = new Map();
+  private primedActionCapabilityKey: string | null = null;
   private questDefsCache: Map<string, QuestDef> = new Map();
   /** Per-player quest state, populated on QUEST_STATE_SYNC at login and
    *  patched per QUEST_STAGE_ADVANCED delta. Mirrored into SidePanel's
@@ -4576,6 +4578,20 @@ export class GameManager {
     return `${kind}:${targetEntityId}:${actionIndex}`;
   }
 
+  private primeActionCapability(kind: ActionCapabilityKind, targetEntityId: number, actionIndex: number = 0): void {
+    this.primedActionCapabilityKey = this.actionCapabilityKey(kind, targetEntityId, actionIndex);
+  }
+
+  private sendActionCommand(
+    kind: ActionCapabilityKind,
+    targetEntityId: number,
+    actionIndex: number,
+    packet: Uint8Array,
+  ): boolean {
+    this.primeActionCapability(kind, targetEntityId, actionIndex);
+    return this.network.sendRaw(packet);
+  }
+
   private resolveActionCapability(opcode: ClientOpcode, values: number[]): ActionCapabilityProof | null {
     let kind: ActionCapabilityKind | null = null;
     let targetEntityId: number | null = null;
@@ -4614,7 +4630,12 @@ export class GameManager {
     }
     if (kind === null || !Number.isInteger(targetEntityId)) return null;
     const key = this.actionCapabilityKey(kind, targetEntityId, actionIndex);
-    return this.actionCapabilities.get(key) ?? null;
+    if (this.primedActionCapabilityKey !== key) return null;
+    this.primedActionCapabilityKey = null;
+    const caps = this.actionCapabilities.get(key);
+    const proof = caps?.pop() ?? null;
+    if (caps && caps.length === 0) this.actionCapabilities.delete(key);
+    return proof;
   }
 
   private applyActionCapabilities(caps: ActionCapabilityWire[]): void {
@@ -4630,10 +4651,14 @@ export class GameManager {
       if (!Number.isInteger(targetEntityId) || !Number.isInteger(actionIndex)) continue;
       if (!Number.isInteger(id) || id <= 0 || id > 0x7fff) continue;
       if (!Number.isInteger(code) || code <= 0 || code > 0x7fff) continue;
-      this.actionCapabilities.set(
-        this.actionCapabilityKey(kind, targetEntityId, actionIndex),
-        { id, code },
-      );
+      const key = this.actionCapabilityKey(kind, targetEntityId, actionIndex);
+      const existing = this.actionCapabilities.get(key);
+      const list = existing ?? [];
+      list.push({ id, code });
+      if (list.length > GameManager.ACTION_CAPABILITY_POOL_SIZE) {
+        list.splice(0, list.length - GameManager.ACTION_CAPABILITY_POOL_SIZE);
+      }
+      if (!existing) this.actionCapabilities.set(key, list);
     }
   }
 
@@ -7863,7 +7888,12 @@ export class GameManager {
   }
 
   private sendNpcAttackIntent(npcEntityId: number, now: number = performance.now()): void {
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
+    this.sendActionCommand(
+      ActionCapabilityKind.Npc,
+      npcEntityId,
+      0,
+      encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId),
+    );
     if (npcEntityId === this.combatTargetId || npcEntityId === this.magicTargetId) {
       this.lastLocalCombatIntentSentAt = now;
     }
@@ -8088,7 +8118,12 @@ export class GameManager {
           }
         }
       }
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_NPC, using.slot, using.itemId, entityId));
+      this.sendActionCommand(
+        ActionCapabilityKind.Npc,
+        entityId,
+        0,
+        encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_NPC, using.slot, using.itemId, entityId),
+      );
       return true;
     }
 
@@ -8096,7 +8131,12 @@ export class GameManager {
     const def = data ? this.objectDefsCache.get(data.defId) : null;
     if (data && !this.isWorldObjectOnCurrentInteractionFloor(data, def)) return true;
     if (!data || !def) {
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
+      this.sendActionCommand(
+        ActionCapabilityKind.WorldObject,
+        entityId,
+        0,
+        encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId),
+      );
       return true;
     }
 
@@ -8105,17 +8145,32 @@ export class GameManager {
     const alreadyAdj = this.isOnObjectInteractionTile(ptx, ptz, data, def);
     if (alreadyAdj) {
       if (!this.stopLocalWalkForImmediateObjectInteraction(data, def)) return true;
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
+      this.sendActionCommand(
+        ActionCapabilityKind.WorldObject,
+        entityId,
+        0,
+        encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId),
+      );
       return true;
     }
 
     if (this.walkToAdjacentTileOf(data, def)) {
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
+      this.sendActionCommand(
+        ActionCapabilityKind.WorldObject,
+        entityId,
+        0,
+        encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId),
+      );
       return true;
     }
 
     // No reachable adjacent tile — let the server send the reach error.
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
+    this.sendActionCommand(
+      ActionCapabilityKind.WorldObject,
+      entityId,
+      0,
+      encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId),
+    );
     return true;
   }
 
@@ -8135,7 +8190,12 @@ export class GameManager {
       this.combatTargetId = -1;
       this.magicTargetId = npcEntityId;
       this.predictSpellCastMovementToNpc(npcEntityId);
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, targetingSpell, npcEntityId));
+      this.sendActionCommand(
+        ActionCapabilityKind.Npc,
+        npcEntityId,
+        0,
+        encodePacket(ClientOpcode.PLAYER_CAST_SPELL, targetingSpell, npcEntityId),
+      );
       this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#a040ff');
       this.sidePanel!.clearTargetingSpell();
       return;
@@ -8368,7 +8428,12 @@ export class GameManager {
   private examineNpc(npcEntityId: number): void {
     const target = this.entities.npcTargets.get(npcEntityId);
     if (!target || target.floor !== this.currentFloor) return;
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EXAMINE_NPC, npcEntityId));
+    this.sendActionCommand(
+      ActionCapabilityKind.Npc,
+      npcEntityId,
+      0,
+      encodePacket(ClientOpcode.PLAYER_EXAMINE_NPC, npcEntityId),
+    );
   }
 
   private resumeTalkToNpc(npcEntityId: number): void {
@@ -8416,7 +8481,12 @@ export class GameManager {
         this.pendingFaceTargetEntityId = -1;
       }
     }
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_TALK_NPC, npcEntityId));
+    this.sendActionCommand(
+      ActionCapabilityKind.Npc,
+      npcEntityId,
+      0,
+      encodePacket(ClientOpcode.PLAYER_TALK_NPC, npcEntityId),
+    );
   }
 
   private sameTile(a: { x: number; z: number }, b: { x: number; z: number }): boolean {
@@ -9786,7 +9856,12 @@ export class GameManager {
         this.minimap?.clearDestination();
       }
     }
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_PICKUP_ITEM, groundItemId));
+    this.sendActionCommand(
+      ActionCapabilityKind.GroundItem,
+      groundItemId,
+      0,
+      encodePacket(ClientOpcode.PLAYER_PICKUP_ITEM, groundItemId),
+    );
   }
 
   private groundItemReachCollision(): {
@@ -9998,7 +10073,12 @@ export class GameManager {
           if (!this.stopLocalWalkForImmediateObjectInteraction(data, def)) return;
         }
         const requested = quantity < 0 ? -1 : Math.max(1, Math.min(quantity, maxQuantity));
-        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex, 0, requested));
+        this.sendActionCommand(
+          ActionCapabilityKind.WorldObject,
+          objectEntityId,
+          0,
+          encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex, 0, requested),
+        );
         return;
       }
       if (supportsBatch && recipe && maxQuantity > 1 && this.quantityInputPanel) {
@@ -10024,14 +10104,24 @@ export class GameManager {
             const currentMax = this.maxObjectRecipeQuantity(recipe, this.sidePanel?.getInventory() ?? []);
             if (currentMax <= 0) return;
             const requested = quantity >= currentMax ? -1 : Math.max(1, Math.min(quantity, currentMax));
-            this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex, 0, requested));
+            this.sendActionCommand(
+              ActionCapabilityKind.WorldObject,
+              objectEntityId,
+              0,
+              encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex, 0, requested),
+            );
           },
         });
         return;
       }
 
       // Walk to the station and send the crafting request with the specific recipe index.
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex));
+      this.sendActionCommand(
+        ActionCapabilityKind.WorldObject,
+        objectEntityId,
+        0,
+        encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex),
+      );
     }, {
       stationLabel,
       inputNoun,
@@ -10087,7 +10177,12 @@ export class GameManager {
       if (this.isOnObjectInteractionTile(ptx, ptz, data, def)) {
         if (!this.stopLocalWalkForImmediateObjectInteraction(data, def)) return;
       }
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
+      this.sendActionCommand(
+        ActionCapabilityKind.WorldObject,
+        objectEntityId,
+        actionIndex,
+        encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex),
+      );
       return;
     }
 
@@ -10102,7 +10197,12 @@ export class GameManager {
         const alreadyAdj = this.isOnObjectInteractionTile(ptx, ptz, objData, objDef);
         if (!alreadyAdj) this.walkToAdjacentTileOf(objData, objDef);
         else if (!this.stopLocalWalkForImmediateObjectInteraction(objData, objDef)) return;
-        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
+        this.sendActionCommand(
+          ActionCapabilityKind.WorldObject,
+          objectEntityId,
+          actionIndex,
+          encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex),
+        );
         return;
       }
     }
@@ -10146,7 +10246,12 @@ export class GameManager {
         this.localPlayer?.stopWalking();
       }
       if (!shouldSendInteraction) return;
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex, -1, data.depleted ? 1 : 0));
+      this.sendActionCommand(
+        ActionCapabilityKind.WorldObject,
+        objectEntityId,
+        actionIndex,
+        encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex, -1, data.depleted ? 1 : 0),
+      );
       return;
     }
 
@@ -10166,10 +10271,20 @@ export class GameManager {
       // exist) keep the auto-fire path.
       const recipes = def.recipes ?? [];
       if (recipes.length > 1) {
-        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
+        this.sendActionCommand(
+          ActionCapabilityKind.WorldObject,
+          objectEntityId,
+          actionIndex,
+          encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex),
+        );
         return;
       }
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
+      this.sendActionCommand(
+        ActionCapabilityKind.WorldObject,
+        objectEntityId,
+        actionIndex,
+        encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex),
+      );
       return;
     }
 
@@ -10187,7 +10302,12 @@ export class GameManager {
     }
 
     // Send interaction request — server validates distance
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
+    this.sendActionCommand(
+      ActionCapabilityKind.WorldObject,
+      objectEntityId,
+      actionIndex,
+      encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex),
+    );
   }
 
   private resolveRotateDebugItem(query: string): ItemDef | null {
@@ -10623,7 +10743,12 @@ export class GameManager {
       this.chatPanel?.addSystemMessage(`${def.name}: no attackable target in sight.`);
       return;
     }
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, nearest.entityId));
+    this.sendActionCommand(
+      ActionCapabilityKind.Npc,
+      nearest.entityId,
+      0,
+      encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, nearest.entityId),
+    );
   }
 
   private openCharacterCreatorWhenReady(canCancel: boolean = false): void {
@@ -10868,7 +10993,12 @@ export class GameManager {
       return;
     }
 
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, targetId));
+    this.sendActionCommand(
+      ActionCapabilityKind.Npc,
+      targetId,
+      0,
+      encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, targetId),
+    );
   }
 
   /**

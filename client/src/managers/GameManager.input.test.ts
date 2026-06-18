@@ -86,17 +86,62 @@ describe('GameManager world context-menu input', () => {
     expect(manager.hideCount).toBe(2);
   });
 
-  test('drops legacy flagged action capabilities before command proof resolution', () => {
+  test('uses only primed one-shot action capabilities and drops shadow canaries', () => {
     const manager = Object.create(GameManager.prototype) as any;
     manager.actionCapabilities = new Map();
+    manager.primedActionCapabilityKey = null;
 
     manager.applyActionCapabilities([
       [ActionCapabilityKind.WorldObject, 10042, 0, 111, 222, 1],
       [ActionCapabilityKind.WorldObject, 10042, 0, 111, 222, 0],
       [ActionCapabilityKind.WorldObject, 10042, 0, 333, 444, 0],
+      [ActionCapabilityKind.WorldObject, 10042, 0, 777, 888, 0],
+      [ActionCapabilityKind.WorldObject, 10042, 0, 999, 1000, 0],
       [ActionCapabilityKind.WorldObject, 10042, 0, 555, 666, 1],
     ]);
 
+    expect(manager.resolveActionCapability(ClientOpcode.PLAYER_INTERACT_OBJECT, [10042, 0])).toBeNull();
+
+    manager.primeActionCapability(ActionCapabilityKind.WorldObject, 10042, 0);
+    expect(manager.resolveActionCapability(ClientOpcode.PLAYER_INTERACT_OBJECT, [10042, 0])).toEqual({ id: 999, code: 1000 });
+
+    manager.primeActionCapability(ActionCapabilityKind.WorldObject, 10042, 0);
+    expect(manager.resolveActionCapability(ClientOpcode.PLAYER_INTERACT_OBJECT, [10042, 0])).toEqual({ id: 777, code: 888 });
+
+    manager.primeActionCapability(ActionCapabilityKind.WorldObject, 10042, 0);
     expect(manager.resolveActionCapability(ClientOpcode.PLAYER_INTERACT_OBJECT, [10042, 0])).toEqual({ id: 333, code: 444 });
+
+    manager.primeActionCapability(ActionCapabilityKind.WorldObject, 10042, 0);
+    expect(manager.resolveActionCapability(ClientOpcode.PLAYER_INTERACT_OBJECT, [10042, 0])).toBeNull();
+  });
+
+  test('sendActionCommand primes exactly one matching capability', () => {
+    const manager = Object.create(GameManager.prototype) as any;
+    manager.actionCapabilities = new Map();
+    manager.primedActionCapabilityKey = null;
+    let proof: unknown = null;
+    manager.network = {
+      sendRaw: () => {
+        proof = manager.resolveActionCapability(ClientOpcode.PLAYER_INTERACT_OBJECT, [10042, 0]);
+        return true;
+      },
+    };
+    manager.applyActionCapabilities([
+      [ActionCapabilityKind.WorldObject, 10042, 1, 100, 200, 0],
+      [ActionCapabilityKind.WorldObject, 10042, 0, 333, 444, 0],
+      [ActionCapabilityKind.WorldObject, 10042, 0, 777, 888, 0],
+    ]);
+
+    expect(manager.sendActionCommand(
+      ActionCapabilityKind.WorldObject,
+      10042,
+      0,
+      new Uint8Array([ClientOpcode.PLAYER_INTERACT_OBJECT]),
+    )).toBe(true);
+    expect(proof).toEqual({ id: 777, code: 888 });
+    expect(manager.resolveActionCapability(ClientOpcode.PLAYER_INTERACT_OBJECT, [10042, 0])).toBeNull();
+
+    manager.primeActionCapability(ActionCapabilityKind.WorldObject, 10042, 1);
+    expect(manager.resolveActionCapability(ClientOpcode.PLAYER_INTERACT_OBJECT, [10042, 0])).toBeNull();
   });
 });
