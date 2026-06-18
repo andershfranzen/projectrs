@@ -1702,6 +1702,19 @@ const EVIDENCE_SIGNAL_FLAGS = new Set([
   'adminOpcodeAbuse',
 ]);
 
+const HARD_BOT_EVIDENCE_FLAGS = new Set([
+  'gameplayCommandCadenceRegular',
+  'sameCommandCadenceRegular',
+  'gameplayCommandIntervalPattern',
+  'rapidGameplayCommandCadence',
+  'mechanicalJitter',
+  'moderateMechanicalJitter',
+  'browserlessActiveGameplay',
+  'reservedActionCapability',
+  'adminOpcodeAbuse',
+  'reservedMapDataPath',
+]);
+
 const DIAGNOSTIC_SIGNAL_FLAGS = new Set([
   'tickAligned',
   'pingRegular',
@@ -1848,14 +1861,14 @@ const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
   legacyActivityTelemetry: { label: 'Legacy-only activity telemetry', description: 'Client sends only old-format activity packets (no kind/seq) — common for spoofed telemetry.', threshold: '≥10 events, ≤20% detailed', tier: 'soft' },
   browserlessActiveGameplay: { label: 'No browser input telemetry', description: 'Active gameplay with zero activity and cursor packets — a headless/raw-socket client.', threshold: '≥2min, ≥25 actions, 0 activity + 0 cursor', tier: 'hard' },
   inputlessCommandBurst: { label: 'Commands before any input', description: 'Gameplay commands fired before the client reported any browser input.', threshold: '≥5 commands', tier: 'soft' },
-  commandsWithoutRecentInput: { label: 'Commands without recent input', description: 'Gameplay commands with no browser input reported in the last 15s.', threshold: '≥5 commands', tier: 'hard' },
-  commandsWithoutRecentActivity: { label: 'Commands without recent activity', description: 'Gameplay commands with no activity packet in the last 15s.', threshold: '≥5 commands', tier: 'hard' },
+  commandsWithoutRecentInput: { label: 'Commands without recent input', description: 'Gameplay commands with no browser input reported in the last 15s.', threshold: '≥5 commands', tier: 'soft' },
+  commandsWithoutRecentActivity: { label: 'Commands without recent activity', description: 'Gameplay commands with no activity packet in the last 15s.', threshold: '≥5 commands', tier: 'soft' },
   inputlessCommandRatio: { label: 'High no-input command ratio', description: 'A large fraction of commands had no recent browser input.', threshold: '≥10 commands, ≥50%', tier: 'soft' },
   activitylessCommandRatio: { label: 'High no-activity command ratio', description: 'A large fraction of commands had no recent activity packet.', threshold: '≥10 commands, ≥50%', tier: 'soft' },
   noClientActivityTelemetry: { label: 'No activity telemetry', description: 'Active session with zero activity packets at all.', threshold: '≥5min, ≥50 actions, 0 activity', tier: 'soft' },
   noCursorTelemetry: { label: 'No cursor telemetry', description: 'Active session with zero cursor-position packets.', threshold: '≥5min, ≥50 actions, 0 cursor', tier: 'soft' },
   cursorStatic: { label: 'Static cursor', description: 'Cursor parked in a single grid cell while playing.', threshold: '≥20 cursor events, >95% one cell', tier: 'soft' },
-  deviceRotating: { label: 'Rotating device IDs', description: 'Many distinct browser device IDs with little reuse — account/session cycling.', threshold: '≥5 logins, ≥5 device IDs, ≤25% reuse', tier: 'hard' },
+  deviceRotating: { label: 'Rotating device IDs', description: 'Many distinct browser device IDs with little reuse — account/session cycling.', threshold: '≥5 logins, ≥5 device IDs, ≤25% reuse', tier: 'soft' },
   noChat: { label: 'Silent grinder', description: 'Long active session with no chat at all.', threshold: '≥120min, ≥100 actions, 0 chats', tier: 'soft' },
   pathRepetitive: { label: 'Repetitive destination', description: 'Most movement targets a single tile.', threshold: '≥50 moves, >50% one tile', tier: 'soft' },
   noMoveRedirects: { label: 'No mid-path redirects', description: 'Player never redirects mid-path; humans frequently do.', threshold: '≥25 moves, 0 redirects', tier: 'soft' },
@@ -1868,26 +1881,26 @@ const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
   marathonSession: { label: 'Marathon session', description: 'A single session running 8+ hours.', threshold: '≥480 minutes', tier: 'soft' },
   noIdleBreaks: { label: 'No idle breaks', description: 'Long active session with no 5-minute idle gaps.', threshold: '≥240min, ≥400 actions, 0 breaks', tier: 'soft' },
   marathonNoIdleBreaks: { label: 'Marathon with no idle breaks', description: 'A 6+ hour session with no idle gaps at all.', threshold: '≥360min, ≥800 actions, 0 breaks', tier: 'soft' },
-  fastReaction: { label: 'Inhuman re-engage speed', description: 'Median time from an NPC death to the next combat swing is faster than a human reaction.', threshold: '≥10 samples, <200ms median', tier: 'hard' },
-  mapDataScrape: { label: 'Bulk map-data scrape', description: 'Rapid bulk fetching of many map files.', threshold: '≥180 unique files or ≥260 requests in 60s', tier: 'hard' },
-  mapDataOutOfScope: { label: 'Out-of-scope map data', description: 'Requested gameplay map files outside the character’s allowed streaming window.', threshold: '≥3 denied map-data requests', tier: 'hard' },
+  fastReaction: { label: 'Inhuman re-engage speed', description: 'Median time from an NPC death to the next combat swing is faster than a human reaction.', threshold: '≥10 samples, <200ms median', tier: 'soft' },
+  mapDataScrape: { label: 'Bulk map-data scrape', description: 'Rapid bulk fetching of many map files.', threshold: '≥180 unique files or ≥260 requests in 60s', tier: 'soft' },
+  mapDataOutOfScope: { label: 'Out-of-scope map data', description: 'Requested gameplay map files outside the character’s allowed streaming window.', threshold: '≥3 denied map-data requests', tier: 'soft' },
   reservedMapDataPath: { label: 'Invalid map-data endpoint', description: 'Requested a map-data endpoint that normal gameplay never uses.', threshold: '≥1 invalid map-data endpoint request', tier: 'hard' },
-  protocolPackets: { label: 'Malformed protocol traffic', description: 'Repeated malformed or impossible game packets.', threshold: '≥3 this session', tier: 'hard' },
-  rateLimitPackets: { label: 'Socket packet flood', description: 'Repeated global socket rate-limit overflows. Per-action spam is throttled but not treated as hard bot evidence.', threshold: '≥3 socket floods this session', tier: 'hard' },
-  automationInvalidPackets: { label: 'Malformed client telemetry', description: 'Repeated malformed client activity/input packets. Noisy input-ticket misses are tracked separately as stale telemetry.', threshold: '≥10 malformed telemetry packets this session', tier: 'hard' },
+  protocolPackets: { label: 'Malformed protocol traffic', description: 'Repeated malformed or impossible game packets.', threshold: '≥3 this session', tier: 'soft' },
+  rateLimitPackets: { label: 'Socket packet flood', description: 'Repeated global socket rate-limit overflows. Per-action spam is throttled but not treated as hard bot evidence.', threshold: '≥3 socket floods this session', tier: 'soft' },
+  automationInvalidPackets: { label: 'Invalid input telemetry', description: 'Repeated malformed client activity/input packets. Noisy input-ticket misses are tracked separately as stale telemetry.', threshold: '≥10 malformed telemetry packets this session', tier: 'soft' },
   reservedActionCapability: { label: 'Invalid action token replayed', description: 'Client sent an action token that was not valid for normal gameplay.', threshold: '≥1 invalid action token', tier: 'hard' },
   adminOpcodeAbuse: { label: 'Non-admin used admin command', description: 'A non-admin client attempted to send an admin-only game command.', threshold: '≥1 non-admin admin command', tier: 'hard' },
-  lifetimeHardInvalidPackets: { label: 'Repeat hard invalid traffic', description: 'Large lifetime volume of malformed protocol or socket-flood events.', threshold: '≥25 lifetime', tier: 'hard' },
+  lifetimeHardInvalidPackets: { label: 'Repeat invalid traffic', description: 'Large lifetime volume of malformed protocol or socket-flood events.', threshold: '≥25 lifetime', tier: 'soft' },
   lifetimeLowSocialHighActivity: { label: 'Low-social high-activity (lifetime)', description: 'Very high lifetime activity with almost no chat.', threshold: '≥600min, ≥10000 actions, <2 chats/hr', tier: 'soft' },
   lifetimeExtremeLowSocialHighActivity: { label: 'Extreme low-social high-activity (lifetime)', description: 'Extreme lifetime activity with virtually no chat.', threshold: '≥1200min, ≥25000 actions, <1 chat/hr', tier: 'soft' },
-  xpVelocity: { label: 'Impossible XP rate', description: 'XP/hour exceeds the highest rate a human could plausibly grind for a skill.', threshold: 'over the per-skill XP/hr ceiling', tier: 'hard' },
+  xpVelocity: { label: 'Impossible XP rate', description: 'XP/hour exceeds the highest rate a human could plausibly grind for a skill.', threshold: 'over the per-skill XP/hr ceiling', tier: 'soft' },
   lifetimeHardEvidence: { label: 'Repeat hard-evidence offender', description: 'Multiple prior sessions ended with hard bot evidence — convicts bots that reconnect often to dodge per-session thresholds.', threshold: '≥3 prior hard-evidence sessions', tier: 'hard' },
 };
 
 /** Review-only context flags. This used to let several soft automation tells
  *  uncap the score as a cluster, but that made legitimate grinders too easy to
- *  convict. Keep the function/API for admin review and tests; hard evidence now
- *  comes only from EVIDENCE_SIGNAL_FLAGS. */
+ *  convict. Keep the function/API for admin review and tests; standalone hard
+ *  evidence now comes only from HARD_BOT_EVIDENCE_FLAGS. */
 const BEHAVIORAL_EVIDENCE_FLAGS = new Set<string>();
 /** Distinct behavioral signals that together count as hard evidence (lifting the
  *  soft-score cap). Conservative: 4 independent automation tells. */
@@ -2092,26 +2105,10 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
 }
 
 function hasHardBotEvidence(flagSet: Set<string>): boolean {
-  return flagSet.has('gameplayCommandCadenceRegular')
-    || flagSet.has('sameCommandCadenceRegular')
-    || flagSet.has('gameplayCommandIntervalPattern')
-    || flagSet.has('rapidGameplayCommandCadence')
-    || flagSet.has('mechanicalJitter')
-    || flagSet.has('moderateMechanicalJitter')
-    || flagSet.has('browserlessActiveGameplay')
-    || flagSet.has('commandsWithoutRecentInput')
-    || flagSet.has('commandsWithoutRecentActivity')
-    || flagSet.has('reservedActionCapability')
-    || flagSet.has('adminOpcodeAbuse')
-    || flagSet.has('deviceRotating')
-    || flagSet.has('protocolPackets')
-    || flagSet.has('rateLimitPackets')
-    || flagSet.has('automationInvalidPackets')
-    || flagSet.has('lifetimeHardInvalidPackets')
-    || flagSet.has('mapDataScrape')
-    || flagSet.has('mapDataOutOfScope')
-    || flagSet.has('reservedMapDataPath')
-    || flagSet.has('xpVelocity');
+  for (const flag of flagSet) {
+    if (HARD_BOT_EVIDENCE_FLAGS.has(normalizeSignalFlag(flag))) return true;
+  }
+  return false;
 }
 
 function riskLevelForScore(score: number): BotRiskLevel {

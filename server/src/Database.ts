@@ -476,6 +476,22 @@ export interface GameEventLogListOptions {
   query?: string | null;
 }
 
+export interface AdminPlaytimeBucket {
+  startTs: number;
+  endTs: number;
+  playMinutes: number;
+  loginCount: number;
+  logoutCount: number;
+  activeAccounts: number;
+}
+
+export interface AdminPlaytimeTimeline {
+  startTs: number;
+  endTs: number;
+  bucketMinutes: number;
+  buckets: AdminPlaytimeBucket[];
+}
+
 interface PendingGameEventLogEntry extends Omit<GameEventLogEntry, 'id'> {
   detailsJson: string;
 }
@@ -3599,6 +3615,62 @@ export class GameDatabase {
     this.db.query(
       `UPDATE login_history SET logout_ts = unixepoch(), session_minutes = ? WHERE id = ?`
     ).run(sessionMinutes, loginRowId);
+  }
+
+  getAdminPlaytimeTimeline(days: number = 7, bucketMinutes: number = 60, nowUnix: number = Math.floor(Date.now() / 1000)): AdminPlaytimeTimeline {
+    const safeDays = Math.max(1, Math.min(30, Math.floor(Number.isFinite(days) ? days : 7)));
+    const safeBucketMinutes = Math.max(15, Math.min(240, Math.floor(Number.isFinite(bucketMinutes) ? bucketMinutes : 60)));
+    const bucketSeconds = safeBucketMinutes * 60;
+    const endTs = Math.ceil(nowUnix / bucketSeconds) * bucketSeconds;
+    const startTs = Math.floor((nowUnix - safeDays * 24 * 60 * 60) / bucketSeconds) * bucketSeconds;
+    const bucketCount = Math.max(1, Math.ceil((endTs - startTs) / bucketSeconds));
+    const activeSets = Array.from({ length: bucketCount }, () => new Set<number>());
+    const buckets: AdminPlaytimeBucket[] = Array.from({ length: bucketCount }, (_, index) => ({
+      startTs: startTs + index * bucketSeconds,
+      endTs: startTs + (index + 1) * bucketSeconds,
+      playMinutes: 0,
+      loginCount: 0,
+      logoutCount: 0,
+      activeAccounts: 0,
+    }));
+
+    const rows = this.db.query(`
+      SELECT account_id, login_ts, logout_ts
+      FROM login_history
+      WHERE login_ts < ?
+        AND COALESCE(logout_ts, ?) > ?
+      ORDER BY login_ts ASC, id ASC
+    `).all(endTs, nowUnix, startTs) as Array<{ account_id: number; login_ts: number; logout_ts: number | null }>;
+
+    const bucketIndex = (ts: number): number => Math.floor((ts - startTs) / bucketSeconds);
+    for (const row of rows) {
+      const loginTs = Math.max(startTs, row.login_ts);
+      const logoutTs = Math.min(endTs, row.logout_ts ?? nowUnix);
+      if (logoutTs <= loginTs) continue;
+
+      const loginIndex = bucketIndex(row.login_ts);
+      if (loginIndex >= 0 && loginIndex < buckets.length) buckets[loginIndex].loginCount += 1;
+      if (row.logout_ts !== null) {
+        const logoutIndex = bucketIndex(row.logout_ts);
+        if (logoutIndex >= 0 && logoutIndex < buckets.length) buckets[logoutIndex].logoutCount += 1;
+      }
+
+      const first = Math.max(0, bucketIndex(loginTs));
+      const last = Math.min(buckets.length - 1, bucketIndex(logoutTs - 1));
+      for (let index = first; index <= last; index++) {
+        const bucket = buckets[index];
+        const overlap = Math.max(0, Math.min(logoutTs, bucket.endTs) - Math.max(loginTs, bucket.startTs));
+        if (overlap <= 0) continue;
+        bucket.playMinutes += overlap / 60;
+        activeSets[index].add(row.account_id);
+      }
+    }
+
+    for (let index = 0; index < buckets.length; index++) {
+      buckets[index].playMinutes = Math.round(buckets[index].playMinutes * 10) / 10;
+      buckets[index].activeAccounts = activeSets[index].size;
+    }
+    return { startTs, endTs, bucketMinutes: safeBucketMinutes, buckets };
   }
 
   /** Async-callable PTR update. Called after a successful login_history insert

@@ -100,6 +100,20 @@ interface ReviewRisk {
   reasons: string[];
 }
 
+const REVIEW_HARD_EVIDENCE_FLAGS = new Set([
+  'gameplayCommandCadenceRegular',
+  'sameCommandCadenceRegular',
+  'gameplayCommandIntervalPattern',
+  'rapidGameplayCommandCadence',
+  'mechanicalJitter',
+  'moderateMechanicalJitter',
+  'browserlessActiveGameplay',
+  'reservedActionCapability',
+  'honeypotActionCapability',
+  'adminOpcodeAbuse',
+  'reservedMapDataPath',
+]);
+
 const AUDIT_PATH = resolve(import.meta.dir, '../server/data/audit.log');
 const DB_PATH = resolve(import.meta.dir, '../projectrs.db');
 const RESET_BOT_METRICS_MIGRATION_ID = 'reset_bot_metrics_2026_05_24_calibration';
@@ -505,8 +519,8 @@ function computeReviewRisk(
     if (flags.has('deviceRotating')) add(24, 'rotating browser device IDs');
     if (flags.has('protocolPackets')) add(18, 'malformed/protocol packet abuse');
     if (flags.has('rateLimitPackets')) add(18, 'socket packet flood');
-    if (flags.has('automationInvalidPackets')) add(10, 'malformed client telemetry');
-    if (flags.has('lifetimeHardInvalidPackets')) add(14, 'lifetime hard invalid packets');
+    if (flags.has('automationInvalidPackets')) add(10, 'invalid input telemetry');
+    if (flags.has('lifetimeHardInvalidPackets')) add(14, 'lifetime invalid packet volume');
     if (flags.has('lifetimeExtremeLowSocialHighActivity')) add(22, 'extreme low-social high-activity lifetime');
     else if (flags.has('lifetimeLowSocialHighActivity')) add(12, 'low-social high-activity lifetime');
     if (flags.has('xpVelocity')) add(28, 'impossible XP velocity');
@@ -547,20 +561,11 @@ function computeReviewRisk(
 }
 
 function hasHardBotEvidence(flags: Set<string>): boolean {
-  return flags.has('activityHeartbeatCoupled')
-    || flags.has('activityRegular')
-    || flags.has('browserlessActiveGameplay')
-    || flags.has('commandsWithoutRecentInput')
-    || flags.has('commandsWithoutRecentActivity')
-    || flags.has('deviceRotating')
-    || flags.has('inputlessCommandBurst')
-    || flags.has('inputlessCommandRatio')
-    || flags.has('activitylessCommandRatio')
-    || flags.has('protocolPackets')
-    || flags.has('rateLimitPackets')
-    || flags.has('lifetimeHardInvalidPackets')
-    || flags.has('mapDataScrape')
-    || flags.has('xpVelocity');
+  for (const flag of flags) {
+    const base = flag.includes(':') ? flag.split(':')[0] : flag;
+    if (REVIEW_HARD_EVIDENCE_FLAGS.has(base)) return true;
+  }
+  return false;
 }
 
 /** --ip path: list every account that's ever used the given IP. */

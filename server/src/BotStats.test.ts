@@ -269,7 +269,7 @@ describe('mechanical-jitter detection (computer-generated randomization)', () =>
   });
 });
 
-describe('hard protocol evidence', () => {
+describe('integrity evidence', () => {
   test('reserved action capability replay is immediate hard evidence', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
@@ -314,7 +314,26 @@ describe('hard protocol evidence', () => {
     ))).toBe(true);
   });
 
-  test('out-of-scope map-data requests are hard evidence', () => {
+  test('malformed protocol packets stay review evidence without standalone hard evidence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.recordSuspiciousPacket('malformed-frame');
+    stats.recordSuspiciousPacket('malformed-frame');
+    stats.recordSuspiciousPacket('malformed-frame');
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).toContain('protocolPackets');
+    expect(summary.evidenceFlags).toContain('protocolPackets');
+    expect(summary.riskHardEvidence).toBe(false);
+    expect(summary.riskLevel).toBe('low');
+    expect(summary.riskSignals.some(signal => (
+      signal.flag === 'protocolPackets'
+      && signal.tier === 'soft'
+      && signal.points === 18
+    ))).toBe(true);
+  });
+
+  test('out-of-scope map-data requests are review evidence but not standalone hard evidence', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
     stats.recordMapDataOutOfScope();
@@ -324,10 +343,11 @@ describe('hard protocol evidence', () => {
     const summary = stats.computeSummary({});
     expect(summary.flags).toContain('mapDataOutOfScope');
     expect(summary.evidenceFlags).toContain('mapDataOutOfScope');
-    expect(summary.riskHardEvidence).toBe(true);
+    expect(summary.riskHardEvidence).toBe(false);
+    expect(summary.riskLevel).toBe('low');
     expect(summary.riskSignals.some(signal => (
       signal.flag === 'mapDataOutOfScope'
-      && signal.tier === 'hard'
+      && signal.tier === 'soft'
       && signal.measured === '3 denied'
     ))).toBe(true);
   });

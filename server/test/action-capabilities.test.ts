@@ -22,7 +22,7 @@ function makeWorld(): any {
 }
 
 describe('action capabilities', () => {
-  test('reserved capability is not labeled in the public wire packet', () => {
+  test('reserved capability duplicates visible actions and is labeled for official clients to ignore', () => {
     const world = makeWorld();
     const player = new Player('tester', 0, 0, fakeWs, 1);
     const obj = new WorldObject({
@@ -42,15 +42,28 @@ describe('action capabilities', () => {
     const { str } = decodeStringPacket(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer);
     const caps = JSON.parse(str);
     const firstReserved = caps[0];
+    const firstShadow = caps[1];
     const lastReserved = caps.at(-1);
-    expect(firstReserved[5]).toBe(0);
-    expect(lastReserved[5]).toBe(0);
-    expect(firstReserved[1]).not.toBe(obj.id);
-    expect(lastReserved[1]).not.toBe(obj.id);
+    expect(firstReserved[5]).toBe(1);
+    expect(firstShadow[5]).toBe(0);
+    expect(lastReserved[5]).toBe(1);
+    expect(firstReserved.slice(0, 3)).toEqual([ActionCapabilityKind.WorldObject, obj.id, 0]);
+    expect(firstShadow.slice(0, 3)).toEqual([ActionCapabilityKind.WorldObject, obj.id, 0]);
+    expect(lastReserved.slice(0, 3)).toEqual([ActionCapabilityKind.WorldObject, obj.id, 1]);
     expect(player.consumeReservedActionCapability(firstReserved[3], firstReserved[4], world.currentTick)).toBe(true);
     expect(player.consumeReservedActionCapability(lastReserved[3], lastReserved[4], world.currentTick)).toBe(true);
+    expect(player.consumeActionCapability(
+      firstShadow[3],
+      firstShadow[4],
+      ActionCapabilityKind.WorldObject,
+      obj.id,
+      0,
+      world.currentTick,
+    )).toBe('reserved');
 
-    const visibleObjectCap = caps.find((cap: number[]) => cap[0] === ActionCapabilityKind.WorldObject && cap[1] === obj.id && cap[2] === 0);
+    const actionZeroCaps = caps.filter((cap: number[]) => cap[0] === ActionCapabilityKind.WorldObject && cap[1] === obj.id && cap[2] === 0 && cap[5] === 0);
+    expect(actionZeroCaps).toHaveLength(2);
+    const visibleObjectCap = actionZeroCaps.at(-1);
     expect(visibleObjectCap).toBeTruthy();
     if (!visibleObjectCap) throw new Error('missing visible object capability');
     expect(visibleObjectCap?.[5]).toBe(0);

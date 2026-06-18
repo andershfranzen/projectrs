@@ -3,6 +3,39 @@ import { BotStats } from '../src/BotStats';
 import { GameDatabase } from '../src/Database';
 
 describe('admin bot review data', () => {
+  test('playtime timeline splits sessions across real hour buckets', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const now = 1_700_006_400;
+      const alice = db.loginFallbackAccount('alice-playtime', '11111111-1111-4111-8111-111111111111');
+      const bob = db.loginFallbackAccount('bob-playtime', '22222222-2222-4222-8222-222222222222');
+      const raw = (db as any).db;
+      raw.query(`
+        INSERT INTO login_history (account_id, ip_address, login_ts, logout_ts, session_minutes, device_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(alice.accountId, '203.0.113.20', now - 5400, now - 1800, 60, '');
+      raw.query(`
+        INSERT INTO login_history (account_id, ip_address, login_ts, logout_ts, session_minutes, device_id)
+        VALUES (?, ?, ?, NULL, NULL, ?)
+      `).run(bob.accountId, '203.0.113.21', now - 1800, '');
+
+      const timeline = db.getAdminPlaytimeTimeline(1, 60, now);
+      const previousHour = timeline.buckets.find(bucket => bucket.startTs === now - 7200);
+      const currentHour = timeline.buckets.find(bucket => bucket.startTs === now - 3600);
+
+      expect(previousHour?.playMinutes).toBe(30);
+      expect(previousHour?.loginCount).toBe(1);
+      expect(previousHour?.logoutCount).toBe(0);
+      expect(previousHour?.activeAccounts).toBe(1);
+      expect(currentHour?.playMinutes).toBe(60);
+      expect(currentHour?.loginCount).toBe(1);
+      expect(currentHour?.logoutCount).toBe(1);
+      expect(currentHour?.activeAccounts).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
   test('surfaces persisted bot scores with latest login context', () => {
     const db = new GameDatabase(':memory:');
     try {

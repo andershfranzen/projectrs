@@ -3839,6 +3839,18 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
       }
     }
 
+    if (url.pathname === '/api/admin/playtime' && req.method === 'GET') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      const days = boundedIntegerParam(url.searchParams.get('days'), 7, 1, 30);
+      const bucketMinutes = boundedIntegerParam(url.searchParams.get('bucketMinutes'), 60, 15, 240);
+      return jsonResponse({
+        ok: true,
+        generatedAt: Math.floor(Date.now() / 1000),
+        ...db.getAdminPlaytimeTimeline(days, bucketMinutes),
+      }, 200, { 'Cache-Control': 'no-store' });
+    }
+
     if (url.pathname === '/api/admin/game-events' && req.method === 'GET') {
       const session = getBoundBearerSession(req);
       if (!session?.isAdmin) return adminForbidden();

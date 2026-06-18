@@ -92,6 +92,7 @@ describe('GameManager world context-menu input', () => {
 
     manager.applyActionCapabilities([
       [ActionCapabilityKind.WorldObject, 10042, 0, 111, 222, 1],
+      [ActionCapabilityKind.WorldObject, 10042, 0, 111, 222, 0],
       [ActionCapabilityKind.WorldObject, 10042, 0, 333, 444, 0],
       [ActionCapabilityKind.WorldObject, 10042, 0, 555, 666, 1],
     ]);

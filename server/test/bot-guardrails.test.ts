@@ -286,7 +286,7 @@ describe('anti-bot guardrails', () => {
     expect(summary.riskLevel).toBe('low');
   });
 
-  test('rapid full-map chunk scraping is hard review evidence', () => {
+  test('rapid full-map chunk scraping is capped review evidence by itself', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
     let burst: ReturnType<BotStats['recordMapDataFetch']> = null;
@@ -301,8 +301,9 @@ describe('anti-bot guardrails', () => {
     expect(summary.sessionUniqueMapDataFiles).toBe(180);
     expect(summary.sessionMapDataScanBursts).toBe(1);
     expect(summary.flags).toContain('mapDataScrape');
-    expect(summary.riskScore).toBeGreaterThanOrEqual(30);
-    expect(summary.riskLevel).toBe('medium');
+    expect(summary.riskHardEvidence).toBe(false);
+    expect(summary.riskScore).toBeLessThan(30);
+    expect(summary.riskLevel).toBe('low');
   });
 
   test('risk profile escalates when multiple calibrated bot signals stack', () => {
@@ -389,7 +390,7 @@ describe('anti-bot guardrails', () => {
     expect(summary.riskLevel).toBe('low');
   });
 
-  test('malformed client telemetry remains hard packet evidence', () => {
+  test('malformed client telemetry remains capped review evidence', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
 
@@ -399,6 +400,8 @@ describe('anti-bot guardrails', () => {
     expect(summary.sessionSuspiciousPacketClasses.automation).toBe(10);
     expect(summary.flags).toContain('automationInvalidPackets');
     expect(summary.evidenceFlags).toContain('automationInvalidPackets');
+    expect(summary.riskHardEvidence).toBe(false);
+    expect(summary.riskLevel).toBe('low');
   });
 
   test('lifetime low-social high-activity behavior escalates review score', () => {
@@ -588,7 +591,7 @@ describe('anti-bot guardrails', () => {
     expect(summary.riskLevel).toBe('low');
   });
 
-  test('cursor spoofing without client activity still requires review', () => {
+  test('cursor spoofing without client activity stays capped without hard evidence', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
     stats.sessionStartedAt = Date.now() - 6 * 60_000;
@@ -610,8 +613,9 @@ describe('anti-bot guardrails', () => {
     expect(summary.diagnosticFlags).toContain('noClientActivityTelemetry');
     expect(summary.flags).toContain('commandsWithoutRecentActivity');
     expect(summary.contextFlags).toContain('activitylessCommandRatio');
-    expect(summary.riskScore).toBeGreaterThanOrEqual(30);
-    expect(summary.riskLevel).toBe('medium');
+    expect(summary.riskHardEvidence).toBe(false);
+    expect(summary.riskScore).toBeLessThan(30);
+    expect(summary.riskLevel).toBe('low');
   });
 
   test('cursorless but active repetitive skilling remains low risk by itself', () => {
@@ -744,7 +748,9 @@ describe('anti-bot guardrails', () => {
     expect(summary.sessionCommandsWithoutRecentActivity).toBe(5);
     expect(summary.inputlessCommandRatio).toBe(1);
     expect(summary.flags).toContain('commandsWithoutRecentInput');
-    expect(summary.riskScore).toBeGreaterThanOrEqual(30);
+    expect(summary.riskHardEvidence).toBe(false);
+    expect(summary.riskScore).toBeLessThan(30);
+    expect(summary.riskLevel).toBe('low');
   });
 
   test('static cursor telemetry is flagged separately from missing telemetry', () => {
@@ -794,8 +800,8 @@ describe('anti-bot guardrails', () => {
       const row = db.loadBotStats(session.accountId);
       const summary = JSON.parse(row?.last_session_summary ?? '{}') as { flags?: string[] };
 
-      expect(row?.risk_score).toBeGreaterThanOrEqual(60);
-      expect(row?.risk_level).toBe('high');
+      expect(row?.risk_score).toBeLessThan(30);
+      expect(row?.risk_level).toBe('low');
       expect(summary.flags).toContain('commandsWithoutRecentInput');
     } finally {
       db.close();

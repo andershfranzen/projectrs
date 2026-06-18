@@ -12388,16 +12388,18 @@ export class World {
 
     const caps: ActionCapabilityWire[] = [];
     const expiresTick = this.currentTick + ACTION_CAPABILITY_EXPIRES_TICKS;
-    const pushCap = (kind: ActionCapabilityKind, targetEntityId: number, actionIndex: number, reserved = false) => {
+    const pushCap = (kind: ActionCapabilityKind, targetEntityId: number, actionIndex: number, reserved = false, flags = 0): ActionCapabilityWire => {
       const cap = viewer.issueActionCapability(kind, targetEntityId, actionIndex, expiresTick, reserved, this.currentTick);
-      caps.push([
+      const wire: ActionCapabilityWire = [
         kind,
         targetEntityId,
         actionIndex,
         cap.id,
         cap.code,
-        0,
-      ]);
+        flags,
+      ];
+      caps.push(wire);
+      return wire;
     };
 
     for (const eid of visibleEntityIds) {
@@ -12432,34 +12434,24 @@ export class World {
     }
 
     viewer.lastActionCapabilitySyncHadCaps = true;
-    const unusedEntityId = (seed: number): number => {
-      for (let offset = 0; offset < 512; offset++) {
-        const id = 32760 - ((seed + offset) % 512);
-        if (!this.players.has(id) && !this.npcs.has(id) && !this.worldObjects.has(id) && !this.groundItems.has(id)) return id;
+    const reservedDuplicate = (source: ActionCapabilityWire, flags = 1): ActionCapabilityWire => {
+      const [kind, targetEntityId, actionIndex] = source;
+      const cap = viewer.issueActionCapability(kind, targetEntityId, actionIndex, expiresTick, true, this.currentTick);
+      return [kind, targetEntityId, actionIndex, cap.id, cap.code, flags];
+    };
+    const firstCap = caps[0];
+    if (firstCap) {
+      caps.unshift(reservedDuplicate(firstCap, 0));
+      caps.unshift(reservedDuplicate(firstCap));
+    }
+    let lastRealCap: ActionCapabilityWire | undefined;
+    for (let i = caps.length - 1; i >= 0; i--) {
+      if ((caps[i][5] & 1) === 0) {
+        lastRealCap = caps[i];
+        break;
       }
-      return 32760;
-    };
-    const reservedCap = (kind: ActionCapabilityKind, seed: number): ActionCapabilityWire => {
-      const targetEntityId = unusedEntityId(seed);
-      const cap = viewer.issueActionCapability(
-        kind,
-        targetEntityId,
-        0,
-        expiresTick,
-        true,
-        this.currentTick,
-      );
-      return [
-        kind,
-        targetEntityId,
-        0,
-        cap.id,
-        cap.code,
-        0,
-      ];
-    };
-    caps.unshift(reservedCap(ActionCapabilityKind.WorldObject, viewer.id + this.currentTick));
-    caps.push(reservedCap(ActionCapabilityKind.Npc, viewer.id + this.currentTick + 173));
+    }
+    if (lastRealCap && lastRealCap !== firstCap) caps.push(reservedDuplicate(lastRealCap));
     this.queueEncodedSyncPacket(out, encodeStringPacket(ServerOpcode.ACTION_CAPABILITIES, JSON.stringify(caps)));
   }
 

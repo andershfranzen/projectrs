@@ -10,7 +10,7 @@ import {
 } from '@projectrs/shared';
 
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
-type AdminTab = 'bots' | 'events' | 'diagnostics';
+type AdminTab = 'bots' | 'playtime' | 'events' | 'diagnostics';
 
 interface AdminBotAccount {
   accountId: number;
@@ -172,6 +172,25 @@ interface ClientDiagnosticsResponse {
   error?: string;
 }
 
+interface AdminPlaytimeBucket {
+  startTs: number;
+  endTs: number;
+  playMinutes: number;
+  loginCount: number;
+  logoutCount: number;
+  activeAccounts: number;
+}
+
+interface AdminPlaytimeResponse {
+  ok: boolean;
+  generatedAt: number;
+  startTs: number;
+  endTs: number;
+  bucketMinutes: number;
+  buckets: AdminPlaytimeBucket[];
+  error?: string;
+}
+
 interface DiagnosticBrowserGap {
   high: ClientDiagnosticLogEntry;
   low: ClientDiagnosticLogEntry;
@@ -182,6 +201,7 @@ interface DiagnosticBrowserGap {
 
 const TEXT_SHADOW = '1px 1px 0 #000';
 const BOT_GRID_COLUMNS = 'minmax(132px, 1.2fr) 44px 66px minmax(150px, 1.4fr) minmax(82px, 0.75fr) 86px';
+const PLAYTIME_GRID_COLUMNS = 'minmax(118px, 1.2fr) minmax(82px, 0.85fr) 68px 58px 58px';
 const EVENT_GRID_COLUMNS = '72px 92px minmax(104px, 0.85fr) minmax(220px, 2fr) 106px';
 const DIAGNOSTIC_GRID_COLUMNS = '74px 110px minmax(96px, 0.75fr) minmax(220px, 2fr) 58px';
 const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
@@ -220,7 +240,7 @@ const BAN_DURATIONS = [
 ];
 
 const BOT_SIGNAL_LABELS: Record<string, string> = {
-  automationInvalidPackets: 'Malformed client telemetry',
+  automationInvalidPackets: 'Invalid input telemetry',
   mapDataScrape: 'Bulk map-data scrape',
   mapDataOutOfScope: 'Out-of-scope map data',
   reservedMapDataPath: 'Invalid map-data endpoint',
@@ -228,7 +248,7 @@ const BOT_SIGNAL_LABELS: Record<string, string> = {
   rateLimitPackets: 'Socket packet flood',
   reservedActionCapability: 'Invalid action token replayed',
   adminOpcodeAbuse: 'Non-admin used admin command',
-  lifetimeHardInvalidPackets: 'Repeat hard invalid traffic',
+  lifetimeHardInvalidPackets: 'Repeat invalid traffic',
   inputTicketTargetFanout: 'One input location, many targets',
   pointerNoApproachShape: 'Pointer actions without approach',
 };
@@ -276,6 +296,9 @@ export class AdminPanel {
   private readonly tabButtons = new Map<AdminTab, HTMLButtonElement>();
   private accounts: AdminBotAccount[] = [];
   private selectedAccountId: number | null = null;
+  private playtimeBuckets: AdminPlaytimeBucket[] = [];
+  private playtimeBucketMinutes = 60;
+  private selectedPlaytimeStartTs: number | null = null;
   private events: GameEventLogEntry[] = [];
   private selectedEventId: number | null = null;
   private diagnostics: ClientDiagnosticLogEntry[] = [];
@@ -284,6 +307,7 @@ export class AdminPanel {
   private eventAfterId = 0;
   private eventPollTimer: number | null = null;
   private eventLoading = false;
+  private playtimeLoading = false;
   private diagnosticLoading = false;
   private readonly hiddenEventTypes = new Set<string>();
   private eventSearchQuery = '';
@@ -353,7 +377,7 @@ export class AdminPanel {
       min-width: 0;
       margin-left: auto;
     `;
-    for (const [tab, label] of [['bots', 'Bot review'], ['events', 'Game log'], ['diagnostics', 'Diagnostics']] as const) {
+    for (const [tab, label] of [['bots', 'Bot review'], ['playtime', 'Playtime'], ['events', 'Game log'], ['diagnostics', 'Diagnostics']] as const) {
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = label;
@@ -699,6 +723,7 @@ export class AdminPanel {
 
   private async refresh(): Promise<void> {
     if (this.activeTab === 'events') return this.refreshGameEvents(true);
+    if (this.activeTab === 'playtime') return this.refreshPlaytime();
     if (this.activeTab === 'diagnostics') return this.refreshClientDiagnostics();
     return this.refreshBotReview();
   }
@@ -747,6 +772,48 @@ export class AdminPanel {
     }
   }
 
+  private async refreshPlaytime(): Promise<void> {
+    if (this.playtimeLoading) return;
+    this.playtimeLoading = true;
+    this.refreshButton.disabled = true;
+    this.clearRiskButton.disabled = true;
+    this.refreshButton.textContent = 'Loading';
+    try {
+      const params = new URLSearchParams({ days: '7', bucketMinutes: '60' });
+      const res = await fetch(`/api/admin/playtime?${params.toString()}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.token}` },
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (privateEndpointDenied(res.status)) {
+        this.playtimeBuckets = [];
+        this.renderEmpty('');
+        this.hide();
+        return;
+      }
+      const payload = await res.json() as AdminPlaytimeResponse;
+      if (!res.ok || !payload.ok) {
+        throw new Error(payload.error || `Playtime failed (${res.status})`);
+      }
+      this.playtimeBuckets = payload.buckets ?? [];
+      this.playtimeBucketMinutes = payload.bucketMinutes || 60;
+      if (!this.playtimeBuckets.some(bucket => bucket.startTs === this.selectedPlaytimeStartTs)) {
+        this.selectedPlaytimeStartTs = this.playtimeBuckets.find(bucket => bucket.playMinutes > 0)?.startTs
+          ?? this.playtimeBuckets.at(-1)?.startTs
+          ?? null;
+      }
+      this.renderPlaytime();
+    } catch (err) {
+      this.renderEmpty(err instanceof Error ? err.message : 'Unable to load playtime.');
+    } finally {
+      this.playtimeLoading = false;
+      this.refreshButton.disabled = false;
+      this.clearRiskButton.disabled = false;
+      this.refreshButton.textContent = 'Refresh';
+    }
+  }
+
   private setActiveTab(tab: AdminTab): void {
     if (this.activeTab === tab) return;
     this.hideAccountContextMenu();
@@ -767,6 +834,8 @@ export class AdminPanel {
     if (this.subtitleEl) {
       this.subtitleEl.textContent = this.activeTab === 'events'
         ? 'Game log'
+        : this.activeTab === 'playtime'
+          ? 'Playtime'
         : this.activeTab === 'diagnostics'
           ? 'Client diagnostics'
           : 'Bot review';
@@ -971,6 +1040,178 @@ export class AdminPanel {
     else this.renderDetailMessage(this.accounts.length > 0 && this.hideBannedAccounts
       ? 'All matching accounts are hidden by the banned filter.'
       : 'No bot telemetry yet.');
+  }
+
+  private renderPlaytime(): void {
+    this.botSearchInput.style.display = 'none';
+    this.botHideBannedLabel.style.display = 'none';
+    this.clearRiskButton.style.display = 'none';
+    this.eventFilterEl.style.display = 'none';
+    this.diagnosticFilterEl.style.display = 'none';
+    this.setGridHeader(PLAYTIME_GRID_COLUMNS, ['Time', 'Play time', 'Avg online', 'Logins', 'Logouts']);
+
+    const totalMinutes = this.playtimeBuckets.reduce((sum, bucket) => sum + bucket.playMinutes, 0);
+    const peak = this.playtimeBuckets.reduce((max, bucket) => Math.max(max, bucket.playMinutes), 0);
+    const logins = this.playtimeBuckets.reduce((sum, bucket) => sum + bucket.loginCount, 0);
+    const logouts = this.playtimeBuckets.reduce((sum, bucket) => sum + bucket.logoutCount, 0);
+    this.summaryEl.replaceChildren(
+      this.summaryPill(`${this.playtimeBuckets.length} hourly buckets`, '#6c5c43'),
+      this.summaryPill(`${this.formatMinutes(Math.round(totalMinutes))} total`, '#2f5f8f'),
+      this.summaryPill(`${this.formatMinutes(Math.round(peak))} peak hour`, peak > 0 ? '#8f6d2d' : '#4d5d45'),
+      this.summaryPill(`${logins} logins`, '#4d5d45'),
+      this.summaryPill(`${logouts} logouts`, '#4d5d45'),
+    );
+
+    this.rowsEl.replaceChildren();
+    for (const bucket of [...this.playtimeBuckets].reverse()) {
+      this.rowsEl.appendChild(this.playtimeRow(bucket));
+    }
+    this.renderPlaytimeChart();
+  }
+
+  private playtimeRow(bucket: AdminPlaytimeBucket): HTMLButtonElement {
+    const selected = bucket.startTs === this.selectedPlaytimeStartTs;
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.style.cssText = `
+      appearance: none;
+      width: 100%;
+      display: grid;
+      grid-template-columns: ${PLAYTIME_GRID_COLUMNS};
+      gap: 8px;
+      padding: 7px 8px;
+      border: 0;
+      border-bottom: 1px solid rgba(74, 64, 53, 0.55);
+      background: ${selected ? 'rgba(122, 50, 40, 0.48)' : 'rgba(22, 16, 12, 0.38)'};
+      color: #f1d6b6;
+      font: 11px Arial, Helvetica, sans-serif;
+      text-align: left;
+      cursor: pointer;
+      text-shadow: ${TEXT_SHADOW};
+      transition: background 120ms ease, filter 120ms ease;
+    `;
+    this.installRowHover(row, selected ? 'rgba(122, 50, 40, 0.48)' : 'rgba(22, 16, 12, 0.38)');
+    row.addEventListener('click', () => {
+      this.selectedPlaytimeStartTs = bucket.startTs;
+      this.renderPlaytime();
+    });
+    row.append(
+      this.truncateCell(this.formatTime(bucket.startTs)),
+      this.truncateCell(this.formatMinutes(Math.round(bucket.playMinutes))),
+      this.truncateCell((bucket.playMinutes / this.playtimeBucketMinutes).toFixed(2)),
+      this.truncateCell(String(bucket.loginCount)),
+      this.truncateCell(String(bucket.logoutCount)),
+    );
+    return row;
+  }
+
+  private renderPlaytimeChart(): void {
+    const root = document.createElement('div');
+    root.style.cssText = `display: flex; flex-direction: column; gap: 8px; min-width: 0;`;
+
+    const title = document.createElement('div');
+    title.textContent = 'Play time by actual date/time';
+    title.style.cssText = `font-size: 13px; font-weight: bold; color: #f4ded5;`;
+    root.appendChild(title);
+
+    const maxMinutes = Math.max(60, ...this.playtimeBuckets.map(bucket => bucket.playMinutes));
+    const width = 720;
+    const height = 260;
+    const padLeft = 44;
+    const padRight = 10;
+    const padTop = 12;
+    const padBottom = 34;
+    const chartWidth = width - padLeft - padRight;
+    const chartHeight = height - padTop - padBottom;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.style.cssText = `
+      width: 100%;
+      height: auto;
+      min-height: 230px;
+      border: 1px solid rgba(84, 70, 50, 0.56);
+      background: rgba(8, 6, 5, 0.42);
+      box-sizing: border-box;
+    `;
+
+    const axis = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    axis.setAttribute('d', `M${padLeft} ${padTop} V${padTop + chartHeight} H${width - padRight}`);
+    axis.setAttribute('fill', 'none');
+    axis.setAttribute('stroke', 'rgba(220,190,140,0.45)');
+    svg.appendChild(axis);
+
+    for (let step = 0; step <= 3; step++) {
+      const value = maxMinutes * step / 3;
+      const y = padTop + chartHeight - (value / maxMinutes) * chartHeight;
+      const grid = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      grid.setAttribute('x1', String(padLeft));
+      grid.setAttribute('x2', String(width - padRight));
+      grid.setAttribute('y1', String(y));
+      grid.setAttribute('y2', String(y));
+      grid.setAttribute('stroke', 'rgba(220,190,140,0.13)');
+      svg.appendChild(grid);
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.textContent = `${Math.round(value)}m`;
+      label.setAttribute('x', '6');
+      label.setAttribute('y', String(y + 3));
+      label.setAttribute('fill', '#b8a17d');
+      label.setAttribute('font-size', '10');
+      svg.appendChild(label);
+    }
+
+    const barGap = 1;
+    const barWidth = Math.max(1, chartWidth / Math.max(1, this.playtimeBuckets.length) - barGap);
+    this.playtimeBuckets.forEach((bucket, index) => {
+      const barHeight = Math.max(0, (bucket.playMinutes / maxMinutes) * chartHeight);
+      const x = padLeft + index * (chartWidth / Math.max(1, this.playtimeBuckets.length));
+      const y = padTop + chartHeight - barHeight;
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('x', x.toFixed(2));
+      rect.setAttribute('y', y.toFixed(2));
+      rect.setAttribute('width', barWidth.toFixed(2));
+      rect.setAttribute('height', Math.max(1, barHeight).toFixed(2));
+      rect.setAttribute('fill', bucket.startTs === this.selectedPlaytimeStartTs ? '#c85f45' : '#8f6d2d');
+      rect.style.cursor = 'pointer';
+      const tooltip = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      tooltip.textContent = `${this.formatTime(bucket.startTs)} - ${this.formatTime(bucket.endTs)}\n${this.formatMinutes(Math.round(bucket.playMinutes))} play time\n${(bucket.playMinutes / this.playtimeBucketMinutes).toFixed(2)} avg online\n${bucket.loginCount} login(s), ${bucket.logoutCount} logout(s)`;
+      rect.appendChild(tooltip);
+      rect.addEventListener('click', () => {
+        this.selectedPlaytimeStartTs = bucket.startTs;
+        this.renderPlaytime();
+      });
+      svg.appendChild(rect);
+    });
+
+    const first = this.playtimeBuckets[0];
+    const last = this.playtimeBuckets.at(-1);
+    for (const [bucket, anchor] of [[first, 'start'], [last, 'end']] as const) {
+      if (!bucket) continue;
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.textContent = this.formatTime(bucket.startTs);
+      label.setAttribute('x', anchor === 'start' ? String(padLeft) : String(width - padRight));
+      label.setAttribute('y', String(height - 12));
+      label.setAttribute('text-anchor', anchor);
+      label.setAttribute('fill', '#b8a17d');
+      label.setAttribute('font-size', '10');
+      svg.appendChild(label);
+    }
+    root.appendChild(svg);
+
+    const selected = this.playtimeBuckets.find(bucket => bucket.startTs === this.selectedPlaytimeStartTs) ?? this.playtimeBuckets.at(-1) ?? null;
+    const metrics = document.createElement('div');
+    metrics.style.cssText = `display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); gap: 6px;`;
+    if (selected) {
+      metrics.append(
+        this.metricCell('Bucket', `${this.formatTime(selected.startTs)} - ${this.formatTime(selected.endTs)}`),
+        this.metricCell('Play time', this.formatMinutes(Math.round(selected.playMinutes))),
+        this.metricCell('Avg online', (selected.playMinutes / this.playtimeBucketMinutes).toFixed(2)),
+        this.metricCell('Active accounts', String(selected.activeAccounts)),
+        this.metricCell('Logins', String(selected.loginCount)),
+        this.metricCell('Logouts', String(selected.logoutCount)),
+      );
+    }
+    root.appendChild(metrics);
+    this.detailEl.replaceChildren(root);
   }
 
   private renderGameEvents(): void {
