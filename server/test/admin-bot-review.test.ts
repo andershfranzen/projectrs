@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { ClientOpcode } from '@projectrs/shared';
 import { BotStats } from '../src/BotStats';
 import { GameDatabase } from '../src/Database';
 
@@ -30,6 +31,7 @@ describe('admin bot review data', () => {
 
       const summaries = db.listAdminBotReplays(20, session.accountId);
       const detail = db.getAdminBotReplay(replayId);
+      const accounts = db.listAdminBotReviewAccounts(20, 'replay-target');
 
       expect(replayId).toBeGreaterThan(0);
       expect(summaries[0]?.id).toBe(replayId);
@@ -39,6 +41,7 @@ describe('admin bot review data', () => {
       expect(detail?.events.map(event => event.kind)).toEqual(['client', 'flag']);
       expect(detail?.events[1]?.reason).toBe('replayed-action-capability');
       expect(detail?.events[0]?.details).toEqual({ proof: { inputSeq: 7 } });
+      expect(accounts[0]?.flagCounts).toEqual([{ flag: 'replayed-action-capability', count: 1 }]);
     } finally {
       db.close();
     }
@@ -48,7 +51,7 @@ describe('admin bot review data', () => {
     const db = new GameDatabase(':memory:');
     try {
       const session = db.loginFallbackAccount('replay-clamp', '11111111-1111-4111-8111-111111111111');
-      const values = Array.from({ length: 180 }, (_, index) => index);
+      const values = Array.from({ length: 1300 }, (_, index) => index);
       const replayId = db.saveBotReplayTrace({
         accountId: session.accountId,
         username: 'replay-clamp',
@@ -65,12 +68,14 @@ describe('admin bot review data', () => {
         startZ: 2,
         events: [
           { kind: 'server', t: 1000, tick: 1, opcode: 10, values, byteLength: 1, rawBase64: 'AA==', details: { huge: 'x'.repeat(20_000) } },
+          { kind: 'client', t: 1001, tick: 1, opcode: ClientOpcode.CURSOR_TRACE, values, result: 'accepted', details: {} },
         ],
       });
 
       const detail = db.getAdminBotReplay(replayId);
 
       expect(detail?.events[0]?.values).toHaveLength(128);
+      expect(detail?.events[1]?.values).toHaveLength(1200);
       expect(detail?.events[0]?.details.truncated).toBe(true);
     } finally {
       db.close();

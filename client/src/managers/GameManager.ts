@@ -11805,6 +11805,8 @@ export class GameManager {
     if (this._cursorTelemetryHandler) {
       window.removeEventListener('pointermove', this._cursorTelemetryHandler, true);
       window.removeEventListener('pointerdown', this._cursorTelemetryHandler, true);
+      window.removeEventListener('pointerup', this._cursorTelemetryHandler, true);
+      window.removeEventListener('pointercancel', this._cursorTelemetryHandler, true);
       this._cursorTelemetryHandler = null;
     }
     if (this._hoverActionHandler) {
@@ -12784,7 +12786,7 @@ export class GameManager {
     };
     const cursorHandler = (event: PointerEvent) => {
       if (!isTrustedBrowserInputEvent(event)) return;
-      this.network.recordPointerInput(event);
+      if (event.type !== 'pointerdown') this.network.recordPointerInput(event);
       this.network.sendCursorPosition(event.clientX, event.clientY);
     };
     const keyupHandler = (event: KeyboardEvent) => {
@@ -12797,6 +12799,8 @@ export class GameManager {
     window.addEventListener('keyup', keyupHandler, true);
     window.addEventListener('pointermove', cursorHandler, true);
     window.addEventListener('pointerdown', cursorHandler, true);
+    window.addEventListener('pointerup', cursorHandler, true);
+    window.addEventListener('pointercancel', cursorHandler, true);
     this._activityHandler = handler;
     this._activityKeyupHandler = keyupHandler;
     this._cursorTelemetryHandler = cursorHandler;

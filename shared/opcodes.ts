@@ -168,8 +168,15 @@ export enum ClientOpcode {
    *  [kind, seq, xPermille, yPermille, optional input-shape stats...]. Every
    *  protected gameplay command must carry one fresh nonzero seq in its
    *  protected-command trailer. The server consumes each seq once, so old
-   *  "one click buys a 15s command window" spoofing is no longer enough. */
+   *  "one click buys a 15s command window" spoofing is no longer enough.
+   *  Current shape stats are [flags, buttons, dwellMs, moveCount,
+   *  coalescedCount, pathPx, directPx, optional trail x/y permille pairs]. */
   CLIENT_INPUT = 123,
+  /** Batched pointer-event replay samples. Values:
+   *  [viewportWidth, viewportHeight, count,
+   *   ageMs, clientX, clientY, buttons, flags, ...].
+   *  ageMs is milliseconds before server receipt; x/y are raw CSS pixels. */
+  CURSOR_TRACE = 124,
 }
 
 export enum ClientActivityKind {

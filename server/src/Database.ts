@@ -2,7 +2,7 @@ import { Database as SQLiteDB } from 'bun:sqlite';
 import { createHash, randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
 import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance, QuestState, EquipSlot } from '@projectrs/shared';
-import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, RUN_ENERGY_MAX, STANCE_KEYS, DEFAULT_APPEARANCE, QUEST_STAGE_COMPLETED, clampRunEnergy, combatLevel, initSkills, isEquipSlot, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, RUN_ENERGY_MAX, STANCE_KEYS, DEFAULT_APPEARANCE, QUEST_STAGE_COMPLETED, ClientOpcode, clampRunEnergy, combatLevel, initSkills, isEquipSlot, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 import { normalizeClientIp } from './network/clientIp';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -388,6 +388,7 @@ export interface AdminBotReviewAccount {
   topPathDestinations: AdminBotPathDestination[];
   deviceIdsSeen: number;
   suspiciousPacketReasons: AdminBotPacketReason[];
+  flagCounts: Array<{ flag: string; count: number }>;
   sessionHistory: Array<Record<string, unknown>>;
   chatRatePerHour: number | null;
   actionsPerHour: number | null;
@@ -3722,7 +3723,7 @@ export class GameDatabase {
           nullableInteger(event.opcode),
           trimmedText(event.result, 40),
           trimmedText(event.reason, 120),
-          jsonNumberArrayForStorage(event.values),
+          jsonNumberArrayForStorage(event.values, event.opcode === ClientOpcode.CURSOR_TRACE ? 1200 : 128),
           rawBase64,
           nullableInteger(event.byteLength),
           trimmedText(event.mapLevel, 80),
@@ -4245,6 +4246,7 @@ export class GameDatabase {
         topPathDestinations: topNumberRecordEntries(pathDestinations, 5).map(([tile, count]) => ({ tile, count })),
         deviceIdsSeen: Object.keys(deviceIds).length,
         suspiciousPacketReasons: topNumberRecordEntries(suspiciousReasons, 8).map(([reason, count]) => ({ reason, count })),
+        flagCounts: this.getBotReplayFlagCounts(row.id),
         sessionHistory: parseJsonObjectArray(row.session_history).slice(-8),
         chatRatePerHour: totalHours === null ? null : totalChats / totalHours,
         actionsPerHour: totalHours === null ? null : totalActions / totalHours,
@@ -4266,6 +4268,25 @@ export class GameDatabase {
       || a.username.localeCompare(b.username)
     );
     return accounts;
+  }
+
+  private getBotReplayFlagCounts(accountId: number, limit: number = 12): Array<{ flag: string; count: number }> {
+    const rows = this.db.query(`
+      SELECT e.reason AS flag, COUNT(*) AS count
+      FROM bot_replay_events e
+      JOIN bot_replay_sessions s ON s.id = e.replay_id
+      WHERE s.account_id = ?
+        AND e.kind = 'flag'
+        AND e.reason IS NOT NULL
+        AND e.reason <> ''
+      GROUP BY e.reason
+      ORDER BY count DESC, e.reason COLLATE NOCASE ASC
+      LIMIT ?
+    `).all(accountId, Math.max(1, Math.min(50, limit))) as Array<{ flag: string; count: number }>;
+    return rows.map((row) => ({
+      flag: String(row.flag).slice(0, 120),
+      count: Math.max(0, Math.floor(Number(row.count) || 0)),
+    }));
   }
 
   private getSharedDeviceAlts(accountId: number, limit: number = 8): AdminSharedDeviceAlt[] {

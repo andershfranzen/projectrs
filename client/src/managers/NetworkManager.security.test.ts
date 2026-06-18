@@ -97,4 +97,100 @@ describe('NetworkManager command proof protection', () => {
     expect(manager.sendMove([{ x: 10.5, z: 0.5 }])).toBe(true);
     expect(sent).toBe(9);
   });
+
+  test('input shape keeps normalized pointer trail points', () => {
+    const oldWindow = (globalThis as any).window;
+    const oldDocument = (globalThis as any).document;
+    (globalThis as any).window = { innerWidth: 1000, innerHeight: 500 };
+    (globalThis as any).document = { visibilityState: 'visible', documentElement: {} };
+    try {
+      const manager = makeManager();
+      manager.pointerInputSamples = [
+        { t: 10, x: 100, y: 50, c: 0 },
+        { t: 20, x: 500, y: 250, c: 0 },
+      ];
+      manager.trimPointerInputSamples = () => {};
+      manager.lastPointerFlags = 3;
+      manager.lastPointerButtons = 1;
+      manager.lastPointerDwellMs = 12;
+
+      expect(manager.inputShapeStats(ClientActivityKind.Pointer).trail).toEqual([100, 100, 500, 500]);
+    } finally {
+      (globalThis as any).window = oldWindow;
+      (globalThis as any).document = oldDocument;
+    }
+  });
+
+  test('cursor trace flush sends raw viewport samples', () => {
+    const oldWindow = (globalThis as any).window;
+    const oldDocument = (globalThis as any).document;
+    (globalThis as any).window = { innerWidth: 800, innerHeight: 600 };
+    (globalThis as any).document = { documentElement: {} };
+    try {
+      const manager = makeManager();
+      const now = performance.now();
+      const sent: Uint8Array[] = [];
+      manager.connected = true;
+      manager.gameSocket = { readyState: WebSocket.OPEN, bufferedAmount: 0 };
+      manager.cursorTraceSamples = [{ t: now - 25, x: 12.4, y: 34.6, buttons: 1, flags: 73 }];
+      manager.sendRawUnprotected = (packet: Uint8Array) => {
+        sent.push(packet);
+        return true;
+      };
+
+      manager.flushCursorTrace(true);
+
+      expect(sent).toHaveLength(1);
+      const decoded = decodePacket(sent[0].buffer.slice(sent[0].byteOffset, sent[0].byteOffset + sent[0].byteLength) as ArrayBuffer);
+      expect(decoded.opcode).toBe(ClientOpcode.CURSOR_TRACE);
+      expect(decoded.values.slice(0, 3)).toEqual([800, 600, 1]);
+      expect(decoded.values.slice(4)).toEqual([12, 35, 1, 73]);
+      expect(manager.cursorTraceSamples).toHaveLength(0);
+    } finally {
+      (globalThis as any).window = oldWindow;
+      (globalThis as any).document = oldDocument;
+    }
+  });
+
+  test('pointer input records coalesced cursor trace samples', () => {
+    const oldWindow = (globalThis as any).window;
+    const oldDocument = (globalThis as any).document;
+    (globalThis as any).window = { innerWidth: 1000, innerHeight: 500 };
+    (globalThis as any).document = { visibilityState: 'visible', documentElement: {} };
+    const manager = makeManager();
+    manager.cursorTraceSamples = [];
+    manager.pointerInputSamples = [];
+    manager.lastPointerDownAt = null;
+    manager.lastPointerDwellMs = 0;
+    manager.lastPointerFlags = 0;
+    manager.lastPointerButtons = 0;
+    manager.lastCursorTraceSentAt = -Infinity;
+    manager.scheduleCursorTraceFlush = () => {};
+    manager.trimPointerInputSamples = () => {};
+
+    try {
+      manager.recordPointerInput({
+        type: 'pointermove',
+        pointerType: 'mouse',
+        isTrusted: true,
+        buttons: 1,
+        clientX: 10,
+        clientY: 20,
+        timeStamp: 100,
+        getCoalescedEvents: () => [
+          { clientX: 11, clientY: 21, buttons: 1, timeStamp: 101 },
+          { clientX: 12, clientY: 22, buttons: 1, timeStamp: 102 },
+        ],
+      } as any);
+
+      expect(manager.cursorTraceSamples.map((sample: any) => [sample.t, sample.x, sample.y, sample.buttons, sample.flags])).toEqual([
+        [101, 11, 21, 1, 73],
+        [102, 12, 22, 1, 73],
+      ]);
+      expect(manager.inputShapeStats(ClientActivityKind.Pointer).coalescedCount).toBe(2);
+    } finally {
+      (globalThis as any).window = oldWindow;
+      (globalThis as any).document = oldDocument;
+    }
+  });
 });

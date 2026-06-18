@@ -65,6 +65,7 @@ describe('anti-bot guardrails', () => {
     expect(getOpcodeRateRule(ClientOpcode.TRADE_OFFER_ITEM).bucket).toBe('inventory-ui');
     expect(getOpcodeRateRule(ClientOpcode.CLIENT_PING).windowMs).toBe(10_000);
     expect(getOpcodeRateRule(ClientOpcode.CURSOR_POSITION).bucket).toBe('cursor');
+    expect(getOpcodeRateRule(ClientOpcode.CURSOR_TRACE).bucket).toBe('cursor-trace');
   });
 
   test('combat follow-up attack packets do not require fresh browser input', () => {
@@ -78,6 +79,7 @@ describe('anti-bot guardrails', () => {
 
   test('per-action rate-limit overflow is throttling only, not bot evidence', () => {
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.CURSOR_POSITION)).toBe(false);
+    expect(rateLimitOverflowIsSuspicious(ClientOpcode.CURSOR_TRACE)).toBe(false);
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.CLIENT_ACTIVITY)).toBe(false);
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.CLIENT_INPUT)).toBe(false);
     expect(rateLimitOverflowIsSuspicious(ClientOpcode.CLIENT_POSITION_Y)).toBe(false);
@@ -108,6 +110,45 @@ describe('anti-bot guardrails', () => {
     expect(player.checkActionRateLimit('inventory-ui', 2, 1000, 100)).toBe(false);
     expect(player.checkActionRateLimit('movement', 2, 1000, 100)).toBe(true);
     expect(player.checkActionRateLimit('inventory-ui', 2, 1000, 1200)).toBe(true);
+  });
+
+  test('cursor trace packets are accepted and captured for replay', () => {
+    const { player, ws, world } = createSocketHarness();
+    const captured: any[] = [];
+    let activityCount = 0;
+    world.recordBotReplayClientCommand = (_player: Player, command: any) => captured.push(command);
+    world.recordPlayerActivity = () => { activityCount++; };
+
+    handleGameSocketMessage(ws, packetBuffer(
+      ClientOpcode.CURSOR_TRACE,
+      800, 600, 2,
+      20, 11, 22, 1, 73,
+      5, 15, 28, 0, 73,
+    ), world);
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].opcode).toBe(ClientOpcode.CURSOR_TRACE);
+    expect(captured[0].values).toEqual([800, 600, 2, 20, 11, 22, 1, 73, 5, 15, 28, 0, 73]);
+    expect(activityCount).toBe(0);
+    expect(player.botStats?.totalSuspiciousPackets).toBe(0);
+  });
+
+  test('cursor trace packets do not spend the global socket flood budget', () => {
+    const { ws, world } = createSocketHarness();
+    const captured: any[] = [];
+    world.recordBotReplayClientCommand = (_player: Player, command: any) => captured.push(command);
+
+    for (let i = 0; i < 31; i++) {
+      handleGameSocketMessage(ws, packetBuffer(
+        ClientOpcode.CURSOR_TRACE,
+        800, 600, 1,
+        5, i, 20, 0, 73,
+      ), world);
+    }
+    handleGameSocketMessage(ws, packetBuffer(ClientOpcode.CURSOR_POSITION, 500, 500), world);
+
+    expect(captured).toHaveLength(32);
+    expect(captured[31].opcode).toBe(ClientOpcode.CURSOR_POSITION);
   });
 
   test('suspicious packet counts reset on the rolling window', () => {

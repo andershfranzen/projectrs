@@ -1889,7 +1889,7 @@ const BOT_SIGNAL_META: Record<string, BotSignalMeta> = {
   protocolPackets: { label: 'Malformed protocol traffic', description: 'Repeated malformed or impossible game packets.', threshold: '≥3 this session', tier: 'soft' },
   rateLimitPackets: { label: 'Socket packet flood', description: 'Repeated global socket rate-limit overflows. Per-action spam is throttled but not treated as hard bot evidence.', threshold: '≥3 socket floods this session', tier: 'soft' },
   automationInvalidPackets: { label: 'Invalid input telemetry', description: 'Repeated malformed client activity/input packets. Noisy input-ticket misses are tracked separately as stale telemetry.', threshold: '≥10 malformed telemetry packets this session', tier: 'soft' },
-  reservedActionCapability: { label: 'Invalid action token replayed', description: 'Client sent an action token that was not valid for normal gameplay.', threshold: '≥1 invalid action token', tier: 'hard' },
+  reservedActionCapability: { label: 'Invalid action token', description: 'Client sent an action token that was not valid for normal gameplay.', threshold: '≥1 invalid action token', tier: 'hard' },
   adminOpcodeAbuse: { label: 'Non-admin used admin command', description: 'A non-admin client attempted to send an admin-only game command.', threshold: '≥1 non-admin admin command', tier: 'hard' },
   lifetimeHardInvalidPackets: { label: 'Repeat invalid traffic', description: 'Large lifetime volume of malformed protocol or socket-flood events.', threshold: '≥25 lifetime', tier: 'soft' },
   lifetimeLowSocialHighActivity: { label: 'Low-social high-activity (lifetime)', description: 'Very high lifetime activity with almost no chat.', threshold: '≥600min, ≥10000 actions, <2 chats/hr', tier: 'soft' },
@@ -2016,7 +2016,7 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('protocolPackets')) add('protocolPackets', 18, `${input.sessionSuspiciousPacketClasses.protocol} this session`);
   if (flagSet.has('rateLimitPackets')) add('rateLimitPackets', 18, `${input.sessionSuspiciousPacketClasses.rateLimit} this session`);
   if (flagSet.has('automationInvalidPackets')) add('automationInvalidPackets', 10, `${input.sessionSuspiciousPacketClasses.automation} this session`);
-  if (flagSet.has('reservedActionCapability')) add('reservedActionCapability', 70, 'replayed');
+  if (flagSet.has('reservedActionCapability')) add('reservedActionCapability', 70, 'reserved/reused');
   if (flagSet.has('adminOpcodeAbuse')) add('adminOpcodeAbuse', 70, 'non-admin attempt');
   if (flagSet.has('lifetimeHardInvalidPackets')) add(
     'lifetimeHardInvalidPackets',

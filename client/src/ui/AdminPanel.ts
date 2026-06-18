@@ -1,5 +1,8 @@
 import { createModalPanel } from './ModalPanel';
 import {
+  ClientActivityKind,
+  ClientOpcode,
+  ServerOpcode,
   areComparableDiagnosticScenes,
   browserFamilyFromDiagnosticPayload,
   diagnosticFlagsFromPayload,
@@ -44,6 +47,7 @@ interface AdminBotAccount {
   topPathDestinations: Array<{ tile: string; count: number }>;
   deviceIdsSeen: number;
   suspiciousPacketReasons: Array<{ reason: string; count: number }>;
+  flagCounts: Array<{ flag: string; count: number }>;
   sessionHistory: Array<Record<string, unknown>>;
   chatRatePerHour: number | null;
   actionsPerHour: number | null;
@@ -258,6 +262,117 @@ const BOT_GRID_COLUMNS = 'minmax(132px, 1.2fr) 44px 66px minmax(150px, 1.4fr) mi
 const REPLAY_GRID_COLUMNS = '70px minmax(120px, 1fr) minmax(110px, 1fr) 72px 64px 76px';
 const PLAYTIME_GRID_COLUMNS = 'minmax(118px, 1.2fr) minmax(82px, 0.85fr) 68px 58px 58px';
 const EVENT_GRID_COLUMNS = '72px 92px minmax(104px, 0.85fr) minmax(220px, 2fr) 106px';
+
+function opcodeName(kind: string, opcode: number | null): string {
+  if (opcode == null) return '-';
+  const enumName = kind === 'server'
+    ? (ServerOpcode as Record<number, string>)[opcode]
+    : (ClientOpcode as Record<number, string>)[opcode];
+  return enumName ?? `opcode ${opcode}`;
+}
+
+function moveWaypoints(values: number[]): Array<{ x: number; z: number }> {
+  const count = values[0] ?? 0;
+  if (!Number.isInteger(count) || count <= 0) return [];
+  const max = Math.min(count, Math.floor((values.length - 1) / 2), 50);
+  const points: Array<{ x: number; z: number }> = [];
+  for (let i = 0; i < max; i++) {
+    points.push({ x: values[1 + i * 2] / 10, z: values[2 + i * 2] / 10 });
+  }
+  return points;
+}
+
+function replayTicketText(event: AdminBotReplayEvent): string {
+  if (event.kind !== 'client' || event.details.requiresInputProof !== true) return '';
+  const proof = event.details.proof as { inputSeq?: number } | null | undefined;
+  return event.details.hasValidInputTicket === true ? `ticket #${proof?.inputSeq ?? '-'}` : 'no ticket';
+}
+
+function cursorPoint(event: AdminBotReplayEvent): { x: number; y: number; input: boolean } | null {
+  if (event.opcode === ClientOpcode.CURSOR_POSITION && event.values.length >= 2) {
+    return { x: event.values[0], y: event.values[1], input: false };
+  }
+  if (
+    (event.opcode === ClientOpcode.CLIENT_INPUT || event.opcode === ClientOpcode.CLIENT_ACTIVITY)
+    && event.values.length >= 4
+    && (event.values[0] === ClientActivityKind.Pointer || event.values[0] === ClientActivityKind.Touch)
+  ) {
+    return { x: event.values[2], y: event.values[3], input: event.opcode === ClientOpcode.CLIENT_INPUT };
+  }
+  return null;
+}
+
+function cursorTrail(event: AdminBotReplayEvent): Array<{ x: number; y: number }> {
+  if (event.opcode !== ClientOpcode.CLIENT_INPUT || event.values.length <= 11) return [];
+  const points: Array<{ x: number; y: number }> = [];
+  for (let i = 11; i + 1 < event.values.length; i += 2) {
+    points.push({ x: event.values[i], y: event.values[i + 1] });
+  }
+  return points;
+}
+
+interface CursorReplaySample {
+  t: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  input: boolean;
+  buttons: number;
+  flags: number;
+}
+
+function cursorTraceSamples(event: AdminBotReplayEvent): CursorReplaySample[] {
+  if (event.opcode !== ClientOpcode.CURSOR_TRACE || event.values.length < 8) return [];
+  const width = Math.max(1, event.values[0]);
+  const height = Math.max(1, event.values[1]);
+  const count = Math.max(0, Math.min(event.values[2], Math.floor((event.values.length - 3) / 5)));
+  const samples: CursorReplaySample[] = [];
+  for (let i = 0; i < count; i++) {
+    const offset = 3 + i * 5;
+    samples.push({
+      t: event.t - Math.max(0, event.values[offset]),
+      x: event.values[offset + 1],
+      y: event.values[offset + 2],
+      width,
+      height,
+      input: false,
+      buttons: event.values[offset + 3],
+      flags: event.values[offset + 4],
+    });
+  }
+  return samples;
+}
+
+function cursorReplaySamples(events: AdminBotReplayEvent[]): CursorReplaySample[] {
+  const traced = events.flatMap(cursorTraceSamples);
+  if (traced.length > 0) return traced.sort((a, b) => a.t - b.t);
+  const inputPoints = events
+    .flatMap((event) => {
+      const point = cursorPoint(event);
+      return point ? [{ t: event.t, x: point.x, y: point.y, width: 1000, height: 1000, input: point.input, buttons: 0, flags: 0 }] : [];
+    });
+  return inputPoints.sort((a, b) => a.t - b.t);
+}
+
+function cursorEventKind(flags: number): string {
+  switch (flags & 7) {
+    case 2: return 'down';
+    case 3: return 'up';
+    case 4: return 'cancel';
+    default: return 'move';
+  }
+}
+
+function cursorSampleColor(sample: CursorReplaySample, index: number): string {
+  const kind = cursorEventKind(sample.flags);
+  if (index === 0) return '#6aa15f';
+  if (kind === 'down') return '#f1b25c';
+  if (kind === 'up') return '#d9c6a2';
+  if (kind === 'cancel') return '#d34636';
+  if (sample.buttons > 0) return '#e08a4f';
+  return sample.input ? '#d9c6a2' : '#6d7fae';
+}
 const DIAGNOSTIC_GRID_COLUMNS = '74px 110px minmax(96px, 0.75fr) minmax(220px, 2fr) 58px';
 const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
   { type: 'chat', label: 'Chat' },
@@ -301,7 +416,7 @@ const BOT_SIGNAL_LABELS: Record<string, string> = {
   reservedMapDataPath: 'Invalid map-data endpoint',
   protocolPackets: 'Malformed protocol traffic',
   rateLimitPackets: 'Socket packet flood',
-  reservedActionCapability: 'Invalid action token replayed',
+  reservedActionCapability: 'Invalid action token',
   adminOpcodeAbuse: 'Non-admin used admin command',
   lifetimeHardInvalidPackets: 'Repeat invalid traffic',
   inputTicketTargetFanout: 'One input location, many targets',
@@ -328,7 +443,8 @@ function botSignalLabel(flag: string): string {
 }
 
 function suspiciousPacketReasonLabel(reason: string): string {
-  if (reason === 'reserved-action-capability' || reason === 'replayed-action-capability') return 'Invalid action token replayed';
+  if (reason === 'reserved-action-capability') return 'Action token used before release';
+  if (reason === 'replayed-action-capability') return 'Action token reused';
   return reason;
 }
 
@@ -1288,6 +1404,7 @@ export class AdminPanel {
     }
 
     root.appendChild(this.detailSection('Movement path', this.renderReplayPath(this.replayEvents)));
+    root.appendChild(this.detailSection('Cursor route', this.renderCursorRoute(this.replayEvents)));
 
     const timeline = document.createElement('div');
     timeline.style.cssText = `
@@ -1322,10 +1439,20 @@ export class AdminPanel {
   private renderReplayPath(events: AdminBotReplayEvent[]): HTMLDivElement {
     const wrap = document.createElement('div');
     wrap.style.cssText = `display: flex; flex-direction: column; gap: 6px;`;
-    const points = events
-      .filter(event => typeof event.x === 'number' && typeof event.z === 'number')
-      .map(event => ({ x: event.x as number, z: event.z as number, kind: event.kind }));
-    if (points.length < 2) {
+    const points: Array<{ x: number; z: number; kind: string }> = [];
+    for (const event of events) {
+      if (typeof event.x !== 'number' || typeof event.z !== 'number') continue;
+      const last = points[points.length - 1];
+      if (!last || last.x !== event.x || last.z !== event.z || event.kind === 'flag') {
+        points.push({ x: event.x, z: event.z, kind: event.kind });
+      }
+    }
+    const moves = events
+      .filter(event => (event.kind === 'client' || event.kind === 'flag') && event.opcode === ClientOpcode.PLAYER_MOVE && typeof event.x === 'number' && typeof event.z === 'number')
+      .map(event => ({ event, points: moveWaypoints(event.values) }))
+      .filter(move => move.points.length > 0)
+      .slice(-40);
+    if (points.length < 2 && moves.length === 0) {
       const empty = document.createElement('div');
       empty.textContent = 'Not enough position samples yet.';
       empty.style.cssText = `font-size: 12px; color: #d9c6a2;`;
@@ -1336,10 +1463,14 @@ export class AdminPanel {
     const width = 520;
     const height = 210;
     const pad = 18;
-    const minX = Math.min(...points.map(point => point.x));
-    const maxX = Math.max(...points.map(point => point.x));
-    const minZ = Math.min(...points.map(point => point.z));
-    const maxZ = Math.max(...points.map(point => point.z));
+    const domainPoints = [
+      ...points,
+      ...moves.flatMap(move => move.points),
+    ];
+    const minX = Math.min(...domainPoints.map(point => point.x));
+    const maxX = Math.max(...domainPoints.map(point => point.x));
+    const minZ = Math.min(...domainPoints.map(point => point.z));
+    const maxZ = Math.max(...domainPoints.map(point => point.z));
     const spanX = Math.max(1, maxX - minX);
     const spanZ = Math.max(1, maxZ - minZ);
     const project = (point: { x: number; z: number }) => ({
@@ -1358,14 +1489,36 @@ export class AdminPanel {
       box-sizing: border-box;
     `;
     const projected = points.map(project);
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-    line.setAttribute('points', projected.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '));
-    line.setAttribute('fill', 'none');
-    line.setAttribute('stroke', '#c85f45');
-    line.setAttribute('stroke-width', '2');
-    line.setAttribute('stroke-linejoin', 'round');
-    line.setAttribute('stroke-linecap', 'round');
-    svg.appendChild(line);
+    if (projected.length > 1) {
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      line.setAttribute('points', projected.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '));
+      line.setAttribute('fill', 'none');
+      line.setAttribute('stroke', '#c85f45');
+      line.setAttribute('stroke-width', '2');
+      line.setAttribute('stroke-linejoin', 'round');
+      line.setAttribute('stroke-linecap', 'round');
+      svg.appendChild(line);
+    }
+    for (const move of moves) {
+      const requested = [{ x: move.event.x as number, z: move.event.z as number }, ...move.points].map(project);
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      const flagged = move.event.kind === 'flag';
+      path.setAttribute('points', requested.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '));
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', flagged ? '#d34636' : '#4b8fc8');
+      path.setAttribute('stroke-width', flagged ? '2.2' : '1.4');
+      path.setAttribute('stroke-dasharray', '4 4');
+      path.setAttribute('stroke-linejoin', 'round');
+      path.setAttribute('stroke-linecap', 'round');
+      svg.appendChild(path);
+      const end = requested[requested.length - 1];
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', end.x.toFixed(1));
+      dot.setAttribute('cy', end.y.toFixed(1));
+      dot.setAttribute('r', flagged ? '4.2' : '2.8');
+      dot.setAttribute('fill', flagged ? '#d34636' : '#4b8fc8');
+      svg.appendChild(dot);
+    }
     for (const [index, point] of projected.entries()) {
       if (index !== 0 && index !== projected.length - 1 && points[index].kind !== 'flag') continue;
       const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -1376,7 +1529,158 @@ export class AdminPanel {
       svg.appendChild(dot);
     }
     wrap.appendChild(svg);
+    const flaggedMoves = moves.filter(move => move.event.kind === 'flag').length;
+    const legend = document.createElement('div');
+    legend.textContent = `${points.length} server position samples | ${moves.length} move requests | ${flaggedMoves} rejected`;
+    legend.style.cssText = `font-size: 10px; color: #d9c6a2;`;
+    wrap.appendChild(legend);
     return wrap;
+  }
+
+  private renderCursorRoute(events: AdminBotReplayEvent[]): HTMLDivElement {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = `display: flex; flex-direction: column; gap: 6px;`;
+    const samples = cursorReplaySamples(events);
+    const hasTracePackets = events.some(event => event.opcode === ClientOpcode.CURSOR_TRACE);
+    const legacyTrails = hasTracePackets ? [] : events
+      .map(cursorTrail)
+      .filter(trail => trail.length > 1)
+      .slice(-30);
+    if (samples.length === 0 && legacyTrails.length === 0) {
+      const empty = document.createElement('div');
+      empty.textContent = 'No cursor samples in this trace.';
+      empty.style.cssText = `font-size: 12px; color: #d9c6a2;`;
+      wrap.appendChild(empty);
+      return wrap;
+    }
+
+    const width = 520;
+    const height = 210;
+    const pad = 14;
+    const project = (point: { x: number; y: number; width?: number; height?: number }) => ({
+      x: pad + (Math.max(0, Math.min(1, point.x / (point.width ?? 1000))) * (width - pad * 2)),
+      y: pad + (Math.max(0, Math.min(1, point.y / (point.height ?? 1000))) * (height - pad * 2)),
+    });
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.style.cssText = `
+      width: 100%;
+      height: auto;
+      min-height: 170px;
+      border: 1px solid rgba(84, 70, 50, 0.56);
+      background: rgba(8, 6, 5, 0.42);
+      box-sizing: border-box;
+    `;
+    const frame = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    frame.setAttribute('x', String(pad));
+    frame.setAttribute('y', String(pad));
+    frame.setAttribute('width', String(width - pad * 2));
+    frame.setAttribute('height', String(height - pad * 2));
+    frame.setAttribute('fill', 'none');
+    frame.setAttribute('stroke', 'rgba(217,198,162,0.28)');
+    frame.setAttribute('stroke-width', '1');
+    svg.appendChild(frame);
+
+    if (samples.length > 1) {
+      const projected = samples.map(project);
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      line.setAttribute('points', projected.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '));
+      line.setAttribute('fill', 'none');
+      line.setAttribute('stroke', hasTracePackets ? '#45b8c8' : '#6d7fae');
+      line.setAttribute('stroke-width', hasTracePackets ? '1.8' : '1.3');
+      line.setAttribute('stroke-linejoin', 'round');
+      line.setAttribute('stroke-linecap', 'round');
+      svg.appendChild(line);
+    }
+    for (const trail of legacyTrails) {
+      const projected = trail.map(project);
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      line.setAttribute('points', projected.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '));
+      line.setAttribute('fill', 'none');
+      line.setAttribute('stroke', '#45b8c8');
+      line.setAttribute('stroke-width', '2');
+      line.setAttribute('stroke-linejoin', 'round');
+      line.setAttribute('stroke-linecap', 'round');
+      svg.appendChild(line);
+    }
+    for (const [index, raw] of samples.entries()) {
+      const kind = cursorEventKind(raw.flags);
+      if (!raw.input && index !== 0 && index !== samples.length - 1 && kind === 'move' && raw.buttons === 0) continue;
+      const point = project(raw);
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', point.x.toFixed(1));
+      dot.setAttribute('cy', point.y.toFixed(1));
+      dot.setAttribute('r', raw.input || raw.buttons > 0 || kind !== 'move' ? '3.8' : '2.8');
+      dot.setAttribute('fill', cursorSampleColor(raw, index));
+      const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      title.textContent = `${kind}${raw.buttons > 0 ? ` buttons=${raw.buttons}` : ''}`;
+      dot.appendChild(title);
+      svg.appendChild(dot);
+    }
+    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    const first = samples[0];
+    if (first) {
+      const point = project(first);
+      marker.setAttribute('cx', point.x.toFixed(1));
+      marker.setAttribute('cy', point.y.toFixed(1));
+      marker.setAttribute('fill', cursorSampleColor(first, 0));
+    }
+    marker.setAttribute('r', '4');
+    marker.setAttribute('stroke', '#15100c');
+    marker.setAttribute('stroke-width', '1.2');
+    svg.appendChild(marker);
+    const controls = document.createElement('div');
+    controls.style.cssText = `display: flex; align-items: center; gap: 8px;`;
+    const play = this.smallButton('Play cursor', '#2f5f8f');
+    const durationMs = samples.length > 1 ? Math.max(0, samples[samples.length - 1].t - samples[0].t) : 0;
+    const downCount = samples.filter(sample => cursorEventKind(sample.flags) === 'down').length;
+    const upCount = samples.filter(sample => cursorEventKind(sample.flags) === 'up').length;
+    const dragCount = samples.filter(sample => cursorEventKind(sample.flags) === 'move' && sample.buttons > 0).length;
+    const label = document.createElement('div');
+    label.textContent = `${samples.length} samples${durationMs > 0 ? ` over ${(durationMs / 1000).toFixed(1)}s` : ''}${hasTracePackets ? ` | ${downCount} down / ${upCount} up / ${dragCount} drag` : ''}`;
+    label.style.cssText = `font-size: 10px; color: #d9c6a2;`;
+    play.disabled = samples.length < 2;
+    play.onclick = () => this.playCursorReplay(samples, marker, project, play);
+    controls.append(play, label);
+    wrap.appendChild(controls);
+    wrap.appendChild(svg);
+    const legend = document.createElement('div');
+    legend.textContent = hasTracePackets
+      ? 'raw CSS pixels replayed against recorded viewport size'
+      : `${legacyTrails.length} legacy input trails | normalized viewport coords`;
+    legend.style.cssText = `font-size: 10px; color: #d9c6a2;`;
+    wrap.appendChild(legend);
+    return wrap;
+  }
+
+  private playCursorReplay(
+    samples: CursorReplaySample[],
+    marker: SVGCircleElement,
+    project: (point: CursorReplaySample) => { x: number; y: number },
+    button: HTMLButtonElement,
+  ): void {
+    if (samples.length < 2) return;
+    const firstT = samples[0].t;
+    const duration = Math.max(1, samples[samples.length - 1].t - firstT);
+    const startedAt = performance.now();
+    let index = 0;
+    button.disabled = true;
+    button.textContent = 'Playing...';
+    const step = () => {
+      const replayT = firstT + Math.min(duration, performance.now() - startedAt);
+      while (index < samples.length - 1 && samples[index + 1].t <= replayT) index++;
+      const point = project(samples[index]);
+      marker.setAttribute('cx', point.x.toFixed(1));
+      marker.setAttribute('cy', point.y.toFixed(1));
+      marker.setAttribute('fill', cursorSampleColor(samples[index], index));
+      if (replayT < firstT + duration) {
+        requestAnimationFrame(step);
+      } else {
+        button.disabled = false;
+        button.textContent = 'Play cursor';
+      }
+    };
+    requestAnimationFrame(step);
   }
 
   private replayTimelineRow(event: AdminBotReplayEvent): HTMLDivElement {
@@ -1429,15 +1733,36 @@ export class AdminPanel {
   }
 
   private replayEventText(event: AdminBotReplayEvent): string {
-    if (event.kind === 'flag') return `${event.reason ?? 'flag'} opcode ${event.opcode ?? '-'}`;
-    if (event.kind === 'client') return `client opcode ${event.opcode ?? '-'} ${event.result ?? ''}`.trim();
-    if (event.kind === 'server') return `server opcode ${event.opcode ?? '-'} ${event.byteLength ?? 0}B`;
+    if (event.kind === 'flag') return `${event.reason ?? 'flag'} ${opcodeName('client', event.opcode)}`;
+    if (event.kind === 'client') return `${opcodeName('client', event.opcode)} ${event.result ?? ''}`.trim();
+    if (event.kind === 'server') return `${opcodeName('server', event.opcode)} ${event.byteLength ?? 0}B`;
     if (event.kind === 'snapshot') return `snapshot ${event.result ?? ''}`.trim();
     return `${event.kind} ${event.result ?? ''}`.trim();
   }
 
   private replayEventMeta(event: AdminBotReplayEvent): string {
     const loc = event.x == null || event.z == null ? '-' : `${event.x.toFixed(1)},${event.z.toFixed(1)}`;
+    if (event.opcode === ClientOpcode.PLAYER_MOVE) {
+      const waypoints = moveWaypoints(event.values);
+      const dest = waypoints[waypoints.length - 1];
+      const ticket = replayTicketText(event);
+      return `${dest ? `move ${waypoints.length} -> ${dest.x.toFixed(1)},${dest.z.toFixed(1)}` : 'move'}${ticket ? `; ${ticket}` : ''} @ ${loc}`;
+    }
+    if (event.opcode === ClientOpcode.CLIENT_INPUT && event.values.length >= 4) {
+      const trail = Math.max(0, Math.floor((event.values.length - 11) / 2));
+      return `input #${event.values[1]} ${event.values[2]},${event.values[3]}${trail > 0 ? `; ${trail} trail pts` : ''} @ ${loc}`;
+    }
+    if (event.opcode === ClientOpcode.CURSOR_TRACE && event.values.length >= 3) {
+      return `cursor trace ${event.values[2]} pts ${event.values[0]}x${event.values[1]} @ ${loc}`;
+    }
+    if (event.opcode === ClientOpcode.CURSOR_POSITION && event.values.length >= 2) {
+      return `cursor ${event.values[0]},${event.values[1]} @ ${loc}`;
+    }
+    if (event.opcode === ClientOpcode.CLIENT_ACTIVITY && event.values.length >= 4) {
+      return `activity #${event.values[1]} ${event.values[2]},${event.values[3]} @ ${loc}`;
+    }
+    const ticket = replayTicketText(event);
+    if (ticket) return `${ticket} @ ${loc}`;
     if (event.values.length > 0) return `[${event.values.slice(0, 4).join(',')}] ${loc}`;
     return loc;
   }
@@ -2566,6 +2891,15 @@ export class AdminPanel {
         packets.appendChild(this.summaryPill(`${suspiciousPacketReasonLabel(entry.reason)}: ${this.formatNumber(entry.count)}`, '#4d355f'));
       }
       root.appendChild(this.detailSection('Suspicious packets', packets));
+    }
+
+    if (account.flagCounts.length > 0) {
+      const flagsWrap = document.createElement('div');
+      flagsWrap.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px;`;
+      for (const entry of account.flagCounts.slice(0, 8)) {
+        flagsWrap.appendChild(this.summaryPill(`${suspiciousPacketReasonLabel(entry.flag)}: ${this.formatNumber(entry.count)}`, '#6b3b34'));
+      }
+      root.appendChild(this.detailSection('Replay flags', flagsWrap));
     }
 
     if (account.topPathDestinations.length > 0 || account.sharedDeviceAlts.length > 0 || account.sharedIpAlts.length > 0 || account.vpnLikeIp) {

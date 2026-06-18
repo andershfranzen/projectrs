@@ -75,6 +75,7 @@ export interface InputShapeRecord {
   coalescedCount: number;
   pathPx: number;
   directPx: number;
+  trail?: Array<[number, number]>;
 }
 
 export interface InputTicketRecord {

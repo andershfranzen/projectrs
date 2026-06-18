@@ -50,8 +50,18 @@ describe('BotReplayRecorder', () => {
         proof: { inputSeq: 9, capabilityId: 77, hasCapability: true },
         requiresInputProof: true,
         hasValidInputTicket: true,
-        inputTicket: { kind: 1, x: 500, y: 500 },
+        inputTicket: { kind: 1, x: 500, y: 500, shape: { moveCount: 2, pathPx: 40, trail: [[100, 100], [500, 500]] } },
         actionCapability: { kind: 2, targetEntityId: 10001, actionIndex: 0 },
+      });
+      const cursorTraceValues = [800, 600, 2, 20, 11, 22, 1, 73, 5, 15, 28, 0, 73];
+      recorder.recordClientCommand(player, 2, {
+        opcode: ClientOpcode.CURSOR_TRACE,
+        values: cursorTraceValues,
+        proof: null,
+        requiresInputProof: false,
+        hasValidInputTicket: false,
+        inputTicket: null,
+        actionCapability: null,
       });
       recorder.recordServerPacket(player, 3, packet);
       recorder.recordFlag(player, 4, ClientOpcode.PLAYER_INTERACT_OBJECT, 'replayed-action-capability', [10001, 0]);
@@ -59,11 +69,14 @@ describe('BotReplayRecorder', () => {
       const detail = db.getAdminBotReplay(replayId ?? 0);
 
       const client = detail?.events.find(event => event.kind === 'client');
+      const cursorTrace = detail?.events.find(event => event.opcode === ClientOpcode.CURSOR_TRACE);
       const server = detail?.events.find(event => event.kind === 'server');
       const flag = detail?.events.find(event => event.kind === 'flag');
 
       expect(client?.opcode).toBe(ClientOpcode.PLAYER_INTERACT_OBJECT);
       expect(client?.details.proof).toEqual({ inputSeq: 9, capabilityId: 77, hasCapability: true });
+      expect((client?.details.inputTicket as any)?.shape?.trail).toEqual([[100, 100], [500, 500]]);
+      expect(cursorTrace?.values).toEqual(cursorTraceValues);
       expect(server?.opcode).toBe(ServerOpcode.PLAYER_STATS);
       expect(server?.rawBase64).toBe(Buffer.from(packet).toString('base64'));
       expect(flag?.reason).toBe('replayed-action-capability');

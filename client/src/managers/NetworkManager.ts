@@ -72,6 +72,14 @@ interface PointerInputSample {
   c: number;
 }
 
+interface CursorTraceSample {
+  t: number;
+  x: number;
+  y: number;
+  buttons: number;
+  flags: number;
+}
+
 interface InputShapeStats {
   flags: number;
   buttons: number;
@@ -80,6 +88,7 @@ interface InputShapeStats {
   coalescedCount: number;
   pathPx: number;
   directPx: number;
+  trail: number[];
 }
 
 const GAME_HEARTBEAT_INTERVAL_MS = 5_000;
@@ -95,6 +104,14 @@ const INPUT_SHAPE_VISIBLE = 16;
 const INPUT_SHAPE_WINDOW_MS = 1_500;
 const INPUT_SHAPE_MAX_POINTER_SAMPLES = 48;
 const INPUT_SHAPE_MAX_VALUE = 32_000;
+const CURSOR_TRACE_FLUSH_MS = 250;
+const CURSOR_TRACE_MAX_SAMPLES_PER_PACKET = 96;
+const CURSOR_TRACE_MAX_BUFFERED_SAMPLES = 512;
+const CURSOR_TRACE_EVENT_MOVE = 1;
+const CURSOR_TRACE_EVENT_DOWN = 2;
+const CURSOR_TRACE_EVENT_UP = 3;
+const CURSOR_TRACE_EVENT_CANCEL = 4;
+const CURSOR_TRACE_TRUSTED = 1 << 6;
 
 /** Opcodes whose payload is `[strLen (2 bytes), utf8 bytes, trailing int16s]`
  *  instead of the int16-array layout. Handled exclusively by raw handlers;
@@ -161,7 +178,10 @@ export class NetworkManager {
   private static readonly MAX_RECV_QUEUE_BYTES = 16 * (1 << 20); // 16 MiB
   private lastActivitySentAt: number = -Infinity;
   private lastCursorSentAt: number = -Infinity;
+  private lastCursorTraceSentAt: number = -Infinity;
+  private cursorTraceFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private pointerInputSamples: PointerInputSample[] = [];
+  private cursorTraceSamples: CursorTraceSample[] = [];
   private lastPointerDownAt: number | null = null;
   private lastPointerDwellMs: number = 0;
   private lastPointerFlags: number = 0;
@@ -189,6 +209,20 @@ export class NetworkManager {
       clearTimeout(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+  }
+
+  private resetCursorTrace(): void {
+    if (this.cursorTraceFlushTimer !== null) {
+      clearTimeout(this.cursorTraceFlushTimer);
+      this.cursorTraceFlushTimer = null;
+    }
+    this.cursorTraceSamples = [];
+    this.pointerInputSamples = [];
+    this.lastCursorTraceSentAt = -Infinity;
+    this.lastPointerDownAt = null;
+    this.lastPointerDwellMs = 0;
+    this.lastPointerFlags = 0;
+    this.lastPointerButtons = 0;
   }
 
   private markGameMessageReceived(): void {
@@ -228,6 +262,7 @@ export class NetworkManager {
   private failGameSocket(socket: WebSocket | null, code: number, reason: string): void {
     if (socket && this.gameSocket !== socket) return;
     this.stopHeartbeat();
+    this.resetCursorTrace();
     this.socketGeneration++;
     this.connected = false;
     this.gameCipherKeys = null;
@@ -251,6 +286,7 @@ export class NetworkManager {
     const generation = this.socketGeneration;
     this.connected = false;
     this.stopHeartbeat();
+    this.resetCursorTrace();
     this.closeQuietly(this.gameSocket);
     this.closeQuietly(this.chatSocket);
     this.gameSocket = null;
@@ -267,6 +303,7 @@ export class NetworkManager {
     this.recvCipherQueue = Promise.resolve();
     this.recvQueueBytes = 0;
     this.lastCursorSentAt = -Infinity;
+    this.lastCursorTraceSentAt = -Infinity;
     this.pendingInputTicketSeq = null;
     this.inputTicketBurst = null;
 
@@ -716,11 +753,30 @@ export class NetworkManager {
       this.lastPointerDwellMs = Math.max(0, Math.min(INPUT_SHAPE_MAX_VALUE, Math.round(now - this.lastPointerDownAt)));
       this.lastPointerDownAt = null;
     }
-    if (event.type !== 'pointermove') return;
-    let coalescedCount = 0;
-    try { coalescedCount = event.getCoalescedEvents?.().length ?? 0; } catch { coalescedCount = 0; }
-    this.pointerInputSamples.push({ t: now, x: event.clientX, y: event.clientY, c: coalescedCount });
+    const samples = this.pointerTraceEvents(event);
+    const coalescedCount = event.type === 'pointermove' && samples.length > 1 ? samples.length : 0;
+    for (const [index, sample] of samples.entries()) {
+      const sampleTime = this.pointerEventTime(sample, now);
+      if (event.type === 'pointermove') {
+        this.pointerInputSamples.push({
+          t: sampleTime,
+          x: sample.clientX,
+          y: sample.clientY,
+          c: index === samples.length - 1 ? coalescedCount : 0,
+        });
+      }
+      this.cursorTraceSamples.push({
+        t: sampleTime,
+        x: sample.clientX,
+        y: sample.clientY,
+        buttons: sample.buttons,
+        flags: this.cursorTraceFlags(event),
+      });
+    }
     this.trimPointerInputSamples(now);
+    this.trimCursorTraceSamples();
+    this.flushCursorTrace(false);
+    this.scheduleCursorTraceFlush();
   }
 
   recordKeyboardInput(event: KeyboardEvent): void {
@@ -746,6 +802,7 @@ export class NetworkManager {
         coalescedCount: 0,
         pathPx: 0,
         directPx: 0,
+        trail: [],
       };
     }
 
@@ -762,6 +819,7 @@ export class NetworkManager {
     const first = this.pointerInputSamples[0];
     const last = this.pointerInputSamples[this.pointerInputSamples.length - 1];
     const directPx = first && last ? Math.hypot(last.x - first.x, last.y - first.y) : 0;
+    const trail = this.pointerInputSamples.flatMap(sample => this.normalizeViewportPoint(sample.x, sample.y));
     return {
       flags: this.lastPointerFlags || (document.visibilityState !== 'hidden' ? INPUT_SHAPE_VISIBLE : 0),
       buttons: this.lastPointerButtons,
@@ -770,6 +828,7 @@ export class NetworkManager {
       coalescedCount: Math.min(INPUT_SHAPE_MAX_VALUE, coalescedCount),
       pathPx: Math.min(INPUT_SHAPE_MAX_VALUE, Math.round(pathPx)),
       directPx: Math.min(INPUT_SHAPE_MAX_VALUE, Math.round(directPx)),
+      trail,
     };
   }
 
@@ -783,12 +842,82 @@ export class NetworkManager {
     }
   }
 
+  private trimCursorTraceSamples(): void {
+    if (this.cursorTraceSamples.length > CURSOR_TRACE_MAX_BUFFERED_SAMPLES) {
+      this.cursorTraceSamples.splice(0, this.cursorTraceSamples.length - CURSOR_TRACE_MAX_BUFFERED_SAMPLES);
+    }
+  }
+
+  private pointerTraceEvents(event: PointerEvent): PointerEvent[] {
+    if (event.type !== 'pointermove') return [event];
+    try {
+      const coalesced = event.getCoalescedEvents?.() ?? [];
+      return coalesced.length > 0 ? coalesced : [event];
+    } catch {
+      return [event];
+    }
+  }
+
+  private pointerEventTime(event: PointerEvent, fallback: number): number {
+    return Number.isFinite(event.timeStamp) && event.timeStamp >= 0 ? event.timeStamp : fallback;
+  }
+
+  private cursorTraceFlags(event: PointerEvent): number {
+    const kind = event.type === 'pointerdown'
+      ? CURSOR_TRACE_EVENT_DOWN
+      : event.type === 'pointerup'
+        ? CURSOR_TRACE_EVENT_UP
+        : event.type === 'pointercancel'
+          ? CURSOR_TRACE_EVENT_CANCEL
+          : CURSOR_TRACE_EVENT_MOVE;
+    const pointerType = event.pointerType === 'mouse' ? 1 : event.pointerType === 'touch' ? 2 : event.pointerType === 'pen' ? 3 : 0;
+    return kind | (pointerType << 3) | (event.isTrusted ? CURSOR_TRACE_TRUSTED : 0);
+  }
+
+  private flushCursorTrace(force: boolean): void {
+    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return;
+    if (this.cursorTraceSamples.length === 0) return;
+    const now = performance.now();
+    if (!force && now - this.lastCursorTraceSentAt < CURSOR_TRACE_FLUSH_MS) return;
+    if (this.cursorTraceFlushTimer !== null) {
+      clearTimeout(this.cursorTraceFlushTimer);
+      this.cursorTraceFlushTimer = null;
+    }
+    this.lastCursorTraceSentAt = now;
+    const viewportWidth = Math.max(1, Math.min(32767, Math.round(window.innerWidth || document.documentElement.clientWidth || 1)));
+    const viewportHeight = Math.max(1, Math.min(32767, Math.round(window.innerHeight || document.documentElement.clientHeight || 1)));
+    while (this.cursorTraceSamples.length > 0) {
+      const chunk = this.cursorTraceSamples.slice(0, CURSOR_TRACE_MAX_SAMPLES_PER_PACKET);
+      const values = [viewportWidth, viewportHeight, chunk.length];
+      for (const sample of chunk) {
+        values.push(
+          Math.max(0, Math.min(32767, Math.round(now - sample.t))),
+          Math.max(-32768, Math.min(32767, Math.round(sample.x))),
+          Math.max(-32768, Math.min(32767, Math.round(sample.y))),
+          Math.max(0, Math.min(31, sample.buttons | 0)),
+          Math.max(0, Math.min(32767, sample.flags | 0)),
+        );
+      }
+      if (!this.sendRawUnprotected(encodePacket(ClientOpcode.CURSOR_TRACE, ...values), 4005, 'cursor trace send failed')) return;
+      this.cursorTraceSamples.splice(0, chunk.length);
+    }
+  }
+
+  private scheduleCursorTraceFlush(): void {
+    if (this.cursorTraceSamples.length === 0 || this.cursorTraceFlushTimer !== null) return;
+    this.cursorTraceFlushTimer = setTimeout(() => {
+      this.cursorTraceFlushTimer = null;
+      this.flushCursorTrace(true);
+    }, CURSOR_TRACE_FLUSH_MS);
+  }
+
   private sendInputTicket(kind: ClientActivityKind, x: number, y: number, keepForNextCommand: boolean): number | null {
     if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return null;
     this.activitySeq = (this.activitySeq % 0x7fff) + 1;
     const seq = this.activitySeq;
     const shape = this.inputShapeStats(kind);
     if (keepForNextCommand) this.pendingInputTicketSeq = seq;
+    this.flushCursorTrace(true);
     if (!this.sendRawUnprotected(
       encodePacket(
         ClientOpcode.CLIENT_INPUT,
@@ -803,6 +932,7 @@ export class NetworkManager {
         shape.coalescedCount,
         shape.pathPx,
         shape.directPx,
+        ...shape.trail,
       ),
       4005,
       'input ticket send failed',
@@ -888,6 +1018,7 @@ export class NetworkManager {
   close(): void {
     this.socketGeneration++;
     this.stopHeartbeat();
+    this.resetCursorTrace();
     this.closeQuietly(this.gameSocket);
     this.closeQuietly(this.chatSocket);
     this.gameSocket = null;

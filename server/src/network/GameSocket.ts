@@ -258,20 +258,49 @@ function validateClientActivityValues(values: number[]): PacketValidationResult 
 }
 
 function validateClientInputValues(values: number[]): PacketValidationResult {
-  if (values.length !== 4 && values.length !== 11) return invalid('bad-client-input-shape');
+  if (values.length !== 4 && (values.length < 11 || (values.length - 11) % 2 !== 0)) return invalid('bad-client-input-shape');
   const validation = validateClientActivityValues(values.slice(0, 4));
   if (!validation.ok) return validation;
   if (!Number.isInteger(values[1]) || values[1] <= 0 || values[1] > 0x7fff) return invalid('bad-client-input-seq');
-  if (values.length === 11) {
+  if (values.length >= 11) {
     for (let i = 4; i < 11; i++) {
       if (!Number.isInteger(values[i]) || values[i] < 0 || values[i] > 32_000) return invalid('bad-client-input-shape');
+    }
+    for (let i = 11; i < values.length; i++) {
+      if (!Number.isInteger(values[i]) || values[i] < 0 || values[i] > 1000) return invalid('bad-client-input-shape');
     }
   }
   return OK_PACKET;
 }
 
+function validateCursorTraceValues(values: number[]): PacketValidationResult {
+  if (!hasValues(values, 3)) return invalid('missing-cursor-trace-values');
+  const [width, height, count] = values;
+  if (!Number.isInteger(width) || width < 1 || width > 32767) return invalid('bad-cursor-trace-viewport');
+  if (!Number.isInteger(height) || height < 1 || height > 32767) return invalid('bad-cursor-trace-viewport');
+  if (!Number.isInteger(count) || count < 1 || count > 192) return invalid('bad-cursor-trace-count');
+  if (values.length !== 3 + count * 5) return invalid('bad-cursor-trace-shape');
+  for (let i = 3; i < values.length; i += 5) {
+    const ageMs = values[i];
+    const x = values[i + 1];
+    const y = values[i + 2];
+    const buttons = values[i + 3];
+    const flags = values[i + 4];
+    if (!Number.isInteger(ageMs) || ageMs < 0 || ageMs > 32767) return invalid('bad-cursor-trace-age');
+    if (!Number.isInteger(x) || x < -32768 || x > 32767) return invalid('bad-cursor-trace-x');
+    if (!Number.isInteger(y) || y < -32768 || y > 32767) return invalid('bad-cursor-trace-y');
+    if (!Number.isInteger(buttons) || buttons < 0 || buttons > 31) return invalid('bad-cursor-trace-buttons');
+    if (!Number.isInteger(flags) || flags < 0 || flags > 32767) return invalid('bad-cursor-trace-flags');
+  }
+  return OK_PACKET;
+}
+
 function inputShapeFromValues(values: number[]): InputShapeRecord | undefined {
-  if (values.length !== 11) return undefined;
+  if (values.length < 11) return undefined;
+  const trail: Array<[number, number]> = [];
+  for (let i = 11; i + 1 < values.length; i += 2) {
+    trail.push([values[i], values[i + 1]]);
+  }
   return {
     flags: values[4],
     buttons: values[5],
@@ -280,6 +309,7 @@ function inputShapeFromValues(values: number[]): InputShapeRecord | undefined {
     coalescedCount: values[8],
     pathPx: values[9],
     directPx: values[10],
+    ...(trail.length > 0 ? { trail } : {}),
   };
 }
 
@@ -295,7 +325,12 @@ function opcodeCountsAsActivity(opcode: number): boolean {
   return opcode !== ClientOpcode.CLIENT_PING
     && opcode !== ClientOpcode.CLIENT_POSITION_Y
     && opcode !== ClientOpcode.CURSOR_POSITION
+    && opcode !== ClientOpcode.CURSOR_TRACE
     && opcode !== ClientOpcode.MAP_READY;
+}
+
+function opcodeCountsAgainstSocketFlood(opcode: number | null): boolean {
+  return opcode !== ClientOpcode.CURSOR_TRACE;
 }
 
 function magicOpcodeDebug(player: Player, opcode: ClientOpcode, values: number[], phase: string, details: Record<string, unknown> = {}): void {
@@ -604,6 +639,8 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
       return { bucket: 'input-ticket', maxMessages: 30, windowMs: 1000 };
     case ClientOpcode.CURSOR_POSITION:
       return { bucket: 'cursor', maxMessages: 8, windowMs: 10_000 };
+    case ClientOpcode.CURSOR_TRACE:
+      return { bucket: 'cursor-trace', maxMessages: 80, windowMs: 10_000 };
     case ClientOpcode.CLIENT_POSITION_Y:
       return { bucket: 'metadata', maxMessages: 8, windowMs: 1000 };
     default:
@@ -1041,6 +1078,9 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
     case ClientOpcode.CLIENT_INPUT:
       return validateClientInputValues(values);
 
+    case ClientOpcode.CURSOR_TRACE:
+      return validateCursorTraceValues(values);
+
     default:
       return invalid('unknown-opcode');
   }
@@ -1376,7 +1416,8 @@ function handleDecryptedGameSocketMessage(
   if (!playerId) return;
   const player = world.getPlayer(playerId);
   if (!player || player.ws !== ws || player.disconnected) return;
-  if (!player.checkRateLimit()) {
+  const socketBudgetOpcode = message.byteLength > 0 ? new Uint8Array(message)[0] : null;
+  if (opcodeCountsAgainstSocketFlood(socketBudgetOpcode) && !player.checkRateLimit()) {
     reportSuspiciousPacket(player, -1, 'rate-limit:socket', [], ws, world);
     return;
   }
@@ -1901,6 +1942,9 @@ function handleDecryptedGameSocketMessage(
       player.botStats?.recordCursorPosition(values[0], values[1]);
       break;
     }
+
+    case ClientOpcode.CURSOR_TRACE:
+      break;
 
     default:
       console.log(`Unknown game opcode: ${opcode}`);

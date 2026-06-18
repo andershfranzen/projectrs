@@ -23,7 +23,7 @@ export interface BotReplayClientCommandDetails {
     kind: number;
     x: number;
     y: number;
-    shape?: Record<string, number>;
+    shape?: Record<string, unknown>;
   } | null;
   actionCapability: {
     kind: number;
