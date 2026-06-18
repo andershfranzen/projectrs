@@ -66,7 +66,7 @@ import { startupTrace } from '../debug/StartupTrace';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, ActionCapabilityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, collectCompressedRouteTileKeys, compressedPathTileSteps, compressedPathTileStepsFromIndex, compressedRouteProgressSteps, compressedRouteSegmentIndexForTile, compressedRouteStepIndexForTile, splitLongCompressedPathSegments, getActiveMovementStep, normalizeMovementRouteForActiveStep, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, movementModeFromIndex, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode, type ActionCapabilityWire, type ActionCapabilityProof } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, ActionCapabilityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, collectCompressedRouteTileKeys, compressedPathTileSteps, compressedPathTileStepsFromIndex, compressedRouteProgressSteps, compressedRouteSegmentIndexForTile, compressedRouteStepIndexForTile, splitLongCompressedPathSegments, getActiveMovementStep, normalizeMovementRouteForActiveStep, findPathToReach, expandAndValidateWaypointPath, canTravel, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, movementModeFromIndex, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode, type ActionCapabilityWire, type ActionCapabilityProof } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -902,7 +902,7 @@ export class GameManager {
     this.gearOverridesReady = new Promise<void>((resolve) => { this.resolveGearOverridesReady = resolve; });
     this.token = token;
     this.username = username;
-    this.engine = new Engine(canvas, false, { antialias: false, adaptToDeviceRatio: false });
+    this.engine = new Engine(canvas, true, { antialias: true, adaptToDeviceRatio: false });
     // RS-style chunky pixels: keep the CSS size stable but allow an explicit
     // low-quality framebuffer for players who need the fill-rate savings.
     this.renderQualityMode = this.detectInitialRenderQualityMode();
@@ -2820,6 +2820,14 @@ export class GameManager {
     return this.chunkManager.getEffectiveHeight(x, z, floor, currentY);
   }
 
+  private getLocalPathCollisionY(
+    x: number = this.playerX,
+    z: number = this.playerZ,
+    floor: number = this.currentFloor,
+  ): number {
+    return this.getHeightAtFloor(x, z, floor, this.localPlayer?.position?.y);
+  }
+
   private applyFog(): void {
     const meta = this.chunkManager.getMeta();
     if (!meta) return;
@@ -4405,7 +4413,7 @@ export class GameManager {
 
   private isFishingToolItem(itemId: number): boolean {
     const toolType = this.itemDefsCache.get(itemId)?.toolType;
-    return toolType === 'fishing_net' || toolType === 'fishing_rod' || toolType === 'harpoon';
+    return toolType === 'fishing_net' || toolType === 'fishing_rod' || toolType === 'harpoon' || toolType === 'fishing_pot';
   }
 
   private hideSkillingShield(entityId: number, character: CharacterEntity): void {
@@ -7745,7 +7753,17 @@ export class GameManager {
   }
 
   private adoptLocalNpcCombatTargetFromServer(targetId: number): void {
-    if (targetId <= 0) return;
+    if (targetId <= 0) {
+      const pendingSingleCastSpell = this.pendingSingleCastSpell;
+      this.clearLocalNpcCombatState();
+      if (pendingSingleCastSpell >= 0 && this.autoCastSpellIndex < 0) {
+        this.pendingSingleCastSpell = pendingSingleCastSpell;
+      }
+      this.pendingFaceTargetEntityId = -1;
+      this._combatPathTimer = 0;
+      this.localPlayer?.clearFaceLock(true);
+      return;
+    }
     if (!this.entities.npcTargets.has(targetId) && !this.entities.npcSprites.has(targetId)) return;
     this.followTargetPlayerId = -1;
     this.followPathTimer = 0;
@@ -8133,7 +8151,11 @@ export class GameManager {
     if (this.autoCastSpellIndex >= 0) {
       this.combatTargetId = -1;
       this.magicTargetId = npcEntityId;
-      this.predictSpellCastMovementToNpc(npcEntityId);
+      if (!this.predictSpellCastMovementToNpc(npcEntityId)) {
+        this.clearLocalNpcCombatState();
+        if (target) this.faceLocalPlayerTowardNpc(npcEntityId, target);
+        return;
+      }
       this.sendNpcAttackIntent(npcEntityId);
       return;
     }
@@ -8166,7 +8188,9 @@ export class GameManager {
           if (this.destMarker) this.destMarker.isVisible = false;
           this.minimap?.clearDestination();
         } else {
+          this.clearLocalNpcCombatState();
           this.faceLocalPlayerTowardNpc(npcEntityId, target);
+          return;
         }
       }
     }
@@ -8187,7 +8211,10 @@ export class GameManager {
     if (spellIndex >= 0) {
       this.combatTargetId = -1;
       this.magicTargetId = targetId;
-      this.predictSpellCastMovementToNpc(targetId);
+      if (!this.predictSpellCastMovementToNpc(targetId)) {
+        this.clearLocalNpcCombatState();
+        return;
+      }
       this.sendNpcAttackIntent(targetId);
       return;
     }
@@ -8199,24 +8226,35 @@ export class GameManager {
     }
   }
 
-  private predictSpellCastMovementToNpc(npcEntityId: number): void {
+  private predictSpellCastMovementToNpc(npcEntityId: number): boolean {
     const target = this.entities.npcTargets.get(npcEntityId);
     if (target) {
+      const inCastRange = this.isPointInNpcInteractionRange(
+        npcEntityId,
+        target,
+        this.playerX,
+        this.playerZ,
+        SPELL_CAST_DISTANCE,
+        'chebyshev',
+        true,
+      );
       const shouldPredictWalk = this.pathIndex < this.path.length
-        || !this.isPlayerInNpcInteractionRange(npcEntityId, target, SPELL_CAST_DISTANCE);
+        || !inCastRange;
       if (shouldPredictWalk) {
-        const pathResult = this.findPathToNpcInteraction(npcEntityId, target, SPELL_CAST_DISTANCE, 'chebyshev');
+        const pathResult = this.findPathToNpcInteraction(npcEntityId, target, SPELL_CAST_DISTANCE, 'chebyshev', true);
         if (pathResult.path.length > 0) {
           this.startInteractionPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
           if (this.destMarker) this.destMarker.isVisible = false;
           this.minimap?.clearDestination();
-          return;
+          return true;
         }
-        if (this.keepCurrentPredictedStepForInteraction()) return;
+        if (inCastRange || this.keepCurrentPredictedStepForInteraction()) return true;
+        return false;
       }
     }
-    if (this.keepCurrentPredictedStepForInteraction()) return;
+    if (this.keepCurrentPredictedStepForInteraction()) return true;
     this.rootLocalPlayerForSpellCast();
+    return true;
   }
 
   private followPlayer(playerEntityId: number): void {
@@ -8958,7 +8996,7 @@ export class GameManager {
 
   private getMovementPathAnchor(): MovementPathAnchor {
     const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
-    const currentY = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
+    const currentY = this.getLocalPathCollisionY(this.playerX, this.playerZ, this.currentFloor);
     if (!activeStep) {
       return {
         activeStep: null,
@@ -9065,7 +9103,8 @@ export class GameManager {
       startZ,
       goalX,
       goalZ,
-      (x, z) => this.isTileBlockedOnFloorForPath(x, z, floor),
+      (x, z) => !this.isObjectCollisionTileLoaded(x, z)
+        || this.isTileBlockedOnFloorForPath(x, z, floor),
       this.chunkManager.getMapWidth(),
       this.chunkManager.getMapHeight(),
       maxSteps,
@@ -9442,13 +9481,10 @@ export class GameManager {
     }, preserveCurrentStep);
   }
 
-  private startPredictedPath(
+  private preparePredictedSendPath(
     path: { x: number; z: number }[],
-    preserveCurrentStep: boolean = false,
-    options: { coalesceDuplicateDestination?: boolean } = {},
-  ): boolean {
-    if (path.length === 0) return false;
-    if (this.controlledMoveUntilMs > 0) this.clearControlledMoveLock();
+    preserveCurrentStep: boolean,
+  ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } | null {
     const normalized = this.normalizePredictedPathForActiveStep(path, preserveCurrentStep);
     const splitPath = splitLongCompressedPathSegments(
       { x: this.playerX, z: this.playerZ },
@@ -9458,12 +9494,78 @@ export class GameManager {
     const sendPath = splitPath.length > PLAYER_MOVE_MAX_WAYPOINTS
       ? splitPath.slice(0, PLAYER_MOVE_MAX_WAYPOINTS)
       : splitPath;
+    if (sendPath.length === 0) return null;
+    return { path: sendPath, preserveCurrentStep: normalized.preserveCurrentStep };
+  }
+
+  private predictedRouteValidationStart(preserveCurrentStep: boolean): { start: { x: number; z: number }; floor: number; y: number } {
+    const activeStep = preserveCurrentStep && this.tileProgress > 0 ? this.getActiveUnitStep() : null;
+    const currentY = this.getLocalPathCollisionY(this.playerX, this.playerZ, this.currentFloor);
+    return {
+      start: activeStep ? activeStep.from : { x: this.playerX, z: this.playerZ },
+      floor: this.currentFloor,
+      y: currentY,
+    };
+  }
+
+  private isObjectCollisionTileLoaded(tileX: number, tileZ: number): boolean {
+    const objectsLoaded = this.chunkManager.isChunkObjectsLoaded?.bind(this.chunkManager);
+    return !objectsLoaded || objectsLoaded(tileX + 0.5, tileZ + 0.5);
+  }
+
+  private isPredictedSendPathValid(
+    path: { x: number; z: number }[],
+    preserveCurrentStep: boolean,
+  ): boolean {
+    const start = this.predictedRouteValidationStart(preserveCurrentStep);
+    const startTileX = Math.floor(start.start.x);
+    const startTileZ = Math.floor(start.start.z);
+    if (!this.isObjectCollisionTileLoaded(startTileX, startTileZ)) return false;
+    const collision = {
+      width: this.chunkManager.getMapWidth(),
+      height: this.chunkManager.getMapHeight(),
+      isTileBlocked: (tileX: number, tileZ: number) =>
+        !this.isObjectCollisionTileLoaded(tileX, tileZ)
+        || this.isTileBlockedOnFloorForPath(tileX, tileZ, start.floor),
+      isWallBlocked: (fromTileX: number, fromTileZ: number, toTileX: number, toTileZ: number) =>
+        this.isWallBlockedForPathOnFloor(fromTileX, fromTileZ, toTileX, toTileZ, start.floor, start.y),
+    };
+    const validated = expandAndValidateWaypointPath({
+      startX: start.start.x,
+      startZ: start.start.z,
+      waypoints: path,
+      initialState: null,
+      maxSegmentTiles: PLAYER_MOVE_MAX_SEGMENT_TILES,
+      maxRequestedTiles: PLAYER_MOVE_MAX_WAYPOINTS * PLAYER_MOVE_MAX_SEGMENT_TILES,
+      canStep: step => canTravel(collision, step.fromTileX, step.fromTileZ, step.stepX, step.stepZ),
+    });
+    return !validated.truncated;
+  }
+
+  private startPredictedPath(
+    path: { x: number; z: number }[],
+    preserveCurrentStep: boolean = false,
+    options: { coalesceDuplicateDestination?: boolean } = {},
+  ): boolean {
+    if (path.length === 0) return false;
+    let prepared = this.preparePredictedSendPath(path, preserveCurrentStep);
+    if (!prepared) return false;
+    if (!this.isPredictedSendPathValid(prepared.path, prepared.preserveCurrentStep)) {
+      const destination = prepared.path.at(-1);
+      if (!destination) return false;
+      const reroute = this.findPathFromMovementAnchor(destination.x, destination.z, 500);
+      prepared = this.preparePredictedSendPath(reroute.path, reroute.preserveCurrentStep);
+      if (!prepared || !this.isPredictedSendPathValid(prepared.path, prepared.preserveCurrentStep)) return false;
+    }
+
+    const sendPath = prepared.path;
     if (sendPath.length === 0) return false;
     if (this.shouldCoalesceDuplicatePredictedPath(sendPath, options.coalesceDuplicateDestination ?? true)) return false;
+    if (this.controlledMoveUntilMs > 0) this.clearControlledMoveLock();
     this.followTargetPlayerId = -1;
     if (!this.network.sendMove(sendPath, this.movementMode)) return false;
     this.noteLocalMoveCommandSent();
-    this.startLocalPredictedPath(sendPath, normalized.preserveCurrentStep, true);
+    this.startLocalPredictedPath(sendPath, prepared.preserveCurrentStep, true);
     return true;
   }
 
@@ -11209,7 +11311,7 @@ export class GameManager {
   };
 
   private isWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number): boolean => {
-    const playerY = this.localPlayer?.position?.y ?? this.getHeight(this.playerX, this.playerZ);
+    const playerY = this.getLocalPathCollisionY();
     return this.isWallBlockedForPathOnFloor(fx, fz, tx, tz, this.currentFloor, playerY);
   };
 
@@ -11227,7 +11329,7 @@ export class GameManager {
   };
 
   private isGroundWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number): boolean => {
-    const playerY = this.localPlayer?.position?.y ?? this.getHeight(this.playerX, this.playerZ);
+    const playerY = this.getLocalPathCollisionY(this.playerX, this.playerZ, 0);
     return this.chunkManager.isWallBlocked(fx, fz, tx, tz, playerY);
   };
 
@@ -12277,56 +12379,72 @@ export class GameManager {
     if (!this.localPlayer) return;
     const now = performance.now();
     if (this.autoCastSpellIndex >= 0 && this.magicTargetId >= 0) {
-      if (this.isNonCombatNpc(this.magicTargetId)) {
+      const targetId = this.magicTargetId;
+      if (this.isNonCombatNpc(targetId)) {
         this.clearLocalNpcCombatState();
         return;
       }
-      const npcTarget = this.entities.npcTargets.get(this.magicTargetId);
+      const npcTarget = this.entities.npcTargets.get(targetId);
       if (!npcTarget) return;
       if (this._combatPathTimer > 0 || now < this.castingUntil) return;
-      const fp = this.distToNpcFootprint(this.magicTargetId, npcTarget, this.playerX, this.playerZ);
-      if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= SPELL_CAST_DISTANCE) return;
+      const inRange = this.isPointInNpcInteractionRange(
+        targetId,
+        npcTarget,
+        this.playerX,
+        this.playerZ,
+        SPELL_CAST_DISTANCE,
+        'chebyshev',
+        true,
+      );
+      if (inRange) return;
       this._combatPathTimer = 0.6;
-      const pathResult = this.findPathToNpcInteraction(this.magicTargetId, npcTarget, SPELL_CAST_DISTANCE, 'chebyshev');
+      const pathResult = this.findPathToNpcInteraction(targetId, npcTarget, SPELL_CAST_DISTANCE, 'chebyshev', true);
       if (pathResult.path.length > 0) {
         this.startInteractionPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
-        this.sendNpcAttackIntent(this.magicTargetId);
+        this.sendNpcAttackIntent(targetId);
+      } else {
+        this.clearLocalNpcCombatState();
+        this.faceLocalPlayerTowardNpc(targetId, npcTarget);
       }
       return;
     }
 
     if (this.combatTargetId < 0) return;
-    if (this.isNonCombatNpc(this.combatTargetId)) {
+    const targetId = this.combatTargetId;
+    if (this.isNonCombatNpc(targetId)) {
       this.clearLocalNpcCombatState();
       return;
     }
-    const npcTarget = this.entities.npcTargets.get(this.combatTargetId);
+    const npcTarget = this.entities.npcTargets.get(targetId);
     if (!npcTarget) return;
     const attackRange = this.getLocalNpcAttackRange();
     const rangeMode = this.getLocalNpcAttackRangeMode();
     const requireRangedLineOfSight = this.isLocalRangedWeapon();
-    const inRange = this.isPointInNpcInteractionRange(this.combatTargetId, npcTarget, this.playerX, this.playerZ, attackRange, rangeMode, requireRangedLineOfSight);
+    const inRange = this.isPointInNpcInteractionRange(targetId, npcTarget, this.playerX, this.playerZ, attackRange, rangeMode, requireRangedLineOfSight);
     if (inRange) {
       const trimmedPath = this.trimPredictedPathToCurrentTileStep();
-      if (trimmedPath || (this._combatPathTimer <= 0 && this.shouldReassertLocalCombatIntent(this.combatTargetId, now))) {
+      if (trimmedPath || (this._combatPathTimer <= 0 && this.shouldReassertLocalCombatIntent(targetId, now))) {
         this._combatPathTimer = 0.6;
-        this.sendNpcAttackIntent(this.combatTargetId, now);
+        this.sendNpcAttackIntent(targetId, now);
       }
       return;
     }
     if (this.pathIndex < this.path.length) return;
     if (this._combatPathTimer > 0) return;
     this._combatPathTimer = 0.6;
-    const pathResult = this.findPathToNpcInteraction(this.combatTargetId, npcTarget, attackRange, rangeMode, requireRangedLineOfSight);
+    const pathResult = this.findPathToNpcInteraction(targetId, npcTarget, attackRange, rangeMode, requireRangedLineOfSight);
     const newPath = pathResult.path;
     if (newPath.length > 0) {
       this.startInteractionPredictedPath(newPath, pathResult.preserveCurrentStep);
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
+      this.sendNpcAttackIntent(targetId);
+    } else {
+      this.clearLocalNpcCombatState();
+      this.faceLocalPlayerTowardNpc(targetId, npcTarget);
     }
-    this.sendNpcAttackIntent(this.combatTargetId);
   }
 
   private shouldKeepLocalCombatWalkLoopAlive(now: number = performance.now()): boolean {

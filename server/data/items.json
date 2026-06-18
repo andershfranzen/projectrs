@@ -5773,84 +5773,13 @@
     "meleeStrength": 13
   },
   {
-    "id": 500,
-    "name": "Raw Minnow",
-    "description": "A raw minnow.",
-    "stackable": false,
-    "equippable": false,
-    "value": 3
-  },
-  {
     "id": 501,
     "name": "Raw Crayfish",
     "description": "A raw crayfish.",
     "stackable": false,
     "equippable": false,
-    "value": 5
-  },
-  {
-    "id": 502,
-    "name": "Raw Bluegill",
-    "description": "A raw bluegill.",
-    "stackable": false,
-    "equippable": false,
-    "value": 8
-  },
-  {
-    "id": 503,
-    "name": "Raw Perch",
-    "description": "A raw perch.",
-    "stackable": false,
-    "equippable": false,
-    "value": 10
-  },
-  {
-    "id": 504,
-    "name": "Raw Roach",
-    "description": "A raw roach.",
-    "stackable": false,
-    "equippable": false,
-    "value": 13
-  },
-  {
-    "id": 505,
-    "name": "Raw Trout",
-    "description": "A raw trout.",
-    "stackable": false,
-    "equippable": false,
-    "value": 15
-  },
-  {
-    "id": 506,
-    "name": "Raw Carp",
-    "description": "A raw carp.",
-    "stackable": false,
-    "equippable": false,
-    "value": 18
-  },
-  {
-    "id": 507,
-    "name": "Raw Salmon",
-    "description": "A raw salmon.",
-    "stackable": false,
-    "equippable": false,
-    "value": 22
-  },
-  {
-    "id": 508,
-    "name": "Raw Bass",
-    "description": "A raw bass.",
-    "stackable": false,
-    "equippable": false,
-    "value": 25
-  },
-  {
-    "id": 509,
-    "name": "Raw Mackerel",
-    "description": "A raw mackerel.",
-    "stackable": false,
-    "equippable": false,
-    "value": 28
+    "value": 5,
+    "model": "/assets/models/Food/CrayfishRaw.glb"
   },
   {
     "id": 510,
@@ -5858,103 +5787,8 @@
     "description": "A raw tuna.",
     "stackable": false,
     "equippable": false,
-    "value": 33
-  },
-  {
-    "id": 511,
-    "name": "Raw King Crab",
-    "description": "A raw king crab.",
-    "stackable": false,
-    "equippable": false,
-    "value": 37
-  },
-  {
-    "id": 512,
-    "name": "Raw Catfish",
-    "description": "A raw catfish.",
-    "stackable": false,
-    "equippable": false,
-    "value": 41
-  },
-  {
-    "id": 513,
-    "name": "Raw Snapper",
-    "description": "A raw snapper.",
-    "stackable": false,
-    "equippable": false,
-    "value": 46
-  },
-  {
-    "id": 514,
-    "name": "Raw Sturgeon",
-    "description": "A raw sturgeon.",
-    "stackable": false,
-    "equippable": false,
-    "value": 51
-  },
-  {
-    "id": 515,
-    "name": "Raw Swordfish",
-    "description": "A raw swordfish.",
-    "stackable": false,
-    "equippable": false,
-    "value": 56
-  },
-  {
-    "id": 516,
-    "name": "Raw Reef Shark",
-    "description": "A raw reef shark.",
-    "stackable": false,
-    "equippable": false,
-    "value": 62
-  },
-  {
-    "id": 517,
-    "name": "Raw Halibut",
-    "description": "A raw halibut.",
-    "stackable": false,
-    "equippable": false,
-    "value": 68
-  },
-  {
-    "id": 518,
-    "name": "Raw Hammerhead Shark",
-    "description": "A raw hammerhead shark.",
-    "stackable": false,
-    "equippable": false,
-    "value": 73
-  },
-  {
-    "id": 519,
-    "name": "Raw Marlin",
-    "description": "A raw marlin.",
-    "stackable": false,
-    "equippable": false,
-    "value": 80
-  },
-  {
-    "id": 520,
-    "name": "Raw Thresher Shark",
-    "description": "A raw thresher shark.",
-    "stackable": false,
-    "equippable": false,
-    "value": 87
-  },
-  {
-    "id": 521,
-    "name": "Raw Mako Shark",
-    "description": "A raw mako shark.",
-    "stackable": false,
-    "equippable": false,
-    "value": 93
-  },
-  {
-    "id": 522,
-    "name": "Raw Tiger Shark",
-    "description": "A raw tiger shark.",
-    "stackable": false,
-    "equippable": false,
-    "value": 101
+    "value": 33,
+    "model": "/assets/models/Food/TunaRaw.glb"
   },
   {
     "id": 523,
@@ -5962,24 +5796,8 @@
     "description": "A raw oarfish.",
     "stackable": false,
     "equippable": false,
-    "value": 108
-  },
-  {
-    "id": 524,
-    "name": "Raw Great White Shark",
-    "description": "A raw great white shark.",
-    "stackable": false,
-    "equippable": false,
-    "value": 117
-  },
-  {
-    "id": 525,
-    "name": "Minnow",
-    "description": "A cooked minnow. Heals 3 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 3,
-    "value": 7
+    "value": 108,
+    "model": "/assets/models/Food/OarfishRaw.glb"
   },
   {
     "id": 526,
@@ -5988,79 +5806,8 @@
     "stackable": false,
     "equippable": false,
     "healAmount": 3,
-    "value": 9
-  },
-  {
-    "id": 527,
-    "name": "Bluegill",
-    "description": "A cooked bluegill. Heals 4 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 4,
-    "value": 12
-  },
-  {
-    "id": 528,
-    "name": "Perch",
-    "description": "A cooked perch. Heals 5 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 5,
-    "value": 15
-  },
-  {
-    "id": 529,
-    "name": "Roach",
-    "description": "A cooked roach. Heals 6 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 6,
-    "value": 19
-  },
-  {
-    "id": 530,
-    "name": "Trout",
-    "description": "A cooked trout. Heals 7 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 7,
-    "value": 22
-  },
-  {
-    "id": 531,
-    "name": "Carp",
-    "description": "A cooked carp. Heals 8 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 8,
-    "value": 27
-  },
-  {
-    "id": 532,
-    "name": "Salmon",
-    "description": "A cooked salmon. Heals 9 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 9,
-    "value": 33
-  },
-  {
-    "id": 533,
-    "name": "Bass",
-    "description": "A cooked bass. Heals 10 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 10,
-    "value": 37
-  },
-  {
-    "id": 534,
-    "name": "Mackerel",
-    "description": "A cooked mackerel. Heals 11 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 11,
-    "value": 42
+    "value": 9,
+    "model": "/assets/models/Food/CrayfishCooked.glb"
   },
   {
     "id": 535,
@@ -6069,115 +5816,8 @@
     "stackable": false,
     "equippable": false,
     "healAmount": 12,
-    "value": 49
-  },
-  {
-    "id": 536,
-    "name": "King Crab",
-    "description": "A cooked king crab. Heals 13 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 13,
-    "value": 55
-  },
-  {
-    "id": 537,
-    "name": "Catfish",
-    "description": "A cooked catfish. Heals 14 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 14,
-    "value": 61
-  },
-  {
-    "id": 538,
-    "name": "Snapper",
-    "description": "A cooked snapper. Heals 15 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 15,
-    "value": 69
-  },
-  {
-    "id": 539,
-    "name": "Sturgeon",
-    "description": "A cooked sturgeon. Heals 16 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 16,
-    "value": 76
-  },
-  {
-    "id": 540,
-    "name": "Swordfish",
-    "description": "A cooked swordfish. Heals 17 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 17,
-    "value": 84
-  },
-  {
-    "id": 541,
-    "name": "Reef Shark",
-    "description": "A cooked reef shark. Heals 18 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 18,
-    "value": 93
-  },
-  {
-    "id": 542,
-    "name": "Halibut",
-    "description": "A cooked halibut. Heals 19 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 19,
-    "value": 102
-  },
-  {
-    "id": 543,
-    "name": "Hammerhead Shark",
-    "description": "A cooked hammerhead shark. Heals 20 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 20,
-    "value": 109
-  },
-  {
-    "id": 544,
-    "name": "Marlin",
-    "description": "A cooked marlin. Heals 21 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 21,
-    "value": 120
-  },
-  {
-    "id": 545,
-    "name": "Thresher Shark",
-    "description": "A cooked thresher shark. Heals 22 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 22,
-    "value": 130
-  },
-  {
-    "id": 546,
-    "name": "Mako Shark",
-    "description": "A cooked mako shark. Heals 23 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 23,
-    "value": 139
-  },
-  {
-    "id": 547,
-    "name": "Tiger Shark",
-    "description": "A cooked tiger shark. Heals 24 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 24,
-    "value": 151
+    "value": 49,
+    "model": "/assets/models/Food/TunaCooked.glb"
   },
   {
     "id": 548,
@@ -6186,16 +5826,8 @@
     "stackable": false,
     "equippable": false,
     "healAmount": 25,
-    "value": 162
-  },
-  {
-    "id": 549,
-    "name": "Great White Shark",
-    "description": "A cooked great white shark. Heals 26 HP.",
-    "stackable": false,
-    "equippable": false,
-    "healAmount": 26,
-    "value": 175
+    "value": 162,
+    "model": "/assets/models/Food/OarfishCooked.glb"
   },
   {
     "id": 550,
@@ -6277,5 +5909,84 @@
     "equippable": false,
     "value": 0,
     "model": "/assets/models/hides/BearHide.glb"
+  },
+  {
+    "id": 557,
+    "name": "Crab Pot",
+    "description": "A weighted pot for trapping shellfish.",
+    "stackable": false,
+    "equippable": false,
+    "equipSlot": "weapon",
+    "toolType": "fishing_pot",
+    "toolLevel": 1,
+    "toolBonus": 0,
+    "value": 10,
+    "model": "/assets/models/CrabPot.glb"
+  },
+  {
+    "id": 564,
+    "name": "Fishing Bait",
+    "description": "Small bait for rod fishing.",
+    "stackable": true,
+    "equippable": false,
+    "value": 1,
+    "icon": "/items/Fishing_Bait_380.png"
+  },
+  {
+    "id": 558,
+    "name": "Raw Lobster",
+    "description": "A raw lobster.",
+    "stackable": false,
+    "equippable": false,
+    "value": 34,
+    "model": "/assets/models/Food/LobsterRaw.glb"
+  },
+  {
+    "id": 559,
+    "name": "Lobster",
+    "description": "A cooked lobster. Heals 12 HP.",
+    "stackable": false,
+    "equippable": false,
+    "healAmount": 12,
+    "value": 50,
+    "model": "/assets/models/Food/LobsterCooked.glb"
+  },
+  {
+    "id": 560,
+    "name": "Raw Sardine",
+    "description": "A raw sardine.",
+    "stackable": false,
+    "equippable": false,
+    "value": 6,
+    "model": "/assets/models/Food/SardineRaw.glb"
+  },
+  {
+    "id": 561,
+    "name": "Sardine",
+    "description": "A cooked sardine. Heals 4 HP.",
+    "stackable": false,
+    "equippable": false,
+    "healAmount": 4,
+    "value": 11,
+    "model": "/assets/models/Food/SardineCooked.glb"
+  },
+  {
+    "id": 562,
+    "name": "Raw Octopus",
+    "description": "A raw octopus.",
+    "stackable": false,
+    "equippable": false,
+    "value": 31,
+    "model": "/assets/models/Food/OctopusRaw.glb"
+  },
+  {
+    "id": 563,
+    "name": "Octopus",
+    "description": "A cooked octopus. Heals 12 HP.",
+    "stackable": false,
+    "equippable": false,
+    "healAmount": 12,
+    "value": 48,
+    "model": "/assets/models/Food/OctopusCooked.glb"
   }
 ]

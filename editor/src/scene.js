@@ -122,6 +122,7 @@ import { openItemThumbnailBrowser } from './assets-system/ItemThumbnailBrowser'
 import { openItemStatsEditor } from './item-stats/ItemStatsEditor'
 import { openDropTableEditor } from './drop-tables/DropTableEditor'
 import { loadTextureRegistry } from './assets-system/TextureRegistry'
+import { isFishingSpotPlaceholderAssetId } from './assets-system/FishingSpotEditorVisual'
 import { planWallRun, wallEdgeSnapPosition } from './editor/WallRunPlanner'
 import {
   buildTerrainMeshes,
@@ -422,21 +423,7 @@ function tuneModelLighting(model, assetOrPath = null) {
   }
 
   function isFishingBubbleAssetId(assetId) {
-    return String(assetId || '').startsWith('FishingSpotBubbles')
-  }
-
-  let fishingSpotEditorMarkerMaterial = null
-  function getFishingSpotEditorMarkerMaterial() {
-    if (fishingSpotEditorMarkerMaterial) return fishingSpotEditorMarkerMaterial
-    const mat = new StandardMaterial('fishing-spot-editor-marker', scene)
-    mat.diffuseColor = new Color3(0.18, 0.72, 1.0)
-    mat.emissiveColor = new Color3(0.08, 0.34, 0.52)
-    mat.specularColor = new Color3(0.1, 0.18, 0.22)
-    mat.alpha = 0.82
-    mat.backFaceCulling = false
-    if (mat.transparencyMode !== undefined) mat.transparencyMode = 2 // ALPHABLEND
-    fishingSpotEditorMarkerMaterial = mat
-    return mat
+    return isFishingSpotPlaceholderAssetId(assetId)
   }
 
   function removeFishingSpotEditorMarker(model) {
@@ -444,54 +431,6 @@ function tuneModelLighting(model, assetOrPath = null) {
     for (const child of children) {
       if (child.metadata?.editorFishingSpotMarker) child.dispose()
     }
-  }
-
-  function attachFishingSpotEditorMarker(model, { pickable = true } = {}) {
-    const assetId = model?.userData?.assetId
-    if (!isFishingBubbleAssetId(assetId)) {
-      removeFishingSpotEditorMarker(model)
-      return
-    }
-
-    removeFishingSpotEditorMarker(model)
-
-    const group = new TransformNode('fishingSpotEditorMarker', scene)
-    group.metadata = { editorFishingSpotMarker: true }
-    group.userData = { editorFishingSpotMarker: true }
-    group.parent = model
-    group.position.set(0, 0.08, 0)
-    group.doNotSerialize = true
-
-    const mat = getFishingSpotEditorMarkerMaterial()
-    const rings = [
-      { diameter: 0.48, thickness: 0.018, y: 0 },
-      { diameter: 0.28, thickness: 0.014, y: 0.01 },
-    ]
-    for (const cfg of rings) {
-      const ring = MeshBuilder.CreateTorus('fishingSpotEditorMarkerRing', {
-        diameter: cfg.diameter,
-        thickness: cfg.thickness,
-        tessellation: 28,
-      }, scene)
-      ring.parent = group
-      ring.position.y = cfg.y
-      ring.rotation.x = Math.PI / 2
-      ring.material = mat
-      ring.isPickable = pickable
-      ring.doNotSerialize = true
-      ring.metadata = { editorFishingSpotMarker: true }
-    }
-
-    const dot = MeshBuilder.CreateSphere('fishingSpotEditorMarkerDot', {
-      diameter: 0.075,
-      segments: 8,
-    }, scene)
-    dot.parent = group
-    dot.position.y = 0.025
-    dot.material = mat
-    dot.isPickable = pickable
-    dot.doNotSerialize = true
-    dot.metadata = { editorFishingSpotMarker: true }
   }
 
   function setHierarchyWorldMatrixFrozen(node, frozen) {
@@ -572,7 +511,7 @@ function tuneModelLighting(model, assetOrPath = null) {
     setHierarchyPickable(model, true)
     updatePlacedModelDerivedData(model)
     model.parent = placedGroup
-    attachFishingSpotEditorMarker(model, { pickable: true })
+    removeFishingSpotEditorMarker(model)
     _spatialRegister(model)
     freezePlacedModel(model)
     if (invalidateShadow) invalidateShadowCache()
@@ -12772,14 +12711,14 @@ function applyToolAtTile(tile, eventLike = null) {
       model.scale.y = 1
     }
 
-    previewObject = makeGhostMaterial(model)
-    model.dispose() // dispose the source instance — ghost is a separate clone
+    previewObject = isFishingBubbleAssetId(asset.id) ? model : makeGhostMaterial(model)
+    if (previewObject !== model) model.dispose() // dispose the source instance — ghost is a separate clone
     if (!previewObject) return
     previewObject.rotationQuaternion = null // use euler rotation instead of quaternion
     previewObject.rotation.set(previewRotation.x, previewRotation.y, previewRotation.z)
     previewObject.scaling.set(previewScale, previewScale, previewScale)
     previewObject.userData.assetId = asset.id
-    attachFishingSpotEditorMarker(previewObject, { pickable: false })
+    removeFishingSpotEditorMarker(previewObject)
     setHierarchyPickable(previewObject, false)
     // previewObject is already in the scene from makeGhostMaterial
 
@@ -13322,6 +13261,7 @@ function applyToolAtTile(tile, eventLike = null) {
       const haystack = `${asset.id} ${asset.name} ${asset.path}`.toLowerCase()
       if (haystack.includes('rock')) return 'rock'
       if (haystack.includes('tree')) return 'tree'
+      if (haystack.includes('fishing') || haystack.includes('crabpot') || haystack.includes('crab pot')) return 'fishingspot'
     }
     return null
   }
@@ -13334,6 +13274,7 @@ function applyToolAtTile(tile, eventLike = null) {
     const category = interactableAssetCategory(asset)
     if (category === 'rock') return 'Rocks'
     if (category === 'tree') return 'Trees'
+    if (category === 'fishingspot') return 'Fishing Spots'
     return null
   }
 

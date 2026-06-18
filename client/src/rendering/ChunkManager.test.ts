@@ -3,7 +3,7 @@ import { Matrix, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { ChunkManager, assertOptionalMapResourceResponse, isInteractiveDoorPlacedAsset, isObjectShadowReceiverGround, isRoofLikePlacedAsset, placedObjectThinGroupKey } from './ChunkManager';
-import type { GroundType, KCTile } from '@projectrs/shared';
+import { TileType, WallEdge, type GroundType, type KCTile } from '@projectrs/shared';
 
 const originalFetch = globalThis.fetch;
 const originalConsoleWarn = console.warn;
@@ -271,6 +271,37 @@ describe('procedural grass placement', () => {
 });
 
 describe('placed object thin-instance grouping', () => {
+  test('applies decor blockers on their assigned floor', () => {
+    const manager = Object.assign(Object.create(ChunkManager.prototype), {
+      mapWidth: 4,
+      mapHeight: 4,
+      tileTypes: new Uint8Array(16).fill(TileType.GRASS),
+      holeTiles: new Set<number>(),
+      floorHeights: new Map<number, number>([[3 * 4 + 3, 0]]),
+      texturePlaneFloorTiles: new Set<number>(),
+      stairData: new Map<number, unknown>(),
+      decorBlockedTileKeys: new Set<string>(['1,2,2', '0,3,3']),
+      floorLayerData: new Map([[
+        1,
+        {
+          tiles: new Map<number, number>([
+            [2 * 4 + 2, 3],
+            [1 * 4 + 1, 3],
+          ]),
+          floors: new Map<number, number>(),
+          stairs: new Map<number, unknown>(),
+          walls: new Map<number, number>(),
+          wallHeights: new Map<number, number>(),
+        },
+      ]]),
+    }) as any;
+
+    expect(manager.isBlocked(2, 2)).toBe(false);
+    expect(manager.isBlocked(3, 3)).toBe(true);
+    expect(manager.isBlockedOnFloor(2, 2, 1)).toBe(true);
+    expect(manager.isBlockedOnFloor(1, 1, 1)).toBe(false);
+  });
+
   test('thin-instances decorative modular door frames', () => {
     const manager = Object.assign(Object.create(ChunkManager.prototype), {
       modelAnimationGroups: new Map(),
@@ -391,6 +422,54 @@ describe('placed object thin-instance grouping', () => {
     expect(metadata.activeObjectPickInstanceCount).toBe(0);
     expect((mesh as any).isPickable).toBe(false);
     expect(manager.setPlacedObjectVisualPickId({} as TransformNode, 12345)).toBe(false);
+  });
+});
+
+describe('texture plane bridge collision', () => {
+  test('raises raw wall bases on bridge tiles over blocking terrain in chunked maps', () => {
+    const wallTileIdx = 1 * 3 + 1;
+    const manager = Object.assign(Object.create(ChunkManager.prototype), {
+      mapWidth: 3,
+      mapHeight: 3,
+      mapData: {
+        texturePlanes: [{
+          id: 'bridge',
+          textureId: 'stone',
+          width: 1,
+          height: 1,
+          vertical: false,
+          doubleSided: true,
+          position: { x: 1.5, y: -1.92, z: 1.5 },
+          rotation: { x: -Math.PI / 2, y: 0, z: 0 },
+          scale: { x: 1, y: 1, z: 1 },
+          uvRepeat: 1,
+          texRotation: 0,
+          bridge: true,
+        }],
+      },
+      heights: new Float32Array((3 + 1) * (3 + 1)).fill(-4),
+      tileTypes: new Uint8Array(3 * 3).fill(TileType.GRASS),
+      walls: new Uint8Array(3 * 3),
+      wallHeights: new Map<number, number>(),
+      floorHeights: new Map<number, number>(),
+      elevatedFloorHeights: new Map<number, number>(),
+      bridgeFloorTiles: new Set<number>(),
+      texturePlaneFloorTiles: new Set<number>(),
+      nonNoRoofElevatedTiles: new Set<number>(),
+      noRoofPlaneTiles: new Set<number>(),
+      openDoorEdges: new Map<string, number>(),
+      floorLayerData: new Map(),
+    }) as any;
+    manager.tileTypes[wallTileIdx] = TileType.WATER;
+    manager.walls[wallTileIdx] = WallEdge.W;
+
+    expect(manager.isWallBlocked(0, 1, 1, 1, -1.92)).toBe(false);
+
+    manager.registerTexturePlaneFloorsInRegion(0, 0, 3, 3);
+
+    expect(manager.tileTypes[wallTileIdx]).toBe(TileType.STONE);
+    expect(manager.floorHeights.get(wallTileIdx)).toBe(-1.92);
+    expect(manager.isWallBlocked(0, 1, 1, 1, -1.92)).toBe(true);
   });
 });
 

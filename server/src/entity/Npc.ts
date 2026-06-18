@@ -1,7 +1,7 @@
 import { Entity } from './Entity';
 import { NPC_INTERACTION_DIRECT_ATTACK, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_STARTS_COMBAT, effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, normalizeNpcEquipmentFits, normalizeNpcVisualScale, npcCombatLevel, resolveNpcNameOverrideForAppearance } from '@projectrs/shared';
 import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors, QuestCondition, NpcEquipmentFitOverrides } from '@projectrs/shared';
-import { canTravel, stepTowardNaiveInteraction, type PathingCollision } from '../pathing/Pathing';
+import { canTravel, findPathToReach, stepTowardNaiveInteraction, type PathingCollision } from '../pathing/Pathing';
 
 function callbackPathingCollision(
   isBlocked: (x: number, z: number) => boolean,
@@ -13,6 +13,37 @@ function callbackPathingCollision(
       ? (fx, fz, tx, tz) => isWallBlocked(fx + 0.5, fz + 0.5, tx + 0.5, tz + 0.5)
       : undefined,
   };
+}
+
+function footprintInteractionClear(
+  collision: PathingCollision,
+  sourceAnchorTileX: number,
+  sourceAnchorTileZ: number,
+  sourceSize: number,
+  targetX: number,
+  targetZ: number,
+  targetSize: number,
+): boolean {
+  const sourceBounds = getObjectFootprintBounds(sourceAnchorTileX + 0.5, sourceAnchorTileZ + 0.5, sourceSize);
+  const targetBounds = getObjectFootprintBounds(targetX, targetZ, targetSize);
+  for (let sx = sourceBounds.minX; sx <= sourceBounds.maxX; sx++) {
+    for (let sz = sourceBounds.minZ; sz <= sourceBounds.maxZ; sz++) {
+      if (sx >= targetBounds.minX && sx <= targetBounds.maxX && sz >= targetBounds.minZ && sz <= targetBounds.maxZ) {
+        return false;
+      }
+      for (let tx = targetBounds.minX; tx <= targetBounds.maxX; tx++) {
+        for (let tz = targetBounds.minZ; tz <= targetBounds.maxZ; tz++) {
+          if (Math.abs(tx - sx) + Math.abs(tz - sz) !== 1) continue;
+          if (!collision.isWallBlocked || !collision.isWallBlocked(sx, sz, tx, tz)) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function isTileInsideBounds(tileX: number, tileZ: number, bounds: ReturnType<typeof getObjectFootprintBounds>): boolean {
+  return tileX >= bounds.minX && tileX <= bounds.maxX && tileZ >= bounds.minZ && tileZ <= bounds.maxZ;
 }
 
 function normalizeFacingAngle(value: number | null | undefined): number | null {
@@ -102,10 +133,9 @@ export class Npc extends Entity {
   private overlapEscapeDelayTargetId: number = -1;
   private overlapEscapeDelayTicks: number = 0;
 
-  // Server path following — used for wander + returning to spawn only. Chase
-  // uses LostCity-style naive interaction stepping so NPCs get
-  // visibly stuck on walls / closed doors / placed objects instead of
-  // routing around them.
+  // Server path following. Wander/return use routed paths directly; combat
+  // chase tries the cheap LostCity-style step first, then falls back to a
+  // bounded routed path when the one-step chase is blocked.
   pathQueue: { x: number; z: number }[] = [];
 
   // Death / respawn
@@ -124,6 +154,7 @@ export class Npc extends Entity {
   private static readonly OVERLAP_ESCAPE_DELAY_TICKS = 2;
   private static readonly WANDER_PATH_MAX = 8;
   private static readonly RETREAT_INTERACTION_EXTRA = 11;
+  private static readonly COMBAT_CHASE_PATH_MAX_SEARCH_TILES = 256;
 
   readonly wanderRangeOverride: number | null;
   readonly maxRangeOverride: number | null;
@@ -488,6 +519,52 @@ export class Npc extends Entity {
     return true;
   }
 
+  private pathQueueStillReachesInteractionTarget(targetX: number, targetZ: number, targetSize: number, collision: PathingCollision): boolean {
+    const final = this.pathQueue[this.pathQueue.length - 1];
+    if (!final) return false;
+    return footprintInteractionClear(
+      collision,
+      Math.floor(final.x),
+      Math.floor(final.z),
+      this.size,
+      targetX,
+      targetZ,
+      targetSize,
+    );
+  }
+
+  private routeToInteractionTarget(
+    targetX: number,
+    targetZ: number,
+    targetSize: number,
+    collision: PathingCollision,
+  ): { x: number; z: number }[] {
+    const targetBounds = getObjectFootprintBounds(targetX, targetZ, targetSize);
+    const routedCollision: PathingCollision = {
+      ...collision,
+      isTileBlocked: (tileX, tileZ) =>
+        !this.isPositionWithinMaxRange(tileX + 0.5, tileZ + 0.5)
+        || isTileInsideBounds(tileX, tileZ, targetBounds)
+        || collision.isTileBlocked(tileX, tileZ),
+    };
+    return findPathToReach({
+      startX: this.position.x,
+      startZ: this.position.y,
+      actorSize: this.size,
+      collision: routedCollision,
+      maxSearchTiles: Npc.COMBAT_CHASE_PATH_MAX_SEARCH_TILES,
+      reached: (tileX, tileZ) => footprintInteractionClear(
+        collision,
+        tileX,
+        tileZ,
+        this.size,
+        targetX,
+        targetZ,
+        targetSize,
+      ),
+    });
+  }
+
   private canStep(collision: PathingCollision, fromTileX: number, fromTileZ: number, dx: number, dz: number, allowLargeDiagonal = true): boolean {
     return canTravel(collision, fromTileX, fromTileZ, dx, dz, this.size, allowLargeDiagonal);
   }
@@ -720,15 +797,27 @@ export class Npc extends Entity {
         return;
       }
 
-      this.pathQueue.length = 0;
       if (this.isFootprintTile(targetTileX, targetTileZ)) {
+        this.pathQueue.length = 0;
         if (this.size > 1 && this.shouldDelayOverlapEscape(this.combatTarget.id)) return;
         if (this.stepOutFromOverlappingTarget(targetTileX, targetTileZ, movementCollision)) return;
       } else {
         this.resetOverlapEscapeDelay();
       }
       const targetSize = this.combatTarget instanceof Npc ? this.combatTarget.size : 1;
-      this.naiveChaseStep(targetX, targetZ, targetSize, movementCollision);
+      if (this.pathQueue.length > 0) {
+        if (!this.pathQueueStillReachesInteractionTarget(targetX, targetZ, targetSize, movementCollision)) {
+          this.pathQueue.length = 0;
+        } else if (this.followPath(pathCollision, movementCollision)) {
+          return;
+        }
+      }
+      if (this.naiveChaseStep(targetX, targetZ, targetSize, movementCollision)) return;
+      const path = this.routeToInteractionTarget(targetX, targetZ, targetSize, movementCollision);
+      if (path.length > 0) {
+        this.pathQueue = path.slice(0, Npc.NPC_MAX_PATH_LENGTH);
+        this.followPath(pathCollision, movementCollision);
+      }
       return;
     }
 

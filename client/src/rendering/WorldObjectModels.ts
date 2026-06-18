@@ -11,6 +11,7 @@ import {
   type FishingSpotEffectResources,
   createFishingSpotEffectPlane,
   createFishingSpotEffectResources,
+  createFishingSpotWaterDarkeningPlane,
   isFishingSpotEffectAssetId,
   updateFishingSpotEffectTexture,
 } from './FishingSpotEffect';
@@ -93,6 +94,9 @@ export class WorldObjectModels {
   /** Runtime-spawned objects, keyed by WorldObjectDef.modelAssetId. */
   private static readonly ACTIVE_ASSET_FILES: Record<string, { rootUrl: string; file: string; alphaBlend?: boolean }> = {
     fire: { rootUrl: '/assets/models/', file: 'fire.glb', alphaBlend: true },
+    CrabPot: { rootUrl: '/assets/models/', file: 'CrabPot.glb' },
+    CrabPotFishingSpot: { rootUrl: '/assets/models/', file: 'CrabPot.glb' },
+    SuperiorCrabPotFishingSpot: { rootUrl: '/assets/models/', file: 'CrabPot.glb' },
   };
 
   /** Map a `depletedAssetId` (e.g. "open tier 1 chest") to a GLB file to
@@ -455,7 +459,10 @@ export class WorldObjectModels {
     root.position.set(x, y ?? this.getHeight(x, z), z);
     root.metadata = { objectEntityId, assetId, runtimeWorldObject: true };
 
-    const { material } = this.getFishingSpotEffectResources();
+    const { material, waterMaterial } = this.getFishingSpotEffectResources();
+    const water = createFishingSpotWaterDarkeningPlane(this.scene, `activeFishingSpotWaterDarkening_${objectEntityId}`, waterMaterial);
+    water.parent = root;
+    water.metadata = { ...(water.metadata ?? {}), objectEntityId, assetId };
     const mesh = createFishingSpotEffectPlane(this.scene, `activeFishingSpotEffectPlane_${objectEntityId}`, material);
     mesh.parent = root;
     mesh.metadata = { ...(mesh.metadata ?? {}), objectEntityId, assetId };
@@ -475,8 +482,8 @@ export class WorldObjectModels {
   private ensureFishingSpotEffectLoop(): void {
     if (this.fishingSpotEffectObserver) return;
     this.fishingSpotEffectObserver = this.scene.onBeforeRenderObservable.add(() => {
-      const texture = this.fishingSpotEffectResources?.texture;
-      if (texture) updateFishingSpotEffectTexture(texture, performance.now() * 0.001);
+      const resources = this.fishingSpotEffectResources;
+      if (resources) updateFishingSpotEffectTexture(resources, performance.now() * 0.001);
       for (const [objectEntityId, root] of this.fishingSpotEffectRoots) {
         if (root.isDisposed()) this.fishingSpotEffectRoots.delete(objectEntityId);
       }
@@ -616,7 +623,9 @@ export class WorldObjectModels {
     }
     if (this.fishingSpotEffectResources) {
       this.fishingSpotEffectResources.material.dispose(false, false);
-      this.fishingSpotEffectResources.texture.dispose();
+      this.fishingSpotEffectResources.waterMaterial.dispose(false, false);
+      this.fishingSpotEffectResources.baseTexture.dispose();
+      this.fishingSpotEffectResources.mistTexture.dispose();
       this.fishingSpotEffectResources = null;
     }
     for (const [, m] of this.treeModels) WorldObjectModels.disposeModelTemplate(m);

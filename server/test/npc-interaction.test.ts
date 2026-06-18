@@ -796,7 +796,68 @@ describe('NPC interaction reachability', () => {
 
     expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
     expect(player.attackTarget).toBe(npc);
+    expect(player.attackCooldown).toBe(2);
     expect(world.combatSystem.listRetaliationRequests()).toHaveLength(0);
+  });
+
+  test('NPC melee hit closes bank before auto retaliate starts', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.autoRetaliate = true;
+    player.openInterface = 'bank';
+    npc.setCombatTarget(player);
+    const { world } = makeCombatWorld(player, npc);
+    const sentOpcodes: ServerOpcode[] = [];
+    world.sendToPlayer = (_player: Player, opcode: ServerOpcode) => { sentOpcodes.push(opcode); };
+
+    withMockedRandom(0, () => world.tickNpcCombat());
+
+    expect(player.openInterface).toBeNull();
+    expect(sentOpcodes).toContain(ServerOpcode.BANK_CLOSE);
+
+    world.currentTick += 1;
+    world.finishCombatTick();
+
+    expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
+    expect(player.attackTarget).toBe(npc);
+  });
+
+  test('NPC melee auto retaliate waits half weapon speed before counterattacking', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.autoRetaliate = true;
+    npc.setCombatTarget(player);
+    const { world } = makeCombatWorld(player, npc);
+    let combatHits = 0;
+    world.broadcastCombatHit = () => { combatHits++; };
+
+    withMockedRandom(0, () => world.tickNpcCombat());
+    world.currentTick += 1;
+    world.finishCombatTick();
+
+    expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
+    expect(player.attackCooldown).toBe(2);
+    combatHits = 0;
+
+    world.currentTick += 1;
+    world.tickCombatSchedules();
+    withMockedRandom([0.99, 0, 0.99], () => world.tickPlayerCombat());
+
+    expect(combatHits).toBe(0);
+    expect(npc.health).toBe(npc.maxHealth);
+    expect(player.attackCooldown).toBe(1);
+
+    world.currentTick += 1;
+    world.tickCombatSchedules();
+    withMockedRandom([0.99, 0, 0.99], () => world.tickPlayerCombat());
+
+    expect(combatHits).toBe(1);
+    expect(npc.health).toBeLessThan(npc.maxHealth);
+    expect(player.attackCooldown).toBe(4);
   });
 
   test('NPC melee auto retaliate does not steal the current walking queue before the delayed hit response', () => {
@@ -927,6 +988,45 @@ describe('NPC interaction reachability', () => {
     expect(player.attackTarget).toBeNull();
     expect(world.playerCombatTargets.has(player.id)).toBe(false);
     expect(world.npcTargetedBy.has(npc.id)).toBe(false);
+  });
+
+  test('clearing combat also drops a stale player NPC attack target', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.attackTarget = npc;
+    const { world } = makeCombatWorld(player, npc);
+
+    world.clearCombatTarget(player.id);
+
+    expect(player.attackTarget).toBeNull();
+    expect(world.playerCombatTargets.has(player.id)).toBe(false);
+  });
+
+  test('NPC retaliation keeps its full half-speed startup tick', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+    world.currentTick = 25;
+
+    world.processCombatRetaliation({
+      actor: { kind: 'npc', id: npc.id },
+      target: { kind: 'player', id: player.id },
+      earliestTick: 25,
+      reason: 'npc-retaliate',
+    });
+
+    expect(npc.combatTarget).toBe(player);
+    expect(npc.attackCooldown).toBe(2);
+    expect(world.getCombatSystem().cooldownRemaining({ kind: 'npc', id: npc.id }, 25)).toBe(2);
+
+    world.currentTick = 26;
+    world.syncNpcAttackCooldownFromSchedule(npc);
+
+    expect(npc.attackCooldown).toBe(1);
   });
 
   test('NPC turns toward the player when the first combat hit resolves', () => {

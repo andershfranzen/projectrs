@@ -151,4 +151,122 @@ describe('GameManager NPC interaction classification', () => {
 
     expect(option?.label).toBe('Walk here');
   });
+
+  test('server idle combat target clears local NPC combat state', () => {
+    const manager = makeManager(0);
+    let clearedFaceLock = false;
+    manager.localPlayer = {
+      clearFaceLock(force: boolean) {
+        clearedFaceLock = force;
+      },
+    };
+    manager.combatTargetId = 1;
+    manager.magicTargetId = 2;
+    manager.pendingSingleCastSpell = -1;
+    manager.localCombatWalkUntilMs = 100;
+    manager.lastLocalCombatIntentSentAt = 200;
+    manager.lastLocalCombatServerConfirmAt = 300;
+    manager.pendingFaceTargetEntityId = 1;
+    manager._combatPathTimer = 0.5;
+
+    manager.adoptLocalNpcCombatTargetFromServer(0);
+
+    expect(manager.combatTargetId).toBe(-1);
+    expect(manager.magicTargetId).toBe(-1);
+    expect(manager.pendingSingleCastSpell).toBe(-1);
+    expect(manager.localCombatWalkUntilMs).toBe(0);
+    expect(manager.lastLocalCombatIntentSentAt).toBe(0);
+    expect(manager.lastLocalCombatServerConfirmAt).toBe(0);
+    expect(manager.pendingFaceTargetEntityId).toBe(-1);
+    expect(manager._combatPathTimer).toBe(0);
+    expect(clearedFaceLock).toBe(true);
+  });
+
+  test('server idle target preserves a pending one-off spell cast through pre-cast combat clear', () => {
+    const manager = makeManager(0);
+    manager.localPlayer = { clearFaceLock() {} };
+    manager.combatTargetId = 1;
+    manager.magicTargetId = 1;
+    manager.pendingSingleCastSpell = 4;
+    manager.autoCastSpellIndex = -1;
+    manager._combatPathTimer = 0.5;
+
+    manager.adoptLocalNpcCombatTargetFromServer(0);
+
+    expect(manager.combatTargetId).toBe(-1);
+    expect(manager.magicTargetId).toBe(-1);
+    expect(manager.pendingSingleCastSpell).toBe(4);
+    expect(manager._combatPathTimer).toBe(0);
+  });
+
+  test('autocast follow does not resend attack intent when no LOS path is available', () => {
+    const manager = makeManager(0);
+    const sent: unknown[] = [];
+    const pathArgs: unknown[][] = [];
+    let facedTarget = -1;
+    manager.entities.npcTargets.set(1, { x: 10.5, z: 10.5, y: 0, floor: 0 });
+    manager.localPlayer = {};
+    manager.network = { sendRaw: (packet: unknown) => sent.push(packet) };
+    manager.playerX = 1.5;
+    manager.playerZ = 1.5;
+    manager.path = [];
+    manager.pathIndex = 0;
+    manager.autoCastSpellIndex = 0;
+    manager.magicTargetId = 1;
+    manager.combatTargetId = -1;
+    manager._combatPathTimer = 0;
+    manager.castingUntil = 0;
+    manager.isNonCombatNpc = () => false;
+    manager.isPointInNpcInteractionRange = () => false;
+    manager.findPathToNpcInteraction = (...args: unknown[]) => {
+      pathArgs.push(args);
+      return { path: [], preserveCurrentStep: false };
+    };
+    manager.faceLocalPlayerTowardNpc = (targetId: number) => {
+      facedTarget = targetId;
+    };
+
+    manager.updateCombatFollow(0.7);
+
+    expect(pathArgs).toHaveLength(1);
+    expect(pathArgs[0][4]).toBe(true);
+    expect(sent).toHaveLength(0);
+    expect(manager.magicTargetId).toBe(-1);
+    expect(manager.combatTargetId).toBe(-1);
+    expect(facedTarget).toBe(1);
+  });
+
+  test('melee follow does not resend attack intent when no path is available', () => {
+    const manager = makeManager(0);
+    const sent: unknown[] = [];
+    let facedTarget = -1;
+    manager.entities.npcTargets.set(1, { x: 10.5, z: 10.5, y: 0, floor: 0 });
+    manager.localPlayer = {};
+    manager.network = { sendRaw: (packet: unknown) => sent.push(packet) };
+    manager.playerX = 1.5;
+    manager.playerZ = 1.5;
+    manager.path = [];
+    manager.pathIndex = 0;
+    manager.autoCastSpellIndex = -1;
+    manager.magicTargetId = -1;
+    manager.combatTargetId = 1;
+    manager._combatPathTimer = 0;
+    manager.castingUntil = 0;
+    manager.isNonCombatNpc = () => false;
+    manager.isPointInNpcInteractionRange = () => false;
+    manager.getLocalNpcAttackRange = () => 1.5;
+    manager.getLocalNpcAttackRangeMode = () => 'melee';
+    manager.isLocalRangedWeapon = () => false;
+    manager.findPathToNpcInteraction = () => ({ path: [], preserveCurrentStep: false });
+    manager.faceLocalPlayerTowardNpc = (targetId: number) => {
+      facedTarget = targetId;
+    };
+
+    manager.updateCombatFollow(0.7);
+
+    expect(sent).toHaveLength(0);
+    expect(manager.magicTargetId).toBe(-1);
+    expect(manager.combatTargetId).toBe(-1);
+    expect(facedTarget).toBe(1);
+  });
 });

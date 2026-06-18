@@ -17,6 +17,7 @@ import {
   type FishingSpotEffectResources,
   createFishingSpotEffectPlane,
   createFishingSpotEffectResources,
+  createFishingSpotWaterDarkeningPlane,
   isFishingSpotEffectAssetId,
   updateFishingSpotEffectTexture,
 } from './FishingSpotEffect';
@@ -91,13 +92,10 @@ function isRevealStructuralPlacedAsset(assetId: string): boolean {
     || lower === 'stone 30';
 }
 
-function shouldSmoothPlacedObjectTextures(assetId: string, path: string): boolean {
-  const lowerId = assetId.toLowerCase().trim();
-  const lowerPath = path.toLowerCase();
-  return lowerPath.includes('/modular-assets/byzantine-modular/')
-    || lowerPath.includes('/modular-assets/theodosian-limewall-modular/')
-    || lowerId.startsWith('byzantine ')
-    || lowerId.startsWith('theodosian limewall ');
+function shouldSmoothPlacedObjectTextures(_assetId: string, _path: string): boolean {
+  // Test pass: smooth all placed GLB scenery to reduce camera-motion texture shimmer.
+  // Character, NPC, and ground-item model textures have separate runtime paths.
+  return true;
 }
 
 function shouldUseStallFrameBounds(assetId: string, path: string): boolean {
@@ -464,9 +462,9 @@ export class ChunkManager {
   private placedObjectGrid: Map<string, TransformNode[]> = new Map();
   /** Raw placed object data indexed by chunk key "cx,cz" */
   private placedObjectsByChunk: Map<string, PlacedObject[]> = new Map();
-  /** Tile-index blockers for thin-instanced decor (bushes); mirrored server-side. */
-  private decorBlockedTiles: Set<number> = new Set();
-  private decorBlockedTilesByChunk: Map<string, number[]> = new Map();
+  /** Floor-aware tile blockers for thin-instanced decor (bushes); mirrored server-side. */
+  private decorBlockedTileKeys: Set<string> = new Set();
+  private decorBlockedTileKeysByChunk: Map<string, string[]> = new Map();
   /** Object chunk keys known to exist from the server manifest. Null means the
    *  map/server did not provide a manifest, so fall back to probing chunks. */
   private objectChunkManifest: Set<string> | null = null;
@@ -3406,6 +3404,10 @@ export class ChunkManager {
     return this.getStairOnFloor(x, z, 0);
   }
 
+  private decorBlockedTileKey(floor: number, tileX: number, tileZ: number): string {
+    return `${Math.trunc(floor)},${Math.floor(tileX)},${Math.floor(tileZ)}`;
+  }
+
   private getTileTypeRaw(x: number, z: number): TileType {
     if (!this.tileTypes) return TileType.WALL;
     if (x < 0 || x >= this.mapWidth || z < 0 || z >= this.mapHeight) return TileType.WALL;
@@ -3419,6 +3421,7 @@ export class ChunkManager {
   isBlocked(x: number, z: number): boolean {
     const tx = Math.floor(x), tz = Math.floor(z);
     const idx = tz * this.mapWidth + tx;
+    if (this.decorBlockedTileKeys.has(this.decorBlockedTileKey(0, tx, tz))) return true;
     // Hole tiles are passable if they have a floor or stairs
     if (this.holeTiles.has(idx)) {
       return !this.floorHeights.has(idx) && !this.stairData.has(idx);
@@ -3427,7 +3430,6 @@ export class ChunkManager {
     if (this.floorHeights.has(idx) || this.texturePlaneFloorTiles.has(idx) || this.stairData.has(idx)) {
       return false;
     }
-    if (this.decorBlockedTiles.has(idx)) return true;
     return BLOCKING_TILES.has(this.getTileType(x, z));
   }
 
@@ -3504,6 +3506,7 @@ export class ChunkManager {
     const tx = Math.floor(x), tz = Math.floor(z);
     if (tx < 0 || tx >= this.mapWidth || tz < 0 || tz >= this.mapHeight) return true;
     const idx = tz * this.mapWidth + tx;
+    if (this.decorBlockedTileKeys.has(this.decorBlockedTileKey(floor, tx, tz))) return true;
     return !layer.tiles.has(idx) && !layer.floors.has(idx) && !layer.stairs.has(idx);
   }
 
@@ -4089,11 +4092,17 @@ export class ChunkManager {
     );
     let count = 0;
     for (const [idx, entry] of derived) {
-      if (entry.wasBlocking && this.tileTypes) {
-        this.tileTypes[idx] = TileType.STONE;
-      }
       this.elevatedFloorHeights.set(idx, entry.y);
-      if (entry.isBridge) this.bridgeFloorTiles.add(idx);
+      if (entry.isBridge) {
+        this.bridgeFloorTiles.add(idx);
+        if (entry.wasBlocking) {
+          if (this.tileTypes) this.tileTypes[idx] = TileType.STONE;
+          const existing = this.floorHeights.get(idx);
+          if (existing === undefined || entry.y < existing) {
+            this.floorHeights.set(idx, entry.y);
+          }
+        }
+      }
       this.texturePlaneFloorTiles.add(idx);
       if (!entry.allContributorsNoRoof) this.nonNoRoofElevatedTiles.add(idx);
       else this.noRoofPlaneTiles.add(idx);
@@ -4148,9 +4157,7 @@ export class ChunkManager {
 
           const idx = tz * this.mapWidth + tx;
           const wasBlocking = this.tileTypes && BLOCKING_TILES.has(this.tileTypes[idx] as TileType);
-          if (wasBlocking) {
-            this.tileTypes![idx] = TileType.STONE;
-          }
+          if (wasBlocking) this.tileTypes![idx] = TileType.STONE;
           const terrainH = this.getInterpolatedHeight(tcx, tcz);
           if (py > terrainH) {
             const existing = this.elevatedFloorHeights.get(idx);
@@ -4161,8 +4168,15 @@ export class ChunkManager {
             // below typical building-floor elevation (~2 units) or every
             // building's ground-floor plane auto-bridges and walking under
             // the overhang teleports the player to the upper floor.
-            if (plane.bridge || wasBlocking || py < terrainH + 1.0) {
+            const isBridge = !!plane.bridge || wasBlocking || py < terrainH + 1.0;
+            if (isBridge) {
               this.bridgeFloorTiles.add(idx);
+              if (wasBlocking) {
+                const existingFloorH = this.floorHeights.get(idx);
+                if (existingFloorH === undefined || py < existingFloorH) {
+                  this.floorHeights.set(idx, py);
+                }
+              }
             }
             this.texturePlaneFloorTiles.add(idx);
             // noRoof flag is sticky-negative: once any non-noRoof plane
@@ -4379,7 +4393,9 @@ export class ChunkManager {
 
   private createFishingSpotEffectTemplate(assetId: string): TransformNode {
     const template = new TransformNode(`template_${assetId}`, this.scene);
-    const { material } = this.getFishingSpotEffectResources();
+    const { material, waterMaterial } = this.getFishingSpotEffectResources();
+    const water = createFishingSpotWaterDarkeningPlane(this.scene, `${assetId}_waterDarkening`, waterMaterial);
+    water.parent = template;
     const mesh = createFishingSpotEffectPlane(this.scene, `${assetId}_effectPlane`, material);
     mesh.parent = template;
     template.setEnabled(false);
@@ -4397,9 +4413,9 @@ export class ChunkManager {
   private ensureFishingSpotEffectTextureLoop(): void {
     if (this.fishingSpotEffectObserver) return;
     this.fishingSpotEffectObserver = this.scene.onBeforeRenderObservable.add(() => {
-      const texture = this.fishingSpotEffectResources?.texture;
-      if (!texture) return;
-      updateFishingSpotEffectTexture(texture, performance.now() * 0.001);
+      const resources = this.fishingSpotEffectResources;
+      if (!resources) return;
+      updateFishingSpotEffectTexture(resources, performance.now() * 0.001);
     });
   }
 
@@ -5112,22 +5128,23 @@ export class ChunkManager {
     const workSlice = { start: performance.now() };
 
     // Stamps tile blockers for decor that stays thin-instanced (no WorldObject).
-    const decorKeys: number[] = [];
+    const decorKeys: string[] = [];
     for (const obj of renderableObjects) {
       if (!BLOCKING_DECOR_ASSETS.has(obj.assetId)) continue;
       const tx = Math.floor(obj.position.x);
       const tz = Math.floor(obj.position.z);
-      const key = tz * this.mapWidth + tx;
-      if (this.decorBlockedTiles.has(key)) continue;
-      this.decorBlockedTiles.add(key);
+      const { floor } = this.placedObjectLayerInfo(obj);
+      const key = this.decorBlockedTileKey(floor, tx, tz);
+      if (this.decorBlockedTileKeys.has(key)) continue;
+      this.decorBlockedTileKeys.add(key);
       decorKeys.push(key);
     }
-    if (decorKeys.length > 0) this.decorBlockedTilesByChunk.set(chunkKey, decorKeys);
+    if (decorKeys.length > 0) this.decorBlockedTileKeysByChunk.set(chunkKey, decorKeys);
     const cleanupDecorAndRoofStamps = () => {
       this.clearRoofObjectGridForChunk(chunkKey);
-      const stampedDecor = this.decorBlockedTilesByChunk.get(chunkKey) ?? decorKeys;
-      for (const k of stampedDecor) this.decorBlockedTiles.delete(k);
-      this.decorBlockedTilesByChunk.delete(chunkKey);
+      const stampedDecor = this.decorBlockedTileKeysByChunk.get(chunkKey) ?? decorKeys;
+      for (const k of stampedDecor) this.decorBlockedTileKeys.delete(k);
+      this.decorBlockedTileKeysByChunk.delete(chunkKey);
     };
     const abortEarlyObjectLoadIfStopped = (): boolean => {
       if (!this.isObjectLoadStale(generation) && this.shouldLoadObjectChunkNow(chunkKey)) return false;
@@ -5281,7 +5298,9 @@ export class ChunkManager {
         src.setEnabled(false);
         if (src instanceof Mesh) src.makeGeometryUnique();
         const mat = src.material;
-        if (mat) this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(assetId), true);
+        if (mat && !isFishingSpotEffectAssetId(assetId)) {
+          this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(assetId), true);
+        }
         src.isPickable = false;
 
         let maxOriginY = -Infinity;
@@ -5347,7 +5366,9 @@ export class ChunkManager {
         src.setEnabled(false);
         if (src instanceof Mesh) src.makeGeometryUnique();
         const mat = src.material;
-        if (mat) this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(assetId), true);
+        if (mat && !isFishingSpotEffectAssetId(assetId)) {
+          this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(assetId), true);
+        }
         src.isPickable = false;
         src.thinInstanceEnablePicking = true;
         const objectEntityIdsByThinInstance: Array<number | null> = [];
@@ -5425,8 +5446,9 @@ export class ChunkManager {
 
     // --- Regular instances: interactable, animated, doors, stairs ---
     for (const obj of regularObjects) {
+      const visualAssetId = this.getPlacedObjectVisualAssetId(obj.assetId);
       const layerInfo = this.placedObjectLayerInfo(obj);
-      const template = this.loadedModelCache.get(obj.assetId)!;
+      const template = this.loadedModelCache.get(visualAssetId)!;
 
       const sourceToClone = new Map<any, any>();
       const instance = template.instantiateHierarchy(null, undefined, (source, cloned) => {
@@ -5439,14 +5461,16 @@ export class ChunkManager {
         child.setEnabled(true);
         child.isPickable = false;
         const mat = child.material as any;
-        if (mat) this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(obj.assetId));
+        if (mat && !isFishingSpotEffectAssetId(visualAssetId)) {
+          this.preparePlacedObjectMaterial(mat, this.isAlphaBlendAsset(obj.assetId));
+        }
       }
       const root = instance;
 
-      const templateAnims = this.modelAnimationGroups.get(obj.assetId);
+      const templateAnims = this.modelAnimationGroups.get(visualAssetId);
       const instanceAnims: AnimationGroup[] = [];
       if (templateAnims) {
-        const oneShotAnimation = this.isOneShotPlacedAnimationAsset(obj.assetId);
+        const oneShotAnimation = this.isOneShotPlacedAnimationAsset(visualAssetId);
         const clonedNodes = new Map<string, any>();
         instance.getChildMeshes(false).forEach(m => {
           clonedNodes.set(m.name, m);
@@ -5583,10 +5607,10 @@ export class ChunkManager {
   private disposeChunkPlacedObjects(chunkKey: string): void {
     this.clearRoofObjectGridForChunk(chunkKey);
 
-    const decorKeys = this.decorBlockedTilesByChunk.get(chunkKey);
+    const decorKeys = this.decorBlockedTileKeysByChunk.get(chunkKey);
     if (decorKeys) {
-      for (const k of decorKeys) this.decorBlockedTiles.delete(k);
-      this.decorBlockedTilesByChunk.delete(chunkKey);
+      for (const k of decorKeys) this.decorBlockedTileKeys.delete(k);
+      this.decorBlockedTileKeysByChunk.delete(chunkKey);
     }
 
     const nodes = this.chunkPlacedNodes.get(chunkKey);
@@ -7056,8 +7080,8 @@ export class ChunkManager {
     this.placedObjectNodeSet.clear();
     this.placedObjectGrid.clear();
     this.placedObjectsByChunk.clear();
-    this.decorBlockedTiles.clear();
-    this.decorBlockedTilesByChunk.clear();
+    this.decorBlockedTileKeys.clear();
+    this.decorBlockedTileKeysByChunk.clear();
     this.objectChunkManifest = null;
     this.chunkPlacedNodes.clear();
     this.chunkAnimGroups.clear();
@@ -7107,7 +7131,9 @@ export class ChunkManager {
     }
     if (this.fishingSpotEffectResources) {
       this.fishingSpotEffectResources.material.dispose(false, false);
-      this.fishingSpotEffectResources.texture.dispose();
+      this.fishingSpotEffectResources.waterMaterial.dispose(false, false);
+      this.fishingSpotEffectResources.baseTexture.dispose();
+      this.fishingSpotEffectResources.mistTexture.dispose();
       this.fishingSpotEffectResources = null;
     }
     this.loadingModelPromises.clear();

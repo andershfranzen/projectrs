@@ -1,37 +1,30 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ItemDef, WorldObjectDef } from '@projectrs/shared';
+import type { ItemDef, ItemToolType, WorldObjectDef } from '@projectrs/shared';
 import { World } from '../src/World';
+import { Player } from '../src/entity/Player';
+import { WorldObject } from '../src/entity/WorldObject';
 
 const DATA_DIR = join(import.meta.dir, '../data');
+const fakeWs = {
+  sendBinary() {},
+  send() {},
+} as any;
 
-const FISH_TIERS = [
-  { level: 1, itemId: 500, name: 'Raw Minnow', xp: 20 },
-  { level: 5, itemId: 501, name: 'Raw Crayfish', xp: 30 },
-  { level: 10, itemId: 502, name: 'Raw Bluegill', xp: 45 },
-  { level: 15, itemId: 503, name: 'Raw Perch', xp: 60 },
-  { level: 20, itemId: 504, name: 'Raw Roach', xp: 75 },
-  { level: 25, itemId: 505, name: 'Raw Trout', xp: 90 },
-  { level: 30, itemId: 506, name: 'Raw Carp', xp: 110 },
-  { level: 35, itemId: 507, name: 'Raw Salmon', xp: 130 },
-  { level: 40, itemId: 508, name: 'Raw Bass', xp: 150 },
-  { level: 45, itemId: 509, name: 'Raw Mackerel', xp: 170 },
-  { level: 50, itemId: 510, name: 'Raw Tuna', xp: 195 },
-  { level: 55, itemId: 511, name: 'Raw King Crab', xp: 220 },
-  { level: 60, itemId: 512, name: 'Raw Catfish', xp: 245 },
-  { level: 65, itemId: 513, name: 'Raw Snapper', xp: 275 },
-  { level: 70, itemId: 514, name: 'Raw Sturgeon', xp: 305 },
-  { level: 75, itemId: 515, name: 'Raw Swordfish', xp: 335 },
-  { level: 80, itemId: 516, name: 'Raw Reef Shark', xp: 370 },
-  { level: 85, itemId: 517, name: 'Raw Halibut', xp: 405 },
-  { level: 90, itemId: 518, name: 'Raw Hammerhead Shark', xp: 440 },
-  { level: 95, itemId: 519, name: 'Raw Marlin', xp: 480 },
-  { level: 100, itemId: 520, name: 'Raw Thresher Shark', xp: 520 },
-  { level: 105, itemId: 521, name: 'Raw Mako Shark', xp: 560 },
-  { level: 110, itemId: 522, name: 'Raw Tiger Shark', xp: 605 },
-  { level: 115, itemId: 523, name: 'Raw Oarfish', xp: 650 },
-  { level: 120, itemId: 524, name: 'Raw Great White Shark', xp: 700 },
+const SEAFOOD_CATCHES = [
+  { itemId: 27, name: 'Raw Shrimp', model: '/assets/models/Food/ShrimpRaw.glb' },
+  { itemId: 501, name: 'Raw Crayfish', model: '/assets/models/Food/CrayfishRaw.glb' },
+  { itemId: 510, name: 'Raw Tuna', model: '/assets/models/Food/TunaRaw.glb' },
+  { itemId: 523, name: 'Raw Oarfish', model: '/assets/models/Food/OarfishRaw.glb' },
+  { itemId: 558, name: 'Raw Lobster', model: '/assets/models/Food/LobsterRaw.glb' },
+  { itemId: 560, name: 'Raw Sardine', model: '/assets/models/Food/SardineRaw.glb' },
+  { itemId: 562, name: 'Raw Octopus', model: '/assets/models/Food/OctopusRaw.glb' },
+] as const;
+
+const REMOVED_LEGACY_FISH_IDS = [
+  500, 502, 503, 504, 505, 506, 507, 508, 509, 511, 512, 513, 514, 515, 516, 517, 518, 519, 520, 521, 522, 524,
+  525, 527, 528, 529, 530, 531, 532, 533, 534, 536, 537, 538, 539, 540, 541, 542, 543, 544, 545, 546, 547, 549,
 ] as const;
 
 function loadItems(): ItemDef[] {
@@ -46,29 +39,40 @@ function optionNames(spot: WorldObjectDef, itemsById: Map<number, ItemDef>): str
   return (spot.harvestOptions ?? []).map(option => itemsById.get(option.harvestItemId)?.name ?? `item ${option.harvestItemId}`);
 }
 
-function harvestOdds(world: any, spot: WorldObjectDef, playerLevel: number): Map<number, number> {
-  const options = (spot.harvestOptions ?? []).filter(option => playerLevel >= option.levelRequired);
-  const weights = options.map(option => ({
-    itemId: option.harvestItemId,
-    weight: world.harvestOptionEffectiveWeight(option, playerLevel),
-  }));
-  const totalWeight = weights.reduce((total, option) => total + option.weight, 0);
-  return new Map(weights.map(option => [option.itemId, option.weight / totalWeight]));
+function makeHarvestWorld(itemsById: Map<number, ItemDef>): { world: any; messages: string[] } {
+  const messages: string[] = [];
+  const world = Object.create(World.prototype) as any;
+  world.data = { getItem: (id: number) => itemsById.get(id) };
+  world.skillingActions = new Map();
+  world.setPlayerAnimation = () => {};
+  world.sendToPlayer = () => {};
+  world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
+  return { world, messages };
 }
 
 describe('fishing spot data', () => {
-  test('all requested fish tiers exist as item definitions', () => {
+  test('only modeled seafood catches remain as active fish item definitions', () => {
     const itemsById = new Map(loadItems().map(item => [item.id, item]));
 
-    for (const tier of FISH_TIERS) {
-      expect(itemsById.get(tier.itemId)).toMatchObject({
-        name: tier.name,
+    for (const catchDef of SEAFOOD_CATCHES) {
+      expect(itemsById.get(catchDef.itemId)).toMatchObject({
+        name: catchDef.name,
         stackable: false,
         equippable: false,
+        model: catchDef.model,
       });
     }
 
-    expect([...itemsById.values()].some(item => item.name.includes('Dogfish'))).toBe(false);
+    for (const removedId of REMOVED_LEGACY_FISH_IDS) {
+      expect(itemsById.has(removedId), `removed fish item ${removedId}`).toBe(false);
+    }
+
+    expect(itemsById.get(564)).toMatchObject({
+      name: 'Fishing Bait',
+      stackable: true,
+      equippable: false,
+      icon: '/items/Fishing_Bait_380.png',
+    });
   });
 
   test('fishingspot definitions group catches into placeable spot types', () => {
@@ -76,42 +80,126 @@ describe('fishing spot data', () => {
     const spots = loadObjects().filter(object => object.category === 'fishingspot');
     const spotsByName = new Map(spots.map(spot => [spot.name, spot]));
 
-    expect(optionNames(spotsByName.get('Shallow Fishing Spot')!, itemsById)).toEqual(['Raw Minnow', 'Raw Crayfish', 'Raw Bluegill']);
-    expect(optionNames(spotsByName.get('River Fishing Spot')!, itemsById)).toEqual(['Raw Perch', 'Raw Roach', 'Raw Trout', 'Raw Carp', 'Raw Salmon']);
-    expect(optionNames(spotsByName.get('Lake Fishing Spot')!, itemsById)).toEqual(['Raw Bluegill', 'Raw Perch', 'Raw Roach', 'Raw Carp', 'Raw Bass']);
-    expect(optionNames(spotsByName.get('Coastal Fishing Spot')!, itemsById)).toEqual(['Raw Bass', 'Raw Mackerel', 'Raw Tuna', 'Raw King Crab', 'Raw Catfish', 'Raw Snapper']);
-    expect(optionNames(spotsByName.get('Deep Sea Fishing Spot')!, itemsById)).toEqual(['Raw Catfish', 'Raw Snapper', 'Raw Sturgeon', 'Raw Swordfish', 'Raw Reef Shark', 'Raw Halibut']);
-    expect(optionNames(spotsByName.get('Shark Fishing Spot')!, itemsById)).toEqual(['Raw Hammerhead Shark', 'Raw Thresher Shark', 'Raw Mako Shark', 'Raw Tiger Shark', 'Raw Great White Shark']);
-    expect(optionNames(spotsByName.get('Rare Ocean Fishing Spot')!, itemsById)).toEqual(['Raw Marlin', 'Raw Oarfish', 'Raw Great White Shark']);
+    expect(optionNames(spotsByName.get('Shallow Fishing Spot')!, itemsById)).toEqual(['Raw Shrimp']);
+    expect(optionNames(spotsByName.get('River Fishing Spot')!, itemsById)).toEqual(['Raw Sardine']);
+    expect(optionNames(spotsByName.get('Lake Fishing Spot')!, itemsById)).toEqual(['Raw Tuna']);
+    expect(optionNames(spotsByName.get('Coastal Fishing Spot')!, itemsById)).toEqual(['Raw Octopus']);
+    expect(optionNames(spotsByName.get('Deep Sea Fishing Spot')!, itemsById)).toEqual(['Raw Octopus']);
+    expect(optionNames(spotsByName.get('Shark Fishing Spot')!, itemsById)).toEqual(['Raw Octopus']);
+    expect(optionNames(spotsByName.get('Rare Ocean Fishing Spot')!, itemsById)).toEqual(['Raw Octopus']);
+    expect(optionNames(spotsByName.get('Low Level Crab Pot Fishing Spot')!, itemsById)).toEqual(['Raw Crayfish']);
+    expect(optionNames(spotsByName.get('Superior Crab Pot Fishing Spot')!, itemsById)).toEqual(['Raw Lobster']);
+    expect(optionNames(spotsByName.get('Deep Fishing Spot')!, itemsById)).toEqual(['Raw Oarfish']);
 
     const covered = new Set(spots.flatMap(spot => (spot.harvestOptions ?? []).map(option => option.harvestItemId)));
-    expect(FISH_TIERS.every(tier => covered.has(tier.itemId))).toBe(true);
+    expect([...covered].sort((a, b) => a - b)).toEqual(SEAFOOD_CATCHES.map(catchDef => catchDef.itemId).sort((a, b) => a - b));
+  });
+
+  test('fishingspot definitions require their related fishing tool items', () => {
+    const itemsById = new Map(loadItems().map(item => [item.id, item]));
+    const spotsByName = new Map(loadObjects().filter(object => object.category === 'fishingspot').map(spot => [spot.name, spot]));
+
+    const expectedTools = new Map<string, ItemToolType>([
+      ['Shallow Fishing Spot', 'fishing_net'],
+      ['River Fishing Spot', 'fishing_rod'],
+      ['Lake Fishing Spot', 'fishing_rod'],
+      ['Deep Fishing Spot', 'fishing_rod'],
+      ['Coastal Fishing Spot', 'harpoon'],
+      ['Deep Sea Fishing Spot', 'harpoon'],
+      ['Shark Fishing Spot', 'harpoon'],
+      ['Rare Ocean Fishing Spot', 'harpoon'],
+      ['Low Level Crab Pot Fishing Spot', 'fishing_pot'],
+      ['Superior Crab Pot Fishing Spot', 'fishing_pot'],
+    ]);
+
+    for (const [spotName, toolType] of expectedTools) {
+      const spot = spotsByName.get(spotName);
+      const tool = spot?.visualToolItemId ? itemsById.get(spot.visualToolItemId) : undefined;
+      expect(tool?.toolType, spotName).toBe(toolType);
+    }
+  });
+
+  test('rod fishing spots require and consume fishing bait', () => {
+    const itemsById = new Map(loadItems().map(item => [item.id, item]));
+    const riverSpot = loadObjects().find(object => object.name === 'River Fishing Spot')!;
+    const player = new Player('bait_test', 10.5, 10.5, fakeWs, 1);
+    player.skills.fishing.level = 40;
+    player.skills.fishing.currentLevel = 40;
+    player.inventory[0] = { itemId: 553, quantity: 1 };
+    const obj = new WorldObject(riverSpot, 10.5, 11.5, 'kcmap');
+
+    const missingBait = makeHarvestWorld(itemsById);
+    missingBait.world.handleHarvestInteraction(player.id, player, obj, 'Fish');
+    expect(missingBait.world.skillingActions.has(player.id)).toBe(false);
+    expect(missingBait.messages).toContain('You need fishing bait to fish.');
+
+    player.inventory[1] = { itemId: 564, quantity: 2 };
+    const withBait = makeHarvestWorld(itemsById);
+    withBait.world.handleHarvestInteraction(player.id, player, obj, 'Fish');
+    expect(withBait.messages).toEqual([]);
+    expect(withBait.world.skillingActions.get(player.id)).toMatchObject({
+      objectId: obj.id,
+      action: 'Fish',
+      toolItemId: 553,
+    });
+
+    expect(withBait.world.consumeHarvestRequiredItem(player, riverSpot)).toBe('consumed');
+    expect(player.inventory[1]).toEqual({ itemId: 564, quantity: 1 });
+  });
+
+  test('server blocks crab pot fishing until the player has a crab pot', () => {
+    const itemsById = new Map(loadItems().map(item => [item.id, item]));
+    const crabPotSpot = loadObjects().find(object => object.name === 'Low Level Crab Pot Fishing Spot')!;
+    const player = new Player('shellfish_test', 10.5, 10.5, fakeWs, 1);
+    player.skills.fishing.level = 40;
+    player.skills.fishing.currentLevel = 40;
+    const obj = new WorldObject(crabPotSpot, 10.5, 11.5, 'kcmap');
+
+    const missing = makeHarvestWorld(itemsById);
+    missing.world.handleHarvestInteraction(player.id, player, obj, 'Fish');
+    expect(missing.world.skillingActions.has(player.id)).toBe(false);
+    expect(missing.messages).toContain('You need a crab pot to fish.');
+
+    const withTool = makeHarvestWorld(itemsById);
+    player.inventory[0] = { itemId: 557, quantity: 1 };
+    withTool.world.handleHarvestInteraction(player.id, player, obj, 'Fish');
+    expect(withTool.messages).toEqual([]);
+    expect(withTool.world.skillingActions.get(player.id)).toMatchObject({
+      objectId: obj.id,
+      action: 'Fish',
+      toolItemId: 557,
+    });
   });
 
   test('server harvest resolver only rolls unlocked spot options', () => {
     const world = Object.create(World.prototype) as any;
     const objectsByName = new Map(loadObjects().map(object => [object.name, object]));
 
+    const shallow = objectsByName.get('Shallow Fishing Spot')!;
+    expect(world.resolveHarvestYield(shallow, 4, () => 0)).toBeNull();
+    expect(world.resolveHarvestYield(shallow, 5, () => 0)).toMatchObject({ itemId: 27, xpReward: 20 });
+
     const river = objectsByName.get('River Fishing Spot')!;
     expect(world.resolveHarvestYield(river, 14, () => 0)).toBeNull();
-    expect(world.resolveHarvestYield(river, 15, () => 0)).toMatchObject({ itemId: 503, xpReward: 60 });
-    expect(world.resolveHarvestYield(river, 35, () => 0.999)).toMatchObject({ itemId: 507, xpReward: 130 });
+    expect(world.resolveHarvestYield(river, 15, () => 0)).toMatchObject({ itemId: 560, xpReward: 30 });
 
-    const deepSea = objectsByName.get('Deep Sea Fishing Spot')!;
-    expect(world.resolveHarvestYield(deepSea, 70, () => 0.999)).toMatchObject({ itemId: 514, xpReward: 305 });
-  });
+    const lake = objectsByName.get('Lake Fishing Spot')!;
+    expect(world.resolveHarvestYield(lake, 34, () => 0)).toBeNull();
+    expect(world.resolveHarvestYield(lake, 35, () => 0)).toMatchObject({ itemId: 510, xpReward: 195 });
 
-  test('higher fishing levels shift spot odds toward higher-tier catches', () => {
-    const world = Object.create(World.prototype) as any;
-    const objectsByName = new Map(loadObjects().map(object => [object.name, object]));
-    const deepSea = objectsByName.get('Deep Sea Fishing Spot')!;
+    const harpoon = objectsByName.get('Deep Sea Fishing Spot')!;
+    expect(world.resolveHarvestYield(harpoon, 77, () => 0)).toBeNull();
+    expect(world.resolveHarvestYield(harpoon, 78, () => 0)).toMatchObject({ itemId: 562, xpReward: 150 });
 
-    const level85Odds = harvestOdds(world, deepSea, 85);
-    const level100Odds = harvestOdds(world, deepSea, 100);
+    const crabPot = objectsByName.get('Low Level Crab Pot Fishing Spot')!;
+    expect(world.resolveHarvestYield(crabPot, 1, () => 0)).toMatchObject({ itemId: 501, xpReward: 30 });
 
-    expect(level85Odds.size).toBeGreaterThan(1);
-    expect(level100Odds.size).toBeGreaterThan(1);
-    expect(level100Odds.get(517)!).toBeGreaterThan(level85Odds.get(517)!);
-    expect(level100Odds.get(512)!).toBeLessThan(level85Odds.get(512)!);
+    const superiorCrabPot = objectsByName.get('Superior Crab Pot Fishing Spot')!;
+    expect(world.resolveHarvestYield(superiorCrabPot, 49, () => 0)).toBeNull();
+    expect(world.resolveHarvestYield(superiorCrabPot, 50, () => 0)).toMatchObject({ itemId: 558, xpReward: 150 });
+
+    const deep = objectsByName.get('Deep Fishing Spot')!;
+    expect(world.resolveHarvestYield(deep, 86, () => 0)).toBeNull();
+    expect(world.resolveHarvestYield(deep, 87, () => 0)).toMatchObject({ itemId: 523, xpReward: 650 });
   });
 });

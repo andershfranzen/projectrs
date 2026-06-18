@@ -1714,6 +1714,11 @@ export class World {
       && this.hasRangedLineOfSightFrom(player, npc, x, z);
   }
 
+  private isPointInNpcMagicAttackRangeFrom(player: Player, npc: Npc, x: number, z: number): boolean {
+    return isPointInNpcMagicAttackRange(npc, x, z)
+      && this.hasRangedLineOfSightFrom(player, npc, x, z);
+  }
+
   private isPointInNpcAttackRangeFrom(
     player: Player,
     npc: Npc,
@@ -1801,7 +1806,7 @@ export class World {
   private isPlayerInNpcAttackRange(player: Player, npc: Npc, mode: 'melee' | 'ranged' | 'magic', rangedRange: number = RANGED_ATTACK_DISTANCE): boolean {
     if (mode === 'melee') return this.isPlayerInNpcMeleeAttackRange(player, npc);
     if (mode === 'ranged') return this.isPointInNpcRangedAttackRange(player, npc, player.position.x, player.position.y, rangedRange);
-    return isPointInNpcMagicAttackRange(npc, player.position.x, player.position.y);
+    return this.isPointInNpcMagicAttackRangeFrom(player, npc, player.position.x, player.position.y);
   }
 
   private setObjectTilesBlocked(
@@ -3793,6 +3798,52 @@ export class World {
     return lowest;
   }
 
+  private harvestRequiredToolType(def: WorldObjectDef): string | null {
+    if (def.category === 'tree') return 'axe';
+    if (def.category === 'rock') return 'pickaxe';
+    if (def.category === 'fishingspot' && def.visualToolItemId) {
+      return this.data.getItem(def.visualToolItemId)?.toolType ?? null;
+    }
+    return null;
+  }
+
+  private harvestToolDisplayName(toolType: string, def: WorldObjectDef): string {
+    const visualTool = def.visualToolItemId ? this.data.getItem(def.visualToolItemId) : null;
+    if (visualTool?.toolType === toolType) return visualTool.name.toLowerCase();
+    if (toolType === 'fishing_net') return 'fishing net';
+    if (toolType === 'fishing_rod') return 'fishing rod';
+    if (toolType === 'fishing_pot') return 'crab pot';
+    return toolType.replace(/_/g, ' ');
+  }
+
+  private harvestRequiredItemQuantity(def: WorldObjectDef): number {
+    return Math.max(1, Math.floor(def.requiredItemQuantity ?? 1));
+  }
+
+  private hasHarvestRequiredItem(player: Player, def: WorldObjectDef): boolean {
+    if (!def.requiredItemId) return true;
+    return this.countInventoryItem(player, def.requiredItemId) >= this.harvestRequiredItemQuantity(def);
+  }
+
+  private harvestRequiredItemMessage(def: WorldObjectDef, action: string): string {
+    const itemId = def.requiredItemId;
+    if (!itemId) return '';
+    const quantity = this.harvestRequiredItemQuantity(def);
+    const itemName = this.data.getItem(itemId)?.name.toLowerCase() ?? `item ${itemId}`;
+    const itemLabel = quantity > 1 ? `${quantity} ${itemName}` : itemName;
+    return `You need ${itemLabel} to ${action.toLowerCase()}.`;
+  }
+
+  private consumeHarvestRequiredItem(player: Player, def: WorldObjectDef): 'ok' | 'consumed' | 'missing' {
+    const itemId = def.requiredItemId;
+    if (!itemId) return 'ok';
+    const quantity = this.harvestRequiredItemQuantity(def);
+    if (this.countInventoryItem(player, itemId) < quantity) return 'missing';
+    if (!def.consumeRequiredItem) return 'ok';
+    const removal = player.removeItemById(itemId, quantity);
+    return removal.completed === quantity ? 'consumed' : 'missing';
+  }
+
   /** Send an opcode to all players near a world position on a given map (zero-allocation) */
   private broadcastNearby(mapId: string, worldX: number, worldZ: number, opcode: ServerOpcode, ...values: number[]): void {
     const cm = this.chunkManagers.get(mapId);
@@ -3911,6 +3962,8 @@ export class World {
 
   private setCombatTarget(playerId: number, npcId: number): void {
     const alreadyTargeting = this.playerCombatTargets.get(playerId) === npcId;
+    const player = this.players.get(playerId);
+    const npc = this.npcs.get(npcId);
     if (!alreadyTargeting) {
       this.clearCombatTarget(playerId);
       this.playerCombatTargets.set(playerId, npcId);
@@ -3918,9 +3971,10 @@ export class World {
       if (!set) { set = new Set(); this.npcTargetedBy.set(npcId, set); }
       set.add(playerId);
     }
-    const player = this.players.get(playerId);
-    const npc = this.npcs.get(npcId);
-    if (player && npc) this.syncPlayerCombatIntent(player, npc);
+    if (player && npc) {
+      player.attackTarget = npc;
+      this.syncPlayerCombatIntent(player, npc);
+    }
     if (player) {
       this.magicDebug(player, 'setCombatTarget', { npcId, autocast: player.autocastSpellIndex, cooldown: player.attackCooldown });
       if (!alreadyTargeting) this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, npcId);
@@ -3929,6 +3983,7 @@ export class World {
 
   private clearCombatTarget(playerId: number): void {
     const oldNpc = this.playerCombatTargets.get(playerId);
+    const player = this.players.get(playerId);
     if (oldNpc !== undefined) {
       const set = this.npcTargetedBy.get(oldNpc);
       if (set) {
@@ -3936,11 +3991,13 @@ export class World {
         if (set.size === 0) this.npcTargetedBy.delete(oldNpc);
       }
       this.playerCombatTargets.delete(playerId);
-      const player = this.players.get(playerId);
       if (player) {
+        if (player.attackTarget?.id === oldNpc) player.attackTarget = null;
         this.magicDebug(player, 'clearCombatTarget', { npcId: oldNpc, autocast: player.autocastSpellIndex, cooldown: player.attackCooldown });
         this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
       }
+    } else if (player?.attackTarget instanceof Npc) {
+      player.attackTarget = null;
     }
     const actor = this.playerCombatRef(playerId);
     const combat = this.getCombatSystem();
@@ -3982,8 +4039,9 @@ export class World {
     this.syncPlayerCombatIntent(player, npc);
   }
 
-  // 2004Scape queues playerhit_n_retaliate from the NPC hit path; in this
-  // server, one tick also lets the next movement step run before retal engages.
+  // 2004Scape queues playerhit_n_retaliate from the NPC hit path. Its script
+  // seeds %action_delay to half weapon speed before p_opnpc(2), so the
+  // counterattack starts without giving the defender an immediate free swing.
   private static readonly PLAYER_AUTO_RETALIATION_DELAY_TICKS = 1;
 
   private enqueuePlayerAutoRetaliation(player: Player, npc: Npc): void {
@@ -4074,6 +4132,23 @@ export class World {
     }
   }
 
+  private seedPlayerAutoRetaliationCooldown(player: Player): void {
+    const actor = this.playerCombatRef(player.id);
+    const combat = this.getCombatSystem();
+    if (player.attackCooldown > 0 || combat.cooldownRemaining(actor, this.currentTick) > 0) return;
+
+    const attackSpeed = player.getAttackSpeed(this.data.itemDefs);
+    const retaliationDelay = Math.max(1, Math.floor(attackSpeed / 2));
+    this.armPlayerAttackCooldown(player, retaliationDelay);
+  }
+
+  private closePlayerHitInterfaces(player: Player): void {
+    if (player.openInterface === 'duel' || this.activeDuels?.has(player.id)) return;
+    if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
+    this.closeShopForPlayer(player);
+    if (player.openDialogueState) this.sendDialogueClose(player);
+  }
+
   private startPlayerAutoRetaliation(player: Player, npc: Npc): void {
     if (!player.autoRetaliate || !player.alive || player.disconnected) return;
     if (player.isInterfaceOpen() || this.activeDuels?.has(player.id)) return;
@@ -4081,6 +4156,7 @@ export class World {
     if (npc.dead || this.isNpcInteractionCombatBlocked(player, npc)) return;
     if (!this.canPlayerTargetNpc(player, npc)) return;
 
+    this.seedPlayerAutoRetaliationCooldown(player);
     this.interruptPlayerAction(player.id, player);
     player.attackTarget = npc;
     this.setCombatTarget(player.id, npc.id);
@@ -4102,7 +4178,7 @@ export class World {
       if (this.activeDuels?.has(player.id) || player.openInterface === 'duel') return;
       if (!this.canPlayerTargetNpc(player, npc)) return;
       armNpcRetaliation(npc, player);
-      this.syncNpcAttackCooldownFromSchedule(npc);
+      this.armNpcAttackCooldown(npc, npc.attackCooldown);
     }
   }
 
@@ -4653,7 +4729,7 @@ export class World {
       // current queue is consumed, keeping client prediction stable mid-walk.
       if (isMagicAutocast && player.hasMoveQueue()) {
         const beforeDest = player.getMoveDestination();
-        if (this.trimPlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE)) {
+        if (this.trimPlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE, true)) {
           this.notifyClientIfMoveDestinationChanged(player, beforeDest);
         }
       } else if (isRanged && player.hasMoveQueue()) {
@@ -4663,7 +4739,7 @@ export class World {
         }
       } else if (!player.hasMoveQueue()) {
         if (isMagicAutocast) {
-          this.queuePlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE);
+          this.queuePlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE, true);
         } else if (!isRanged) {
           const path = this.findPlayerPathToNpc(player, npc);
           player.setMoveQueue(path);
@@ -6692,7 +6768,7 @@ export class World {
       return;
     }
 
-    const requiredTool = obj.def.category === 'tree' ? 'axe' : obj.def.category === 'rock' ? 'pickaxe' : null;
+    const requiredTool = this.harvestRequiredToolType(obj.def);
     let toolItemId: number | undefined;
     let toolBonus = 0;
     if (requiredTool) {
@@ -6702,12 +6778,17 @@ export class World {
         if (lowestOwnedRequirement !== null && lowestOwnedRequirement > playerLevel) {
           this.sendChatSystem(player, `You need level ${lowestOwnedRequirement} ${SKILL_NAMES[skillId] ?? 'skill'} to use that ${requiredTool}.`);
         } else {
-          this.sendChatSystem(player, `You need ${requiredTool === 'axe' ? 'an axe' : 'a pickaxe'} to ${action.toLowerCase()}.`);
+          const toolName = this.harvestToolDisplayName(requiredTool, obj.def);
+          this.sendChatSystem(player, `You need ${indefiniteArticle(toolName)} ${toolName} to ${action.toLowerCase()}.`);
         }
         return;
       }
       toolItemId = bestTool.id;
       toolBonus = bestTool.toolBonus ?? 0;
+    }
+    if (!this.hasHarvestRequiredItem(player, obj.def)) {
+      this.sendChatSystem(player, this.harvestRequiredItemMessage(obj.def, action));
+      return;
     }
     if (toolItemId == null && obj.def.visualToolItemId && this.data.getItem(obj.def.visualToolItemId)) {
       toolItemId = obj.def.visualToolItemId;
@@ -8061,9 +8142,9 @@ export class World {
     const fp = npc.distToFootprint(player.position.x, player.position.y);
     const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
     const rangeDist = Math.max(Math.abs(fp.dx), Math.abs(fp.dz));
-    if (!isPointInNpcMagicAttackRange(npc, player.position.x, player.position.y)) {
+    if (!this.isPointInNpcMagicAttackRangeFrom(player, npc, player.position.x, player.position.y)) {
       this.magicDebug(player, 'castSpell-defer-range', { spellIndex, targetEntityId, keepCombatTarget, dist: rangeDist, max: MAGIC_ATTACK_DISTANCE });
-      if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE);
+      if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE, true);
       if (player.hasMoveQueue()) {
         player.pendingSpellCast = { spellIndex, targetEntityId, actionRevision: player.actionRevision };
         this.markQueuedAction(player);
@@ -10898,7 +10979,7 @@ export class World {
         }
         const fp = npc.distToFootprint(player.position.x, player.position.y);
         const dist = Math.max(Math.abs(fp.dx), Math.abs(fp.dz));
-        if (!isPointInNpcMagicAttackRange(npc, player.position.x, player.position.y)) {
+        if (!this.isPointInNpcMagicAttackRangeFrom(player, npc, player.position.x, player.position.y)) {
           this.magicDebug(player, 'tickCombat-autocast-out-of-range', {
             npcId,
             autocast: player.autocastSpellIndex,
@@ -10906,7 +10987,7 @@ export class World {
             max: MAGIC_ATTACK_DISTANCE,
             hasMoveQueue: player.hasMoveQueue(),
           });
-          if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE);
+          if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE, true);
           continue;
         }
         if (player.attackCooldown <= 0) {
@@ -11115,6 +11196,7 @@ export class World {
         this.sendSingleSkill(target, HITPOINTS_SKILL_INDEX);
 
         if (target.alive) {
+          this.closePlayerHitInterfaces(target);
           this.enqueuePlayerAutoRetaliation(target, npc);
         }
 
@@ -11393,6 +11475,14 @@ export class World {
         const isChest = obj.def.category === 'chest';
         const foundForChest: Array<{ itemId: number; quantity: number }> = [];
         let inventoryChanged = false;
+
+        const requiredItemState = this.consumeHarvestRequiredItem(player, obj.def);
+        if (requiredItemState === 'missing') {
+          this.sendChatSystem(player, this.harvestRequiredItemMessage(obj.def, action.action));
+          this.stopPlayerSkilling(playerId, player);
+          continue;
+        }
+        if (requiredItemState === 'consumed') inventoryChanged = true;
 
         const primary = isChest
           ? { added: player.addItem(itemId, qty, this.data.itemDefs).completed, dropped: 0 }

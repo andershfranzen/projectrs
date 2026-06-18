@@ -60,7 +60,7 @@ export function decodeNpcVisualScale(value: unknown): number {
 
 export const HEAD_RENDER_MODES = ['helmet', 'hat', 'hairTuck', 'hairFit'] as const;
 export type HeadRenderMode = typeof HEAD_RENDER_MODES[number];
-export type ItemToolType = 'axe' | 'pickaxe' | 'hammer' | 'fishing_net' | 'fishing_rod' | 'harpoon';
+export type ItemToolType = 'axe' | 'pickaxe' | 'hammer' | 'fishing_net' | 'fishing_rod' | 'harpoon' | 'fishing_pot';
 
 export interface ItemDef {
   id: number;
@@ -512,6 +512,12 @@ export interface WorldObjectDef {
   skillAnimation?: 'chop' | 'mine' | 'fish_net' | 'fish_rod' | 'fish_harpoon' | string;
   /** Item model to temporarily show in-hand while this harvest action runs. */
   visualToolItemId?: number;
+  /** Additional inventory item required for the harvest action, e.g. fishing bait. */
+  requiredItemId?: number;
+  /** Quantity of requiredItemId needed per action/cycle. Defaults to 1. */
+  requiredItemQuantity?: number;
+  /** Whether requiredItemId should be consumed on a successful harvest roll. */
+  consumeRequiredItem?: boolean;
   depletionChance?: number; // 0-1, chance per success
   respawnTime?: number; // ticks after depletion
   harvestOptions?: Array<{

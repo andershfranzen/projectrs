@@ -9,6 +9,7 @@ import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
 import type { AnimationGroup } from '@babylonjs/core/Animations/animationGroup'
 import type { ISceneLoaderAsyncResult } from '@babylonjs/core/Loading/sceneLoader'
 import '@babylonjs/loaders/glTF'
+import { createFishingSpotEditorVisual, isFishingSpotPlaceholderPath } from './FishingSpotEditorVisual'
 
 interface CacheEntry {
   template: TransformNode
@@ -25,7 +26,6 @@ interface CloneAssetOptions {
 
 const cache = new Map<string, CacheEntry>()
 const STALL_FRAME_MATERIAL_NAMES = new Set(['material.001', 'material.002', 'material.003'])
-const FISHING_SPOT_BUBBLES_PATH = '/assets/models/fishingspotbubbles.glb'
 
 let _scene: Scene | null = null
 
@@ -33,16 +33,8 @@ function shouldUseStallFrameBounds(path: string): boolean {
   return path.toLowerCase().includes('stall')
 }
 
-function isFishingSpotPlaceholderPath(path: string): boolean {
-  return path.toLowerCase() === FISHING_SPOT_BUBBLES_PATH
-}
-
 function buildFishingSpotPlaceholderTemplate(): TransformNode {
-  const pivot = new TransformNode('fishing-spot-placeholder-pivot', _scene!)
-  pivot.metadata = {
-    bounds: { width: 1, height: 0.12, depth: 1 }
-  } as BoundsMetadata
-  return pivot
+  return createFishingSpotEditorVisual(_scene!, 'fishing-spot-placeholder', { pickable: true }).root
 }
 
 function worldAABBForMaterials(meshes: AbstractMesh[], materialNames: ReadonlySet<string>): {

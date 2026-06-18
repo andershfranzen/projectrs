@@ -12,7 +12,7 @@ export interface ItemDefValidationOptions {
 
 const EQUIP_SKILLS = new Set<string>(ALL_SKILLS);
 const WEAPON_STYLES = new Set(['stab', 'slash', 'crush', 'bow', 'crossbow']);
-const TOOL_TYPES = new Set(['axe', 'pickaxe', 'hammer', 'fishing_net', 'fishing_rod', 'harpoon']);
+const TOOL_TYPES = new Set(['axe', 'pickaxe', 'hammer', 'fishing_net', 'fishing_rod', 'harpoon', 'fishing_pot']);
 const HEAD_RENDER_MODE_SET: ReadonlySet<string> = new Set(HEAD_RENDER_MODES);
 const FINITE_NUMBER_FIELDS = [
   'value', 'attackSpeed', 'attackRange', 'stabAttack', 'slashAttack', 'crushAttack',

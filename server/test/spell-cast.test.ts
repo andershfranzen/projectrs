@@ -148,6 +148,7 @@ function makeWorld(player: Player, npc: Npc, spell: SpellEffectDef | undefined):
     p.setMoveQueue([{ x: 10.5, z: 10.5 }]);
     return true;
   };
+  world.hasRangedLineOfSightFrom = () => true;
   world.cancelSkilling = () => {};
   world.cancelItemProduction = () => {};
   world.closeShopForPlayer = () => {};
@@ -217,6 +218,27 @@ describe('server-authoritative spell casting', () => {
     expect(player.pendingSpellCast).toMatchObject({ spellIndex: 0, targetEntityId: npc.id });
   });
 
+  test('blocked magic line of sight does not cast or queue an unreachable spell', () => {
+    const player = new Player('caster', 1.5, 1.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 3.5, 1.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const world = makeWorld(player, npc, spellDef);
+    let pathQueued = false;
+    world.hasRangedLineOfSightFrom = () => false;
+    world.queuePlayerPathToNpcRange = () => {
+      pathQueued = true;
+      return false;
+    };
+
+    world.handlePlayerCastSpell(player.id, 0, npc.id);
+
+    expect(pathQueued).toBe(true);
+    expect(player.pendingSpellCast).toBeNull();
+    expect(player.attackCooldown).toBe(0);
+    expect(world.pendingSpellImpacts).toHaveLength(0);
+  });
+
   test('stale queued spell casts are dropped after another action revision', () => {
     const player = new Player('caster', 1.5, 1.5, fakeWs, 1);
     const npc = new Npc(npcDef, 20.5, 1.5);
@@ -276,6 +298,31 @@ describe('server-authoritative spell casting', () => {
     expect(player.attackCooldown).toBe(5);
     expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
     expect(world.pendingSpellImpacts).toHaveLength(1);
+  });
+
+  test('active autocast walks for magic line of sight instead of casting through blockers', () => {
+    const player = new Player('caster', 1.5, 1.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 3.5, 1.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const world = makeWorld(player, npc, spellDef);
+    let pathQueued = false;
+    world.hasRangedLineOfSightFrom = () => false;
+    world.queuePlayerPathToNpcRange = (p: Player) => {
+      pathQueued = true;
+      p.setMoveQueue([{ x: 2.5, z: 1.5 }]);
+      return true;
+    };
+
+    world.handlePlayerSetAutocast(player.id, 0);
+    world.playerCombatTargets.set(player.id, npc.id);
+    world.tickPlayerCombat();
+
+    expect(pathQueued).toBe(true);
+    expect(player.hasMoveQueue()).toBe(true);
+    expect(player.attackCooldown).toBe(0);
+    expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
+    expect(world.pendingSpellImpacts).toHaveLength(0);
   });
 
   test('active autocast repeats after cooldown while the target remains engaged', () => {

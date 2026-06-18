@@ -8,8 +8,14 @@ import { Color3, Color4 } from '@babylonjs/core/Maths/math.color'
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader'
 import type { ISceneLoaderAsyncResult } from '@babylonjs/core/Loading/sceneLoader'
 import type { Material } from '@babylonjs/core/Materials/material'
+import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh'
 import '@babylonjs/loaders/glTF'
 import { getCachedThumb, putCachedThumb } from './ThumbnailCache'
+import {
+  createFishingSpotEditorVisual,
+  disposeFishingSpotEditorResources,
+  isFishingSpotPlaceholderPath,
+} from './FishingSpotEditorVisual'
 
 export const DEFAULT_THUMB_ALPHA = -Math.PI / 4
 export const DEFAULT_THUMB_BETA = Math.PI / 2.6
@@ -52,14 +58,14 @@ export function splitEncodedGlbUrl(path: string): { dir: string; file: string } 
  *  ArcRotateCamera. Distance multipliers are applied by callers so the editor
  *  uses the same distance semantics as the runtime thumbnail renderer. Returns
  *  null for an empty/vertex-less import result. */
-export function computeFitTarget(
-  result: ISceneLoaderAsyncResult,
+export function computeFitTargetForMeshes(
+  meshes: AbstractMesh[],
   fov: number,
 ): { center: Vector3; fitRadius: number } | null {
   let minX = Infinity, maxX = -Infinity
   let minY = Infinity, maxY = -Infinity
   let minZ = Infinity, maxZ = -Infinity
-  for (const mesh of result.meshes) {
+  for (const mesh of meshes) {
     if (!mesh.getTotalVertices || mesh.getTotalVertices() === 0) continue
     if (mesh.material) (mesh.material as any).backFaceCulling = false
     mesh.computeWorldMatrix(true)
@@ -78,9 +84,16 @@ export function computeFitTarget(
   return { center, fitRadius }
 }
 
+export function computeFitTarget(
+  result: ISceneLoaderAsyncResult,
+  fov: number,
+): { center: Vector3; fitRadius: number } | null {
+  return computeFitTargetForMeshes(result.meshes, fov)
+}
+
 const THUMB_SIZE = 128
 // Bump to invalidate every cached thumbnail across clients.
-const THUMB_VERSION = 5
+const THUMB_VERSION = 6
 const RENDER_TIMEOUT_MS = 10000
 
 export interface AssetThumbnailOverride {
@@ -246,6 +259,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 async function renderOne(path: string, explicitOverride?: AssetThumbnailOverride): Promise<string | null> {
   ensureEngine()
+  if (isFishingSpotPlaceholderPath(path)) return renderFishingSpotThumbnail(path, explicitOverride)
+
   const { dir, file } = splitEncodedGlbUrl(path)
   const result: ISceneLoaderAsyncResult = await SceneLoader.ImportMeshAsync('', dir, file, _scene!)
   for (const ag of result.animationGroups || []) ag.stop()
@@ -267,6 +282,36 @@ async function renderOne(path: string, explicitOverride?: AssetThumbnailOverride
     dataUrl = _canvas!.toDataURL('image/png')
   }
   disposeImportResult(result)
+  return dataUrl
+}
+
+async function renderFishingSpotThumbnail(path: string, explicitOverride?: AssetThumbnailOverride): Promise<string | null> {
+  const visual = createFishingSpotEditorVisual(_scene!, 'thumbFishingSpot')
+  const overrides = explicitOverride ? null : await loadAssetOverrides()
+  const ov = explicitOverride ?? overrides?.[path] ?? overrides?.['/assets/models/FishingSpotBubbles.glb'] ?? {}
+
+  if (visual.root.rotationQuaternion) visual.root.rotationQuaternion = null
+  visual.root.rotation.x += ov.rotationX ?? 0
+  visual.root.rotation.y += ov.rotationY ?? 0
+  visual.root.rotation.z += ov.rotationZ ?? 0
+  visual.root.computeWorldMatrix(true)
+  for (const mesh of visual.root.getChildMeshes()) mesh.computeWorldMatrix(true)
+
+  let dataUrl: string | null = null
+  const fit = computeFitTargetForMeshes(visual.root.getChildMeshes(), _camera!.fov)
+  if (fit) {
+    _camera!.alpha = ov.alpha ?? DEFAULT_THUMB_ALPHA
+    _camera!.beta = ov.beta ?? DEFAULT_THUMB_BETA
+    _camera!.setTarget(fit.center)
+    _camera!.radius = fit.fitRadius * (ov.distanceMult ?? 1.15)
+    await _scene!.whenReadyAsync()
+    _scene!.render()
+    _scene!.render()
+    dataUrl = _canvas!.toDataURL('image/png')
+  }
+
+  visual.root.dispose()
+  disposeFishingSpotEditorResources(visual.resources)
   return dataUrl
 }
 

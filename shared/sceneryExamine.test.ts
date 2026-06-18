@@ -132,7 +132,11 @@ test('fishing bubble assets resolve to fishing spot object definitions', () => {
   expect(objectDefIdForPlacedAsset('FishingSpotBubbles')).toBe(5);
   expect(objectDefIdForPlacedAsset('FishingSpotBubblesNet')).toBe(5);
   expect(objectDefIdForPlacedAsset('FishingSpotBubblesRod')).toBe(46);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesRodDeep')).toBe(69);
   expect(objectDefIdForPlacedAsset('FishingSpotBubblesHarpoon')).toBe(48);
+  expect(objectDefIdForPlacedAsset('CrabPot')).toBe(67);
+  expect(objectDefIdForPlacedAsset('CrabPotFishingSpot')).toBe(67);
+  expect(objectDefIdForPlacedAsset('SuperiorCrabPotFishingSpot')).toBe(68);
 });
 
 test('trapdoor assets resolve to the teleport object definition', () => {

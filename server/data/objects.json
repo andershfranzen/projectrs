@@ -227,34 +227,22 @@
     "skill": "fishing",
     "skillAnimation": "fish_net",
     "visualToolItemId": 552,
-    "levelRequired": 1,
+    "levelRequired": 5,
     "xpReward": 20,
-    "harvestItemId": 500,
+    "harvestItemId": 27,
     "harvestQuantity": 1,
     "harvestTime": 5,
     "depletionChance": 0,
     "respawnTime": 0,
     "harvestOptions": [
       {
-        "levelRequired": 1,
-        "xpReward": 20,
-        "harvestItemId": 500,
-        "weight": 6
-      },
-      {
         "levelRequired": 5,
-        "xpReward": 30,
-        "harvestItemId": 501,
-        "weight": 4
-      },
-      {
-        "levelRequired": 10,
-        "xpReward": 45,
-        "harvestItemId": 502,
-        "weight": 2
+        "xpReward": 20,
+        "harvestItemId": 27,
+        "weight": 1
       }
     ],
-    "examineText": "Small fish ripple through the shallows."
+    "examineText": "Shrimp ripple through the shallows."
   },
   {
     "id": 6,
@@ -406,15 +394,6 @@
         "xpReward": 5
       },
       {
-        "inputItemId": 27,
-        "inputQuantity": 1,
-        "outputItemId": 28,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 1,
-        "xpReward": 20
-      },
-      {
         "inputItemId": 230,
         "inputQuantity": 1,
         "outputItemId": 231,
@@ -433,12 +412,12 @@
         "xpReward": 25
       },
       {
-        "inputItemId": 500,
+        "inputItemId": 27,
         "inputQuantity": 1,
-        "outputItemId": 525,
+        "outputItemId": 28,
         "outputQuantity": 1,
         "skill": "cooking",
-        "levelRequired": 1,
+        "levelRequired": 5,
         "xpReward": 20
       },
       {
@@ -447,80 +426,26 @@
         "outputItemId": 526,
         "outputQuantity": 1,
         "skill": "cooking",
-        "levelRequired": 5,
+        "levelRequired": 1,
         "xpReward": 30
       },
       {
-        "inputItemId": 502,
+        "inputItemId": 560,
         "inputQuantity": 1,
-        "outputItemId": 527,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 10,
-        "xpReward": 45
-      },
-      {
-        "inputItemId": 503,
-        "inputQuantity": 1,
-        "outputItemId": 528,
+        "outputItemId": 561,
         "outputQuantity": 1,
         "skill": "cooking",
         "levelRequired": 15,
-        "xpReward": 60
+        "xpReward": 30
       },
       {
-        "inputItemId": 504,
+        "inputItemId": 562,
         "inputQuantity": 1,
-        "outputItemId": 529,
+        "outputItemId": 563,
         "outputQuantity": 1,
         "skill": "cooking",
-        "levelRequired": 20,
-        "xpReward": 75
-      },
-      {
-        "inputItemId": 505,
-        "inputQuantity": 1,
-        "outputItemId": 530,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 25,
-        "xpReward": 90
-      },
-      {
-        "inputItemId": 506,
-        "inputQuantity": 1,
-        "outputItemId": 531,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 30,
-        "xpReward": 110
-      },
-      {
-        "inputItemId": 507,
-        "inputQuantity": 1,
-        "outputItemId": 532,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 35,
-        "xpReward": 130
-      },
-      {
-        "inputItemId": 508,
-        "inputQuantity": 1,
-        "outputItemId": 533,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 40,
+        "levelRequired": 78,
         "xpReward": 150
-      },
-      {
-        "inputItemId": 509,
-        "inputQuantity": 1,
-        "outputItemId": 534,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 45,
-        "xpReward": 170
       },
       {
         "inputItemId": 510,
@@ -528,116 +453,8 @@
         "outputItemId": 535,
         "outputQuantity": 1,
         "skill": "cooking",
-        "levelRequired": 50,
+        "levelRequired": 35,
         "xpReward": 195
-      },
-      {
-        "inputItemId": 511,
-        "inputQuantity": 1,
-        "outputItemId": 536,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 55,
-        "xpReward": 220
-      },
-      {
-        "inputItemId": 512,
-        "inputQuantity": 1,
-        "outputItemId": 537,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 60,
-        "xpReward": 245
-      },
-      {
-        "inputItemId": 513,
-        "inputQuantity": 1,
-        "outputItemId": 538,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 65,
-        "xpReward": 275
-      },
-      {
-        "inputItemId": 514,
-        "inputQuantity": 1,
-        "outputItemId": 539,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 70,
-        "xpReward": 305
-      },
-      {
-        "inputItemId": 515,
-        "inputQuantity": 1,
-        "outputItemId": 540,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 75,
-        "xpReward": 335
-      },
-      {
-        "inputItemId": 516,
-        "inputQuantity": 1,
-        "outputItemId": 541,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 80,
-        "xpReward": 370
-      },
-      {
-        "inputItemId": 517,
-        "inputQuantity": 1,
-        "outputItemId": 542,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 85,
-        "xpReward": 405
-      },
-      {
-        "inputItemId": 518,
-        "inputQuantity": 1,
-        "outputItemId": 543,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 90,
-        "xpReward": 440
-      },
-      {
-        "inputItemId": 519,
-        "inputQuantity": 1,
-        "outputItemId": 544,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 95,
-        "xpReward": 480
-      },
-      {
-        "inputItemId": 520,
-        "inputQuantity": 1,
-        "outputItemId": 545,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 100,
-        "xpReward": 520
-      },
-      {
-        "inputItemId": 521,
-        "inputQuantity": 1,
-        "outputItemId": 546,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 105,
-        "xpReward": 560
-      },
-      {
-        "inputItemId": 522,
-        "inputQuantity": 1,
-        "outputItemId": 547,
-        "outputQuantity": 1,
-        "skill": "cooking",
-        "levelRequired": 110,
-        "xpReward": 605
       },
       {
         "inputItemId": 523,
@@ -645,17 +462,17 @@
         "outputItemId": 548,
         "outputQuantity": 1,
         "skill": "cooking",
-        "levelRequired": 115,
+        "levelRequired": 87,
         "xpReward": 650
       },
       {
-        "inputItemId": 524,
+        "inputItemId": 558,
         "inputQuantity": 1,
-        "outputItemId": 549,
+        "outputItemId": 559,
         "outputQuantity": 1,
         "skill": "cooking",
-        "levelRequired": 120,
-        "xpReward": 700
+        "levelRequired": 50,
+        "xpReward": 150
       }
     ],
     "examineText": "A cooking range with enough heat for a proper meal."
@@ -2921,8 +2738,8 @@
     "skillAnimation": "fish_rod",
     "visualToolItemId": 553,
     "levelRequired": 15,
-    "xpReward": 60,
-    "harvestItemId": 503,
+    "xpReward": 30,
+    "harvestItemId": 560,
     "harvestQuantity": 1,
     "harvestTime": 5,
     "depletionChance": 0,
@@ -2930,36 +2747,15 @@
     "harvestOptions": [
       {
         "levelRequired": 15,
-        "xpReward": 60,
-        "harvestItemId": 503,
-        "weight": 5
-      },
-      {
-        "levelRequired": 20,
-        "xpReward": 75,
-        "harvestItemId": 504,
-        "weight": 4
-      },
-      {
-        "levelRequired": 25,
-        "xpReward": 90,
-        "harvestItemId": 505,
-        "weight": 3
-      },
-      {
-        "levelRequired": 30,
-        "xpReward": 110,
-        "harvestItemId": 506,
-        "weight": 2
-      },
-      {
-        "levelRequired": 35,
-        "xpReward": 130,
-        "harvestItemId": 507,
+        "xpReward": 30,
+        "harvestItemId": 560,
         "weight": 1
       }
     ],
-    "examineText": "A moving current where river fish gather."
+    "examineText": "Small sardines gather near baited hooks.",
+    "requiredItemId": 564,
+    "requiredItemQuantity": 1,
+    "consumeRequiredItem": true
   },
   {
     "id": 47,
@@ -2981,46 +2777,25 @@
     "skill": "fishing",
     "skillAnimation": "fish_rod",
     "visualToolItemId": 553,
-    "levelRequired": 10,
-    "xpReward": 45,
-    "harvestItemId": 502,
+    "levelRequired": 35,
+    "xpReward": 195,
+    "harvestItemId": 510,
     "harvestQuantity": 1,
     "harvestTime": 5,
     "depletionChance": 0,
     "respawnTime": 0,
     "harvestOptions": [
       {
-        "levelRequired": 10,
-        "xpReward": 45,
-        "harvestItemId": 502,
-        "weight": 4
-      },
-      {
-        "levelRequired": 15,
-        "xpReward": 60,
-        "harvestItemId": 503,
-        "weight": 4
-      },
-      {
-        "levelRequired": 20,
-        "xpReward": 75,
-        "harvestItemId": 504,
-        "weight": 3
-      },
-      {
-        "levelRequired": 30,
-        "xpReward": 110,
-        "harvestItemId": 506,
-        "weight": 2
-      },
-      {
-        "levelRequired": 40,
-        "xpReward": 150,
-        "harvestItemId": 508,
+        "levelRequired": 35,
+        "xpReward": 195,
+        "harvestItemId": 510,
         "weight": 1
       }
     ],
-    "examineText": "Still water with patient lake fish beneath the surface."
+    "examineText": "Deeper lake water where tuna strike baited hooks.",
+    "requiredItemId": 564,
+    "requiredItemQuantity": 1,
+    "consumeRequiredItem": true
   },
   {
     "id": 48,
@@ -3042,52 +2817,22 @@
     "skill": "fishing",
     "skillAnimation": "fish_harpoon",
     "visualToolItemId": 554,
-    "levelRequired": 40,
+    "levelRequired": 78,
     "xpReward": 150,
-    "harvestItemId": 508,
+    "harvestItemId": 562,
     "harvestQuantity": 1,
     "harvestTime": 5,
     "depletionChance": 0,
     "respawnTime": 0,
     "harvestOptions": [
       {
-        "levelRequired": 40,
+        "levelRequired": 78,
         "xpReward": 150,
-        "harvestItemId": 508,
-        "weight": 5
-      },
-      {
-        "levelRequired": 45,
-        "xpReward": 170,
-        "harvestItemId": 509,
-        "weight": 4
-      },
-      {
-        "levelRequired": 50,
-        "xpReward": 195,
-        "harvestItemId": 510,
-        "weight": 3
-      },
-      {
-        "levelRequired": 55,
-        "xpReward": 220,
-        "harvestItemId": 511,
-        "weight": 2
-      },
-      {
-        "levelRequired": 60,
-        "xpReward": 245,
-        "harvestItemId": 512,
-        "weight": 2
-      },
-      {
-        "levelRequired": 65,
-        "xpReward": 275,
-        "harvestItemId": 513,
+        "harvestItemId": 562,
         "weight": 1
       }
     ],
-    "examineText": "Foamy coastal water with larger fish moving in and out."
+    "examineText": "Dark water where octopus move beneath the surface."
   },
   {
     "id": 49,
@@ -3109,52 +2854,22 @@
     "skill": "fishing",
     "skillAnimation": "fish_harpoon",
     "visualToolItemId": 554,
-    "levelRequired": 60,
-    "xpReward": 245,
-    "harvestItemId": 512,
+    "levelRequired": 78,
+    "xpReward": 150,
+    "harvestItemId": 562,
     "harvestQuantity": 1,
     "harvestTime": 5,
     "depletionChance": 0,
     "respawnTime": 0,
     "harvestOptions": [
       {
-        "levelRequired": 60,
-        "xpReward": 245,
-        "harvestItemId": 512,
-        "weight": 5
-      },
-      {
-        "levelRequired": 65,
-        "xpReward": 275,
-        "harvestItemId": 513,
-        "weight": 4
-      },
-      {
-        "levelRequired": 70,
-        "xpReward": 305,
-        "harvestItemId": 514,
-        "weight": 3
-      },
-      {
-        "levelRequired": 75,
-        "xpReward": 335,
-        "harvestItemId": 515,
-        "weight": 2
-      },
-      {
-        "levelRequired": 80,
-        "xpReward": 370,
-        "harvestItemId": 516,
-        "weight": 1
-      },
-      {
-        "levelRequired": 85,
-        "xpReward": 405,
-        "harvestItemId": 517,
+        "levelRequired": 78,
+        "xpReward": 150,
+        "harvestItemId": 562,
         "weight": 1
       }
     ],
-    "examineText": "Dark water drops away beneath this deep sea fishing mark."
+    "examineText": "Dark water where octopus move beneath the surface."
   },
   {
     "id": 50,
@@ -3176,46 +2891,22 @@
     "skill": "fishing",
     "skillAnimation": "fish_harpoon",
     "visualToolItemId": 554,
-    "levelRequired": 90,
-    "xpReward": 440,
-    "harvestItemId": 518,
+    "levelRequired": 78,
+    "xpReward": 150,
+    "harvestItemId": 562,
     "harvestQuantity": 1,
     "harvestTime": 5,
     "depletionChance": 0,
     "respawnTime": 0,
     "harvestOptions": [
       {
-        "levelRequired": 90,
-        "xpReward": 440,
-        "harvestItemId": 518,
-        "weight": 5
-      },
-      {
-        "levelRequired": 100,
-        "xpReward": 520,
-        "harvestItemId": 520,
-        "weight": 3
-      },
-      {
-        "levelRequired": 105,
-        "xpReward": 560,
-        "harvestItemId": 521,
-        "weight": 2
-      },
-      {
-        "levelRequired": 110,
-        "xpReward": 605,
-        "harvestItemId": 522,
-        "weight": 2
-      },
-      {
-        "levelRequired": 120,
-        "xpReward": 700,
-        "harvestItemId": 524,
+        "levelRequired": 78,
+        "xpReward": 150,
+        "harvestItemId": 562,
         "weight": 1
       }
     ],
-    "examineText": "Heavy water with shark fins cutting through it."
+    "examineText": "Dark water where octopus move beneath the surface."
   },
   {
     "id": 51,
@@ -3237,34 +2928,136 @@
     "skill": "fishing",
     "skillAnimation": "fish_harpoon",
     "visualToolItemId": 554,
-    "levelRequired": 95,
-    "xpReward": 480,
-    "harvestItemId": 519,
+    "levelRequired": 78,
+    "xpReward": 150,
+    "harvestItemId": 562,
     "harvestQuantity": 1,
     "harvestTime": 5,
     "depletionChance": 0,
     "respawnTime": 0,
     "harvestOptions": [
       {
-        "levelRequired": 95,
-        "xpReward": 480,
-        "harvestItemId": 519,
-        "weight": 6
-      },
-      {
-        "levelRequired": 115,
-        "xpReward": 650,
-        "harvestItemId": 523,
-        "weight": 2
-      },
-      {
-        "levelRequired": 120,
-        "xpReward": 700,
-        "harvestItemId": 524,
+        "levelRequired": 78,
+        "xpReward": 150,
+        "harvestItemId": 562,
         "weight": 1
       }
     ],
-    "examineText": "Unusual currents churn here. Rare ocean fish may pass through."
+    "examineText": "Dark water where octopus move beneath the surface."
+  },
+  {
+    "id": 67,
+    "name": "Low Level Crab Pot Fishing Spot",
+    "category": "fishingspot",
+    "actions": [
+      "Fish",
+      "Examine"
+    ],
+    "blocking": false,
+    "width": 0.8,
+    "height": 0.5,
+    "color": [
+      54,
+      92,
+      115
+    ],
+    "modelAssetId": "CrabPot",
+    "skill": "fishing",
+    "skillAnimation": "fish_net",
+    "visualToolItemId": 557,
+    "levelRequired": 1,
+    "xpReward": 30,
+    "harvestItemId": 501,
+    "harvestQuantity": 1,
+    "harvestTime": 5,
+    "depletionChance": 0,
+    "respawnTime": 0,
+    "harvestOptions": [
+      {
+        "levelRequired": 1,
+        "xpReward": 30,
+        "harvestItemId": 501,
+        "weight": 1
+      }
+    ],
+    "examineText": "A baited low-level crab pot set for crayfish."
+  },
+  {
+    "id": 68,
+    "name": "Superior Crab Pot Fishing Spot",
+    "category": "fishingspot",
+    "actions": [
+      "Fish",
+      "Examine"
+    ],
+    "blocking": false,
+    "width": 0.8,
+    "height": 0.5,
+    "color": [
+      42,
+      75,
+      105
+    ],
+    "modelAssetId": "SuperiorCrabPotFishingSpot",
+    "skill": "fishing",
+    "skillAnimation": "fish_net",
+    "visualToolItemId": 557,
+    "levelRequired": 50,
+    "xpReward": 150,
+    "harvestItemId": 558,
+    "harvestQuantity": 1,
+    "harvestTime": 5,
+    "depletionChance": 0,
+    "respawnTime": 0,
+    "harvestOptions": [
+      {
+        "levelRequired": 50,
+        "xpReward": 150,
+        "harvestItemId": 558,
+        "weight": 1
+      }
+    ],
+    "examineText": "A sturdy crab pot set for larger shellfish."
+  },
+  {
+    "id": 69,
+    "name": "Deep Fishing Spot",
+    "category": "fishingspot",
+    "actions": [
+      "Fish",
+      "Examine"
+    ],
+    "blocking": false,
+    "width": 0.6,
+    "height": 0.6,
+    "color": [
+      28,
+      82,
+      150
+    ],
+    "modelAssetId": "FishingSpotBubblesRodDeep",
+    "skill": "fishing",
+    "skillAnimation": "fish_rod",
+    "visualToolItemId": 553,
+    "requiredItemId": 564,
+    "requiredItemQuantity": 1,
+    "consumeRequiredItem": true,
+    "levelRequired": 87,
+    "xpReward": 650,
+    "harvestItemId": 523,
+    "harvestQuantity": 1,
+    "harvestTime": 5,
+    "depletionChance": 0,
+    "respawnTime": 0,
+    "harvestOptions": [
+      {
+        "levelRequired": 87,
+        "xpReward": 650,
+        "harvestItemId": 523,
+        "weight": 1
+      }
+    ],
+    "examineText": "Deep water where oarfish take baited lines."
   },
   {
     "id": 45,

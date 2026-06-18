@@ -635,7 +635,7 @@ export class CharacterCreator {
     if (this.destroyed) return;
     if (!this.previewCanvas) return;
 
-    const engine = new Engine(this.previewCanvas, false, { antialias: false, adaptToDeviceRatio: false });
+    const engine = new Engine(this.previewCanvas, true, { antialias: true, adaptToDeviceRatio: false });
     engine.setHardwareScalingLevel(1);
     const scene = new Scene(engine);
     scene.useRightHandedSystem = true;

@@ -3597,25 +3597,6 @@
       }
     },
     {
-      "id": 197,
-      "npcId": 120,
-      "x": 72.5,
-      "z": 41.5,
-      "wanderRange": 0,
-      "aggressive": false,
-      "facing": 3.141592653589793,
-      "appearance": {
-        "bodyType": 0,
-        "shirtColor": 7,
-        "pantsColor": 6,
-        "shoesColor": 4,
-        "hairColor": 0,
-        "beltColor": 1,
-        "skinColor": 0,
-        "hairStyle": 7
-      }
-    },
-    {
       "id": 198,
       "npcId": 117,
       "x": 78.5,

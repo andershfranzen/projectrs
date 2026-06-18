@@ -61,7 +61,11 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'FishingSpotBubbles': 5,
   'FishingSpotBubblesNet': 5,
   'FishingSpotBubblesRod': 46,
+  'FishingSpotBubblesRodDeep': 69,
   'FishingSpotBubblesHarpoon': 48,
+  'CrabPot': 67,
+  'CrabPotFishingSpot': 67,
+  'SuperiorCrabPotFishingSpot': 68,
   // Crafting stations
   'forge': 6,        // Furnace
   'cookingrange': 7, // Cooking Range

@@ -26,6 +26,7 @@ export * from './png';
 export * from './projectile';
 export * from './movementPath';
 export * from './movementQueue';
+export * from './movementValidation';
 export * from './targetPathing';
 export * from './movement';
 export * from './bankNotes';

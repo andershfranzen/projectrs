@@ -124,7 +124,7 @@ function makeManager(
     : manager.chunkManager.isWallBlockedOnFloor(fx, fz, tx, tz, floor);
   manager.isTileBlocked = (x: number, z: number) => manager.isTileBlockedOnFloorForPath(x, z, manager.currentFloor);
   manager.isWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number) => {
-    const y = manager.localPlayer?.position?.y ?? manager.getHeight(manager.playerX, manager.playerZ);
+    const y = manager.getLocalPathCollisionY(manager.playerX, manager.playerZ, manager.currentFloor);
     return manager.isWallBlockedForPathOnFloor(fx, fz, tx, tz, manager.currentFloor, y);
   };
   manager.clearLocalNpcCombatState = () => {};
@@ -328,6 +328,8 @@ describe('GameManager local movement prediction', () => {
 
     const started = manager.startInteractionPredictedPath([
       { x: 1.5, z: 1.5 },
+      { x: 2.5, z: 1.5 },
+      { x: 10.5, z: 1.5 },
       { x: 10.5, z: 0.5 },
     ], true);
 
@@ -336,6 +338,8 @@ describe('GameManager local movement prediction', () => {
       path: [
         { x: 1.5, z: 0.5 },
         { x: 1.5, z: 1.5 },
+        { x: 2.5, z: 1.5 },
+        { x: 10.5, z: 1.5 },
         { x: 10.5, z: 0.5 },
       ],
       mode: 'run',
@@ -343,6 +347,8 @@ describe('GameManager local movement prediction', () => {
     expect(manager.path).toEqual([
       { x: 1.5, z: 0.5 },
       { x: 1.5, z: 1.5 },
+      { x: 2.5, z: 1.5 },
+      { x: 10.5, z: 1.5 },
       { x: 10.5, z: 0.5 },
     ]);
   });
@@ -373,6 +379,159 @@ describe('GameManager local movement prediction', () => {
     ]);
     expect(manager.tileFrom).toEqual({ x: 0.5, z: 0.5 });
     expect(manager.tileProgress).toBe(0.5);
+  });
+
+  test('reroutes a predicted diagonal that cuts through a blocked cardinal side tile before sending', () => {
+    const { manager, sentMoves } = makeManager([], 0);
+    manager.blockedObjectTiles.add(manager.blockedObjectKey(0, 1, 0));
+
+    const started = manager.startPredictedPath([
+      { x: 1.5, z: 1.5 },
+    ]);
+
+    expect(started).toBe(true);
+    expect(sentMoves).toEqual([{
+      path: [
+        { x: 0.5, z: 1.5 },
+        { x: 1.5, z: 1.5 },
+      ],
+      mode: 'run',
+    }]);
+    expect(manager.path).toEqual([
+      { x: 0.5, z: 1.5 },
+      { x: 1.5, z: 1.5 },
+    ]);
+  });
+
+  test('reroutes a long compressed predicted diagonal that cuts through a blocked cardinal side tile', () => {
+    const { manager, sentMoves } = makeManager([], 0);
+    manager.blockedObjectTiles.add(manager.blockedObjectKey(0, 1, 0));
+
+    const started = manager.startPredictedPath([
+      { x: 3.5, z: 3.5 },
+    ]);
+
+    expect(started).toBe(true);
+    expect(sentMoves).toEqual([{
+      path: [
+        { x: 0.5, z: 1.5 },
+        { x: 1.5, z: 1.5 },
+        { x: 3.5, z: 3.5 },
+      ],
+      mode: 'run',
+    }]);
+    expect(manager.path).toEqual([
+      { x: 0.5, z: 1.5 },
+      { x: 1.5, z: 1.5 },
+      { x: 3.5, z: 3.5 },
+    ]);
+  });
+
+  test('finds the two-step route when a stale rendered Y would miss a wall edge', () => {
+    const { manager, player } = makeManager([], 0);
+    const wallCheckYs: number[] = [];
+    manager.playerX = 365.5;
+    manager.playerZ = 174.5;
+    manager.tileFrom = { x: 365.5, z: 174.5 };
+    player.position = { x: 365.5, y: 0, z: 174.5 };
+    manager.chunkManager = {
+      ...manager.chunkManager,
+      getMapWidth: () => 384,
+      getMapHeight: () => 256,
+      getEffectiveHeight: (x: number, z: number, floor: number) =>
+        floor === 0 && Math.floor(x) === 365 && Math.floor(z) === 174
+          ? -1.92083596780807
+          : 0,
+      isWallBlocked: (fx: number, fz: number, tx: number, tz: number, y: number) => {
+        wallCheckYs.push(y);
+        return y < -1
+          && fx === 365
+          && fz === 174
+          && tx === 366
+          && tz === 174;
+      },
+    };
+
+    const result = manager.findPathFromMovementAnchor(366.5, 173.5);
+
+    expect(result.path).toEqual([
+      { x: 365.5, z: 173.5 },
+      { x: 366.5, z: 173.5 },
+    ]);
+    expect(wallCheckYs).toContain(-1.92083596780807);
+    expect(wallCheckYs).not.toContain(0);
+  });
+
+  test('send-time diagonal reroute also uses logical tile height instead of stale rendered Y', () => {
+    const { manager, player, sentMoves } = makeManager([], 0);
+    manager.playerX = 365.5;
+    manager.playerZ = 174.5;
+    manager.tileFrom = { x: 365.5, z: 174.5 };
+    player.position = { x: 365.5, y: 0, z: 174.5 };
+    manager.chunkManager = {
+      ...manager.chunkManager,
+      getMapWidth: () => 384,
+      getMapHeight: () => 256,
+      getEffectiveHeight: (x: number, z: number, floor: number) =>
+        floor === 0 && Math.floor(x) === 365 && Math.floor(z) === 174
+          ? -1.92083596780807
+          : 0,
+      isWallBlocked: (fx: number, fz: number, tx: number, tz: number, y: number) =>
+        y < -1
+        && fx === 365
+        && fz === 174
+        && tx === 366
+        && tz === 174,
+    };
+
+    const started = manager.startPredictedPath([
+      { x: 366.5, z: 173.5 },
+    ]);
+
+    expect(started).toBe(true);
+    expect(sentMoves).toEqual([{
+      path: [
+        { x: 365.5, z: 173.5 },
+        { x: 366.5, z: 173.5 },
+      ],
+      mode: 'run',
+    }]);
+    expect(manager.path).toEqual([
+      { x: 365.5, z: 173.5 },
+      { x: 366.5, z: 173.5 },
+    ]);
+  });
+
+  test('does not predict an adjacent diagonal before object collision chunks are ready', () => {
+    const { manager, sentMoves } = makeManager([], 0);
+    manager.chunkManager = {
+      ...manager.chunkManager,
+      isChunkObjectsLoaded: (x: number, z: number) => Math.floor(x) === 0 && Math.floor(z) === 0,
+    };
+
+    const started = manager.startPredictedPath([
+      { x: 1.5, z: 1.5 },
+    ]);
+
+    expect(started).toBe(false);
+    expect(sentMoves).toEqual([]);
+    expect(manager.path).toEqual([]);
+  });
+
+  test('does not predict a long route before object collision chunks are ready', () => {
+    const { manager, sentMoves } = makeManager([], 0);
+    manager.chunkManager = {
+      ...manager.chunkManager,
+      isChunkObjectsLoaded: (x: number, z: number) => Math.floor(x) === 0 && Math.floor(z) === 0,
+    };
+
+    const started = manager.startPredictedPath([
+      { x: 3.5, z: 0.5 },
+    ]);
+
+    expect(started).toBe(false);
+    expect(sentMoves).toEqual([]);
+    expect(manager.path).toEqual([]);
   });
 
   test('mid-step route replacements cap after preserving the active unit step', () => {
@@ -459,6 +618,8 @@ describe('GameManager local movement prediction', () => {
     expect(sentMoves).toEqual([{
       path: [
         { x: 1.5, z: 1.5 },
+        { x: 1.5, z: 2.5 },
+        { x: 1.5, z: 7.5 },
         { x: 0.5, z: 8.5 },
       ],
       mode: 'run',
@@ -937,6 +1098,10 @@ describe('GameManager local movement prediction', () => {
 
   test('ground clicks split long compressed segments before sending movement', () => {
     const { manager, sentMoves } = makeManager([], 0);
+    manager.chunkManager = {
+      ...manager.chunkManager,
+      getMapWidth: () => 256,
+    };
     manager.findPathFromMovementAnchor = () => ({
       path: [{ x: 130.5, z: 0.5 }],
       preserveCurrentStep: false,

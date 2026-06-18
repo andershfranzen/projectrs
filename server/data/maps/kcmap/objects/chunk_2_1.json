@@ -8304,26 +8304,6 @@
     }
   },
   {
-    "assetId": "relic stall",
-    "layerId": "layer_0",
-    "position": {
-      "x": 73,
-      "y": 0,
-      "z": 40.5
-    },
-    "rotation": {
-      "x": 0,
-      "y": -3.141592653589793,
-      "z": 0
-    },
-    "scale": {
-      "x": 1,
-      "y": 1,
-      "z": 1
-    },
-    "examineText": "Probably more expensive than it looks."
-  },
-  {
     "assetId": "hides stall",
     "layerId": "layer_0",
     "position": {
