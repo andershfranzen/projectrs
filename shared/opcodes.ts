@@ -377,6 +377,10 @@ export enum ServerOpcode {
    *  [npcEntityId]. Used for server-triggered NPC lines that are not full
    *  dialogue sessions. */
   NPC_OVERHEAD_MESSAGE = 83,
+  /** One-shot local-player overhead bubble. String packet — message only.
+   *  Used for private self-dialogue such as reading signs; never routes through
+   *  the public chat socket. */
+  PLAYER_OVERHEAD_MESSAGE = 127,
 
   // --- Trade ---
   /** Server tells the client another player wants to trade. Values: [requesterEntityId].

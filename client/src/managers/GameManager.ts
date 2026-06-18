@@ -6197,6 +6197,9 @@ export class GameManager {
         if (entityId !== undefined && str.length > 0) {
           this.showNpcDialogueBubble(entityId, str, values[1] === 1);
         }
+      } else if (opcode === ServerOpcode.PLAYER_OVERHEAD_MESSAGE) {
+        const { str } = decodeStringPacket(data);
+        if (str.length > 0) this.showLocalDialogueBubble(str);
       } else if (opcode === ServerOpcode.NPC_NAME) {
         // [npcEntityId] follows the string payload. Override is cached for
         // the right-click menu, hover tooltip, and shop title — no floating

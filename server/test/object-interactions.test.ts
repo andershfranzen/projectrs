@@ -6,6 +6,8 @@ import {
   BUCKET_ITEM_ID,
   BUCKET_OF_WATER_ITEM_ID,
   QUEST_STAGE_COMPLETED,
+  ServerOpcode,
+  decodeStringPacket,
   type QuestCondition,
   type WorldObjectDef,
 } from '@projectrs/shared';
@@ -60,7 +62,72 @@ function conditionMet(player: Player, condition: QuestCondition): boolean {
   return false;
 }
 
+function exactPacket(packet: Uint8Array): ArrayBuffer {
+  return packet.buffer.slice(packet.byteOffset, packet.byteOffset + packet.byteLength) as ArrayBuffer;
+}
+
 describe('placed object interactions', () => {
+  test('object say lines are local overhead packets, not public chat', () => {
+    const packets: Uint8Array[] = [];
+    const player = new Player('sign_reader', 10.5, 10.5, {
+      sendBinary(packet: Uint8Array) { packets.push(packet); },
+      send() {},
+    } as any, 1);
+    const world = Object.create(World.prototype) as any;
+    world.quests = {
+      questConditionMet: () => true,
+      runQuestActions: () => true,
+    };
+
+    world.runObjectInteractionEffects(player, {
+      interactions: [{ action: 'Read', say: 'North road. South mine.' }],
+    }, 'Read');
+
+    expect(packets).toHaveLength(1);
+    const decoded = decodeStringPacket(exactPacket(packets[0]));
+    expect(decoded).toEqual({
+      opcode: ServerOpcode.PLAYER_OVERHEAD_MESSAGE,
+      str: 'North road. South mine.',
+      values: [],
+    });
+  });
+
+  test('delayed object say sequences stay local to the interacting player', () => {
+    const packets: Uint8Array[] = [];
+    const player = new Player('sign_reader', 10.5, 10.5, {
+      sendBinary(packet: Uint8Array) { packets.push(packet); },
+      send() {},
+    } as any, 1);
+    const world = Object.create(World.prototype) as any;
+    world.currentTick = 10;
+    world.players = new Map([[player.id, player]]);
+    world.objectSayScheduledLines = [];
+    world.quests = {
+      questConditionMet: () => true,
+      runQuestActions: () => true,
+    };
+
+    world.runObjectInteractionEffects(player, {
+      interactions: [{
+        action: 'Read',
+        saySequence: [
+          { text: 'North road.' },
+          { text: 'South mine.', delaySeconds: 1 },
+        ],
+      }],
+    }, 'Read');
+
+    expect(packets.map(packet => decodeStringPacket(exactPacket(packet)).str)).toEqual(['North road.']);
+
+    world.currentTick += 2;
+    world.tickObjectSayScheduledLines();
+
+    expect(packets.map(packet => decodeStringPacket(exactPacket(packet)))).toEqual([
+      { opcode: ServerOpcode.PLAYER_OVERHEAD_MESSAGE, str: 'North road.', values: [] },
+      { opcode: ServerOpcode.PLAYER_OVERHEAD_MESSAGE, str: 'South mine.', values: [] },
+    ]);
+  });
+
   test('same-label interaction variants run only the first matching branch', () => {
     const player = new Player('quester', 10.5, 10.5, fakeWs, 1);
     player.inventory[0] = { itemId: SKETCH_ITEM_ID, quantity: 1 };

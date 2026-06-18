@@ -13,7 +13,7 @@ import { GameDatabase, type GameEventLogInput } from './Database';
 import { applyPlayerMagicImpactToNpc, armNpcRetaliation, isPointInNpcMagicAttackRange, isPointInNpcRangedAttackRange as isNpcInRangedAttackRange, processPlayerCombat, processPlayerRangedCombat, processNpcCombat, rollLoot, rollPlayerMagicDamageAgainstNpc, rollPlayerMagicDamageAgainstPlayer, rollPlayerMeleeDamageAgainstPlayer, rollPlayerRangedDamageAgainstPlayer, shouldConsumeAmmoOnShot, MAGIC_ATTACK_COOLDOWN_TICKS, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE, MELEE_ATTACK_DISTANCE, RANGED_ATTACK_DISTANCE, type PlayerNpcCombatResult } from './combat/Combat';
 import { CombatSystem, type CombatActorRef, type CombatContext, type CombatMode, type ImpactQueueEntry, type RetaliationRequest } from './combat/CombatSystem';
 import { finalizeNpcDeath as finalizeNpcDeathCombat } from './combat/NpcDeath';
-import { broadcastLocalMessage, broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSocket';
+import { broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSocket';
 import { normalizeClientIp } from './network/clientIp';
 import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
@@ -526,10 +526,6 @@ type DialogueScheduledStep =
 interface ObjectSayScheduledLine {
   runAtTick: number;
   playerId: number;
-  accountId: number;
-  isAdmin: boolean;
-  isModerator: boolean;
-  playerName: string;
   message: string;
 }
 
@@ -3472,6 +3468,12 @@ export class World {
     try { player.ws.sendBinary(packet); } catch { /* connection closed */ }
   }
 
+  private sendPlayerOverheadMessage(player: Player, message: string): void {
+    if (player.disconnected) return;
+    const packet = encodeStringPacket(ServerOpcode.PLAYER_OVERHEAD_MESSAGE, message.slice(0, 300));
+    try { player.ws.sendBinary(packet); } catch { /* connection closed */ }
+  }
+
   private broadcastNpcOverheadMessage(npc: Npc, message: string, alert: boolean = false): void {
     const cm = this.chunkManagers?.get(npc.currentMapLevel);
     if (!cm) return;
@@ -6004,7 +6006,7 @@ export class World {
       this.queueObjectSaySequence(player, effect.saySequence);
     } else if (typeof effect.say === 'string') {
       const say = effect.say.trim();
-      if (say) broadcastLocalMessage(player.name, say.slice(0, 1000), player.accountId);
+      if (say) this.sendPlayerOverheadMessage(player, say);
     }
     const message = typeof effect.message === 'string' ? effect.message.trim() : '';
     if (message) this.sendChatSystem(player, message.slice(0, 300));
@@ -6121,16 +6123,12 @@ export class World {
         : 0;
       const delayTicks = Math.round((delaySeconds * 1000) / TICK_RATE);
       if (delayTicks <= 0) {
-        broadcastLocalMessage(player.name, message, player.accountId);
+        this.sendPlayerOverheadMessage(player, message);
         continue;
       }
       this.objectSayScheduledLines.push({
         runAtTick: this.currentTick + delayTicks,
         playerId: player.id,
-        accountId: player.accountId,
-        isAdmin: player.isAdmin,
-        isModerator: player.isModerator,
-        playerName: player.name,
         message,
       });
     }
@@ -11804,7 +11802,7 @@ export class World {
       }
       const player = this.players.get(line.playerId);
       if (!player || player.disconnected || player.requestIdleLogout) continue;
-      broadcastLocalMessage(line.playerName, line.message, line.accountId);
+      this.sendPlayerOverheadMessage(player, line.message);
     }
     this.objectSayScheduledLines = remaining;
   }
