@@ -1064,25 +1064,6 @@
     }
   },
   {
-    "assetId": "Notice_Board",
-    "layerId": "layer_0",
-    "position": {
-      "x": 351.5,
-      "y": -1.087158965687526,
-      "z": 128.5
-    },
-    "rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "scale": {
-      "x": 0.25,
-      "y": 0.25,
-      "z": 0.25
-    }
-  },
-  {
     "assetId": "Coffin-Closed",
     "layerId": "layer_0",
     "position": {
@@ -1543,6 +1524,32 @@
       "y": 1.1500000000000001,
       "z": 1.1500000000000001
     },
+    "interactionTiles": [
+      {
+        "x": 0,
+        "z": 1
+      }
+    ]
+  },
+  {
+    "assetId": "sign post",
+    "layerId": "layer_0",
+    "position": {
+      "x": 351.5,
+      "y": -1.106570779315887,
+      "z": 128.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.7999999999999998,
+      "y": 0.8499999999999999,
+      "z": 0.8499999999999999
+    },
+    "signText": "Dangerous swamp ahead",
     "interactionTiles": [
       {
         "x": 0,
