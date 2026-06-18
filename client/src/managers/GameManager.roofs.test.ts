@@ -23,6 +23,7 @@ function makeRoofManager() {
   manager.hoverHiddenRoofNodes = [];
   manager.hoverHiddenRoofNodeSet = new Set();
   manager.worldObjectIdByNode = new Map();
+  manager.worldObjectModels = new Map();
   manager.worldObjectDefs = new Map();
   manager.objectDefsCache = new Map();
   manager.currentFloor = 0;
@@ -35,6 +36,7 @@ function makeRoofManager() {
       return true;
     },
     roofNodeDefaultEnabled: () => true,
+    isUnderRoof: () => false,
     getCeilingHeight: () => Infinity,
     getRoofNodesNear: () => [],
     getNodesAboveHeight: () => [],
@@ -79,5 +81,49 @@ describe('GameManager roof hiding', () => {
 
     expect(visualToggles).toEqual([false]);
     expect(roofNode.enabled).toBe(false);
+  });
+
+  test('floor visibility refresh clears stale hidden roofs immediately', () => {
+    const { manager, visualToggles } = makeRoofManager();
+    const roofNode = makeNode();
+    manager.hiddenRoofNodes = [roofNode];
+    manager.hiddenRoofNodeSet = new Set([roofNode]);
+    manager.isIndoors = true;
+    manager._outdoorFrameCount = 3;
+
+    manager.refreshFloorVisibilityAfterFloorChange();
+
+    expect(visualToggles).toEqual([true]);
+    expect(roofNode.enabled).toBe(true);
+    expect(manager.hiddenRoofNodes).toEqual([]);
+    expect(manager.hiddenRoofNodeSet.size).toBe(0);
+    expect(manager.isIndoors).toBe(false);
+    expect(manager._outdoorFrameCount).toBe(0);
+  });
+});
+
+describe('GameManager floor visibility', () => {
+  test('remote players on another floor are render-disabled even when nearby', () => {
+    const manager = Object.create(GameManager.prototype) as any;
+    const renderStates: boolean[] = [];
+    const sprite = {
+      position: { x: 10, z: 12 },
+      isRenderEnabled: () => true,
+      setRenderEnabled: (enabled: boolean) => renderStates.push(enabled),
+    };
+    manager.playerX = 10;
+    manager.playerZ = 12;
+    manager.currentFloor = 0;
+    manager.syncNpcVisibleRenderDistance = () => 20;
+    manager.entities = {
+      remotePlayers: new Map([[1, sprite]]),
+      remoteTargets: new Map([[1, { x: 10, z: 12, floor: 1 }]]),
+      npcSprites: new Map(),
+      npcTargets: new Map(),
+    };
+
+    manager.updateEntityRenderVisibility();
+
+    expect(renderStates).toEqual([false]);
   });
 });

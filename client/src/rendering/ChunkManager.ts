@@ -120,9 +120,11 @@ function hasAlphaBlendAssetFlag(asset: { alphaBlend?: unknown; tags?: unknown })
   });
 }
 
-export function placedObjectThinGroupKey(assetId: string, visibility: 'ground' | 'elevated' | 'roof', originY: number): string {
+export type PlacedObjectVisualClass = 'ground' | 'elevated' | 'roof';
+
+export function placedObjectThinGroupKey(assetId: string, visibility: PlacedObjectVisualClass, originY: number, floor: number = 0): string {
   const yBucket = visibility === 'elevated' ? Math.floor(originY * 2) / 2 : 0;
-  return `${assetId}\u0000${visibility}\u0000${yBucket}`;
+  return `${assetId}\u0000${visibility}\u0000${floor}\u0000${yBucket}`;
 }
 
 function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
@@ -210,10 +212,25 @@ type BatchedPlacedVisualRef = {
   hiddenMatrix: Matrix;
 };
 
-type BatchedPlacedVisualMetadata = {
+type LayeredVisualMetadata = {
+  visibility?: PlacedObjectVisualClass;
+  placedFloor?: number;
+};
+
+type BatchedPlacedVisualMetadata = LayeredVisualMetadata & {
   kind?: string;
   objectEntityIdsByThinInstance?: Array<number | null>;
   activeObjectPickInstanceCount?: number;
+};
+
+type TexturePlaneVisualMetadata = LayeredVisualMetadata & {
+  isTexPlane: true;
+  isFlat: boolean;
+  isNoRoof: boolean;
+  minY: number;
+  maxY: number;
+  chunkX: number;
+  chunkZ: number;
 };
 
 function setBatchedPlacedVisualPickId(
@@ -302,6 +319,8 @@ interface PlacedObjectNodeMetadata {
   placedX?: number;
   placedY?: number;
   placedZ?: number;
+  placedFloor?: number;
+  visibility?: PlacedObjectVisualClass;
   placedName?: string;
   interactionActions?: string[];
   interactions?: PlacedObjectInteraction[];
@@ -813,10 +832,18 @@ export class ChunkManager {
   }
 
   private setTexturePlaneChunkEnabled(chunkKey: string, planes: Mesh[], enabled: boolean): boolean {
-    if (this.texturePlaneChunksEnabled.get(chunkKey) === enabled) return false;
+    const previous = this.texturePlaneChunksEnabled.get(chunkKey);
+    if (previous === enabled || (previous === undefined && !enabled)) return false;
     this.texturePlaneChunksEnabled.set(chunkKey, enabled);
-    for (const m of planes) m.setEnabled(enabled);
+    this.applyTexturePlaneFloorVisibility(chunkKey, planes);
     return planes.length > 0;
+  }
+
+  private applyTexturePlaneFloorVisibility(chunkKey: string, planes: Mesh[] = this.texturePlanesByChunk.get(chunkKey) ?? []): void {
+    const chunkEnabled = this.texturePlaneChunksEnabled.get(chunkKey) === true;
+    for (const mesh of planes) {
+      mesh.setEnabled(chunkEnabled && this.shouldTexturePlaneRenderOnCurrentFloor(mesh));
+    }
   }
 
   private disposeChunkMeshes(key: string, meshes: ChunkMeshes): void {
@@ -3996,12 +4023,30 @@ export class ChunkManager {
       this.setRenderTreeEnabled(chunk.roof, floor === 0);
       for (const [floorIdx, meshSet] of chunk.upperFloors) this.setFloorMeshSetVisibility(meshSet, floorIdx);
     }
+    for (const [chunkKey, enabled] of this.chunkPlacedEnabled) {
+      if (enabled) this.applyPlacedObjectFloorVisibility(chunkKey);
+    }
+    for (const [chunkKey, planes] of this.texturePlanesByChunk) {
+      if (this.texturePlaneChunksEnabled.get(chunkKey) === true) {
+        this.applyTexturePlaneFloorVisibility(chunkKey, planes);
+      }
+    }
   }
 
   getCurrentFloor(): number { return this.currentFloor; }
 
   roofNodeDefaultEnabled(node: TransformNode): boolean | null {
-    const md = node.metadata as { kind?: string; assetId?: string; chunkKey?: string; floor?: number; isTexPlane?: boolean; chunkX?: number; chunkZ?: number } | null;
+    const md = node.metadata as {
+      kind?: string;
+      assetId?: string;
+      chunkKey?: string;
+      floor?: number;
+      visibility?: PlacedObjectVisualClass;
+      placedFloor?: number;
+      isTexPlane?: boolean;
+      chunkX?: number;
+      chunkZ?: number;
+    } | null;
     if (!md) return null;
 
     if (md.kind === 'terrainRoof' && typeof md.chunkKey === 'string' && typeof md.floor === 'number') {
@@ -4010,12 +4055,13 @@ export class ChunkManager {
     }
 
     if (md.isTexPlane === true && typeof md.chunkX === 'number' && typeof md.chunkZ === 'number') {
-      return this.texturePlaneChunksEnabled.get(`${md.chunkX},${md.chunkZ}`) !== false;
+      return this.texturePlaneChunksEnabled.get(`${md.chunkX},${md.chunkZ}`) === true
+        && this.shouldPlacedVisualRenderOnCurrentFloor(md.visibility, md.placedFloor);
     }
 
     if (typeof md.assetId === 'string' && typeof md.chunkKey === 'string') {
       const enabled = this.chunkPlacedEnabled.get(md.chunkKey);
-      return enabled === undefined ? null : enabled;
+      return enabled === undefined ? null : enabled && this.shouldPlacedVisualRenderOnCurrentFloor(md.visibility, md.placedFloor);
     }
 
     return null;
@@ -4423,7 +4469,12 @@ export class ChunkManager {
     return true;
   }
 
-  private createPlacedObjectPlaceholder(chunkKey: string, idx: number, obj: PlacedObject): TransformNode {
+  private createPlacedObjectPlaceholder(
+    chunkKey: string,
+    idx: number,
+    obj: PlacedObject,
+    layerInfo: { visibility: PlacedObjectVisualClass; floor: number } = this.placedObjectLayerInfo(obj),
+  ): TransformNode {
     const root = new TransformNode(`placed_${chunkKey}_${idx}_${obj.assetId}_placeholder`, this.scene);
     root.position = new Vector3(obj.position.x, obj.position.y, obj.position.z);
     const { x: orx, y: ory, z: orz } = obj.rotation;
@@ -4438,6 +4489,8 @@ export class ChunkManager {
       placedX: obj.position.x,
       placedY: obj.position.y,
       placedZ: obj.position.z,
+      placedFloor: layerInfo.floor,
+      visibility: layerInfo.visibility,
       interactionActions: this.placedObjectInteractionActions(obj),
       interactions: this.placedObjectInteractions(obj),
       placedName: obj.name,
@@ -4497,10 +4550,114 @@ export class ChunkManager {
     return isFishingSpotEffectAssetId(assetId) ? 'FishingSpotBubbles' : assetId;
   }
 
-  private getThinVisibilityClass(obj: PlacedObject): 'ground' | 'elevated' | 'roof' {
+  private getThinVisibilityClass(obj: PlacedObject): PlacedObjectVisualClass {
     if (this.isRoofLikeAsset(obj.assetId)) return obj.noRoof ? 'ground' : 'roof';
     const terrainY = this.getInterpolatedHeight(obj.position.x, obj.position.z);
     return obj.position.y > terrainY + 1.5 ? 'elevated' : 'ground';
+  }
+
+  private placedObjectLayerInfo(obj: PlacedObject): { visibility: PlacedObjectVisualClass; floor: number } {
+    const visibility = this.getThinVisibilityClass(obj);
+    if (visibility === 'roof') {
+      return {
+        visibility,
+        floor: this.assignRoofFloor(obj.position.x, obj.position.z, obj.position.y),
+      };
+    }
+    if (visibility === 'ground') return { visibility, floor: 0 };
+    return {
+      visibility,
+      floor: this.assignPlacedObjectFloor(obj.position.x, obj.position.z, obj.position.y),
+    };
+  }
+
+  private assignPlacedObjectFloor(x: number, z: number, y: number): number {
+    const targets = this.getWalkableFloorTargetsAt(x, z);
+    if (targets.length === 0) {
+      const terrainY = this.getInterpolatedHeight(x, z);
+      return y > terrainY + 1.5 ? 1 : 0;
+    }
+
+    let best = targets[0];
+    let bestDist = Math.abs(best.y - y);
+    for (let i = 1; i < targets.length; i++) {
+      const candidate = targets[i];
+      const dist = Math.abs(candidate.y - y);
+      if (dist < bestDist - 0.05 || (Math.abs(dist - bestDist) < 0.05 && candidate.floor > best.floor)) {
+        best = candidate;
+        bestDist = dist;
+      }
+    }
+    if (bestDist <= 1.25) return best.floor;
+
+    const terrainY = this.getInterpolatedHeight(x, z);
+    return y > terrainY + 1.5 ? Math.max(1, best.floor) : 0;
+  }
+
+  private shouldPlacedVisualRenderOnCurrentFloor(visibility: PlacedObjectVisualClass | undefined, floor: number | undefined): boolean {
+    if (visibility === 'roof') {
+      const roofFloor = Number.isFinite(floor) ? Math.trunc(floor!) : 0;
+      return roofFloor === 0 ? this.currentFloor === 0 : roofFloor > this.currentFloor;
+    }
+    if (visibility === 'elevated') {
+      const objectFloor = Number.isFinite(floor) ? Math.trunc(floor!) : 1;
+      return objectFloor <= this.currentFloor;
+    }
+    return true;
+  }
+
+  private shouldPlacedNodeRenderOnCurrentFloor(node: TransformNode): boolean {
+    const md = node.metadata as PlacedObjectNodeMetadata | null;
+    return this.shouldPlacedVisualRenderOnCurrentFloor(md?.visibility, md?.placedFloor);
+  }
+
+  private shouldThinSourceRenderOnCurrentFloor(mesh: Mesh): boolean {
+    const md = mesh.metadata as BatchedPlacedVisualMetadata | null;
+    return this.shouldPlacedVisualRenderOnCurrentFloor(md?.visibility, md?.placedFloor);
+  }
+
+  private shouldTexturePlaneRenderOnCurrentFloor(mesh: Mesh): boolean {
+    const md = mesh.metadata as TexturePlaneVisualMetadata | null;
+    return this.shouldPlacedVisualRenderOnCurrentFloor(md?.visibility, md?.placedFloor);
+  }
+
+  private texturePlaneYRangeFromPositions(positions: number[], fallbackY: number): { minY: number; maxY: number } {
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let i = 1; i < positions.length; i += 3) {
+      const y = positions[i];
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    if (!Number.isFinite(minY) || !Number.isFinite(maxY)) {
+      return { minY: fallbackY, maxY: fallbackY };
+    }
+    return { minY, maxY };
+  }
+
+  private texturePlaneYRange(plane: TexturePlane): { minY: number; maxY: number } {
+    const { positions } = this.buildPlaneWorldVerts(plane);
+    return this.texturePlaneYRangeFromPositions(positions, plane.position.y);
+  }
+
+  private texturePlaneLayerInfo(
+    plane: TexturePlane,
+    isFlat: boolean,
+    isRoof: boolean,
+    roofFloor: number,
+    yRange: { minY: number; maxY: number } = this.texturePlaneYRange(plane),
+  ): { visibility: PlacedObjectVisualClass; floor: number } {
+    if (isRoof) return { visibility: 'roof', floor: roofFloor };
+    if (plane.bridge) return { visibility: 'ground', floor: 0 };
+
+    const terrainY = this.getInterpolatedHeight(plane.position.x, plane.position.z);
+    const referenceY = isFlat ? plane.position.y : yRange.minY;
+    if (referenceY > terrainY + 1.0) {
+      const floor = this.assignPlacedObjectFloor(plane.position.x, plane.position.z, referenceY);
+      if (floor > 0) return { visibility: 'elevated', floor };
+    }
+
+    return { visibility: 'ground', floor: 0 };
   }
 
   private composePlacedObjectMatrix(obj: PlacedObject, scaleBoost: number, out: Matrix): void {
@@ -4999,28 +5156,29 @@ export class ChunkManager {
       return;
     }
 
-    type ThinGroup = { assetId: string; visibility: 'ground' | 'elevated' | 'roof'; placements: PlacedObject[] };
+    type ThinGroup = { assetId: string; visibility: PlacedObjectVisualClass; floor: number; placements: PlacedObject[] };
     const regularObjects: PlacedObject[] = [];
     const thinGroups = new Map<string, ThinGroup>();
     const batchedVisualGroups = new Map<string, ThinGroup>();
     for (const obj of renderableObjects) {
       const visualAssetId = this.getPlacedObjectVisualAssetId(obj.assetId);
       if (!this.loadedModelCache.get(visualAssetId)) continue;
+      const layerInfo = this.placedObjectLayerInfo(obj);
       if (this.canBatchPlacedObjectVisual(obj)) {
-        const visibility = this.getThinVisibilityClass(obj);
-        const groupKey = placedObjectThinGroupKey(visualAssetId, visibility, obj.position.y);
+        const visibility = layerInfo.visibility;
+        const groupKey = placedObjectThinGroupKey(visualAssetId, visibility, obj.position.y, layerInfo.floor);
         let group = batchedVisualGroups.get(groupKey);
         if (!group) {
-          group = { assetId: visualAssetId, visibility, placements: [] };
+          group = { assetId: visualAssetId, visibility, floor: layerInfo.floor, placements: [] };
           batchedVisualGroups.set(groupKey, group);
         }
         group.placements.push(obj);
       } else if (this.canThinInstance(obj)) {
-        const visibility = this.getThinVisibilityClass(obj);
-        const groupKey = placedObjectThinGroupKey(visualAssetId, visibility, obj.position.y);
+        const visibility = layerInfo.visibility;
+        const groupKey = placedObjectThinGroupKey(visualAssetId, visibility, obj.position.y, layerInfo.floor);
         let group = thinGroups.get(groupKey);
         if (!group) {
-          group = { assetId: visualAssetId, visibility, placements: [] };
+          group = { assetId: visualAssetId, visibility, floor: layerInfo.floor, placements: [] };
           thinGroups.set(groupKey, group);
         }
         group.placements.push(obj);
@@ -5086,9 +5244,9 @@ export class ChunkManager {
     let placedNodeIndex = 0;
     const batchedPlaceholderByObject = new Map<PlacedObject, TransformNode>();
 
-    for (const { placements } of batchedVisualGroups.values()) {
+    for (const { floor, placements, visibility } of batchedVisualGroups.values()) {
       for (const obj of placements) {
-        const root = this.createPlacedObjectPlaceholder(chunkKey, placedNodeIndex++, obj);
+        const root = this.createPlacedObjectPlaceholder(chunkKey, placedNodeIndex++, obj, { visibility, floor });
         if (!obj.noRoof && this.isRoofLikeAsset(obj.assetId)) {
           const bounds = this.getPlacedObjectTemplateBounds(this.getPlacedObjectVisualAssetId(obj.assetId), obj);
           if (bounds) this.stampRoofObjectFootprint(chunkKey, obj, bounds.min, bounds.max, root);
@@ -5100,7 +5258,7 @@ export class ChunkManager {
       }
     }
 
-    for (const { assetId, visibility, placements } of thinGroups.values()) {
+    for (const { assetId, visibility, floor, placements } of thinGroups.values()) {
       const template = this.loadedModelCache.get(assetId)!;
       const baseEntries = this.getTemplateBaseMatrices(assetId, template);
       if (baseEntries.length === 0) continue;
@@ -5157,7 +5315,7 @@ export class ChunkManager {
         }
         src.doNotSyncBoundingInfo = true;
         src.freezeWorldMatrix();
-        src.metadata = { ...(src.metadata ?? {}), assetId, chunkKey };
+        src.metadata = { ...(src.metadata ?? {}), assetId, chunkKey, visibility, placedFloor: floor };
         thinSources.push(src);
         if (visibility === 'roof') roofThinSources.push(src);
         else if (visibility === 'elevated' && Number.isFinite(bMinX) && Number.isFinite(bMaxX) && Number.isFinite(maxOriginY)) {
@@ -5171,7 +5329,7 @@ export class ChunkManager {
       }
     }
 
-    for (const { assetId, placements } of batchedVisualGroups.values()) {
+    for (const { assetId, visibility, floor, placements } of batchedVisualGroups.values()) {
       const template = this.loadedModelCache.get(assetId)!;
       const baseEntries = this.getTemplateBaseMatrices(assetId, template);
       if (baseEntries.length === 0) continue;
@@ -5249,6 +5407,8 @@ export class ChunkManager {
           ...(src.metadata ?? {}),
           assetId,
           chunkKey,
+          visibility,
+          placedFloor: floor,
           kind: 'worldObjectVisualBatch',
           objectEntityIdsByThinInstance,
           activeObjectPickInstanceCount: 0,
@@ -5265,6 +5425,7 @@ export class ChunkManager {
 
     // --- Regular instances: interactable, animated, doors, stairs ---
     for (const obj of regularObjects) {
+      const layerInfo = this.placedObjectLayerInfo(obj);
       const template = this.loadedModelCache.get(obj.assetId)!;
 
       const sourceToClone = new Map<any, any>();
@@ -5356,6 +5517,8 @@ export class ChunkManager {
         placedX: obj.position.x,
         placedY: obj.position.y,
         placedZ: obj.position.z,
+        placedFloor: layerInfo.floor,
+        visibility: layerInfo.visibility,
         interactionActions: this.placedObjectInteractionActions(obj),
         interactions: this.placedObjectInteractions(obj),
         placedName: obj.name,
@@ -5491,20 +5654,33 @@ export class ChunkManager {
     const hasRenderableContent = (nodes?.length ?? 0) > 0 || (thinSrcs?.length ?? 0) > 0 || (anims?.length ?? 0) > 0;
 
     this.chunkPlacedEnabled.set(chunkKey, enabled);
-    if (nodes) {
-      for (const node of nodes) node.setEnabled(enabled);
-    }
-    if (thinSrcs) {
-      for (const m of thinSrcs) m.setEnabled(enabled);
-    }
+    this.applyPlacedObjectFloorVisibility(chunkKey);
+    if (!enabled) return hasRenderableContent;
     if (anims) {
       for (const ag of anims) {
-        if (enabled && !this.oneShotPlacedAnimationGroups.has(ag)) ag.play(true);
-        else ag.stop();
+        if (!this.oneShotPlacedAnimationGroups.has(ag)) ag.play(true);
       }
     }
 
     return hasRenderableContent;
+  }
+
+  private applyPlacedObjectFloorVisibility(chunkKey: string): void {
+    const enabled = this.chunkPlacedEnabled.get(chunkKey) === true;
+    const nodes = this.chunkPlacedNodes.get(chunkKey);
+    const thinSrcs = this.chunkThinInstSources.get(chunkKey);
+    const anims = this.chunkAnimGroups.get(chunkKey);
+    if (nodes) {
+      for (const node of nodes) node.setEnabled(enabled && this.shouldPlacedNodeRenderOnCurrentFloor(node));
+    }
+    if (thinSrcs) {
+      for (const m of thinSrcs) m.setEnabled(enabled && this.shouldThinSourceRenderOnCurrentFloor(m));
+    }
+    if (!enabled && anims) {
+      for (const ag of anims) {
+        ag.stop();
+      }
+    }
   }
 
   playPlacedObjectAnimation(node: TransformNode): boolean {
@@ -6600,12 +6776,25 @@ export class ChunkManager {
     this.buildMinimapTexturePlaneColors(planes);
 
     // Classify each plane into a merge group
+    type TexturePlaneGeometry = {
+      positions: number[];
+      normals: number[];
+      uvs: number[];
+      indices: number[];
+    };
+    interface PreparedTexturePlane {
+      plane: TexturePlane;
+      geometry: TexturePlaneGeometry;
+      yRange: { minY: number; maxY: number };
+    }
     interface MergeGroup {
-      planes: TexturePlane[];
+      planes: PreparedTexturePlane[];
       isFlat: boolean;
       isRoof: boolean;
       roofFloor: number;
       isNoRoof: boolean;
+      visibility: PlacedObjectVisualClass;
+      floor: number;
     }
     const mergeGroups = new Map<string, MergeGroup>();
 
@@ -6619,41 +6808,56 @@ export class ChunkManager {
       }
 
       for (const plane of renderPlanes) {
-      if (!this.getOrLoadTexture(plane.textureId)) continue;
-      const isFlat = isFlatPlane(plane);
-      const pcx = Math.floor(plane.position.x / CHUNK_SIZE);
-      const pcz = Math.floor(plane.position.z / CHUNK_SIZE);
+        if (!this.getOrLoadTexture(plane.textureId)) continue;
+        const isFlat = isFlatPlane(plane);
+        const pcx = Math.floor(plane.position.x / CHUNK_SIZE);
+        const pcz = Math.floor(plane.position.z / CHUNK_SIZE);
 
-      let isRoof = false;
-      let roofFloor = 0;
-      const isNoRoof = !!plane.noRoof;
-      if (isRoofCoverPlane(plane)) {
-        const terrainH = this.getEffectiveHeight(plane.position.x, plane.position.z);
-        if (plane.position.y > terrainH + 1.0 && !plane.noRoof) {
-          isRoof = true;
-          roofFloor = this.assignRoofFloor(plane.position.x, plane.position.z, plane.position.y);
+        let isRoof = false;
+        let roofFloor = 0;
+        const isNoRoof = !!plane.noRoof;
+        if (isRoofCoverPlane(plane)) {
+          const terrainH = this.getEffectiveHeight(plane.position.x, plane.position.z);
+          if (plane.position.y > terrainH + 1.0 && !plane.noRoof) {
+            isRoof = true;
+            roofFloor = this.assignRoofFloor(plane.position.x, plane.position.z, plane.position.y);
+          }
         }
-      }
 
-      const tintKey = plane.tintColor ? `${plane.tintColor.r.toFixed(2)}_${plane.tintColor.g.toFixed(2)}_${plane.tintColor.b.toFixed(2)}` : '';
-      // Include noRoof in the merge key so noRoof planes don't share a
-      // merged mesh with regular planes — the indoor-roof culler can then
-      // skip the entire merged mesh by checking its metadata flag.
-      const matKey = `${plane.textureId}_${plane.uvRepeat || 0}_${plane.texRotation || 0}_${tintKey}_${plane.doubleSided ? 1 : 0}_${isFlat ? 1 : 0}_${isNoRoof ? 1 : 0}`;
-      // Y-bucket prevents different floor heights from merging into one mesh
-      // when assignRoofFloor returns the same index (kcmap doesn't track per-
-      // tile floor data, so every plane lands on roofFloor=0). Without this,
-      // 1st-floor and 2nd-floor planes in the same chunk shared a single
-      // merged mesh, and the indoor culler hiding the y=5.5 entries also
-      // hid the y=2.7 planes baked into the same mesh.
-      const yBucket = Math.round(plane.position.y * 10);
-      const groupKey = isRoof
-        ? `${matKey}_chunk${pcx}_${pcz}_roof${roofFloor}_y${yBucket}`
-        : `${matKey}_chunk${pcx}_${pcz}`;
+        const tintKey = plane.tintColor ? `${plane.tintColor.r.toFixed(2)}_${plane.tintColor.g.toFixed(2)}_${plane.tintColor.b.toFixed(2)}` : '';
+        // Include noRoof in the merge key so noRoof planes don't share a
+        // merged mesh with regular planes — the indoor-roof culler can then
+        // skip the entire merged mesh by checking its metadata flag.
+        const matKey = `${plane.textureId}_${plane.uvRepeat || 0}_${plane.texRotation || 0}_${tintKey}_${plane.doubleSided ? 1 : 0}_${isFlat ? 1 : 0}_${isNoRoof ? 1 : 0}`;
+        // Y-bucket prevents different floor heights from merging into one mesh
+        // when assignRoofFloor returns the same index (kcmap doesn't track per-
+        // tile floor data, so every plane lands on roofFloor=0). Without this,
+        // 1st-floor and 2nd-floor planes in the same chunk shared a single
+        // merged mesh, and the indoor culler hiding the y=5.5 entries also
+        // hid the y=2.7 planes baked into the same mesh.
+        const yBucket = Math.round(plane.position.y * 10);
+        const geometry = this.buildPlaneWorldVerts(plane);
+        const yRange = this.texturePlaneYRangeFromPositions(geometry.positions, plane.position.y);
+        const layerInfo = this.texturePlaneLayerInfo(plane, isFlat, isRoof, roofFloor, yRange);
+        const layerKey = `${layerInfo.visibility}${layerInfo.floor}_y${layerInfo.visibility === 'ground' ? 0 : yBucket}`;
+        const groupKey = isRoof
+          ? `${matKey}_chunk${pcx}_${pcz}_${layerKey}_roof${roofFloor}`
+          : `${matKey}_chunk${pcx}_${pcz}_${layerKey}`;
 
-      let group = mergeGroups.get(groupKey);
-      if (!group) { group = { planes: [], isFlat, isRoof, roofFloor, isNoRoof }; mergeGroups.set(groupKey, group); }
-      group.planes.push(plane);
+        let group = mergeGroups.get(groupKey);
+        if (!group) {
+          group = {
+            planes: [],
+            isFlat,
+            isRoof,
+            roofFloor,
+            isNoRoof,
+            visibility: layerInfo.visibility,
+            floor: layerInfo.floor,
+          };
+          mergeGroups.set(groupKey, group);
+        }
+        group.planes.push({ plane, geometry, yRange });
       }
     }
 
@@ -6664,7 +6868,7 @@ export class ChunkManager {
       const planeTiles: Set<string>[] = [];
       for (let i = 0; i < group.planes.length; i++) {
         const tiles = new Set<string>();
-        forEachTileInPlaneFootprint(group.planes[i], this.mapWidth, this.mapHeight, (_idx, tx, tz) => {
+        forEachTileInPlaneFootprint(group.planes[i].plane, this.mapWidth, this.mapHeight, (_idx, tx, tz) => {
           const key = `${tx},${tz}`;
           tiles.add(key);
           let list = tileToPlanes.get(key);
@@ -6712,124 +6916,126 @@ export class ChunkManager {
     let mergedCount = 0;
     for (const [, sourceGroup] of mergeGroups) {
       for (const group of splitConnectedRoofMergeGroup(sourceGroup)) {
-      const allPositions: number[] = [];
-      const allNormals: number[] = [];
-      const allUvs: number[] = [];
-      const allIndices: number[] = [];
-      let vertOffset = 0;
+        const allPositions: number[] = [];
+        const allNormals: number[] = [];
+        const allUvs: number[] = [];
+        const allIndices: number[] = [];
+        let vertOffset = 0;
 
-      for (const plane of group.planes) {
-        const { positions, normals, uvs, indices } = this.buildPlaneWorldVerts(plane);
-        allPositions.push(...positions);
-        allNormals.push(...normals);
-        allUvs.push(...uvs);
-        for (const idx of indices) allIndices.push(idx + vertOffset);
-        vertOffset += positions.length / 3;
-      }
+        for (const prepared of group.planes) {
+          const { positions, normals, uvs, indices } = prepared.geometry;
+          allPositions.push(...positions);
+          allNormals.push(...normals);
+          allUvs.push(...uvs);
+          for (const idx of indices) allIndices.push(idx + vertOffset);
+          vertOffset += positions.length / 3;
+        }
 
-      const refPlane = group.planes[0];
-      const mesh = new Mesh(`texplane_merged_${mergedCount}`, this.scene);
-      const vd = new VertexData();
-      vd.positions = allPositions;
-      vd.normals = allNormals;
-      vd.uvs = allUvs;
-      vd.indices = allIndices;
-      vd.applyToMesh(mesh);
+        const refPlane = group.planes[0].plane;
+        const mesh = new Mesh(`texplane_merged_${mergedCount}`, this.scene);
+        const vd = new VertexData();
+        vd.positions = allPositions;
+        vd.normals = allNormals;
+        vd.uvs = allUvs;
+        vd.indices = allIndices;
+        vd.applyToMesh(mesh);
 
-      mesh.material = this.getTexPlaneMaterial(refPlane, group.isFlat);
-      mesh.renderingGroupId = 0;
-      mesh.isPickable = group.isFlat;
-      mesh.freezeWorldMatrix();
-      mesh.doNotSyncBoundingInfo = true;
+        mesh.material = this.getTexPlaneMaterial(refPlane, group.isFlat);
+        mesh.renderingGroupId = 0;
+        mesh.isPickable = group.isFlat;
+        mesh.freezeWorldMatrix();
+        mesh.doNotSyncBoundingInfo = true;
 
-      // Compute Y range across all planes in this group so roof reveal/culling
-      // can hide upper-floor surfaces even after plane meshes are merged.
-      let minPY = Infinity, maxPY = -Infinity;
-      for (const plane of group.planes) {
-        const py = plane.position.y;
-        if (py < minPY) minPY = py;
-        if (py > maxPY) maxPY = py;
-      }
-      let minPX = Infinity, maxPX = -Infinity, minPZ = Infinity, maxPZ = -Infinity;
-      for (let i = 0; i < allPositions.length; i += 3) {
-        const px = allPositions[i];
-        const pz = allPositions[i + 2];
-        if (px < minPX) minPX = px;
-        if (px > maxPX) maxPX = px;
-        if (pz < minPZ) minPZ = pz;
-        if (pz > maxPZ) maxPZ = pz;
-      }
-      let minTileX = Infinity, maxTileX = -Infinity, minTileZ = Infinity, maxTileZ = -Infinity;
-      const revealChunkKeys = new Set<string>();
-      if (Number.isFinite(minPX) && Number.isFinite(maxPX) && Number.isFinite(minPZ) && Number.isFinite(maxPZ)) {
-        minTileX = Math.max(0, Math.floor(minPX));
-        maxTileX = Math.min(this.mapWidth - 1, Math.floor(maxPX));
-        minTileZ = Math.max(0, Math.floor(minPZ));
-        maxTileZ = Math.min(this.mapHeight - 1, Math.floor(maxPZ));
-        if (minTileX <= maxTileX && minTileZ <= maxTileZ) {
-          for (let tz = minTileZ; tz <= maxTileZ; tz++) {
-            for (let tx = minTileX; tx <= maxTileX; tx++) {
-              revealChunkKeys.add(`${Math.floor(tx / CHUNK_SIZE)},${Math.floor(tz / CHUNK_SIZE)}`);
+        // Compute Y range across all planes in this group so roof reveal/culling
+        // can hide upper-floor surfaces even after plane meshes are merged.
+        let minPY = Infinity, maxPY = -Infinity;
+        for (const prepared of group.planes) {
+          if (prepared.yRange.minY < minPY) minPY = prepared.yRange.minY;
+          if (prepared.yRange.maxY > maxPY) maxPY = prepared.yRange.maxY;
+        }
+        let minPX = Infinity, maxPX = -Infinity, minPZ = Infinity, maxPZ = -Infinity;
+        for (let i = 0; i < allPositions.length; i += 3) {
+          const px = allPositions[i];
+          const pz = allPositions[i + 2];
+          if (px < minPX) minPX = px;
+          if (px > maxPX) maxPX = px;
+          if (pz < minPZ) minPZ = pz;
+          if (pz > maxPZ) maxPZ = pz;
+        }
+        let minTileX = Infinity, maxTileX = -Infinity, minTileZ = Infinity, maxTileZ = -Infinity;
+        const revealChunkKeys = new Set<string>();
+        if (Number.isFinite(minPX) && Number.isFinite(maxPX) && Number.isFinite(minPZ) && Number.isFinite(maxPZ)) {
+          minTileX = Math.max(0, Math.floor(minPX));
+          maxTileX = Math.min(this.mapWidth - 1, Math.floor(maxPX));
+          minTileZ = Math.max(0, Math.floor(minPZ));
+          maxTileZ = Math.min(this.mapHeight - 1, Math.floor(maxPZ));
+          if (minTileX <= maxTileX && minTileZ <= maxTileZ) {
+            for (let tz = minTileZ; tz <= maxTileZ; tz++) {
+              for (let tx = minTileX; tx <= maxTileX; tx++) {
+                revealChunkKeys.add(`${Math.floor(tx / CHUNK_SIZE)},${Math.floor(tz / CHUNK_SIZE)}`);
+              }
             }
           }
         }
-      }
-      const refChunkX = Math.floor(refPlane.position.x / CHUNK_SIZE);
-      const refChunkZ = Math.floor(refPlane.position.z / CHUNK_SIZE);
-      mesh.metadata = {
-        isTexPlane: true,
-        isFlat: group.isFlat,
-        isNoRoof: group.isNoRoof,
-        minY: minPY,
-        maxY: maxPY,
-        chunkX: refChunkX,
-        chunkZ: refChunkZ,
-      };
-
-      this.texturePlaneMeshes.push(mesh);
-
-      const pcx = Math.floor(refPlane.position.x / CHUNK_SIZE);
-      const pcz = Math.floor(refPlane.position.z / CHUNK_SIZE);
-      const pkey = `${pcx},${pcz}`;
-      let arr = this.texturePlanesByChunk.get(pkey);
-      if (!arr) { arr = []; this.texturePlanesByChunk.set(pkey, arr); }
-      arr.push(mesh);
-
-      if (Number.isFinite(minTileX) && Number.isFinite(minTileZ) && revealChunkKeys.size > 0) {
-        const revealEntry: TexturePlaneRevealEntry = {
-          mesh,
+        const refChunkX = Math.floor(refPlane.position.x / CHUNK_SIZE);
+        const refChunkZ = Math.floor(refPlane.position.z / CHUNK_SIZE);
+        mesh.metadata = {
+          isTexPlane: true,
+          isFlat: group.isFlat,
+          isNoRoof: group.isNoRoof,
           minY: minPY,
-          minX: minPX,
-          maxX: maxPX,
-          minZ: minPZ,
-          maxZ: maxPZ,
+          maxY: maxPY,
+          chunkX: refChunkX,
+          chunkZ: refChunkZ,
+          visibility: group.visibility,
+          placedFloor: group.floor,
         };
-        for (const key of revealChunkKeys) {
-          let entries = this.texturePlaneRevealEntriesByChunk.get(key);
-          if (!entries) {
-            entries = [];
-            this.texturePlaneRevealEntriesByChunk.set(key, entries);
+
+        this.texturePlaneMeshes.push(mesh);
+
+        const pcx = Math.floor(refPlane.position.x / CHUNK_SIZE);
+        const pcz = Math.floor(refPlane.position.z / CHUNK_SIZE);
+        const pkey = `${pcx},${pcz}`;
+        let arr = this.texturePlanesByChunk.get(pkey);
+        if (!arr) { arr = []; this.texturePlanesByChunk.set(pkey, arr); }
+        arr.push(mesh);
+        this.applyTexturePlaneFloorVisibility(pkey, [mesh]);
+
+        if (Number.isFinite(minTileX) && Number.isFinite(minTileZ) && revealChunkKeys.size > 0) {
+          const revealEntry: TexturePlaneRevealEntry = {
+            mesh,
+            minY: minPY,
+            minX: minPX,
+            maxX: maxPX,
+            minZ: minPZ,
+            maxZ: maxPZ,
+          };
+          for (const key of revealChunkKeys) {
+            let entries = this.texturePlaneRevealEntriesByChunk.get(key);
+            if (!entries) {
+              entries = [];
+              this.texturePlaneRevealEntriesByChunk.set(key, entries);
+            }
+            entries.push(revealEntry);
           }
-          entries.push(revealEntry);
         }
-      }
 
-      // Register roof entries for all planes in the group. Only register
-      // tiles whose CENTER falls inside the plane's footprint. The previous
-      // version used Math.ceil on half-width, which rounded a 1.2-tile plane
-      // up to a 3-tile footprint — and an "every cell of 3×3 is covered"
-      // indoor test would then fire near any wall with a slightly-oversized
-      // decorative plane on it.
-      if (group.isRoof) {
-        for (const plane of group.planes) {
-          forEachTileInPlaneFootprint(plane, this.mapWidth, this.mapHeight, (_idx, tx, tz) => {
-            const rk = `${tx},${tz}`;
-            this.addRoofGridEntry(rk, { node: mesh, floor: group.roofFloor, y: plane.position.y });
-          });
+        // Register roof entries for all planes in the group. Only register
+        // tiles whose CENTER falls inside the plane's footprint. The previous
+        // version used Math.ceil on half-width, which rounded a 1.2-tile plane
+        // up to a 3-tile footprint — and an "every cell of 3×3 is covered"
+        // indoor test would then fire near any wall with a slightly-oversized
+        // decorative plane on it.
+        if (group.isRoof) {
+          for (const { plane } of group.planes) {
+            forEachTileInPlaneFootprint(plane, this.mapWidth, this.mapHeight, (_idx, tx, tz) => {
+              const rk = `${tx},${tz}`;
+              this.addRoofGridEntry(rk, { node: mesh, floor: group.roofFloor, y: plane.position.y });
+            });
+          }
         }
-      }
 
-      mergedCount++;
+        mergedCount++;
       }
     }
     if (import.meta.env.DEV) console.log(`[ChunkManager] Merged ${planes.length} texture planes into ${mergedCount} batched meshes (${this.texturePlanesByChunk.size} chunks, ${this.flatTexturePickPlanes.length} flat pick planes, ${this.flatTexturePickPlanesByCell.size} pick cells)`);

@@ -131,6 +131,7 @@ function makeManager(
   manager.isSpellMovementLocked = () => false;
   manager.isControlledMoveActive = () => false;
   manager.refreshHoverHiddenRoofs = () => {};
+  manager.refreshFloorVisibilityAfterFloorChange = () => {};
   manager.shouldKeepLocalCombatWalkLoopAlive = () => false;
   manager.refreshLocalCombatFacing = () => {};
 

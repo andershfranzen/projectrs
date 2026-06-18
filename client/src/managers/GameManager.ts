@@ -1215,7 +1215,15 @@ export class GameManager {
       // …and apply the hide synchronously RIGHT NOW so the streamed mesh
       // never renders even for a frame. Otherwise we'd see a brief flash of
       // the upper-floor surface before updateIndoorDetection runs next tick.
-      if (this.isIndoors) this.recomputeHiddenRoofs();
+      const playerY = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
+      const underRoof = this.chunkManager.isUnderRoof(this.playerX, this.playerZ, playerY, this.currentFloor);
+      if (underRoof) {
+        this.isIndoors = true;
+        this._outdoorFrameCount = 0;
+        this.recomputeHiddenRoofs();
+      } else if (this.isIndoors) {
+        this.recomputeHiddenRoofs();
+      }
       this.refreshHoverHiddenRoofs(true);
       // Spawn-Y comes from LOGIN_OK now — no client-side re-snap needed.
       // The previous re-snap loop dropped players: getHeight() returns the
@@ -3566,7 +3574,6 @@ export class GameManager {
       this.linkPlacedObjectsToWorldObjects();
       this.reapplyWorldObjectVisualStates();
     }
-    this.recomputeHiddenRoofs();
   }
 
   /** Link a placed GLB node to a world object entity, tagging for picking and handling depletion */
@@ -6107,11 +6114,13 @@ export class GameManager {
       this.applyAuthoritativeFloor(newFloor ?? this.currentFloor, newY, {
         heightOverrideMs: 3000,
         refreshWorld: false,
+        refreshVisibility: false,
       });
       if (this.destMarker) this.destMarker.isVisible = false;
       if (this.interactMarker) this.interactMarker.isVisible = false;
       this.minimap?.clearDestination();
       this.refreshWorldAfterSameMapTeleport();
+      this.refreshFloorVisibilityAfterFloorChange();
       // Camera will follow naturally via its target on the next tick.
     });
 
@@ -6304,6 +6313,9 @@ export class GameManager {
       this.playerZ = newZ;
       this.clearPredictedPath();
       this.clearHoverHiddenRoofs();
+      this.clearHiddenRoofNodes();
+      this.isIndoors = false;
+      this._outdoorFrameCount = 0;
       this.currentFloor = 0;
       this.chunkManager.setCurrentFloor(0);
       if (this.localPlayer) this.localPlayer.stopWalking();
@@ -6411,7 +6423,7 @@ export class GameManager {
   private applyAuthoritativeFloor(
     newFloor: number,
     worldY?: number,
-    opts: { heightOverrideMs?: number; refreshWorld?: boolean } = {},
+    opts: { heightOverrideMs?: number; refreshWorld?: boolean; refreshVisibility?: boolean } = {},
   ): void {
     if (!Number.isFinite(newFloor)) return;
     const floor = Math.trunc(newFloor);
@@ -6431,8 +6443,10 @@ export class GameManager {
       if (this.localPlayer) this.localPlayer.setPositionXYZ(this.playerX, worldY, this.playerZ);
       this.inputManager.setPlayerY(worldY);
     }
-    this.refreshHoverHiddenRoofs(true, !floorChanged);
     if (opts.refreshWorld !== false) this.refreshWorldAfterSameMapTeleport();
+    if (opts.refreshVisibility === false) return;
+    if (floorChanged || opts.refreshWorld !== false) this.refreshFloorVisibilityAfterFloorChange();
+    else this.refreshHoverHiddenRoofs(true, true);
   }
 
   private isDungeonMap(mapId: string, meta: { id?: string; mapType?: string; dungeon?: boolean } | null): boolean {
@@ -11684,7 +11698,8 @@ export class GameManager {
       const z = target?.z ?? sprite.position.z;
       const dist = Math.max(Math.abs(x - this.playerX), Math.abs(z - this.playerZ));
       const threshold = sprite.isRenderEnabled() ? disableDist : enableDist;
-      sprite.setRenderEnabled(dist <= threshold);
+      const sameFloor = target ? target.floor === this.currentFloor : true;
+      sprite.setRenderEnabled(sameFloor && dist <= threshold);
     }
 
     for (const [entityId, sprite] of this.entities.npcSprites) {
@@ -12653,7 +12668,7 @@ export class GameManager {
     if (this.localTeleportHeightOverride?.floor !== nextFloor) this.localTeleportHeightOverride = null;
     if (!floorChanged) return;
     this.chunkManager.setCurrentFloor(nextFloor);
-    this.refreshHoverHiddenRoofs(true, false);
+    this.refreshFloorVisibilityAfterFloorChange();
   }
 
   private applyLocalVerticalAuthority(floor: number | null, y: number | null): void {
@@ -12931,11 +12946,7 @@ export class GameManager {
       this._outdoorFrameCount++;
       if (this._outdoorFrameCount >= 6 && this.isIndoors) {
         this.isIndoors = false;
-        this.hiddenRoofNodeSet.clear();
-        for (const node of this.hiddenRoofNodes) this.setPlacedWorldObjectEnabled(node, true);
-        this.hiddenRoofNodes = [];
-        this._lastIndoorTileX = -9999;
-        this._lastIndoorTileZ = -9999;
+        this.clearHiddenRoofNodes();
       }
     }
     if (this.isIndoors) {
@@ -12947,6 +12958,35 @@ export class GameManager {
         this.recomputeHiddenRoofs();
       }
     }
+  }
+
+  private clearHiddenRoofNodes(): void {
+    if (this.hiddenRoofNodes.length === 0 && this.hiddenRoofNodeSet.size === 0) {
+      this._lastIndoorTileX = -9999;
+      this._lastIndoorTileZ = -9999;
+      return;
+    }
+
+    const oldNodes = this.hiddenRoofNodes;
+    this.hiddenRoofNodes = [];
+    this.hiddenRoofNodeSet.clear();
+    this._lastIndoorTileX = -9999;
+    this._lastIndoorTileZ = -9999;
+    for (const node of oldNodes) {
+      if (!node.isDisposed()) this.setPlacedWorldObjectEnabled(node, true);
+    }
+  }
+
+  private refreshFloorVisibilityAfterFloorChange(): void {
+    this.clearHoverHiddenRoofs();
+    this.clearHiddenRoofNodes();
+    this.reapplyWorldObjectVisualStates();
+
+    const playerY = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
+    const underRoof = this.chunkManager.isUnderRoof(this.playerX, this.playerZ, playerY, this.currentFloor);
+    this.isIndoors = underRoof;
+    this._outdoorFrameCount = 0;
+    if (underRoof) this.recomputeHiddenRoofs();
   }
 
   private clearHoverRoofPointer(): void {
@@ -13190,7 +13230,7 @@ export class GameManager {
 
     // Re-enable nodes that LEFT the hidden set.
     for (const node of this.hiddenRoofNodes) {
-      if (!newSet.has(node)) this.setPlacedWorldObjectEnabled(node, true);
+      if (!newSet.has(node) && !node.isDisposed()) this.setPlacedWorldObjectEnabled(node, true);
     }
     // Disable nodes that ENTERED the hidden set (don't touch ones already in).
     const next: TransformNode[] = [];

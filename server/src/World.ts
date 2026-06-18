@@ -1117,6 +1117,7 @@ export class World {
   private canPlayerSyncNpc(player: Player, npc: Npc): boolean {
     return !npc.dead
       && npc.currentMapLevel === player.currentMapLevel
+      && npc.currentFloor === player.currentFloor
       && this.canPlayerSeeNpc(player, npc);
   }
 
@@ -2584,6 +2585,7 @@ export class World {
     player.syncDirty = true;
     this.markEntityTileOccupantsDirty();
     this.sendFloorChange(player);
+    this.pruneVisibleEntitiesAfterFloorChange(player);
     this.sendNearbyVerticalObjectUpdates(player);
     return true;
   }
@@ -12063,7 +12065,37 @@ export class World {
       player.currentFloor,
     );
     try { player.ws.sendBinary(packet); } catch {}
+    this.pruneVisibleEntitiesAfterFloorChange(player);
     this.sendNearbyVerticalObjectUpdates(player);
+  }
+
+  private canPlayerKeepVisibleEntityOnCurrentFloor(player: Player, entityId: number): boolean {
+    const other = this.players.get(entityId);
+    if (other) {
+      return !other.disconnected
+        && other.currentMapLevel === player.currentMapLevel
+        && other.currentFloor === player.currentFloor;
+    }
+
+    const npc = this.npcs.get(entityId);
+    if (npc) return this.canPlayerSyncNpc(player, npc);
+
+    const obj = this.worldObjects.get(entityId);
+    if (obj) return this.canPlayerTargetObject(player, obj);
+
+    const item = this.groundItems.get(entityId);
+    if (item) return this.canPlayerTargetGroundItem(player, item);
+
+    return false;
+  }
+
+  private pruneVisibleEntitiesAfterFloorChange(player: Player): void {
+    if (player.visibleEntityIds.size === 0) return;
+    for (const entityId of [...player.visibleEntityIds]) {
+      if (this.canPlayerKeepVisibleEntityOnCurrentFloor(player, entityId)) continue;
+      this.sendToPlayer(player, ServerOpcode.ENTITY_DEATH, entityId);
+      player.visibleEntityIds.delete(entityId);
+    }
   }
 
   private sendNearbyVerticalObjectUpdates(player: Player): void {
@@ -12347,8 +12379,9 @@ export class World {
     return !!crypto?.encryptEnabled && !!crypto.handshakeComplete && !!crypto.opcodeMappingEnabled;
   }
 
-  private flushSyncPackets(player: Player, packets: SyncPacket[]): void {
-    if (player.disconnected || packets.length === 0) return;
+  private flushSyncPackets(player: Player, packets: SyncPacket[]): boolean {
+    if (player.disconnected) return false;
+    if (packets.length === 0) return true;
     // Backpressure guard: sync packets are position/health snapshots, so if this
     // socket's outbound buffer is already backed up we drop this tick's sync (the
     // next tick re-sends current state). A wedged client otherwise grows Bun's
@@ -12359,7 +12392,7 @@ export class World {
       if (buffered > World.MAX_WS_BACKPRESSURE_BYTES * 4) {
         try { ws.close?.(1011, 'backpressure'); } catch { /* already closing */ }
       }
-      return;
+      return false;
     }
     try {
       if (packets.length > 1 && this.canBatchSyncPackets(player)) {
@@ -12367,7 +12400,7 @@ export class World {
         scratch.length = 0;
         for (const packet of packets) scratch.push(packet.data);
         player.ws.sendBinary(encodePacketBatch(ServerOpcode.PACKET_BATCH, scratch));
-        return;
+        return true;
       }
       const sendToPlayerOverridden = this.sendToPlayer !== World.prototype.sendToPlayer;
       for (const packet of packets) {
@@ -12377,7 +12410,8 @@ export class World {
           player.ws.sendBinary(packet.data);
         }
       }
-    } catch { /* connection closed */ }
+      return true;
+    } catch { return false; }
   }
 
   private broadcastSync(): void {
@@ -12563,11 +12597,12 @@ export class World {
         });
 
         this.queueActionCapabilities(syncPackets, viewer, nextVisible, previousVisible);
-        viewer.visibleEntityIds = nextVisible;
-        viewer.nextVisibleEntityIds = previousVisible;
-        viewer.lastBroadcastChunkX = viewer.currentChunkX;
-        viewer.lastBroadcastChunkZ = viewer.currentChunkZ;
-        this.flushSyncPackets(viewer, syncPackets);
+        if (this.flushSyncPackets(viewer, syncPackets)) {
+          viewer.visibleEntityIds = nextVisible;
+          viewer.nextVisibleEntityIds = previousVisible;
+          viewer.lastBroadcastChunkX = viewer.currentChunkX;
+          viewer.lastBroadcastChunkZ = viewer.currentChunkZ;
+        }
       } catch { /* connection closed */ }
     }
 

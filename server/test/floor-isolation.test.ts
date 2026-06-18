@@ -488,7 +488,7 @@ describe('floor isolation', () => {
     expect(world.isTileBlockedForPlayer(upper, map, 5, 5)).toBe(true);
   });
 
-  test('broadcast sync keeps nearby NPCs resident across floors', () => {
+  test('broadcast sync despawns nearby NPCs on other floors', () => {
     const { world, packets } = makeWorld();
     const viewer = makePlayer('viewer', 1, 0);
     const npc = new Npc(npcDef, 5.5, 5.5);
@@ -508,8 +508,8 @@ describe('floor isolation', () => {
 
     world.broadcastSync();
 
-    expect(packets.get(viewer.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.ENTITY_DEATH && p.values[0] === npc.id)).toBe(false);
-    expect(viewer.visibleEntityIds.has(npc.id)).toBe(true);
+    expect(packets.get(viewer.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.ENTITY_DEATH && p.values[0] === npc.id)).toBe(true);
+    expect(viewer.visibleEntityIds.has(npc.id)).toBe(false);
   });
 
   test('broadcast sync keeps ladders visible from connected upper floors', () => {
@@ -709,6 +709,85 @@ describe('floor isolation', () => {
     expect(player.visibleEntityIds.has(ladder.id)).toBe(true);
     expect(world.canPlayerTargetObject(player, ladder)).toBe(true);
     expect(world.ladderActionMaskForPlayer(player, ladder)).toBe(0);
+  });
+
+  test('same-map floor changes immediately despawn stale non-ladder entities', () => {
+    const { world, packets } = makeWorld();
+    const player = makePlayer('viewer', 1, 1);
+    player.effectiveY = 2.7;
+    world.sendWorldObjectUpdate = (target: Player, obj: WorldObject) => {
+      world.sendToPlayer(target, ServerOpcode.WORLD_OBJECT_SYNC, obj.id);
+    };
+    const remote = makePlayer('remote', 2, 1);
+    const npc = new Npc(npcDef, 5.5, 5.5);
+    npc.currentMapLevel = 'kcmap';
+    npc.currentFloor = 1;
+    const crate = new WorldObject(objectDef, 5.5, 5.5, 'kcmap', 1, 2.7);
+    const groundItem = makeGroundItem(9011, 5.5, 5.5, 1);
+    const ladder = new WorldObject(ladderDef, 5.5, 5.5, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 5.5, z: 5.5, floor: 0, y: 0 },
+      to: { x: 5.5, z: 5.5, floor: 1, y: 2.7 },
+      bidirectional: true,
+    }];
+    for (const id of [remote.id, npc.id, crate.id, groundItem.id, ladder.id]) player.visibleEntityIds.add(id);
+    world.players.set(player.id, player);
+    world.players.set(remote.id, remote);
+    world.npcs.set(npc.id, npc);
+    world.worldObjects.set(crate.id, crate);
+    world.worldObjects.set(ladder.id, ladder);
+    world.groundItems.set(groundItem.id, groundItem);
+    world.chunkManagers = new Map([[
+      'kcmap',
+      {
+        getEntitiesNear() {
+          return new Set([ladder.id]);
+        },
+      },
+    ]]);
+
+    world.applyPlayerMovementLayer(player, { floor: 0, y: 0, lastFloorChangeTile: -1 });
+
+    const sent = packets.get(player.id) ?? [];
+    for (const id of [remote.id, npc.id, crate.id, groundItem.id]) {
+      expect(sent.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.ENTITY_DEATH && p.values[0] === id)).toBe(true);
+      expect(player.visibleEntityIds.has(id)).toBe(false);
+    }
+    expect(player.visibleEntityIds.has(ladder.id)).toBe(true);
+    expect(sent.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.WORLD_OBJECT_SYNC && p.values[0] === ladder.id)).toBe(true);
+  });
+
+  test('visibility despawns are retried after a backpressured sync tick', () => {
+    const { world, packets } = makeWorld();
+    const viewer = makePlayer('viewer', 1, 0);
+    const crate = new WorldObject(objectDef, 5.5, 5.5, 'kcmap', 1, 2.7);
+    viewer.visibleEntityIds.add(crate.id);
+    let buffered = Number.POSITIVE_INFINITY;
+    viewer.ws = {
+      sendBinary() {},
+      send() {},
+      close() {},
+      getBufferedAmount: () => buffered,
+    } as any;
+    world.players.set(viewer.id, viewer);
+    world.worldObjects.set(crate.id, crate);
+    world.chunkManagers = new Map([[
+      'kcmap',
+      {
+        forEachEntityNearChunk() {},
+      },
+    ]]);
+
+    world.broadcastSync();
+
+    expect(packets.get(viewer.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.ENTITY_DEATH && p.values[0] === crate.id) ?? false).toBe(false);
+    expect(viewer.visibleEntityIds.has(crate.id)).toBe(true);
+
+    buffered = 0;
+    world.broadcastSync();
+
+    expect(packets.get(viewer.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.ENTITY_DEATH && p.values[0] === crate.id)).toBe(true);
+    expect(viewer.visibleEntityIds.has(crate.id)).toBe(false);
   });
 
   test('ladder links support signed negative destination floors', () => {
