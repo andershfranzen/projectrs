@@ -80,11 +80,19 @@ function makeKCTile(overrides: Partial<KCTile> = {}): KCTile {
   };
 }
 
-function makeGrassChunkManager(tiles: KCTile[][]): any {
+function makeGrassChunkManager(
+  tiles: KCTile[][],
+  cornerHeights: { tl: number; tr: number; bl: number; br: number } = { tl: 0, tr: 0, bl: 0, br: 0 },
+  defaultWaterLevel = -1,
+): any {
   return Object.assign(Object.create(ChunkManager.prototype), {
     mapWidth: tiles[0]?.length ?? 0,
     mapHeight: tiles.length,
     defaultGround: 'grass' as GroundType,
+    defaultWaterLevel,
+    chunkWaterLevelCache: null,
+    chunkCols: 0,
+    chunkRows: 0,
     activeChunks: null,
     holeTiles: new Set<number>(),
     floorHeights: new Map<number, number>(),
@@ -92,7 +100,7 @@ function makeGrassChunkManager(tiles: KCTile[][]): any {
     texturePlaneFloorTiles: new Set<number>(),
     tilePaintedEntries: new Map<number, { color: [number, number, number]; y: number }>(),
     mapData: { tiles },
-    getTileCornerHeights: () => ({ tl: 0, tr: 0, bl: 0, br: 0 }),
+    getTileCornerHeights: () => cornerHeights,
   });
 }
 
@@ -118,6 +126,9 @@ describe('placed object door classification', () => {
     expect(isInteractiveDoorPlacedAsset('castleTruedoor')).toBe(true);
     expect(isInteractiveDoorPlacedAsset('basicTruedoor')).toBe(true);
     expect(isInteractiveDoorPlacedAsset('IronDoor1')).toBe(true);
+    expect(isInteractiveDoorPlacedAsset('Door')).toBe(true);
+    expect(isInteractiveDoorPlacedAsset('Door_Alternative_2')).toBe(true);
+    expect(isInteractiveDoorPlacedAsset('Door_Alternative_3')).toBe(true);
     expect(isInteractiveDoorPlacedAsset('stone door1')).toBe(false);
     expect(isInteractiveDoorPlacedAsset('dark stone door2')).toBe(false);
     expect(isInteractiveDoorPlacedAsset('wood door3')).toBe(false);
@@ -218,6 +229,8 @@ describe('procedural grass placement', () => {
       makeKCTile({ groundB: 'dirt' }),
       makeKCTile(),
       makeKCTile(),
+      makeKCTile({ waterPainted: true }),
+      makeKCTile({ waterSurface: true }),
     ]]);
 
     manager.texturePlaneFloorTiles.add(2);
@@ -232,13 +245,21 @@ describe('procedural grass placement', () => {
     expect(manager.isGrassBladeSurface(4, 0)).toBe(false);
     expect(manager.isGrassBladeSurface(5, 0)).toBe(false);
     expect(manager.isGrassBladeSurface(6, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(7, 0)).toBe(false);
+    expect(manager.isGrassBladeSurface(8, 0)).toBe(false);
     expect(manager.isGrassBladeSurface(-1, 0)).toBe(false);
   });
 
-  test('keeps seam blades inside the grass tile', () => {
+  test('does not grow blades on height-submerged grass', () => {
+    const manager = makeGrassChunkManager([[makeKCTile()]], { tl: -0.4, tr: -0.3, bl: -0.2, br: -0.1 }, 0);
+
+    expect(manager.isGrassBladeSurface(0, 0)).toBe(false);
+  });
+
+  test('keeps natural seam blades inside the grass tile', () => {
     const manager = makeGrassChunkManager([[
       makeKCTile(),
-      makeKCTile({ ground: 'road' }),
+      makeKCTile({ ground: 'sand' }),
     ]]);
 
     const matrices = manager.buildGrassBladeMatrices(0, 0, 2, 1);
@@ -250,6 +271,60 @@ describe('procedural grass placement', () => {
       expect(matrices[offset + 14]).toBeGreaterThanOrEqual(0);
       expect(matrices[offset + 14]).toBeLessThanOrEqual(1);
     }
+  });
+
+  test('does not force seam blades along dirt roads', () => {
+    const tiles = Array.from({ length: 3 }, () => (
+      Array.from({ length: 3 }, () => makeKCTile())
+    ));
+    tiles[1][2] = makeKCTile({ ground: 'dirt' });
+    const manager = makeGrassChunkManager(tiles);
+
+    const matrices = manager.buildGrassBladeMatrices(0, 0, 3, 3);
+    let centerTileBlades = 0;
+    for (let offset = 0; offset < matrices.length; offset += 16) {
+      const x = matrices[offset + 12];
+      const z = matrices[offset + 14];
+      if (x >= 1 && x < 2 && z >= 1 && z < 2) centerTileBlades++;
+    }
+
+    expect(centerTileBlades).toBe(0);
+  });
+
+  test('does not force seam blades along river edges', () => {
+    const tiles = Array.from({ length: 3 }, () => (
+      Array.from({ length: 3 }, () => makeKCTile())
+    ));
+    tiles[1][2] = makeKCTile({ waterPainted: true });
+    const manager = makeGrassChunkManager(tiles);
+
+    const matrices = manager.buildGrassBladeMatrices(0, 0, 3, 3);
+    let centerTileBlades = 0;
+    for (let offset = 0; offset < matrices.length; offset += 16) {
+      const x = matrices[offset + 12];
+      const z = matrices[offset + 14];
+      if (x >= 1 && x < 2 && z >= 1 && z < 2) centerTileBlades++;
+    }
+
+    expect(centerTileBlades).toBe(0);
+  });
+
+  test('dampens sparse field blades directly beside rivers', () => {
+    const tiles = Array.from({ length: 3 }, () => (
+      Array.from({ length: 5 }, () => makeKCTile())
+    ));
+    tiles[1][3] = makeKCTile({ waterPainted: true });
+    const manager = makeGrassChunkManager(tiles);
+
+    const matrices = manager.buildGrassBladeMatrices(0, 0, 5, 3);
+    let riverbankBlades = 0;
+    for (let offset = 0; offset < matrices.length; offset += 16) {
+      const x = matrices[offset + 12];
+      const z = matrices[offset + 14];
+      if (x >= 2 && x < 3 && z >= 1 && z < 2) riverbankBlades++;
+    }
+
+    expect(riverbankBlades).toBe(0);
   });
 
   test('adds sparse field blades away from grass edges', () => {
@@ -317,6 +392,7 @@ describe('placed object thin-instance grouping', () => {
     expect(manager.canThinInstance({ ...basePlacement, assetId: 'stone wall door2' })).toBe(true);
     expect(manager.canThinInstance({ ...basePlacement, assetId: 'byzantine stone wall door' })).toBe(true);
     expect(manager.canThinInstance({ ...basePlacement, assetId: 'castleTruedoor' })).toBe(false);
+    expect(manager.canThinInstance({ ...basePlacement, assetId: 'Door' })).toBe(false);
   });
 
   test('batches static world-object and roof visuals but keeps doors unique', () => {
@@ -334,6 +410,7 @@ describe('placed object thin-instance grouping', () => {
     expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'wheat2' })).toBe(true);
     expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'tile roofing' })).toBe(true);
     expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'castleTruedoor' })).toBe(false);
+    expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'Door' })).toBe(false);
   });
 
   test('separates elevated scenery by storey height for indoor culling', () => {

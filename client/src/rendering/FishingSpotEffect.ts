@@ -30,6 +30,15 @@ const FISHING_SPOT_EFFECT_VERTICES: Array<[number, number, number]> = [
   [0.208811, 0.050653, -0.407629],
 ];
 
+export const FISHING_SPOT_EFFECT_VISUAL_BOUNDS = Object.freeze({
+  minX: -0.431068,
+  minY: 0.035,
+  minZ: -0.412011,
+  maxX: 0.431068,
+  maxY: 0.200368,
+  maxZ: 0.412011,
+});
+
 const FISHING_SPOT_EFFECT_QUADS: Array<{
   vertices: [number, number, number, number];
   normal: [number, number, number];

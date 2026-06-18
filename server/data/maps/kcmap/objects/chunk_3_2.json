@@ -1032,5 +1032,43 @@
       "y": 1,
       "z": 1
     }
+  },
+  {
+    "assetId": "FishingSpotBubblesSardine",
+    "layerId": "layer_0",
+    "position": {
+      "x": 101.5,
+      "y": -2.48,
+      "z": 93.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "FishingSpotBubblesSardine",
+    "layerId": "layer_0",
+    "position": {
+      "x": 97.5,
+      "y": -2.48,
+      "z": 91.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
   }
 ]

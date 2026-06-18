@@ -141,6 +141,9 @@ type HarvestYield = {
   xpReward: number;
   levelRequired: number;
 };
+type HarvestAwardOptions = {
+  dropOverflow?: boolean;
+};
 type PendingSpellImpact = {
   impactTick: number;
   attackerId: number;
@@ -6791,6 +6794,12 @@ export class World {
       const itemId = obj.def.harvestItemId!;
       const qty = obj.def.harvestQuantity ?? 1;
       const { added, dropped } = this.awardHarvestItem(player, itemId, qty);
+      if (added + dropped <= 0) {
+        this.sendChatSystem(player, "You can't carry any more.");
+        this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, obj.id);
+        player.setDelay(this.currentTick, 1);
+        return;
+      }
       if (added > 0) {
         this.sendInventory(player);
         this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: added, source: 'harvest' });
@@ -6933,9 +6942,8 @@ export class World {
         }
       }
 
-      if (recipe.successChance !== undefined && Math.random() > recipe.successChance) {
-        // Recipe rolled fail — inputs are consumed, no output. Matches RS2 behavior.
-        this.sendInventory(player);
+      if (!this.objectRecipeSuccessRoll(player, skillId, recipe)) {
+        this.handleObjectRecipeFailure(player, recipe);
         return false;
       }
 
@@ -6998,6 +7006,25 @@ export class World {
       return true;
     }
     return false;
+  }
+
+  private objectRecipeSuccessRoll(player: Player, skillId: SkillId, recipe: ObjectRecipe): boolean {
+    if (recipe.successRoll !== undefined) {
+      const [low, high] = recipe.successRoll;
+      return statRandom(player.skills[skillId]?.level ?? 1, low, high);
+    }
+    if (recipe.successChance !== undefined) return Math.random() <= recipe.successChance;
+    return true;
+  }
+
+  private handleObjectRecipeFailure(player: Player, recipe: ObjectRecipe): void {
+    if (recipe.failureOutputItemId !== undefined) {
+      const quantity = Math.max(1, Math.floor(recipe.failureOutputQuantity ?? recipe.outputQuantity ?? 1));
+      player.addItem(recipe.failureOutputItemId, quantity, this.data.itemDefs);
+      const itemName = this.data.getItem(recipe.outputItemId)?.name ?? 'item';
+      this.sendChatSystem(player, `You accidentally burn the ${itemName.toLowerCase()}.`);
+    }
+    this.sendInventory(player);
   }
 
   private resolveCraftingOutput(recipe: ObjectRecipe): {
@@ -10241,9 +10268,21 @@ export class World {
     }
   }
 
-  private awardHarvestItem(player: Player, itemId: number, quantity: number): { added: number; dropped: number } {
-    const added = player.addItem(itemId, quantity, this.data.itemDefs, { assureFullInsertion: false }).completed;
-    const dropped = quantity - added;
+  private harvestCanDropOverflow(skillId: SkillId | undefined, def: WorldObjectDef): boolean {
+    return skillId === 'mining' || def.category === 'rock';
+  }
+
+  private awardHarvestItem(
+    player: Player,
+    itemId: number,
+    quantity: number,
+    options: HarvestAwardOptions = {},
+  ): { added: number; dropped: number } {
+    const dropOverflow = options.dropOverflow === true;
+    const added = player.addItem(itemId, quantity, this.data.itemDefs, {
+      assureFullInsertion: !dropOverflow,
+    }).completed;
+    const dropped = dropOverflow ? quantity - added : 0;
     if (dropped > 0) this.spawnGroundItem(player, itemId, dropped, GROUND_ITEM_DESPAWN_TICKS);
     return { added, dropped };
   }
@@ -11518,8 +11557,15 @@ export class World {
         const xpReward = harvestYield.xpReward;
 
         const isChest = obj.def.category === 'chest';
+        const canDropOverflow = this.harvestCanDropOverflow(skillId, obj.def);
         const foundForChest: Array<{ itemId: number; quantity: number }> = [];
         let inventoryChanged = false;
+
+        if (!isChest && !canDropOverflow && !player.canFit(itemId, qty, this.data.itemDefs)) {
+          this.sendChatSystem(player, "You can't carry any more.");
+          this.stopPlayerSkilling(playerId, player);
+          continue;
+        }
 
         const requiredItemState = this.consumeHarvestRequiredItem(player, obj.def);
         if (requiredItemState === 'missing') {
@@ -11531,7 +11577,7 @@ export class World {
 
         const primary = isChest
           ? { added: player.addItem(itemId, qty, this.data.itemDefs).completed, dropped: 0 }
-          : this.awardHarvestItem(player, itemId, qty);
+          : this.awardHarvestItem(player, itemId, qty, { dropOverflow: canDropOverflow });
         const addedToInv = primary.added > 0;
         const harvestedAnything = primary.added + primary.dropped > 0;
         if (!harvestedAnything) {
@@ -11573,7 +11619,7 @@ export class World {
         });
 
         if (obj.defId === MITHRIL_ROCK_OBJECT_DEF_ID && Math.random() < MITHRIL_PICKAXE_FIND_CHANCE) {
-          const rare = this.awardHarvestItem(player, MITHRIL_PICKAXE_ITEM_ID, 1);
+          const rare = this.awardHarvestItem(player, MITHRIL_PICKAXE_ITEM_ID, 1, { dropOverflow: canDropOverflow });
           this.sendChatSystem(player, 'You find a beautiful blue pickaxe left among the rocks...');
           if (rare.added > 0) {
             inventoryChanged = true;
@@ -11627,7 +11673,7 @@ export class World {
             if (Math.random() >= drop.chance) continue;
             const got = isChest
               ? { added: player.addItem(drop.itemId, drop.quantity, this.data.itemDefs).completed, dropped: 0 }
-              : this.awardHarvestItem(player, drop.itemId, drop.quantity);
+              : this.awardHarvestItem(player, drop.itemId, drop.quantity, { dropOverflow: canDropOverflow });
             const gotQuantity = got.added + got.dropped;
             if (gotQuantity > 0) {
               inventoryChanged = true;

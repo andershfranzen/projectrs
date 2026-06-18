@@ -1556,6 +1556,42 @@
     "rotationZ": -0.1832595714594046,
     "iconScale": 0.85
   },
+  "510": {
+    "alpha": -0.8377580409572782,
+    "beta": 0.6719517620178169,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 2.234021442552742,
+    "iconScale": 1
+  },
+  "523": {
+    "alpha": 1.090830782496456,
+    "beta": 0.9599310885968813,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "535": {
+    "alpha": -0.8377580409572782,
+    "beta": 0.6719517620178169,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 2.234021442552742,
+    "iconScale": 1
+  },
+  "548": {
+    "alpha": 1.090830782496456,
+    "beta": 0.9599310885968813,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
   "550": {
     "alpha": -0.6544984694978736,
     "beta": 0.8377580409572782,
@@ -1568,6 +1604,78 @@
   "551": {
     "alpha": -2.5569073541716927,
     "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "558": {
+    "alpha": 1.1431906600562858,
+    "beta": 0.9162978572970231,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "559": {
+    "alpha": 1.1431906600562858,
+    "beta": 0.9162978572970231,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "562": {
+    "alpha": 2.0158552860534504,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "563": {
+    "alpha": 2.0158552860534504,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "568": {
+    "alpha": -0.8377580409572782,
+    "beta": 0.6719517620178169,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 2.234021442552742,
+    "iconScale": 1
+  },
+  "569": {
+    "alpha": 1.1431906600562858,
+    "beta": 0.9162978572970231,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "570": {
+    "alpha": 2.0158552860534504,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "571": {
+    "alpha": 1.090830782496456,
+    "beta": 0.9599310885968813,
     "distanceMult": 0.75,
     "rotationX": 0,
     "rotationY": 0,

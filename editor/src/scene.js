@@ -13266,10 +13266,6 @@ function applyToolAtTile(tile, eventLike = null) {
     return null
   }
 
-  function isInteractableRockAsset(asset) {
-    return interactableAssetCategory(asset) === 'rock'
-  }
-
   function resourceAssetGroup(asset) {
     const category = interactableAssetCategory(asset)
     if (category === 'rock') return 'Rocks'
@@ -13280,7 +13276,7 @@ function applyToolAtTile(tile, eventLike = null) {
 
   function assetMatchesSection(asset, section) {
     if (section === '__resources__') return resourceAssetGroup(asset) !== null
-    if (section === 'Models' && isInteractableRockAsset(asset)) return false
+    if (section === 'Models' && resourceAssetGroup(asset) !== null) return false
     if (section !== 'all' && asset.section !== section) return false
     return true
   }

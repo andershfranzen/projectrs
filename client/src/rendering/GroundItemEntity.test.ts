@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import type { ItemDef } from '@projectrs/shared';
 import {
   groundItemHiddenStackPipCount,
+  groundItemHiddenStackPipOffset,
   groundItemTargetModelSizeForItem,
+  groundItemVisibleStackOffsetForIndex,
   groundItemVisualScaleFromOptions,
 } from './GroundItemEntity';
 
@@ -61,5 +63,33 @@ describe('ground item sizing', () => {
     expect(groundItemHiddenStackPipCount(6)).toBe(3);
     expect(groundItemHiddenStackPipCount(30)).toBe(3);
     expect(groundItemHiddenStackPipCount(Number.NaN)).toBe(0);
+  });
+
+  test('places visible same-tile drops as a compact pile instead of a line', () => {
+    const offsets = [0, 1, 2].map(groundItemVisibleStackOffsetForIndex);
+
+    for (const offset of offsets) {
+      expect(Math.hypot(offset.x, offset.z)).toBeLessThanOrEqual(0.06);
+    }
+
+    const area = Math.abs(
+      offsets[0].x * (offsets[1].z - offsets[2].z)
+      + offsets[1].x * (offsets[2].z - offsets[0].z)
+      + offsets[2].x * (offsets[0].z - offsets[1].z)
+    ) / 2;
+    expect(area).toBeGreaterThan(0.0008);
+    expect(offsets.map(offset => offset.y)).toEqual([...offsets.map(offset => offset.y)].sort((a, b) => b - a));
+  });
+
+  test('clusters hidden-stack pips instead of drawing a row of coins', () => {
+    const offsets = [0, 1, 2].map(index => groundItemHiddenStackPipOffset(index, 3));
+    const uniqueX = new Set(offsets.map(offset => offset.x.toFixed(3)));
+    const uniqueZ = new Set(offsets.map(offset => offset.z.toFixed(3)));
+
+    expect(uniqueX.size).toBeGreaterThan(1);
+    expect(uniqueZ.size).toBeGreaterThan(1);
+    for (const offset of offsets) {
+      expect(Math.hypot(offset.x - 0.16, offset.z - 0.17)).toBeLessThanOrEqual(0.04);
+    }
   });
 });

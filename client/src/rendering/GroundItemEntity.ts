@@ -15,7 +15,6 @@ import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
-import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { buildGroundItemOptionsForItem, resolveGroundItemModelPath, stackModelScaleForItem } from './ItemIcon';
 import type { ThumbnailOptions } from './ThumbnailRenderer';
@@ -44,9 +43,14 @@ const LOG_GROUND_ITEM_VISUAL_SCALE = 1.6;
 const TEMPLATE_CACHE_BY_SCENE = new WeakMap<Scene, Map<string, Promise<GroundItemTemplate | null>>>();
 const STACK_MARKER_MATERIAL_BY_SCENE = new WeakMap<Scene, StandardMaterial>();
 const HIDDEN_STACK_MARKER_MAX_PIPS = 3;
-const HIDDEN_STACK_MARKER_DIAMETER = 0.055;
-const HIDDEN_STACK_MARKER_HEIGHT = 0.018;
-const HIDDEN_STACK_MARKER_SPACING = 0.065;
+const HIDDEN_STACK_MARKER_DIAMETER = 0.036;
+const HIDDEN_STACK_MARKER_HEIGHT = 0.012;
+
+export interface GroundItemStackOffset {
+  x: number;
+  y: number;
+  z: number;
+}
 
 const LOG_GROUND_ITEM_IDS = new Set<number>([
   LOGS_ITEM_ID,
@@ -70,10 +74,23 @@ const SLOT_TARGET_MODEL_SIZE: Partial<Record<NonNullable<ItemDef['equipSlot']>, 
   ring: 0.14,
 };
 
-const STACK_OFFSETS = [
-  new Vector3(0.1, 0.055, -0.08),
-  new Vector3(-0.11, 0.032, -0.01),
-  new Vector3(-0.02, 0.014, 0.13),
+const STACK_OFFSETS: readonly GroundItemStackOffset[] = [
+  { x: 0.000, y: 0.046, z: 0.000 },
+  { x: -0.050, y: 0.028, z: -0.020 },
+  { x: 0.020, y: 0.012, z: 0.055 },
+];
+
+const HIDDEN_STACK_MARKER_OFFSETS: readonly GroundItemStackOffset[][] = [
+  [{ x: 0.158, y: HIDDEN_STACK_MARKER_HEIGHT / 2 + 0.006, z: 0.166 }],
+  [
+    { x: 0.138, y: HIDDEN_STACK_MARKER_HEIGHT / 2 + 0.006, z: 0.160 },
+    { x: 0.178, y: HIDDEN_STACK_MARKER_HEIGHT / 2 + 0.006, z: 0.188 },
+  ],
+  [
+    { x: 0.132, y: HIDDEN_STACK_MARKER_HEIGHT / 2 + 0.006, z: 0.164 },
+    { x: 0.176, y: HIDDEN_STACK_MARKER_HEIGHT / 2 + 0.006, z: 0.152 },
+    { x: 0.158, y: HIDDEN_STACK_MARKER_HEIGHT / 2 + 0.006, z: 0.198 },
+  ],
 ];
 
 function templateCacheKey(path: string, options: ThumbnailOptions, targetSize: number): string {
@@ -181,6 +198,20 @@ export function groundItemHiddenStackPipCount(stackSize: number): number {
   if (!Number.isFinite(stackSize)) return 0;
   const hiddenCount = Math.floor(stackSize) - MAX_MODELS_PER_TILE;
   return hiddenCount > 0 ? Math.min(HIDDEN_STACK_MARKER_MAX_PIPS, hiddenCount) : 0;
+}
+
+export function groundItemVisibleStackOffsetForIndex(index: number): GroundItemStackOffset {
+  const safeIndex = Number.isFinite(index) ? Math.max(0, Math.floor(index)) : 0;
+  return STACK_OFFSETS[Math.min(safeIndex, STACK_OFFSETS.length - 1)];
+}
+
+export function groundItemHiddenStackPipOffset(index: number, pipCount: number): GroundItemStackOffset {
+  const safeCount = Number.isFinite(pipCount)
+    ? Math.max(1, Math.min(HIDDEN_STACK_MARKER_MAX_PIPS, Math.floor(pipCount)))
+    : 1;
+  const offsets = HIDDEN_STACK_MARKER_OFFSETS[safeCount - 1] ?? HIDDEN_STACK_MARKER_OFFSETS[0];
+  const safeIndex = Number.isFinite(index) ? Math.max(0, Math.floor(index)) : 0;
+  return offsets[Math.min(safeIndex, offsets.length - 1)];
 }
 
 function getStackMarkerMaterial(scene: Scene): StandardMaterial {
@@ -324,8 +355,8 @@ export class GroundItemEntity {
         child.metadata = groundItemMetadata('groundItemVisual', primary.id, tileKey);
       }
 
-      const offset = STACK_OFFSETS[Math.min(i, STACK_OFFSETS.length - 1)];
-      clone.position.copyFrom(offset);
+      const offset = groundItemVisibleStackOffsetForIndex(i);
+      clone.position.set(offset.x, offset.y, offset.z);
       clone.rotationQuaternion = null;
       const stackYaw = i === 0 ? 0 : ((entry.itemId * 37) % 360) * Math.PI / 180;
       clone.rotation.set(0, template.baseYaw + stackYaw, 0);
@@ -350,8 +381,6 @@ export class GroundItemEntity {
     if (pipCount === 0) return;
 
     const material = getStackMarkerMaterial(scene);
-    const startX = 0.18 - ((pipCount - 1) * HIDDEN_STACK_MARKER_SPACING) / 2;
-    const z = 0.18;
     for (let i = 0; i < pipCount; i++) {
       const pip = MeshBuilder.CreateCylinder(`groundItemHiddenPip_${tileKey}_${i}`, {
         height: HIDDEN_STACK_MARKER_HEIGHT,
@@ -359,7 +388,8 @@ export class GroundItemEntity {
         tessellation: 8,
       }, scene);
       pip.parent = this.root;
-      pip.position.set(startX + i * HIDDEN_STACK_MARKER_SPACING, HIDDEN_STACK_MARKER_HEIGHT / 2 + 0.006, z);
+      const offset = groundItemHiddenStackPipOffset(i, pipCount);
+      pip.position.set(offset.x, offset.y, offset.z);
       pip.material = material;
       pip.isPickable = false;
       pip.metadata = groundItemMetadata('groundItemVisual', groundItemId, tileKey);

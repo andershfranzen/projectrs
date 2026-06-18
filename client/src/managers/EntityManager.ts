@@ -356,6 +356,30 @@ export class EntityManager {
     return this.sortGroundItemStackForDisplay(stack);
   }
 
+  private collectGroundItemTileVisualStack(tileKey: string): GroundItemStackEntry[] {
+    const stack = this.collectGroundItemTileStack(tileKey);
+    if (stack.length <= 1) return stack;
+
+    const grouped: GroundItemStackEntry[] = [];
+    const stackableByItemId = new Map<number, GroundItemStackEntry>();
+    for (const entry of stack) {
+      if (!entry.def.stackable) {
+        grouped.push(entry);
+        continue;
+      }
+
+      const existing = stackableByItemId.get(entry.itemId);
+      if (existing) {
+        existing.quantity += entry.quantity;
+      } else {
+        stackableByItemId.set(entry.itemId, entry);
+        grouped.push(entry);
+      }
+    }
+
+    return this.sortGroundItemStackForDisplay(grouped);
+  }
+
   getGroundItemStackForItem(groundItemId: number): GroundItemData[] {
     const item = this.groundItems.get(groundItemId);
     if (!item) return [];
@@ -506,7 +530,7 @@ export class EntityManager {
     this.groundItemTileVersions.set(tileKey, version);
     this.disposeGroundItemTileRender(tileKey);
 
-    const stack = this.collectGroundItemTileStack(tileKey);
+    const stack = this.collectGroundItemTileVisualStack(tileKey);
     const top = stack[0];
     if (!top) return;
 
@@ -556,7 +580,7 @@ export class EntityManager {
     if (this.groundItemLabelMode === mode) return;
     this.groundItemLabelMode = mode;
     for (const tileKey of this.groundItemIdsByTile.keys()) {
-      const stack = this.collectGroundItemTileStack(tileKey);
+      const stack = this.collectGroundItemTileVisualStack(tileKey);
       const top = stack[0];
       if (!top) {
         this.removeGroundItemTileLabel(tileKey);
@@ -1001,18 +1025,18 @@ export class EntityManager {
       }
     }
     for (const [tileKey, model] of this.groundItemModels) {
-      const top = this.collectGroundItemTileStack(tileKey)[0];
+      const top = this.collectGroundItemTileVisualStack(tileKey)[0];
       if (top) model.setPosition(top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
     }
     for (const [tileKey, proxy] of this.groundItemPickProxies) {
-      const top = this.collectGroundItemTileStack(tileKey)[0];
+      const top = this.collectGroundItemTileVisualStack(tileKey)[0];
       if (top) {
         proxy.metadata = { kind: 'groundItem', groundItemId: top.id, groundItemTileKey: tileKey };
         positionGroundItemPickProxy(proxy, top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
       }
     }
     for (const [tileKey, label] of this.groundItemLabels) {
-      const top = this.collectGroundItemTileStack(tileKey)[0];
+      const top = this.collectGroundItemTileVisualStack(tileKey)[0];
       if (!top) {
         this.removeGroundItemTileLabel(tileKey);
         continue;

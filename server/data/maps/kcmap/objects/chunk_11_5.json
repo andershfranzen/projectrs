@@ -2587,12 +2587,31 @@
     }
   },
   {
-    "assetId": "FishingSpotBubbles",
+    "assetId": "FishingSpotBubblesCrayfish",
     "layerId": "layer_0",
     "position": {
-      "x": 361.5,
+      "x": 364.5,
+      "y": -2.5,
+      "z": 175.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "FishingSpotBubblesCrayfish",
+    "layerId": "layer_0",
+    "position": {
+      "x": 363.5,
       "y": -2.48,
-      "z": 182.5
+      "z": 178.5
     },
     "rotation": {
       "x": 0,

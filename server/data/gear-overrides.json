@@ -3713,5 +3713,24 @@
         "scale": 0.92
       }
     }
+  },
+  "557": {
+    "localPosition": {
+      "x": 0.019,
+      "y": 0.342,
+      "z": 0.106
+    },
+    "localRotation": {
+      "x": 3.15,
+      "y": 1.39,
+      "z": 0.37
+    },
+    "meshOffset": {
+      "x": 0,
+      "y": 0,
+      "z": -0.006
+    },
+    "scale": 0.64,
+    "centerOrigin": false
   }
 }

@@ -61,6 +61,7 @@ const ROOF_REVEAL_OBJECT_LAYER_BELOW_TOLERANCE = 0.75;
 const ROOF_REVEAL_TEXTURE_PLANE_BBOX_PADDING = 10;
 const STALL_FRAME_MATERIAL_NAMES = new Set(['material.001', 'material.002', 'material.003']);
 const DOOR_OBJECT_DEF_ID = 13;
+const GRASS_BLADE_TRIMMED_EDGE_GROUNDS: ReadonlySet<GroundType> = new Set(['dirt', 'path', 'road']);
 
 export function isRoofLikePlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
@@ -71,7 +72,10 @@ export function isInteractiveDoorPlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
   return lower === 'castletruedoor'
     || lower === 'basictruedoor'
-    || lower === 'irondoor1';
+    || lower === 'irondoor1'
+    || lower === 'door'
+    || lower === 'door_alternative_2'
+    || lower === 'door_alternative_3';
 }
 
 export function isObjectShadowReceiverGround(type: GroundType | null | undefined): boolean {
@@ -2270,11 +2274,34 @@ export class ChunkManager {
     }
 
     const tile = this.getTileRaw(x, z);
+    if (!tile) return false;
+    if (tile.waterSurface || tile.waterSurfaceB || this.shouldRenderWater(x, z)) return false;
+
     const ground = tile?.ground ?? this.defaultGround;
     if (ground !== 'grass') return false;
     if (tile?.groundB && tile.groundB !== 'grass') return false;
     if (tile?.textureId || tile?.textureIdB) return false;
     return true;
+  }
+
+  private isTrimmedGrassBladeEdgeNeighbor(x: number, z: number): boolean {
+    if (x < 0 || z < 0 || x >= this.mapWidth || z >= this.mapHeight) return false;
+
+    const idx = z * this.mapWidth + x;
+    if (this.texturePlaneFloorTiles.has(idx)) return true;
+
+    const tile = this.getTileRaw(x, z);
+    if (!tile) return false;
+    if (this.isGrassBladeWaterNeighbor(x, z)) return true;
+    if (tile.textureId || tile.textureIdB) return true;
+    if (GRASS_BLADE_TRIMMED_EDGE_GROUNDS.has(tile.ground)) return true;
+    return !!tile.groundB && GRASS_BLADE_TRIMMED_EDGE_GROUNDS.has(tile.groundB);
+  }
+
+  private isGrassBladeWaterNeighbor(x: number, z: number): boolean {
+    if (x < 0 || z < 0 || x >= this.mapWidth || z >= this.mapHeight) return false;
+    const tile = this.getTileRaw(x, z);
+    return !!tile && (tile.waterSurface || tile.waterSurfaceB || this.shouldRenderWater(x, z));
   }
 
   private buildGrassBladeMatrices(startX: number, startZ: number, endX: number, endZ: number): Float32Array {
@@ -2290,6 +2317,7 @@ export class ChunkManager {
     // These triangles are sparse silhouette/accent detail; grass seams get extra
     // density, while open fields get a light deterministic scatter.
     const FIELD_BLADE_CHANCE = 0.22;
+    const WATER_EDGE_FIELD_BLADE_CHANCE = 0.06;
     const FIELD_BLADES_PER_TILE = 1;
     const BOUNDARY_BLADES_PER_TILE = 1;
     const EDGE_SPILL_BLADES = 1;
@@ -2322,8 +2350,15 @@ export class ChunkManager {
       for (let z = startZ; z < endZ; z++) {
         if (!this.isGrassBladeSurface(x, z)) continue;
 
-        const hasNonGrassNeighbor = EDGES.some(([dx, dz]) => !isGrass(x + dx, z + dz));
-        const hasFieldBlade = rand(x * 5 + 19, z * 5 + 23) < FIELD_BLADE_CHANCE;
+        const hasNonGrassNeighbor = EDGES.some(([dx, dz]) => {
+          const nx = x + dx;
+          const nz = z + dz;
+          return !isGrass(nx, nz) && !this.isTrimmedGrassBladeEdgeNeighbor(nx, nz);
+        });
+        const fieldBladeChance = EDGES.some(([dx, dz]) => this.isGrassBladeWaterNeighbor(x + dx, z + dz))
+          ? WATER_EDGE_FIELD_BLADE_CHANCE
+          : FIELD_BLADE_CHANCE;
+        const hasFieldBlade = rand(x * 5 + 19, z * 5 + 23) < fieldBladeChance;
         if (!hasNonGrassNeighbor && !hasFieldBlade) continue;
 
         const h = this.getTileCornerHeights(x, z);
@@ -2347,7 +2382,9 @@ export class ChunkManager {
         // organic without growing grass onto roads, floors or texture-painted tiles.
         for (let e = 0; e < EDGES.length; e++) {
           const [dx, dz] = EDGES[e];
-          if (isGrass(x + dx, z + dz)) continue;
+          const nx = x + dx;
+          const nz = z + dz;
+          if (isGrass(nx, nz) || this.isTrimmedGrassBladeEdgeNeighbor(nx, nz)) continue;
           for (let s = 0; s < EDGE_SPILL_BLADES; s++) {
             // Along-edge position 0.1..0.9, inset 0.04..0.22 into this grass tile.
             const along = 0.1 + rand(x * 9 + e * 3 + s, z * 9) * 0.8;

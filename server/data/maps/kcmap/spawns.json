@@ -1883,6 +1883,37 @@
         0,
         0
       ],
+      "shop": {
+        "name": "Giles's Shop",
+        "restockTicks": 100,
+        "items": [
+          {
+            "itemId": 552,
+            "price": 8,
+            "stock": 5
+          },
+          {
+            "itemId": 557,
+            "price": 15,
+            "stock": 4
+          },
+          {
+            "itemId": 553,
+            "price": 25,
+            "stock": 5
+          },
+          {
+            "itemId": 554,
+            "price": 25,
+            "stock": 3
+          },
+          {
+            "itemId": 564,
+            "price": 1,
+            "stock": 500
+          }
+        ]
+      },
       "customColors": {
         "shirtColor": [
           0.27450980392156865,

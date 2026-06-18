@@ -58,14 +58,13 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'ClayRock2': 33,
   'ClayRock3': 33,
   // Fishing spots.
-  'FishingSpotBubbles': 5,
   'FishingSpotBubblesNet': 5,
-  'FishingSpotBubblesRod': 46,
-  'FishingSpotBubblesRodDeep': 69,
-  'FishingSpotBubblesHarpoon': 48,
-  'CrabPot': 67,
-  'CrabPotFishingSpot': 67,
-  'SuperiorCrabPotFishingSpot': 68,
+  'FishingSpotBubblesSardine': 46,
+  'FishingSpotBubblesTuna': 47,
+  'FishingSpotBubblesCrayfish': 67,
+  'FishingSpotBubblesLobster': 68,
+  'FishingSpotBubblesOarfish': 69,
+  'FishingSpotBubblesOctopus': 48,
   // Crafting stations
   'forge': 6,        // Furnace
   'cookingrange': 7, // Cooking Range
@@ -82,6 +81,10 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'castleTruedoor': 13,
   'basicTruedoor': 13,
   'IronDoor1': 13,
+  // Dracula pack standalone door panels.
+  'Door': 13,
+  'Door_Alternative_2': 13,
+  'Door_Alternative_3': 13,
   // Cave entrances
   'cavedoor': 15,  // Cave Entrance -> map transition
   'CavernEntrance1': 15,

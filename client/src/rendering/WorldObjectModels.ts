@@ -95,8 +95,6 @@ export class WorldObjectModels {
   private static readonly ACTIVE_ASSET_FILES: Record<string, { rootUrl: string; file: string; alphaBlend?: boolean }> = {
     fire: { rootUrl: '/assets/models/', file: 'fire.glb', alphaBlend: true },
     CrabPot: { rootUrl: '/assets/models/', file: 'CrabPot.glb' },
-    CrabPotFishingSpot: { rootUrl: '/assets/models/', file: 'CrabPot.glb' },
-    SuperiorCrabPotFishingSpot: { rootUrl: '/assets/models/', file: 'CrabPot.glb' },
   };
 
   /** Map a `depletedAssetId` (e.g. "open tier 1 chest") to a GLB file to

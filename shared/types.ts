@@ -571,6 +571,11 @@ export interface ObjectRecipe {
   requiresTool?: string; // e.g. "hammer" — must be in inventory but not consumed
   /** 0..1 chance the recipe yields output. Inputs are consumed regardless. Default 1. */
   successChance?: number;
+  /** RS-style stat_random roll [low, high] for level-scaled success. Inputs are consumed on failure. */
+  successRoll?: [number, number];
+  /** Optional item awarded when successChance/successRoll fails, e.g. burnt food. */
+  failureOutputItemId?: number;
+  failureOutputQuantity?: number;
   /** Optional rare high-quality output. When rolled, replaces outputItemId and multiplies XP. */
   hqOutputItemId?: number;
   /** 0..1 chance to yield hqOutputItemId instead of outputItemId. */
@@ -1124,7 +1129,9 @@ export function groundTypeToTileType(ground: GroundType): TileType {
  * The editor's overworld "Mud" swatch sets `waterPainted = true` while leaving
  * `ground` unchanged, so we must NOT treat every `waterPainted` tile as real
  * water. Blue surface-water paint is a visual terrain-following layer and
- * should not add collision. Only heightmap-submerged tiles are real water.
+ * should not add collision. Only mostly heightmap-submerged tiles are real
+ * blocking water, so shoreline slopes can blend into rivers without creating
+ * an oversized invisible collision border.
  */
 export function classifyTileType(
   tile: KCTile,
@@ -1132,8 +1139,11 @@ export function classifyTileType(
   waterLevel: number,
 ): TileType {
   if (tile.ground === 'void') return TileType.WALL;
-  const minH = Math.min(cornerHeights.tl, cornerHeights.tr, cornerHeights.bl, cornerHeights.br);
-  if (minH <= waterLevel) return TileType.WATER;
+  const submergedCorners = Number(cornerHeights.tl <= waterLevel)
+    + Number(cornerHeights.tr <= waterLevel)
+    + Number(cornerHeights.bl <= waterLevel)
+    + Number(cornerHeights.br <= waterLevel);
+  if (submergedCorners >= 3) return TileType.WATER;
   if (tile.waterPainted) return TileType.MUD;
   return groundTypeToTileType(tile.ground);
 }

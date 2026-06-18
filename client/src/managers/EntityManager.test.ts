@@ -80,6 +80,32 @@ describe('EntityManager ground item stacks', () => {
     expect(manager.getGroundItemStackForTileKey('0,5,7').map(item => item.id)).toEqual([2, 1]);
   });
 
+  test('merges duplicate stackable items only for the visual tile stack', () => {
+    const manager = Object.create(EntityManager.prototype) as EntityManager;
+    (manager as any).groundItems = new Map([
+      [1, { id: 1, itemId: 101, quantity: 1, x: 5.5, z: 7.5, floor: 0 }],
+      [2, { id: 2, itemId: 101, quantity: 2, x: 5.5, z: 7.5, floor: 0 }],
+      [3, { id: 3, itemId: 100, quantity: 1, x: 5.5, z: 7.5, floor: 0 }],
+      [4, { id: 4, itemId: 101, quantity: 1, x: 6.5, z: 7.5, floor: 0 }],
+    ]);
+    (manager as any).groundItemIdsByTile = new Map([
+      ['0,5,7', new Set([1, 2, 3])],
+      ['0,6,7', new Set([4])],
+    ]);
+    (manager as any).itemDefsCache = new Map<number, ItemDef>([
+      [100, { id: 100, name: 'Bones', description: '', value: 1, stackable: false, equippable: false }],
+      [101, { id: 101, name: 'Coins', description: '', value: 5, stackable: true, equippable: false }],
+    ]);
+
+    expect(manager.getGroundItemStackForTileKey('0,5,7').map(item => item.id)).toEqual([2, 1, 3]);
+
+    const visualStack = (manager as any).collectGroundItemTileVisualStack('0,5,7') as Array<{ id: number; itemId: number; quantity: number }>;
+    expect(visualStack.map(item => [item.id, item.itemId, item.quantity])).toEqual([
+      [2, 101, 3],
+      [3, 100, 1],
+    ]);
+  });
+
   test('can resolve a tile stack after the picked top item was removed', () => {
     const manager = Object.create(EntityManager.prototype) as EntityManager;
     (manager as any).groundItems = new Map([

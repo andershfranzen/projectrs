@@ -14,6 +14,8 @@ import {
   storageSurfaceProfileForPlacedAsset,
 } from './index';
 
+const DOOR_OBJECT_DEF_ID = 13;
+
 test('filler scenery has clean display names and authored examine text', () => {
   expect(objectDefIdForPlacedAsset('bookcase2')).toBe(GENERIC_SCENERY_OBJECT_DEF_ID);
   expect(sceneryExamineMetaForAsset('bookcase2')).toEqual({
@@ -129,19 +131,35 @@ test('stall assets resolve to roguery stall object definitions', () => {
 });
 
 test('fishing bubble assets resolve to fishing spot object definitions', () => {
-  expect(objectDefIdForPlacedAsset('FishingSpotBubbles')).toBe(5);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubbles')).toBeUndefined();
   expect(objectDefIdForPlacedAsset('FishingSpotBubblesNet')).toBe(5);
-  expect(objectDefIdForPlacedAsset('FishingSpotBubblesRod')).toBe(46);
-  expect(objectDefIdForPlacedAsset('FishingSpotBubblesRodDeep')).toBe(69);
-  expect(objectDefIdForPlacedAsset('FishingSpotBubblesHarpoon')).toBe(48);
-  expect(objectDefIdForPlacedAsset('CrabPot')).toBe(67);
-  expect(objectDefIdForPlacedAsset('CrabPotFishingSpot')).toBe(67);
-  expect(objectDefIdForPlacedAsset('SuperiorCrabPotFishingSpot')).toBe(68);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesRod')).toBeUndefined();
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesSardine')).toBe(46);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesTuna')).toBe(47);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesCrayfish')).toBe(67);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesLobster')).toBe(68);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesRodDeep')).toBeUndefined();
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesOarfish')).toBe(69);
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesHarpoon')).toBeUndefined();
+  expect(objectDefIdForPlacedAsset('FishingSpotBubblesOctopus')).toBe(48);
+  expect(objectDefIdForPlacedAsset('CrabPot')).toBeUndefined();
+  expect(objectDefIdForPlacedAsset('CrabPotFishingSpot')).toBeUndefined();
+  expect(objectDefIdForPlacedAsset('SuperiorCrabPotFishingSpot')).toBeUndefined();
 });
 
 test('trapdoor assets resolve to the teleport object definition', () => {
   expect(objectDefIdForPlacedAsset('TrapdoorClosed')).toBe(TRAPDOOR_OBJECT_DEF_ID);
   expect(objectDefIdForPlacedAsset('TrapdoorOpenFinal')).toBe(TRAPDOOR_OBJECT_DEF_ID);
+});
+
+test('standalone door panel assets resolve to the default door definition', () => {
+  expect(objectDefIdForPlacedAsset('castleTruedoor')).toBe(DOOR_OBJECT_DEF_ID);
+  expect(objectDefIdForPlacedAsset('basicTruedoor')).toBe(DOOR_OBJECT_DEF_ID);
+  expect(objectDefIdForPlacedAsset('IronDoor1')).toBe(DOOR_OBJECT_DEF_ID);
+  expect(objectDefIdForPlacedAsset('Door')).toBe(DOOR_OBJECT_DEF_ID);
+  expect(objectDefIdForPlacedAsset('Door_Alternative_2')).toBe(DOOR_OBJECT_DEF_ID);
+  expect(objectDefIdForPlacedAsset('Door_Alternative_3')).toBe(DOOR_OBJECT_DEF_ID);
+  expect(objectDefIdForPlacedAsset('stone door1')).toBeUndefined();
 });
 
 test('quest chest asset resolves to the dedicated Brother Monk chest definition', () => {

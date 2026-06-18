@@ -35,6 +35,7 @@ import { LevelUpFireworkEffect } from '../rendering/LevelUpFireworkEffect';
 import { DEFAULT_DUNGEON_SKYBOX_CONFIG, DEFAULT_SKYBOX_CONFIG, GameSkybox } from '../rendering/GameSkybox';
 import type { Targetable } from '../rendering/Targetable';
 import { WorldObjectModels } from '../rendering/WorldObjectModels';
+import { FISHING_SPOT_EFFECT_VISUAL_BOUNDS, isFishingSpotEffectAssetId } from '../rendering/FishingSpotEffect';
 import { mountWorldOverlayElement } from '../rendering/worldOverlay';
 import { EntityManager, type GroundItemData, type RemoteMovementStep } from './EntityManager';
 import { InputManager } from './InputManager';
@@ -105,9 +106,7 @@ const WORLD_OBJECT_PICK_HORIZONTAL_MARGIN = 0.18;
 const WORLD_OBJECT_PICK_VERTICAL_MARGIN = 0.04;
 const WORLD_OBJECT_PICK_MIN_HEIGHT = 0.45;
 const WORLD_OBJECT_PICK_MAX_HEIGHT = 8;
-const FISHING_SPOT_PICK_WIDTH = 1.6;
-const FISHING_SPOT_PICK_DEPTH = 1.6;
-const FISHING_SPOT_PICK_HEIGHT = 1.8;
+const FISHING_SPOT_PICK_MIN_SIZE = 0.12;
 const CROP_PICK_MARGIN = 0.04;
 const CROP_PICK_MIN_SIZE = 0.45;
 const CLIENT_FRAME_SPIKE_TELEMETRY_ENABLED = true;
@@ -246,6 +245,23 @@ function worldObjectPickProxyHeight(def: WorldObjectDef): number {
     WORLD_OBJECT_PICK_MIN_HEIGHT,
     Math.min(authoredHeight + WORLD_OBJECT_PICK_VERTICAL_MARGIN, WORLD_OBJECT_PICK_MAX_HEIGHT),
   );
+}
+
+function fishingSpotEffectPickProxyBounds(data: { x: number; z: number; y?: number }): DoorPickProxyBounds {
+  const baseY = Number.isFinite(data.y) ? (data.y ?? 0) : 0;
+  const width = FISHING_SPOT_EFFECT_VISUAL_BOUNDS.maxX - FISHING_SPOT_EFFECT_VISUAL_BOUNDS.minX;
+  const depth = FISHING_SPOT_EFFECT_VISUAL_BOUNDS.maxZ - FISHING_SPOT_EFFECT_VISUAL_BOUNDS.minZ;
+  const height = FISHING_SPOT_EFFECT_VISUAL_BOUNDS.maxY - FISHING_SPOT_EFFECT_VISUAL_BOUNDS.minY;
+  return {
+    center: new Vector3(
+      data.x + (FISHING_SPOT_EFFECT_VISUAL_BOUNDS.minX + FISHING_SPOT_EFFECT_VISUAL_BOUNDS.maxX) / 2,
+      baseY + (FISHING_SPOT_EFFECT_VISUAL_BOUNDS.minY + FISHING_SPOT_EFFECT_VISUAL_BOUNDS.maxY) / 2,
+      data.z + (FISHING_SPOT_EFFECT_VISUAL_BOUNDS.minZ + FISHING_SPOT_EFFECT_VISUAL_BOUNDS.maxZ) / 2,
+    ),
+    width,
+    depth,
+    height,
+  };
 }
 
 function formatPerfTiming(value: number | null | undefined): string {
@@ -3778,14 +3794,6 @@ export class GameManager {
   ): DoorPickProxyBounds {
     const bounds = getObjectFootprintBounds(data.x, data.z, def, data.rotY ?? 0);
     const baseY = Number.isFinite(data.y) ? (data.y ?? 0) : 0;
-    if (def.category === 'fishingspot') {
-      return {
-        center: new Vector3(data.x, baseY + FISHING_SPOT_PICK_HEIGHT / 2, data.z),
-        width: FISHING_SPOT_PICK_WIDTH,
-        depth: FISHING_SPOT_PICK_DEPTH,
-        height: FISHING_SPOT_PICK_HEIGHT,
-      };
-    }
     const height = worldObjectPickProxyHeight(def);
     return {
       center: new Vector3(
@@ -3805,7 +3813,12 @@ export class GameManager {
     def: WorldObjectDef,
   ): DoorPickProxyBounds {
     const fallback = this.fallbackWorldObjectPickProxyBounds(data, def);
-    if (def.category === 'fishingspot') return fallback;
+    const assetId = typeof (model.metadata as { assetId?: unknown } | null)?.assetId === 'string'
+      ? (model.metadata as { assetId: string }).assetId
+      : null;
+    if (def.category === 'fishingspot' && isFishingSpotEffectAssetId(assetId)) {
+      return fishingSpotEffectPickProxyBounds(data);
+    }
     let bounds = this.worldObjectPickProxyBoundsFromMetadata(model.metadata) as ReturnType<TransformNode['getHierarchyBoundingVectors']> | null;
     if (!bounds) {
       model.computeWorldMatrix(true);
@@ -3826,19 +3839,27 @@ export class GameManager {
     // Tree meshes include broad canopies; use visual bounds only for centering,
     // not for proxy size, or clicks spill far outside the trunk/footprint.
     const useAuthoredFootprintSize = def.category === 'tree';
+    const useVisualSize = def.category === 'fishingspot';
+    const visualWidth = Math.min(width + (useVisualSize ? 0 : WORLD_OBJECT_PICK_HORIZONTAL_MARGIN), 6);
+    const visualDepth = Math.min(depth + (useVisualSize ? 0 : WORLD_OBJECT_PICK_HORIZONTAL_MARGIN), 6);
+    const visualHeight = Math.min(height + (useVisualSize ? 0 : WORLD_OBJECT_PICK_VERTICAL_MARGIN), WORLD_OBJECT_PICK_MAX_HEIGHT);
     return {
       center: new Vector3(
         (bounds.min.x + bounds.max.x) / 2,
-        bounds.min.y + fallback.height / 2,
+        useVisualSize ? (bounds.min.y + bounds.max.y) / 2 : bounds.min.y + fallback.height / 2,
         (bounds.min.z + bounds.max.z) / 2,
       ),
       width: useAuthoredFootprintSize
         ? fallback.width
-        : Math.max(fallback.width, Math.min(width + WORLD_OBJECT_PICK_HORIZONTAL_MARGIN, 6)),
+        : useVisualSize
+          ? Math.max(FISHING_SPOT_PICK_MIN_SIZE, visualWidth)
+          : Math.max(fallback.width, visualWidth),
       depth: useAuthoredFootprintSize
         ? fallback.depth
-        : Math.max(fallback.depth, Math.min(depth + WORLD_OBJECT_PICK_HORIZONTAL_MARGIN, 6)),
-      height: fallback.height,
+        : useVisualSize
+          ? Math.max(FISHING_SPOT_PICK_MIN_SIZE, visualDepth)
+          : Math.max(fallback.depth, visualDepth),
+      height: useVisualSize ? Math.max(FISHING_SPOT_PICK_MIN_SIZE, visualHeight) : fallback.height,
     };
   }
 

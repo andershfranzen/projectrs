@@ -5858,7 +5858,7 @@
     "toolLevel": 1,
     "toolBonus": 0,
     "value": 5,
-    "icon": "/items/Net_376.png",
+    "icon": "Net_376.png",
     "model": "/assets/models/FishingNet.glb"
   },
   {
@@ -5872,7 +5872,7 @@
     "toolLevel": 1,
     "toolBonus": 0,
     "value": 8,
-    "icon": "/items/Fishing_Rod_377.png",
+    "icon": "Fishing_Rod_377.png",
     "model": "/assets/models/FishingRod.glb"
   },
   {
@@ -5886,7 +5886,7 @@
     "toolLevel": 1,
     "toolBonus": 0,
     "value": 12,
-    "icon": "/items/Harpoon_379.png",
+    "icon": "Harpoon_379.png",
     "model": "/assets/models/Harpoon.glb"
   },
   {
@@ -5930,7 +5930,34 @@
     "stackable": true,
     "equippable": false,
     "value": 1,
-    "icon": "/items/Fishing_Bait_380.png"
+    "icon": "Fishing_Bait_380.png",
+    "model": "/assets/models/bait/stacks/FishingBaitStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/bait/stacks/FishingBaitStack1.glb",
+        "scale": 0.7
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/bait/stacks/FishingBaitStack2.glb",
+        "scale": 0.82
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/bait/stacks/FishingBaitStack3.glb",
+        "scale": 0.92
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/bait/stacks/FishingBaitStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/bait/stacks/FishingBaitStack5Plus.glb",
+        "scale": 1.08
+      }
+    ]
   },
   {
     "id": 558,
@@ -5988,5 +6015,68 @@
     "healAmount": 12,
     "value": 48,
     "model": "/assets/models/Food/OctopusCooked.glb"
+  },
+  {
+    "id": 565,
+    "name": "Burnt Shrimp",
+    "description": "Some shrimp burnt beyond saving.",
+    "stackable": false,
+    "equippable": false,
+    "value": 1,
+    "model": "/assets/models/Food/ShrimpBurnt.glb"
+  },
+  {
+    "id": 566,
+    "name": "Burnt Crayfish",
+    "description": "A badly burnt crayfish.",
+    "stackable": false,
+    "equippable": false,
+    "value": 1,
+    "model": "/assets/models/Food/CrayfishBurnt.glb"
+  },
+  {
+    "id": 567,
+    "name": "Burnt Sardine",
+    "description": "A charred sardine.",
+    "stackable": false,
+    "equippable": false,
+    "value": 1,
+    "model": "/assets/models/Food/SardineBurnt.glb"
+  },
+  {
+    "id": 568,
+    "name": "Burnt Tuna",
+    "description": "A blackened tuna.",
+    "stackable": false,
+    "equippable": false,
+    "value": 1,
+    "model": "/assets/models/Food/TunaBurnt.glb"
+  },
+  {
+    "id": 569,
+    "name": "Burnt Lobster",
+    "description": "A burnt lobster shell and all.",
+    "stackable": false,
+    "equippable": false,
+    "value": 1,
+    "model": "/assets/models/Food/LobsterBurnt.glb"
+  },
+  {
+    "id": 570,
+    "name": "Burnt Octopus",
+    "description": "A scorched octopus.",
+    "stackable": false,
+    "equippable": false,
+    "value": 1,
+    "model": "/assets/models/Food/OctopusBurnt.glb"
+  },
+  {
+    "id": 571,
+    "name": "Burnt Oarfish",
+    "description": "An oarfish ruined by too much heat.",
+    "stackable": false,
+    "equippable": false,
+    "value": 1,
+    "model": "/assets/models/Food/OarfishBurnt.glb"
   }
 ]

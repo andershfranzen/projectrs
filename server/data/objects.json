@@ -209,7 +209,7 @@
   },
   {
     "id": 5,
-    "name": "Shallow Fishing Spot",
+    "name": "Shallow Net Fishing Spot",
     "category": "fishingspot",
     "actions": [
       "Fish",
@@ -227,8 +227,8 @@
     "skill": "fishing",
     "skillAnimation": "fish_net",
     "visualToolItemId": 552,
-    "levelRequired": 5,
-    "xpReward": 20,
+    "levelRequired": 1,
+    "xpReward": 10,
     "harvestItemId": 27,
     "harvestQuantity": 1,
     "harvestTime": 5,
@@ -236,13 +236,20 @@
     "respawnTime": 0,
     "harvestOptions": [
       {
-        "levelRequired": 5,
-        "xpReward": 20,
+        "levelRequired": 1,
+        "xpReward": 10,
         "harvestItemId": 27,
-        "weight": 1
+        "weight": 1,
+        "harvestQuantity": 1
       }
     ],
-    "examineText": "Shrimp ripple through the shallows."
+    "examineText": "Shrimp ripple through the shallows.",
+    "successChances": {
+      "552": [
+        48,
+        256
+      ]
+    }
   },
   {
     "id": 6,
@@ -417,8 +424,13 @@
         "outputItemId": 28,
         "outputQuantity": 1,
         "skill": "cooking",
-        "levelRequired": 5,
-        "xpReward": 20
+        "levelRequired": 1,
+        "xpReward": 12,
+        "successRoll": [
+          128,
+          512
+        ],
+        "failureOutputItemId": 565
       },
       {
         "inputItemId": 501,
@@ -426,8 +438,13 @@
         "outputItemId": 526,
         "outputQuantity": 1,
         "skill": "cooking",
-        "levelRequired": 1,
-        "xpReward": 30
+        "levelRequired": 5,
+        "xpReward": 24,
+        "successRoll": [
+          98,
+          452
+        ],
+        "failureOutputItemId": 566
       },
       {
         "inputItemId": 560,
@@ -436,7 +453,12 @@
         "outputQuantity": 1,
         "skill": "cooking",
         "levelRequired": 15,
-        "xpReward": 30
+        "xpReward": 32,
+        "successRoll": [
+          118,
+          492
+        ],
+        "failureOutputItemId": 567
       },
       {
         "inputItemId": 562,
@@ -445,7 +467,12 @@
         "outputQuantity": 1,
         "skill": "cooking",
         "levelRequired": 78,
-        "xpReward": 150
+        "xpReward": 132,
+        "successRoll": [
+          8,
+          260
+        ],
+        "failureOutputItemId": 570
       },
       {
         "inputItemId": 510,
@@ -454,7 +481,12 @@
         "outputQuantity": 1,
         "skill": "cooking",
         "levelRequired": 35,
-        "xpReward": 195
+        "xpReward": 84,
+        "successRoll": [
+          58,
+          372
+        ],
+        "failureOutputItemId": 568
       },
       {
         "inputItemId": 523,
@@ -463,7 +495,12 @@
         "outputQuantity": 1,
         "skill": "cooking",
         "levelRequired": 87,
-        "xpReward": 650
+        "xpReward": 180,
+        "successRoll": [
+          1,
+          222
+        ],
+        "failureOutputItemId": 571
       },
       {
         "inputItemId": 558,
@@ -472,7 +509,12 @@
         "outputQuantity": 1,
         "skill": "cooking",
         "levelRequired": 50,
-        "xpReward": 150
+        "xpReward": 108,
+        "successRoll": [
+          38,
+          332
+        ],
+        "failureOutputItemId": 569
       }
     ],
     "examineText": "A cooking range with enough heat for a proper meal."
@@ -2719,7 +2761,7 @@
   },
   {
     "id": 46,
-    "name": "River Fishing Spot",
+    "name": "River Bait Fishing Spot",
     "category": "fishingspot",
     "actions": [
       "Fish",
@@ -2733,12 +2775,12 @@
       125,
       190
     ],
-    "modelAssetId": "FishingSpotBubblesRod",
+    "modelAssetId": "FishingSpotBubblesSardine",
     "skill": "fishing",
     "skillAnimation": "fish_rod",
     "visualToolItemId": 553,
     "levelRequired": 15,
-    "xpReward": 30,
+    "xpReward": 26,
     "harvestItemId": 560,
     "harvestQuantity": 1,
     "harvestTime": 5,
@@ -2747,19 +2789,26 @@
     "harvestOptions": [
       {
         "levelRequired": 15,
-        "xpReward": 30,
+        "xpReward": 26,
         "harvestItemId": 560,
-        "weight": 1
+        "weight": 1,
+        "harvestQuantity": 1
       }
     ],
     "examineText": "Small sardines gather near baited hooks.",
     "requiredItemId": 564,
     "requiredItemQuantity": 1,
-    "consumeRequiredItem": true
+    "consumeRequiredItem": true,
+    "successChances": {
+      "553": [
+        32,
+        192
+      ]
+    }
   },
   {
     "id": 47,
-    "name": "Lake Fishing Spot",
+    "name": "Tuna Harpoon Fishing Spot",
     "category": "fishingspot",
     "actions": [
       "Fish",
@@ -2773,12 +2822,12 @@
       110,
       170
     ],
-    "modelAssetId": "FishingSpotBubblesRod",
+    "modelAssetId": "FishingSpotBubblesTuna",
     "skill": "fishing",
-    "skillAnimation": "fish_rod",
-    "visualToolItemId": 553,
+    "skillAnimation": "fish_harpoon",
+    "visualToolItemId": 554,
     "levelRequired": 35,
-    "xpReward": 195,
+    "xpReward": 70,
     "harvestItemId": 510,
     "harvestQuantity": 1,
     "harvestTime": 5,
@@ -2787,19 +2836,23 @@
     "harvestOptions": [
       {
         "levelRequired": 35,
-        "xpReward": 195,
+        "xpReward": 70,
         "harvestItemId": 510,
-        "weight": 1
+        "weight": 1,
+        "harvestQuantity": 1
       }
     ],
-    "examineText": "Deeper lake water where tuna strike baited hooks.",
-    "requiredItemId": 564,
-    "requiredItemQuantity": 1,
-    "consumeRequiredItem": true
+    "examineText": "Deeper lake water where tuna can be harpooned.",
+    "successChances": {
+      "554": [
+        50,
+        79
+      ]
+    }
   },
   {
     "id": 48,
-    "name": "Coastal Fishing Spot",
+    "name": "Coastal Harpoon Fishing Spot",
     "category": "fishingspot",
     "actions": [
       "Fish",
@@ -2813,12 +2866,12 @@
       105,
       185
     ],
-    "modelAssetId": "FishingSpotBubblesHarpoon",
+    "modelAssetId": "FishingSpotBubblesOctopus",
     "skill": "fishing",
     "skillAnimation": "fish_harpoon",
     "visualToolItemId": 554,
-    "levelRequired": 78,
-    "xpReward": 150,
+    "levelRequired": 70,
+    "xpReward": 110,
     "harvestItemId": 562,
     "harvestQuantity": 1,
     "harvestTime": 5,
@@ -2826,128 +2879,24 @@
     "respawnTime": 0,
     "harvestOptions": [
       {
-        "levelRequired": 78,
-        "xpReward": 150,
+        "levelRequired": 70,
+        "xpReward": 110,
         "harvestItemId": 562,
-        "weight": 1
+        "weight": 1,
+        "harvestQuantity": 1
       }
     ],
-    "examineText": "Dark water where octopus move beneath the surface."
-  },
-  {
-    "id": 49,
-    "name": "Deep Sea Fishing Spot",
-    "category": "fishingspot",
-    "actions": [
-      "Fish",
-      "Examine"
-    ],
-    "blocking": false,
-    "width": 0.6,
-    "height": 0.6,
-    "color": [
-      20,
-      70,
-      140
-    ],
-    "modelAssetId": "FishingSpotBubblesHarpoon",
-    "skill": "fishing",
-    "skillAnimation": "fish_harpoon",
-    "visualToolItemId": 554,
-    "levelRequired": 78,
-    "xpReward": 150,
-    "harvestItemId": 562,
-    "harvestQuantity": 1,
-    "harvestTime": 5,
-    "depletionChance": 0,
-    "respawnTime": 0,
-    "harvestOptions": [
-      {
-        "levelRequired": 78,
-        "xpReward": 150,
-        "harvestItemId": 562,
-        "weight": 1
-      }
-    ],
-    "examineText": "Dark water where octopus move beneath the surface."
-  },
-  {
-    "id": 50,
-    "name": "Shark Fishing Spot",
-    "category": "fishingspot",
-    "actions": [
-      "Fish",
-      "Examine"
-    ],
-    "blocking": false,
-    "width": 0.6,
-    "height": 0.6,
-    "color": [
-      15,
-      55,
-      110
-    ],
-    "modelAssetId": "FishingSpotBubblesHarpoon",
-    "skill": "fishing",
-    "skillAnimation": "fish_harpoon",
-    "visualToolItemId": 554,
-    "levelRequired": 78,
-    "xpReward": 150,
-    "harvestItemId": 562,
-    "harvestQuantity": 1,
-    "harvestTime": 5,
-    "depletionChance": 0,
-    "respawnTime": 0,
-    "harvestOptions": [
-      {
-        "levelRequired": 78,
-        "xpReward": 150,
-        "harvestItemId": 562,
-        "weight": 1
-      }
-    ],
-    "examineText": "Dark water where octopus move beneath the surface."
-  },
-  {
-    "id": 51,
-    "name": "Rare Ocean Fishing Spot",
-    "category": "fishingspot",
-    "actions": [
-      "Fish",
-      "Examine"
-    ],
-    "blocking": false,
-    "width": 0.6,
-    "height": 0.6,
-    "color": [
-      60,
-      95,
-      160
-    ],
-    "modelAssetId": "FishingSpotBubblesHarpoon",
-    "skill": "fishing",
-    "skillAnimation": "fish_harpoon",
-    "visualToolItemId": 554,
-    "levelRequired": 78,
-    "xpReward": 150,
-    "harvestItemId": 562,
-    "harvestQuantity": 1,
-    "harvestTime": 5,
-    "depletionChance": 0,
-    "respawnTime": 0,
-    "harvestOptions": [
-      {
-        "levelRequired": 78,
-        "xpReward": 150,
-        "harvestItemId": 562,
-        "weight": 1
-      }
-    ],
-    "examineText": "Dark water where octopus move beneath the surface."
+    "examineText": "Dark water where octopus move beneath the surface.",
+    "successChances": {
+      "554": [
+        45,
+        84
+      ]
+    }
   },
   {
     "id": 67,
-    "name": "Low Level Crab Pot Fishing Spot",
+    "name": "Crayfish Pot Fishing Spot",
     "category": "fishingspot",
     "actions": [
       "Fish",
@@ -2961,12 +2910,12 @@
       92,
       115
     ],
-    "modelAssetId": "CrabPot",
+    "modelAssetId": "FishingSpotBubblesCrayfish",
     "skill": "fishing",
     "skillAnimation": "fish_net",
     "visualToolItemId": 557,
-    "levelRequired": 1,
-    "xpReward": 30,
+    "levelRequired": 10,
+    "xpReward": 20,
     "harvestItemId": 501,
     "harvestQuantity": 1,
     "harvestTime": 5,
@@ -2974,17 +2923,24 @@
     "respawnTime": 0,
     "harvestOptions": [
       {
-        "levelRequired": 1,
-        "xpReward": 30,
+        "levelRequired": 10,
+        "xpReward": 20,
         "harvestItemId": 501,
-        "weight": 1
+        "weight": 1,
+        "harvestQuantity": 1
       }
     ],
-    "examineText": "A baited low-level crab pot set for crayfish."
+    "examineText": "A baited low-level crab pot set for crayfish.",
+    "successChances": {
+      "557": [
+        59,
+        130
+      ]
+    }
   },
   {
     "id": 68,
-    "name": "Superior Crab Pot Fishing Spot",
+    "name": "Lobster Pot Fishing Spot",
     "category": "fishingspot",
     "actions": [
       "Fish",
@@ -2998,12 +2954,12 @@
       75,
       105
     ],
-    "modelAssetId": "SuperiorCrabPotFishingSpot",
+    "modelAssetId": "FishingSpotBubblesLobster",
     "skill": "fishing",
     "skillAnimation": "fish_net",
     "visualToolItemId": 557,
     "levelRequired": 50,
-    "xpReward": 150,
+    "xpReward": 90,
     "harvestItemId": 558,
     "harvestQuantity": 1,
     "harvestTime": 5,
@@ -3012,16 +2968,23 @@
     "harvestOptions": [
       {
         "levelRequired": 50,
-        "xpReward": 150,
+        "xpReward": 90,
         "harvestItemId": 558,
-        "weight": 1
+        "weight": 1,
+        "harvestQuantity": 1
       }
     ],
-    "examineText": "A sturdy crab pot set for larger shellfish."
+    "examineText": "A sturdy crab pot set for larger shellfish.",
+    "successChances": {
+      "557": [
+        48,
+        73
+      ]
+    }
   },
   {
     "id": 69,
-    "name": "Deep Fishing Spot",
+    "name": "Deep Bait Fishing Spot",
     "category": "fishingspot",
     "actions": [
       "Fish",
@@ -3035,7 +2998,7 @@
       82,
       150
     ],
-    "modelAssetId": "FishingSpotBubblesRodDeep",
+    "modelAssetId": "FishingSpotBubblesOarfish",
     "skill": "fishing",
     "skillAnimation": "fish_rod",
     "visualToolItemId": 553,
@@ -3043,7 +3006,7 @@
     "requiredItemQuantity": 1,
     "consumeRequiredItem": true,
     "levelRequired": 87,
-    "xpReward": 650,
+    "xpReward": 150,
     "harvestItemId": 523,
     "harvestQuantity": 1,
     "harvestTime": 5,
@@ -3052,12 +3015,19 @@
     "harvestOptions": [
       {
         "levelRequired": 87,
-        "xpReward": 650,
+        "xpReward": 150,
         "harvestItemId": 523,
-        "weight": 1
+        "weight": 1,
+        "harvestQuantity": 1
       }
     ],
-    "examineText": "Deep water where oarfish take baited lines."
+    "examineText": "Deep water where oarfish take baited lines.",
+    "successChances": {
+      "553": [
+        50,
+        81
+      ]
+    }
   },
   {
     "id": 45,

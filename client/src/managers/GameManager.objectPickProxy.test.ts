@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { BROTHER_MONK_CHEST_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID, TRAPDOOR_OBJECT_DEF_ID } from '@projectrs/shared';
 import { GameManager } from './GameManager';
+import { FISHING_SPOT_EFFECT_VISUAL_BOUNDS } from '../rendering/FishingSpotEffect';
 
 function makeManager(): any {
   const manager = Object.create(GameManager.prototype) as any;
@@ -190,23 +191,59 @@ describe('GameManager world object pick proxies', () => {
     expect(config.y).toBeCloseTo(0.32);
   });
 
-  test('fishing spot proxies use an oversized click hitbox', () => {
+  test('procedural fishing bubble proxies match the visible effect bounds', () => {
     const manager = makeManager();
 
     const bounds = manager.computeWorldObjectPickProxyBounds(
-      { metadata: {}, computeWorldMatrix: () => {}, getHierarchyBoundingVectors: () => {
-        throw new Error('fishing spots should ignore tiny visual bounds');
+      { metadata: { assetId: 'FishingSpotBubblesSardine' }, computeWorldMatrix: () => {}, getHierarchyBoundingVectors: () => {
+        throw new Error('procedural bubbles should use authored effect bounds');
       } },
       { x: 10.5, z: 20.5, y: 0, rotY: 0 },
       FISHING_SPOT_DEF,
     );
 
     expect(bounds.center.x).toBeCloseTo(10.5);
-    expect(bounds.center.y).toBeCloseTo(0.9);
+    expect(bounds.center.y).toBeCloseTo((FISHING_SPOT_EFFECT_VISUAL_BOUNDS.minY + FISHING_SPOT_EFFECT_VISUAL_BOUNDS.maxY) / 2);
     expect(bounds.center.z).toBeCloseTo(20.5);
-    expect(bounds.width).toBeCloseTo(1.6);
-    expect(bounds.depth).toBeCloseTo(1.6);
-    expect(bounds.height).toBeCloseTo(1.8);
+    expect(bounds.width).toBeCloseTo(FISHING_SPOT_EFFECT_VISUAL_BOUNDS.maxX - FISHING_SPOT_EFFECT_VISUAL_BOUNDS.minX);
+    expect(bounds.depth).toBeCloseTo(FISHING_SPOT_EFFECT_VISUAL_BOUNDS.maxZ - FISHING_SPOT_EFFECT_VISUAL_BOUNDS.minZ);
+    expect(bounds.height).toBeCloseTo(FISHING_SPOT_EFFECT_VISUAL_BOUNDS.maxY - FISHING_SPOT_EFFECT_VISUAL_BOUNDS.minY);
+  });
+
+  test('non-bubble fishing spot proxies use model bounds', () => {
+    const manager = makeManager();
+    let hierarchyBoundsCalled = false;
+
+    const bounds = manager.computeWorldObjectPickProxyBounds(
+      {
+        metadata: {
+          assetId: 'CustomFishingSpotModel',
+          pickProxyBounds: {
+            minX: 10,
+            minY: 0,
+            minZ: 20,
+            maxX: 10.7,
+            maxY: 0.5,
+            maxZ: 20.8,
+          },
+        },
+        computeWorldMatrix: () => {},
+        getHierarchyBoundingVectors: () => {
+          hierarchyBoundsCalled = true;
+          throw new Error('metadata bounds should be used');
+        },
+      },
+      { x: 10.5, z: 20.5, y: 0, rotY: 0 },
+      FISHING_SPOT_DEF,
+    );
+
+    expect(hierarchyBoundsCalled).toBe(false);
+    expect(bounds.center.x).toBeCloseTo(10.35);
+    expect(bounds.center.y).toBeCloseTo(0.25);
+    expect(bounds.center.z).toBeCloseTo(20.4);
+    expect(bounds.width).toBeCloseTo(0.7);
+    expect(bounds.depth).toBeCloseTo(0.8);
+    expect(bounds.height).toBeCloseTo(0.5);
   });
 
   test('generic batched interactables use visual thin-instance picking instead of box proxies', () => {
