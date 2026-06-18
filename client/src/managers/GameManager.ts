@@ -639,6 +639,7 @@ export class GameManager {
   private _activityHandler: (() => void) | null = null;
   private _activityKeyupHandler: ((event: KeyboardEvent) => void) | null = null;
   private _cursorTelemetryHandler: ((event: PointerEvent) => void) | null = null;
+  private _cursorPageTelemetryHandler: ((event: Event) => void) | null = null;
   private _hoverActionHandler: ((event: PointerEvent) => void) | null = null;
   private _roofHoverLeaveHandler: ((event: PointerEvent) => void) | null = null;
   private _tempVec: Vector3 = new Vector3(); // reusable temp vector to avoid per-frame allocations
@@ -11807,7 +11808,14 @@ export class GameManager {
       window.removeEventListener('pointerdown', this._cursorTelemetryHandler, true);
       window.removeEventListener('pointerup', this._cursorTelemetryHandler, true);
       window.removeEventListener('pointercancel', this._cursorTelemetryHandler, true);
+      document.documentElement.removeEventListener('pointerenter', this._cursorTelemetryHandler, true);
+      document.documentElement.removeEventListener('pointerleave', this._cursorTelemetryHandler, true);
       this._cursorTelemetryHandler = null;
+    }
+    if (this._cursorPageTelemetryHandler) {
+      window.removeEventListener('focus', this._cursorPageTelemetryHandler, true);
+      window.removeEventListener('blur', this._cursorPageTelemetryHandler, true);
+      this._cursorPageTelemetryHandler = null;
     }
     if (this._hoverActionHandler) {
       window.removeEventListener('pointermove', this._hoverActionHandler, true);
@@ -12787,7 +12795,11 @@ export class GameManager {
     const cursorHandler = (event: PointerEvent) => {
       if (!isTrustedBrowserInputEvent(event)) return;
       if (event.type !== 'pointerdown') this.network.recordPointerInput(event);
-      this.network.sendCursorPosition(event.clientX, event.clientY);
+      if (event.type !== 'pointerleave') this.network.sendCursorPosition(event.clientX, event.clientY);
+    };
+    const pageHandler = (event: Event) => {
+      if (!isTrustedBrowserInputEvent(event)) return;
+      this.network.recordCursorPageState(event.type === 'focus' ? 'focus' : 'blur');
     };
     const keyupHandler = (event: KeyboardEvent) => {
       if (!isTrustedBrowserInputEvent(event)) return;
@@ -12801,9 +12813,14 @@ export class GameManager {
     window.addEventListener('pointerdown', cursorHandler, true);
     window.addEventListener('pointerup', cursorHandler, true);
     window.addEventListener('pointercancel', cursorHandler, true);
+    document.documentElement.addEventListener('pointerenter', cursorHandler, true);
+    document.documentElement.addEventListener('pointerleave', cursorHandler, true);
+    window.addEventListener('focus', pageHandler, true);
+    window.addEventListener('blur', pageHandler, true);
     this._activityHandler = handler;
     this._activityKeyupHandler = keyupHandler;
     this._cursorTelemetryHandler = cursorHandler;
+    this._cursorPageTelemetryHandler = pageHandler;
   }
 
   private reconcileLocalPlayerToServer(serverX: number, serverZ: number, hiddenCatchup: boolean, serverMoving: boolean = false): void {

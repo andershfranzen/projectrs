@@ -111,7 +111,11 @@ const CURSOR_TRACE_EVENT_MOVE = 1;
 const CURSOR_TRACE_EVENT_DOWN = 2;
 const CURSOR_TRACE_EVENT_UP = 3;
 const CURSOR_TRACE_EVENT_CANCEL = 4;
+const CURSOR_TRACE_EVENT_ENTER = 5;
+const CURSOR_TRACE_EVENT_LEAVE = 6;
+const CURSOR_TRACE_EVENT_WINDOW = 7;
 const CURSOR_TRACE_TRUSTED = 1 << 6;
+const CURSOR_TRACE_WINDOW_FOCUS = 1 << 7;
 
 /** Opcodes whose payload is `[strLen (2 bytes), utf8 bytes, trailing int16s]`
  *  instead of the int16-array layout. Handled exclusively by raw handlers;
@@ -182,6 +186,7 @@ export class NetworkManager {
   private cursorTraceFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private pointerInputSamples: PointerInputSample[] = [];
   private cursorTraceSamples: CursorTraceSample[] = [];
+  private lastCursorTracePoint: { x: number; y: number } | null = null;
   private lastPointerDownAt: number | null = null;
   private lastPointerDwellMs: number = 0;
   private lastPointerFlags: number = 0;
@@ -218,6 +223,7 @@ export class NetworkManager {
     }
     this.cursorTraceSamples = [];
     this.pointerInputSamples = [];
+    this.lastCursorTracePoint = null;
     this.lastCursorTraceSentAt = -Infinity;
     this.lastPointerDownAt = null;
     this.lastPointerDwellMs = 0;
@@ -772,11 +778,29 @@ export class NetworkManager {
         buttons: sample.buttons,
         flags: this.cursorTraceFlags(event),
       });
+      this.lastCursorTracePoint = { x: sample.clientX, y: sample.clientY };
     }
     this.trimPointerInputSamples(now);
     this.trimCursorTraceSamples();
     this.flushCursorTrace(false);
     this.scheduleCursorTraceFlush();
+  }
+
+  recordCursorPageState(kind: 'focus' | 'blur'): void {
+    const now = performance.now();
+    const point = this.lastCursorTracePoint ?? {
+      x: (window.innerWidth || document.documentElement.clientWidth || 1) / 2,
+      y: (window.innerHeight || document.documentElement.clientHeight || 1) / 2,
+    };
+    this.cursorTraceSamples.push({
+      t: now,
+      x: point.x,
+      y: point.y,
+      buttons: 0,
+      flags: CURSOR_TRACE_EVENT_WINDOW | (kind === 'focus' ? CURSOR_TRACE_WINDOW_FOCUS : 0),
+    });
+    this.trimCursorTraceSamples();
+    this.flushCursorTrace(true);
   }
 
   recordKeyboardInput(event: KeyboardEvent): void {
@@ -867,9 +891,13 @@ export class NetworkManager {
       ? CURSOR_TRACE_EVENT_DOWN
       : event.type === 'pointerup'
         ? CURSOR_TRACE_EVENT_UP
-        : event.type === 'pointercancel'
-          ? CURSOR_TRACE_EVENT_CANCEL
-          : CURSOR_TRACE_EVENT_MOVE;
+        : event.type === 'pointerenter'
+          ? CURSOR_TRACE_EVENT_ENTER
+          : event.type === 'pointerleave'
+            ? CURSOR_TRACE_EVENT_LEAVE
+            : event.type === 'pointercancel'
+              ? CURSOR_TRACE_EVENT_CANCEL
+              : CURSOR_TRACE_EVENT_MOVE;
     const pointerType = event.pointerType === 'mouse' ? 1 : event.pointerType === 'touch' ? 2 : event.pointerType === 'pen' ? 3 : 0;
     return kind | (pointerType << 3) | (event.isTrusted ? CURSOR_TRACE_TRUSTED : 0);
   }

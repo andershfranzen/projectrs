@@ -5,6 +5,7 @@ import {
   ServerOpcode,
   areComparableDiagnosticScenes,
   browserFamilyFromDiagnosticPayload,
+  clientOpcodeRequiresInputProof,
   diagnosticFlagsFromPayload,
   hasUnevenFramePacing as sharedHasUnevenFramePacing,
   isPlayerChromiumBrowserFamily,
@@ -263,6 +264,10 @@ const REPLAY_GRID_COLUMNS = '70px minmax(120px, 1fr) minmax(110px, 1fr) 72px 64p
 const PLAYTIME_GRID_COLUMNS = 'minmax(118px, 1.2fr) minmax(82px, 0.85fr) 68px 58px 58px';
 const EVENT_GRID_COLUMNS = '72px 92px minmax(104px, 0.85fr) minmax(220px, 2fr) 106px';
 const CURSOR_TRACE_GAP_MS = 500;
+const CURSOR_ACTION_WINDOW_MS = 2_000;
+const CURSOR_ACTION_AFTER_MS = 150;
+const CURSOR_ACTION_LIMIT = 12;
+const CURSOR_TRACE_WINDOW_FOCUS = 1 << 7;
 
 function opcodeName(kind: string, opcode: number | null): string {
   if (opcode == null) return '-';
@@ -323,6 +328,13 @@ interface CursorReplaySample {
   flags: number;
 }
 
+interface CursorActionApproach {
+  event: AdminBotReplayEvent;
+  samples: CursorReplaySample[];
+  segments: CursorReplaySample[][];
+  stats: { ratio: number | null; avgGapMs: number | null; maxGapMs: number | null };
+}
+
 function cursorTraceSamples(event: AdminBotReplayEvent): CursorReplaySample[] {
   if (event.opcode !== ClientOpcode.CURSOR_TRACE || event.values.length < 8) return [];
   const width = Math.max(1, event.values[0]);
@@ -361,12 +373,29 @@ function cursorEventKind(flags: number): string {
     case 2: return 'down';
     case 3: return 'up';
     case 4: return 'cancel';
+    case 5: return 'enter';
+    case 6: return 'leave';
+    case 7: return (flags & CURSOR_TRACE_WINDOW_FOCUS) !== 0 ? 'focus' : 'blur';
     default: return 'move';
   }
 }
 
+function cursorBreaksPath(flags: number): boolean {
+  const kind = cursorEventKind(flags);
+  return kind === 'leave' || kind === 'blur' || kind === 'cancel';
+}
+
+function cursorStartsPath(flags: number): boolean {
+  const kind = cursorEventKind(flags);
+  return kind === 'enter' || kind === 'focus';
+}
+
 function cursorSampleColor(sample: CursorReplaySample, index: number): string {
   const kind = cursorEventKind(sample.flags);
+  if (kind === 'enter') return '#6aa15f';
+  if (kind === 'leave') return '#e08a4f';
+  if (kind === 'focus') return '#6d9dd8';
+  if (kind === 'blur') return '#d34636';
   if (index === 0) return '#6aa15f';
   if (kind === 'down') return '#f1b25c';
   if (kind === 'up') return '#d9c6a2';
@@ -380,7 +409,7 @@ function cursorSampleSegments(samples: CursorReplaySample[], maxGapMs: number): 
   let current: CursorReplaySample[] = [];
   for (const sample of samples) {
     const last = current[current.length - 1];
-    if (last && sample.t - last.t > maxGapMs) {
+    if (last && (sample.t - last.t > maxGapMs || cursorBreaksPath(last.flags) || cursorStartsPath(sample.flags))) {
       if (current.length > 0) segments.push(current);
       current = [];
     }
@@ -416,6 +445,31 @@ function cursorPathStats(segments: CursorReplaySample[][]): { ratio: number | nu
     avgGapMs: gapCount > 0 ? gapTotal / gapCount : null,
     maxGapMs: gapCount > 0 ? maxGap : null,
   };
+}
+
+function isCursorActionEvent(event: AdminBotReplayEvent): boolean {
+  if (event.opcode == null || (event.kind !== 'client' && event.kind !== 'flag')) return false;
+  return clientOpcodeRequiresInputProof(event.opcode);
+}
+
+function cursorActionApproaches(events: AdminBotReplayEvent[], samples: CursorReplaySample[]): CursorActionApproach[] {
+  if (samples.length === 0) return [];
+  const approaches: CursorActionApproach[] = [];
+  for (const event of events) {
+    if (!isCursorActionEvent(event)) continue;
+    const start = event.t - CURSOR_ACTION_WINDOW_MS;
+    const end = event.t + CURSOR_ACTION_AFTER_MS;
+    const actionSamples = samples.filter(sample => sample.t >= start && sample.t <= end);
+    if (actionSamples.length === 0) continue;
+    const segments = cursorSampleSegments(actionSamples, CURSOR_TRACE_GAP_MS);
+    approaches.push({
+      event,
+      samples: actionSamples,
+      segments,
+      stats: cursorPathStats(segments),
+    });
+  }
+  return approaches.slice(-CURSOR_ACTION_LIMIT);
 }
 const DIAGNOSTIC_GRID_COLUMNS = '74px 110px minmax(96px, 0.75fr) minmax(220px, 2fr) 58px';
 const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
@@ -1586,8 +1640,9 @@ export class AdminPanel {
     wrap.style.cssText = `display: flex; flex-direction: column; gap: 6px;`;
     const samples = cursorReplaySamples(events);
     const hasTracePackets = events.some(event => event.opcode === ClientOpcode.CURSOR_TRACE);
-    const traceSegments = hasTracePackets ? cursorSampleSegments(samples, CURSOR_TRACE_GAP_MS) : (samples.length > 0 ? [samples] : []);
+    const traceSegments = hasTracePackets ? cursorSampleSegments(samples, CURSOR_TRACE_GAP_MS) : [];
     const traceStats = cursorPathStats(traceSegments);
+    const actionApproaches = hasTracePackets ? cursorActionApproaches(events, samples) : [];
     const legacyTrails = hasTracePackets ? [] : events
       .map(cursorTrail)
       .filter(trail => trail.length > 1)
@@ -1632,9 +1687,8 @@ export class AdminPanel {
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
       line.setAttribute('points', projected.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '));
       line.setAttribute('fill', 'none');
-      line.setAttribute('stroke', hasTracePackets ? '#45b8c8' : '#6d7fae');
-      line.setAttribute('stroke-width', hasTracePackets ? '1.8' : '1.3');
-      if (!hasTracePackets) line.setAttribute('stroke-dasharray', '4 4');
+      line.setAttribute('stroke', '#45b8c8');
+      line.setAttribute('stroke-width', '1.8');
       line.setAttribute('stroke-linejoin', 'round');
       line.setAttribute('stroke-linecap', 'round');
       svg.appendChild(line);
@@ -1683,8 +1737,9 @@ export class AdminPanel {
     const downCount = samples.filter(sample => cursorEventKind(sample.flags) === 'down').length;
     const upCount = samples.filter(sample => cursorEventKind(sample.flags) === 'up').length;
     const dragCount = samples.filter(sample => cursorEventKind(sample.flags) === 'move' && sample.buttons > 0).length;
+    const boundaryCount = samples.filter(sample => ['enter', 'leave', 'focus', 'blur'].includes(cursorEventKind(sample.flags))).length;
     const label = document.createElement('div');
-    label.textContent = `${samples.length} samples${durationMs > 0 ? ` over ${(durationMs / 1000).toFixed(1)}s` : ''}${hasTracePackets ? ` | ${traceSegments.length} paths | ${downCount} down / ${upCount} up / ${dragCount} drag` : ''}`;
+    label.textContent = `${samples.length} samples${durationMs > 0 ? ` over ${(durationMs / 1000).toFixed(1)}s` : ''}${hasTracePackets ? ` | ${traceSegments.length} paths | ${downCount} down / ${upCount} up / ${dragCount} drag / ${boundaryCount} boundary` : ` | ${legacyTrails.length} input trails | destinations only`}`;
     label.style.cssText = `font-size: 10px; color: #d9c6a2;`;
     play.disabled = samples.length < 2;
     play.onclick = () => this.playCursorReplay(samples, marker, project, play, hasTracePackets);
@@ -1697,10 +1752,122 @@ export class AdminPanel {
     const maxGap = traceStats.maxGapMs === null ? '-' : `${Math.round(traceStats.maxGapMs)}ms`;
     legend.textContent = hasTracePackets
       ? `raw pointer samples; gaps >${CURSOR_TRACE_GAP_MS}ms split | straightness ${straightness} | avg/max sample gap ${avgGap}/${maxGap}`
-      : `${legacyTrails.length} legacy input trails | fallback points only, not actual cursor movement`;
+      : 'No raw cursor trace packets in this replay; dots are cursor/input destinations only, not exact movement routes.';
     legend.style.cssText = `font-size: 10px; color: #d9c6a2;`;
     wrap.appendChild(legend);
+    if (actionApproaches.length > 0) {
+      wrap.appendChild(this.renderCursorActionApproaches(actionApproaches));
+    } else if (hasTracePackets) {
+      const emptyActions = document.createElement('div');
+      emptyActions.textContent = 'No protected gameplay actions overlapped the raw cursor samples.';
+      emptyActions.style.cssText = `font-size: 10px; color: #a98d72;`;
+      wrap.appendChild(emptyActions);
+    }
     return wrap;
+  }
+
+  private renderCursorActionApproaches(approaches: CursorActionApproach[]): HTMLDivElement {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-top: 5px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(84, 70, 50, 0.56);
+    `;
+    const title = document.createElement('div');
+    title.textContent = `Action approaches (${(CURSOR_ACTION_WINDOW_MS / 1000).toFixed(0)}s before action)`;
+    title.style.cssText = `font: 700 11px Arial, Helvetica, sans-serif; color: #f1d6b6;`;
+    wrap.appendChild(title);
+
+    for (const approach of approaches) {
+      const row = document.createElement('div');
+      row.style.cssText = `
+        display: grid;
+        grid-template-columns: minmax(140px, 0.65fr) minmax(0, 1.35fr);
+        gap: 7px;
+        align-items: stretch;
+        padding: 5px 0;
+        border-top: 1px solid rgba(74, 64, 53, 0.34);
+      `;
+      const meta = document.createElement('div');
+      meta.style.cssText = `display: flex; flex-direction: column; gap: 3px; min-width: 0;`;
+      const action = document.createElement('div');
+      action.textContent = `${this.formatReplayEventTime(approach.event.t)} ${this.replayEventText(approach.event)}`;
+      action.title = this.replayEventMeta(approach.event);
+      action.style.cssText = `
+        color: ${approach.event.kind === 'flag' ? '#ffb3aa' : '#f1d6b6'};
+        font: 700 10px Arial, Helvetica, sans-serif;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      `;
+      const straightness = approach.stats.ratio === null ? '-' : `${approach.stats.ratio.toFixed(2)}x`;
+      const maxGap = approach.stats.maxGapMs === null ? '-' : `${Math.round(approach.stats.maxGapMs)}ms`;
+      const ticket = replayTicketText(approach.event);
+      const stats = document.createElement('div');
+      stats.textContent = `${approach.samples.length} samples | ${approach.segments.length} paths | straight ${straightness} | max gap ${maxGap}${ticket ? ` | ${ticket}` : ''}`;
+      stats.style.cssText = `color: #d9c6a2; font-size: 10px; line-height: 1.25;`;
+      meta.append(action, stats);
+
+      row.append(meta, this.renderCursorApproachSvg(approach));
+      wrap.appendChild(row);
+    }
+    return wrap;
+  }
+
+  private renderCursorApproachSvg(approach: CursorActionApproach): SVGSVGElement {
+    const width = 310;
+    const height = 72;
+    const pad = 7;
+    const project = (point: CursorReplaySample) => ({
+      x: pad + (Math.max(0, Math.min(1, point.x / point.width)) * (width - pad * 2)),
+      y: pad + (Math.max(0, Math.min(1, point.y / point.height)) * (height - pad * 2)),
+    });
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.style.cssText = `
+      width: 100%;
+      min-height: 62px;
+      border: 1px solid rgba(84, 70, 50, 0.5);
+      background: rgba(8, 6, 5, 0.32);
+      box-sizing: border-box;
+    `;
+    const frame = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    frame.setAttribute('x', String(pad));
+    frame.setAttribute('y', String(pad));
+    frame.setAttribute('width', String(width - pad * 2));
+    frame.setAttribute('height', String(height - pad * 2));
+    frame.setAttribute('fill', 'none');
+    frame.setAttribute('stroke', 'rgba(217,198,162,0.24)');
+    frame.setAttribute('stroke-width', '1');
+    svg.appendChild(frame);
+
+    const stroke = approach.event.kind === 'flag' ? '#d34636' : '#45b8c8';
+    for (const segment of approach.segments.filter(segment => segment.length > 1)) {
+      const projected = segment.map(project);
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      line.setAttribute('points', projected.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '));
+      line.setAttribute('fill', 'none');
+      line.setAttribute('stroke', stroke);
+      line.setAttribute('stroke-width', '1.7');
+      line.setAttribute('stroke-linejoin', 'round');
+      line.setAttribute('stroke-linecap', 'round');
+      svg.appendChild(line);
+    }
+    for (const [index, sample] of approach.samples.entries()) {
+      const kind = cursorEventKind(sample.flags);
+      if (index !== 0 && index !== approach.samples.length - 1 && kind === 'move' && sample.buttons === 0) continue;
+      const point = project(sample);
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', point.x.toFixed(1));
+      dot.setAttribute('cy', point.y.toFixed(1));
+      dot.setAttribute('r', index === approach.samples.length - 1 ? '3.7' : '2.6');
+      dot.setAttribute('fill', cursorSampleColor(sample, index));
+      svg.appendChild(dot);
+    }
+    return svg;
   }
 
   private playCursorReplay(

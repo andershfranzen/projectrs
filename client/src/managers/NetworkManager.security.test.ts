@@ -152,6 +152,36 @@ describe('NetworkManager command proof protection', () => {
     }
   });
 
+  test('cursor page markers reuse last pointer point', () => {
+    const oldWindow = (globalThis as any).window;
+    const oldDocument = (globalThis as any).document;
+    (globalThis as any).window = { innerWidth: 800, innerHeight: 600 };
+    (globalThis as any).document = { documentElement: {} };
+    try {
+      const manager = makeManager();
+      const sent: Uint8Array[] = [];
+      manager.connected = true;
+      manager.gameSocket = { readyState: WebSocket.OPEN, bufferedAmount: 0 };
+      manager.cursorTraceSamples = [];
+      manager.lastCursorTraceSentAt = -Infinity;
+      manager.lastCursorTracePoint = { x: 50, y: 60 };
+      manager.sendRawUnprotected = (packet: Uint8Array) => {
+        sent.push(packet);
+        return true;
+      };
+
+      manager.recordCursorPageState('focus');
+
+      expect(sent).toHaveLength(1);
+      const decoded = decodePacket(sent[0].buffer.slice(sent[0].byteOffset, sent[0].byteOffset + sent[0].byteLength) as ArrayBuffer);
+      expect(decoded.values.slice(0, 3)).toEqual([800, 600, 1]);
+      expect(decoded.values.slice(4)).toEqual([50, 60, 0, 135]);
+    } finally {
+      (globalThis as any).window = oldWindow;
+      (globalThis as any).document = oldDocument;
+    }
+  });
+
   test('pointer input records coalesced cursor trace samples', () => {
     const oldWindow = (globalThis as any).window;
     const oldDocument = (globalThis as any).document;
