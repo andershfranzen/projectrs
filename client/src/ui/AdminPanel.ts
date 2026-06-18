@@ -262,6 +262,7 @@ const BOT_GRID_COLUMNS = 'minmax(132px, 1.2fr) 44px 66px minmax(150px, 1.4fr) mi
 const REPLAY_GRID_COLUMNS = '70px minmax(120px, 1fr) minmax(110px, 1fr) 72px 64px 76px';
 const PLAYTIME_GRID_COLUMNS = 'minmax(118px, 1.2fr) minmax(82px, 0.85fr) 68px 58px 58px';
 const EVENT_GRID_COLUMNS = '72px 92px minmax(104px, 0.85fr) minmax(220px, 2fr) 106px';
+const CURSOR_TRACE_GAP_MS = 500;
 
 function opcodeName(kind: string, opcode: number | null): string {
   if (opcode == null) return '-';
@@ -372,6 +373,49 @@ function cursorSampleColor(sample: CursorReplaySample, index: number): string {
   if (kind === 'cancel') return '#d34636';
   if (sample.buttons > 0) return '#e08a4f';
   return sample.input ? '#d9c6a2' : '#6d7fae';
+}
+
+function cursorSampleSegments(samples: CursorReplaySample[], maxGapMs: number): CursorReplaySample[][] {
+  const segments: CursorReplaySample[][] = [];
+  let current: CursorReplaySample[] = [];
+  for (const sample of samples) {
+    const last = current[current.length - 1];
+    if (last && sample.t - last.t > maxGapMs) {
+      if (current.length > 0) segments.push(current);
+      current = [];
+    }
+    current.push(sample);
+  }
+  if (current.length > 0) segments.push(current);
+  return segments;
+}
+
+function cursorPathStats(segments: CursorReplaySample[][]): { ratio: number | null; avgGapMs: number | null; maxGapMs: number | null } {
+  let path = 0;
+  let direct = 0;
+  let gapTotal = 0;
+  let maxGap = 0;
+  let gapCount = 0;
+  for (const segment of segments) {
+    if (segment.length < 2) continue;
+    const first = segment[0];
+    const last = segment[segment.length - 1];
+    direct += Math.hypot((last.x / last.width) - (first.x / first.width), (last.y / last.height) - (first.y / first.height));
+    for (let i = 1; i < segment.length; i++) {
+      const prev = segment[i - 1];
+      const next = segment[i];
+      path += Math.hypot((next.x / next.width) - (prev.x / prev.width), (next.y / next.height) - (prev.y / prev.height));
+      const gap = Math.max(0, next.t - prev.t);
+      gapTotal += gap;
+      maxGap = Math.max(maxGap, gap);
+      gapCount++;
+    }
+  }
+  return {
+    ratio: direct > 0 ? path / direct : null,
+    avgGapMs: gapCount > 0 ? gapTotal / gapCount : null,
+    maxGapMs: gapCount > 0 ? maxGap : null,
+  };
 }
 const DIAGNOSTIC_GRID_COLUMNS = '74px 110px minmax(96px, 0.75fr) minmax(220px, 2fr) 58px';
 const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
@@ -1542,6 +1586,8 @@ export class AdminPanel {
     wrap.style.cssText = `display: flex; flex-direction: column; gap: 6px;`;
     const samples = cursorReplaySamples(events);
     const hasTracePackets = events.some(event => event.opcode === ClientOpcode.CURSOR_TRACE);
+    const traceSegments = hasTracePackets ? cursorSampleSegments(samples, CURSOR_TRACE_GAP_MS) : (samples.length > 0 ? [samples] : []);
+    const traceStats = cursorPathStats(traceSegments);
     const legacyTrails = hasTracePackets ? [] : events
       .map(cursorTrail)
       .filter(trail => trail.length > 1)
@@ -1581,13 +1627,14 @@ export class AdminPanel {
     frame.setAttribute('stroke-width', '1');
     svg.appendChild(frame);
 
-    if (samples.length > 1) {
-      const projected = samples.map(project);
+    for (const segment of traceSegments.filter(segment => segment.length > 1)) {
+      const projected = segment.map(project);
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
       line.setAttribute('points', projected.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '));
       line.setAttribute('fill', 'none');
       line.setAttribute('stroke', hasTracePackets ? '#45b8c8' : '#6d7fae');
       line.setAttribute('stroke-width', hasTracePackets ? '1.8' : '1.3');
+      if (!hasTracePackets) line.setAttribute('stroke-dasharray', '4 4');
       line.setAttribute('stroke-linejoin', 'round');
       line.setAttribute('stroke-linecap', 'round');
       svg.appendChild(line);
@@ -1637,17 +1684,20 @@ export class AdminPanel {
     const upCount = samples.filter(sample => cursorEventKind(sample.flags) === 'up').length;
     const dragCount = samples.filter(sample => cursorEventKind(sample.flags) === 'move' && sample.buttons > 0).length;
     const label = document.createElement('div');
-    label.textContent = `${samples.length} samples${durationMs > 0 ? ` over ${(durationMs / 1000).toFixed(1)}s` : ''}${hasTracePackets ? ` | ${downCount} down / ${upCount} up / ${dragCount} drag` : ''}`;
+    label.textContent = `${samples.length} samples${durationMs > 0 ? ` over ${(durationMs / 1000).toFixed(1)}s` : ''}${hasTracePackets ? ` | ${traceSegments.length} paths | ${downCount} down / ${upCount} up / ${dragCount} drag` : ''}`;
     label.style.cssText = `font-size: 10px; color: #d9c6a2;`;
     play.disabled = samples.length < 2;
-    play.onclick = () => this.playCursorReplay(samples, marker, project, play);
+    play.onclick = () => this.playCursorReplay(samples, marker, project, play, hasTracePackets);
     controls.append(play, label);
     wrap.appendChild(controls);
     wrap.appendChild(svg);
     const legend = document.createElement('div');
+    const straightness = traceStats.ratio === null ? '-' : `${traceStats.ratio.toFixed(2)}x`;
+    const avgGap = traceStats.avgGapMs === null ? '-' : `${Math.round(traceStats.avgGapMs)}ms`;
+    const maxGap = traceStats.maxGapMs === null ? '-' : `${Math.round(traceStats.maxGapMs)}ms`;
     legend.textContent = hasTracePackets
-      ? 'raw CSS pixels replayed against recorded viewport size'
-      : `${legacyTrails.length} legacy input trails | normalized viewport coords`;
+      ? `raw pointer samples; gaps >${CURSOR_TRACE_GAP_MS}ms split | straightness ${straightness} | avg/max sample gap ${avgGap}/${maxGap}`
+      : `${legacyTrails.length} legacy input trails | fallback points only, not actual cursor movement`;
     legend.style.cssText = `font-size: 10px; color: #d9c6a2;`;
     wrap.appendChild(legend);
     return wrap;
@@ -1658,6 +1708,7 @@ export class AdminPanel {
     marker: SVGCircleElement,
     project: (point: CursorReplaySample) => { x: number; y: number },
     button: HTMLButtonElement,
+    interpolate: boolean,
   ): void {
     if (samples.length < 2) return;
     const firstT = samples[0].t;
@@ -1669,10 +1720,25 @@ export class AdminPanel {
     const step = () => {
       const replayT = firstT + Math.min(duration, performance.now() - startedAt);
       while (index < samples.length - 1 && samples[index + 1].t <= replayT) index++;
-      const point = project(samples[index]);
+      const from = samples[index];
+      const to = samples[Math.min(index + 1, samples.length - 1)];
+      const gap = to.t - from.t;
+      const canInterpolate = interpolate && gap > 0 && gap <= CURSOR_TRACE_GAP_MS;
+      const blend = canInterpolate ? Math.max(0, Math.min(1, (replayT - from.t) / gap)) : 0;
+      const sample = canInterpolate
+        ? {
+            ...from,
+            t: replayT,
+            x: from.x + (to.x - from.x) * blend,
+            y: from.y + (to.y - from.y) * blend,
+            width: from.width + (to.width - from.width) * blend,
+            height: from.height + (to.height - from.height) * blend,
+          }
+        : from;
+      const point = project(sample);
       marker.setAttribute('cx', point.x.toFixed(1));
       marker.setAttribute('cy', point.y.toFixed(1));
-      marker.setAttribute('fill', cursorSampleColor(samples[index], index));
+      marker.setAttribute('fill', cursorSampleColor(blend > 0.5 ? to : from, index));
       if (replayT < firstT + duration) {
         requestAnimationFrame(step);
       } else {
