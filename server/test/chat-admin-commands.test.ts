@@ -67,7 +67,7 @@ function makeSocialWorld(extra: Record<string, unknown> = {}): any {
 }
 
 describe('admin chat teleport commands', () => {
-  test('/ipban account-bans known accounts and kicks every online player from that IP', () => {
+  test('/ipban bans only the IP and kicks every online player from that IP', () => {
     const admin = makeAdminSocket('Admin');
     const calls: string[] = [];
     const world = makeSocialWorld({
@@ -81,10 +81,6 @@ describe('admin chat teleport commands', () => {
       },
       banIp(ip: string, reason: string, by: string) {
         calls.push(`ban-ip:${ip}:${reason}:${by}`);
-      },
-      banAccountsForIp(ip: string, reason: string, by: string) {
-        calls.push(`ban-accounts:${ip}:${reason}:${by}`);
-        return [2, 3];
       },
     });
     world.kickPlayersFromIp = (ip: string) => {
@@ -101,12 +97,9 @@ describe('admin chat teleport commands', () => {
       'lookup:Target',
       'latest:2',
       'ban-ip:203.0.113.9:botting:Admin',
-      'ban-accounts:203.0.113.9:botting:Admin',
-      'kick-account:2',
-      'kick-account:3',
       'kick-ip:203.0.113.9',
     ]);
-    expect(admin.messages.at(-1)).toBe('IP-banned Target (203.0.113.9); banned 2 known accounts and kicked 2 — botting.');
+    expect(admin.messages.at(-1)).toBe('IP-banned Target (203.0.113.9); kicked 2 online players from that IP — botting.');
   });
 
   test('player info hides staff players from normal chat clients', () => {

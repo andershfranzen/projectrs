@@ -45,7 +45,7 @@ describe('account usernames', () => {
     }
   });
 
-  test('active IP bans account-ban known non-admin accounts on that IP', () => {
+  test('active IP bans stay IP-only until shared-IP account bans are explicit', () => {
     const dir = mkdtempSync(join(tmpdir(), 'evilquest-ipban-'));
     const path = join(dir, 'test.db');
     let db: GameDatabase | null = new GameDatabase(path);
@@ -69,10 +69,13 @@ describe('account usernames', () => {
       db.close();
       db = null;
       db = new GameDatabase(path);
+      expect(db.isAccountBanned(target.accountId)).toBeNull();
+      expect(db.isAccountBanned(alt.accountId)).toBeNull();
+      expect(db.isAccountBanned(admin.accountId)).toBeNull();
+      expect(db.banAccountsForIp('198.51.100.9', 'bot network', 'test-admin')).toEqual([target.accountId, alt.accountId]);
       expect(db.isAccountBanned(target.accountId)).not.toBeNull();
       expect(db.isAccountBanned(alt.accountId)).not.toBeNull();
       expect(db.isAccountBanned(admin.accountId)).toBeNull();
-      expect(db.banAccountsForIp('198.51.100.9', 'bot network', 'test-admin')).toEqual([target.accountId, alt.accountId]);
     } finally {
       db?.close();
       rmSync(dir, { recursive: true, force: true });

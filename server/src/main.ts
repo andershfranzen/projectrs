@@ -4052,14 +4052,12 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         if (!duration.ok) return jsonResponse({ ok: false, error: duration.error }, 400);
         const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
         db.banIp(ip, reason, session.username, duration.expiresAt);
-        const bannedAccountIds = db.banAccountsForIp(ip, reason, session.username, duration.expiresAt);
-        for (const accountId of bannedAccountIds) world.kickAccountIfOnline(accountId);
         const kicked = world.kickPlayersFromIp(ip);
         return jsonResponse({
           ok: true,
-          message: `IP-banned ${ip} and banned ${bannedAccountIds.length} known account${bannedAccountIds.length === 1 ? '' : 's'} (${banLabel(duration.expiresAt)})`,
+          message: `IP-banned ${ip} (${banLabel(duration.expiresAt)}); kicked ${kicked} online player${kicked === 1 ? '' : 's'} from that IP`,
           ban: db.getIpBanRecord(ip),
-          bannedAccountIds,
+          bannedAccountIds: [],
           kicked,
         });
       } catch {

@@ -1248,10 +1248,8 @@ function handleCommand(
         label = `${arg} (${ip})`;
       }
       world.db.banIp(ip, reason, from);
-      const bannedAccountIds = world.db.banAccountsForIp(ip, reason, from, null);
-      for (const accountId of bannedAccountIds) world.kickAccountIfOnline(accountId);
       const kicked = world.kickPlayersFromIp(ip);
-      sendSystem(ws, `IP-banned ${label}; banned ${bannedAccountIds.length} known account${bannedAccountIds.length === 1 ? '' : 's'} and kicked ${kicked}${reason ? ` — ${reason}` : ''}.`);
+      sendSystem(ws, `IP-banned ${label}; kicked ${kicked} online player${kicked === 1 ? '' : 's'} from that IP${reason ? ` — ${reason}` : ''}.`);
       break;
     }
 

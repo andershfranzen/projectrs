@@ -1487,7 +1487,9 @@ export class GameDatabase {
     try {
       this.db.exec(`ALTER TABLE ip_bans ADD COLUMN expires_at INTEGER`);
     } catch { /* column already exists */ }
-    this.applyActiveIpBansToKnownAccounts();
+    // IP bans stay IP-only. Expanding them into account bans caused too many
+    // false positives on shared networks; use the explicit shared-IP account
+    // ban action when that escalation is intentional.
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS account_social (
@@ -4998,21 +5000,6 @@ export class GameDatabase {
     const accountIds = this.accountIdsForIp(ip);
     for (const accountId of accountIds) this.banAccount(accountId, reason, bannedBy, expiresAt);
     return accountIds;
-  }
-
-  private applyActiveIpBansToKnownAccounts(): void {
-    const rows = this.db.query(`
-      SELECT ip_address, reason, banned_by, expires_at
-      FROM ip_bans
-      WHERE expires_at IS NULL OR expires_at > unixepoch()
-    `).all() as Array<{ ip_address: string; reason: string; banned_by: string; expires_at: number | null }>;
-    for (const row of rows) {
-      for (const accountId of this.accountIdsForIp(row.ip_address)) {
-        if (!this.isAccountBanned(accountId)) {
-          this.banAccount(accountId, row.reason, row.banned_by, row.expires_at);
-        }
-      }
-    }
   }
 
   muteAccount(accountId: number, reason: string, mutedBy: string, expiresAt: number | null = null): void {
