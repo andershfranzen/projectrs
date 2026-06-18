@@ -62,6 +62,7 @@ import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick } from '../ui/popupStyle';
 import { buildSceneBudget, logSceneBudget } from '../debug/SceneBudget';
+import { startupTrace } from '../debug/StartupTrace';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
@@ -1310,14 +1311,12 @@ export class GameManager {
 
   /** Resolves once every preload-phase artifact is in memory:
    *   - character GLB + 10 animation GLBs parsed onto the local skeleton
-   *   - default kcmap spawn chunks built (terrain + placed objects)
    *   - world-object model templates (trees, stumps, rocks) loaded
+   *   - current map spawn chunks, only if a map load is already in flight
    *
-   *  Once this resolves the user is one network round-trip away from a
-   *  playable world — there is no parse work left to do on the post-auth
-   *  path. main.ts awaits this before hiding the LoadingScreen so the
-   *  user only sees the login form when nothing else is loading behind
-   *  the scenes.
+   *  The map step is conditional because the old pre-auth kcmap warm-start was
+   *  removed to avoid racing the authoritative MAP_CHANGE load. Waiting for
+   *  spawn chunks before any map load has started just burns the 15s timeout.
    *
    *  `onProgress` fires when each of the three internal load steps
    *  settles. Three milestones at fixed percentages — coarse but
@@ -1336,11 +1335,13 @@ export class GameManager {
       GameManager.PRELOAD_STEP_TIMEOUT_MS,
       'scenery preload',
     ).then(() => step('Loaded scenery models'));
-    const chunksReady = this.waitWithTimeout(
-      this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ),
-      GameManager.PRELOAD_STEP_TIMEOUT_MS,
-      'map preload',
-    ).then(() => step('Loaded map area'));
+    const chunksReady = this.chunkManager.hasMapLoadStarted()
+      ? this.waitWithTimeout(
+        this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ),
+        GameManager.PRELOAD_STEP_TIMEOUT_MS,
+        'map preload',
+      ).then(() => step('Loaded map area'))
+      : Promise.resolve().then(() => step('Map load deferred'));
 
     return Promise.all([characterReady, objectsReady, chunksReady]).then(() => {});
   }
@@ -1401,14 +1402,15 @@ export class GameManager {
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
     this._loginProgress?.(0.6, 'Loading world');
     await this._loginMapReady;
+    startupTrace.mark('login_map_ready', { map: this.chunkManager.getMapId() });
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
 
     this._loginProgress?.(0.72, 'Loading character');
     await this.waitForCurrentLocalPlayerReady(seq);
+    startupTrace.mark('login_character_ready');
     if (this.localAppearance && this.localPlayer) this.localPlayer.applyAppearance(this.localAppearance);
 
     this._loginProgress?.(0.78, 'Loading saved location');
-    await this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ);
     if (this.localPlayer) {
       const groundY = this.getHeight(this.playerX, this.playerZ);
       this.localPlayer.setPositionXYZ(this.playerX, groundY, this.playerZ);
@@ -1417,12 +1419,14 @@ export class GameManager {
 
     this._loginProgress?.(0.86, 'Loading character state');
     await this.waitForLoginBootstrapPackets(seq);
+    startupTrace.mark('login_state_ready');
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
 
     if (this._pendingLoginGearLoads.length > 0) {
       this._loginProgress?.(0.94, 'Loading equipped gear');
       const gearLoads = this._pendingLoginGearLoads.splice(0);
       await this.waitWithTimeout(Promise.allSettled(gearLoads).then(() => {}), GameManager.LOGIN_READY_TIMEOUT_MS, 'login gear ready');
+      startupTrace.mark('login_gear_ready');
     }
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
     if (this.localAppearance && this.localPlayer) this.localPlayer.applyAppearance(this.localAppearance);
@@ -1441,6 +1445,19 @@ export class GameManager {
     this.lastSelfAuthorityWarnAt = 0;
     this.selfAuthorityGraceUntil = this.lastSelfAuthorityAt + GameManager.AUTHORITY_LOGIN_GRACE_MS;
     this._loginBootstrapPending = null;
+    startupTrace.mark('login_ready', {
+      map: this.chunkManager.getMapId(),
+      x: Math.round(this.playerX * 10) / 10,
+      z: Math.round(this.playerZ * 10) / 10,
+    });
+    this.reportClientLog('client_startup_trace', {
+      entries: startupTrace.snapshot(),
+      currentMap: this.chunkManager.getMapId(),
+      player: {
+        x: Math.round(this.playerX * 10) / 10,
+        z: Math.round(this.playerZ * 10) / 10,
+      },
+    });
     const resolver = this._loginOkResolver;
     this._loginOkResolver = null;
     this._loginProgress = null;
@@ -1500,6 +1517,7 @@ export class GameManager {
       this.bufferedSelfSyncReplayCount = 0;
       this.clearPendingSelfMoveSteps();
       this._loginReadySeq++;
+      startupTrace.mark('auth_connect_start', { username });
       onProgress?.(0.02, 'Connecting to server');
       this.network.connect(token);
     });
@@ -4623,6 +4641,10 @@ export class GameManager {
       this.playerX = v[1] / 10;
       this.playerZ = v[2] / 10;
       const loginSeq = this._loginReadySeq;
+      startupTrace.mark('login_ok', {
+        x: Math.round(this.playerX * 10) / 10,
+        z: Math.round(this.playerZ * 10) / 10,
+      });
       this._loginProgress?.(0.48, 'Loading saved character');
       // Server-authored spawn Y (effective walking height at our tile/floor).
       // Trust this over locally-computed getHeight: on initial spawn the
@@ -6247,6 +6269,11 @@ export class GameManager {
 
   private async handleMapChange(mapId: string, newX: number, newZ: number): Promise<void> {
     if (import.meta.env.DEV) console.log(`Map change to '${mapId}' at (${newX}, ${newZ})`);
+    startupTrace.mark('map_change_start', {
+      map: mapId,
+      x: Math.round(newX * 10) / 10,
+      z: Math.round(newZ * 10) / 10,
+    });
 
     const mapChangeSeq = ++this.nextMapChangeSeq;
     this.activeMapChangeSeq = mapChangeSeq;
@@ -6305,6 +6332,7 @@ export class GameManager {
         this.doorPivots.clear();
 
         await this.chunkManager.loadMap(mapId);
+        startupTrace.mark('map_data_loaded', { map: mapId });
         await this.loadBiomes(mapId);
         this.applyFog();
         this.minimap?.invalidateTileCache();
@@ -6317,11 +6345,13 @@ export class GameManager {
       // for entities. This keeps WORLD_OBJECT_SYNC linking against live placed
       // object nodes instead of racing chunk streaming after the overlay hides.
       await this.chunkManager.whenSpawnChunksReady(newX, newZ);
+      startupTrace.mark('spawn_chunks_ready', { map: mapId });
       this.repositionWorldObjects();
 
       await this._defsReady;
       if (!isInitialPlacement || !this._initialMapReadySent) {
         this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
+        startupTrace.mark('map_ready_sent', { map: mapId });
         if (isInitialPlacement) this._initialMapReadySent = true;
       }
 

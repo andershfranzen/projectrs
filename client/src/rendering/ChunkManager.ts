@@ -576,6 +576,7 @@ export class ChunkManager {
   }
 
   isLoaded(): boolean { return this.loaded; }
+  hasMapLoadStarted(): boolean { return this.loadMapToken > 0; }
   getMapId(): string { return this.mapId; }
   getMeta(): MapMeta | null { return this.meta; }
   getMapWidth(): number { return this.mapWidth; }
@@ -4410,15 +4411,15 @@ export class ChunkManager {
 
   private canBatchPlacedObjectVisual(obj: PlacedObject): boolean {
     const objectDefId = objectDefIdForPlacedAsset(obj.assetId);
-    if (objectDefId == null) return false;
+    const roofLike = this.isRoofLikeAsset(obj.assetId);
+    if (objectDefId == null && !roofLike) return false;
     if (objectDefId === DOOR_OBJECT_DEF_ID) return false;
     if (this.modelAnimationGroups.has(obj.assetId)) return false;
-    if (this.isRoofLikeAsset(obj.assetId)) return false;
     if (this.isAlphaBlendAsset(obj.assetId)) return false;
     // Door-like decorative frames can share names with interactable objects.
     // Keep any door-named asset unique so pick metadata and door pivots remain
     // tied to the actual transform hierarchy.
-    if (obj.assetId.toLowerCase().includes('door')) return false;
+    if (!roofLike && obj.assetId.toLowerCase().includes('door')) return false;
     return true;
   }
 
@@ -4977,8 +4978,9 @@ export class ChunkManager {
       return true;
     };
 
-    // Split into thin-instanceable static scenery, batched world-object
-    // visuals with placeholder roots, and regular animated/door hierarchies.
+    // Split into thin-instanceable static scenery, placeholder-backed batched
+    // visuals (interactable world objects and roof pieces), and regular
+    // animated/door hierarchies.
     // Need to load templates first so canThinInstance can check for animations.
     const templateAssetIds = new Set<string>();
     for (const obj of renderableObjects) {
@@ -4995,14 +4997,6 @@ export class ChunkManager {
       this.disposeChunkPlacedObjects(chunkKey);
       this.loadingObjectChunks.delete(chunkKey);
       return;
-    }
-
-    for (const obj of renderableObjects) {
-      if (obj.noRoof || !this.isRoofLikeAsset(obj.assetId)) continue;
-      const bounds = this.getPlacedObjectTemplateBounds(obj.assetId, obj);
-      if (bounds) this.stampRoofObjectFootprint(chunkKey, obj, bounds.min, bounds.max);
-      await this.yieldIfFrameBudgetSpent(workSlice);
-      if (abortEarlyObjectLoadIfStopped()) return;
     }
 
     type ThinGroup = { assetId: string; visibility: 'ground' | 'elevated' | 'roof'; placements: PlacedObject[] };
@@ -5095,6 +5089,10 @@ export class ChunkManager {
     for (const { placements } of batchedVisualGroups.values()) {
       for (const obj of placements) {
         const root = this.createPlacedObjectPlaceholder(chunkKey, placedNodeIndex++, obj);
+        if (!obj.noRoof && this.isRoofLikeAsset(obj.assetId)) {
+          const bounds = this.getPlacedObjectTemplateBounds(this.getPlacedObjectVisualAssetId(obj.assetId), obj);
+          if (bounds) this.stampRoofObjectFootprint(chunkKey, obj, bounds.min, bounds.max, root);
+        }
         batchedPlaceholderByObject.set(obj, root);
         this.addPlacedObjectNode(root, obj, nodes);
         await this.yieldIfFrameBudgetSpent(workSlice);

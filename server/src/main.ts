@@ -10,7 +10,7 @@ import { canFetchScopedGameplayMapDataPath, gameplayMapPlayerWindowFromWorldPosi
 import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } from './data/PublicData';
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
-import { requestClientIp } from './network/clientIp';
+import { normalizeClientIp, requestClientIp } from './network/clientIp';
 import { hasForbiddenStaticSourceExtension, requiresAdminStaticAsset, requiresAuthenticatedGameStaticAsset, staticGameAssetCacheControl } from './security/StaticAssetAccess';
 import { maybeCompressResponse } from './network/compress';
 import type { Server } from 'bun';
@@ -2442,8 +2442,14 @@ function hasPrivateWebsiteAccess(req: Request): boolean {
   return hasForumAvatarBakeSecret(req) || !!getStaticAssetAdminSession(req);
 }
 
+function isLocalDevRequest(req: Request, srv: { requestIP: (r: Request) => { address: string } | null }): boolean {
+  if (isProductionLike()) return false;
+  const directIp = normalizeClientIp(srv.requestIP(req)?.address ?? '');
+  return directIp === '127.0.0.1' || directIp === '::1' || directIp === 'localhost';
+}
+
 function isAdminRequest(req: Request, srv: { requestIP: (r: Request) => { address: string } | null }): boolean {
-  void srv;
+  if (isLocalDevRequest(req, srv)) return true;
   const auth = req.headers.get('Authorization') || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
   if (!m) return false;

@@ -288,7 +288,7 @@ describe('placed object thin-instance grouping', () => {
     expect(manager.canThinInstance({ ...basePlacement, assetId: 'castleTruedoor' })).toBe(false);
   });
 
-  test('batches static world-object visuals but keeps doors unique', () => {
+  test('batches static world-object and roof visuals but keeps doors unique', () => {
     const manager = Object.assign(Object.create(ChunkManager.prototype), {
       modelAnimationGroups: new Map(),
       assetRegistry: new Map(),
@@ -301,6 +301,7 @@ describe('placed object thin-instance grouping', () => {
 
     expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'sTree 1' })).toBe(true);
     expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'wheat2' })).toBe(true);
+    expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'tile roofing' })).toBe(true);
     expect(manager.canBatchPlacedObjectVisual({ ...basePlacement, assetId: 'castleTruedoor' })).toBe(false);
   });
 
