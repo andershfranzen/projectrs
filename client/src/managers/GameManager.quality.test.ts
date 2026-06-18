@@ -510,4 +510,51 @@ describe('GameManager render quality command', () => {
       dischargingTime: 3600,
     });
   });
+
+  test('client environment snapshot reports enriched browser data once', async () => {
+    const manager = Object.create(GameManager.prototype) as any;
+    const reported: Array<{ event: string; snapshot: Record<string, unknown> }> = [];
+    const browser: Record<string, unknown> = { platform: 'MacIntel' };
+    manager.clientEnvironmentReported = false;
+    manager.destroyed = false;
+    manager.currentFloor = 1;
+    manager.playerX = 12.34;
+    manager.playerZ = 56.78;
+    manager.renderHardwareScalingLevel = 1;
+    manager.baseHardwareScalingLevel = 1;
+    manager.framePaceMode = 'smooth';
+    manager.framePaceEstimatedHz = 120;
+    manager.framePaceTargetIntervalMs = null;
+    manager.chunkManager = { getMapId: () => 'kcmap' };
+    manager.engine = {
+      getRenderingCanvas: () => ({
+        width: 800,
+        height: 600,
+        clientWidth: 800,
+        clientHeight: 600,
+        dataset: { renderScale: '1.00' },
+      }),
+    };
+    manager.getBrowserDiagnostics = () => browser;
+    manager.getWebGlDiagnostics = () => ({ context: 'webgl2', unmaskedRenderer: 'ANGLE (Apple)' });
+    manager.enrichBrowserDiagnostics = async (target: Record<string, unknown>) => {
+      target.userAgentDataHighEntropy = { architecture: 'arm', bitness: '64' };
+    };
+    manager.getPerformanceDiagnosticFlags = () => ['brave-browser'];
+    manager.reportClientLog = (event: string, snapshot: Record<string, unknown>) => reported.push({ event, snapshot });
+
+    await manager.reportClientEnvironmentSnapshot();
+    await manager.reportClientEnvironmentSnapshot();
+
+    expect(reported).toHaveLength(1);
+    expect(reported[0].event).toBe('client_environment');
+    expect(reported[0].snapshot.browser).toMatchObject({
+      platform: 'MacIntel',
+      userAgentDataHighEntropy: { architecture: 'arm', bitness: '64' },
+    });
+    expect(reported[0].snapshot.webgl).toEqual({ context: 'webgl2', unmaskedRenderer: 'ANGLE (Apple)' });
+    expect(reported[0].snapshot.currentMap).toBe('kcmap');
+    expect(reported[0].snapshot.player).toEqual({ x: 12.3, z: 56.8 });
+    expect(reported[0].snapshot.diagnosticFlags).toEqual(['brave-browser']);
+  });
 });

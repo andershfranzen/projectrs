@@ -15,6 +15,8 @@ import {
 
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 type AdminTab = 'bots' | 'replays' | 'playtime' | 'events' | 'diagnostics';
+type BotQuickFilter = 'all' | 'flagged' | 'sharedIp' | 'bannedDevice' | 'vpn' | 'banned';
+type BotSortMode = 'risk' | 'online' | 'login' | 'links' | 'actions';
 
 interface AdminBotAccount {
   accountId: number;
@@ -259,10 +261,10 @@ interface DiagnosticBrowserGap {
 }
 
 const TEXT_SHADOW = '1px 1px 0 #000';
-const BOT_GRID_COLUMNS = 'minmax(132px, 1.2fr) 44px 66px minmax(150px, 1.4fr) minmax(82px, 0.75fr) 86px';
+const BOT_GRID_COLUMNS = '22px minmax(118px, 1.1fr) 44px 66px minmax(146px, 1.4fr) minmax(82px, 0.75fr) 62px';
 const REPLAY_GRID_COLUMNS = '70px minmax(120px, 1fr) minmax(110px, 1fr) 72px 64px 76px';
 const PLAYTIME_GRID_COLUMNS = 'minmax(118px, 1.2fr) minmax(82px, 0.85fr) 68px 58px 58px';
-const EVENT_GRID_COLUMNS = '72px 92px minmax(104px, 0.85fr) minmax(220px, 2fr) 106px';
+const EVENT_GRID_COLUMNS = '68px 82px minmax(96px, 0.75fr) minmax(280px, 2.2fr) minmax(132px, 0.95fr)';
 const CURSOR_TRACE_GAP_MS = 500;
 const CURSOR_ACTION_WINDOW_MS = 2_000;
 const CURSOR_ACTION_AFTER_MS = 150;
@@ -472,12 +474,12 @@ function cursorActionApproaches(events: AdminBotReplayEvent[], samples: CursorRe
   return approaches.slice(-CURSOR_ACTION_LIMIT);
 }
 const DIAGNOSTIC_GRID_COLUMNS = '74px 110px minmax(96px, 0.75fr) minmax(220px, 2fr) 58px';
-const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
+const GAME_EVENT_TYPES: Array<{ type: string; label: string; types?: string[] }> = [
   { type: 'chat', label: 'Chat' },
   { type: 'private_chat', label: 'Private' },
   { type: 'chat_command', label: 'Commands' },
   { type: 'admin', label: 'Admin' },
-  { type: 'harvest', label: 'Harvest' },
+  { type: 'skilling', label: 'Skilling', types: ['harvest', 'firemaking'] },
   { type: 'item_pickup', label: 'Pickups' },
   { type: 'npc_kill', label: 'Kills' },
   { type: 'npc_drop', label: 'Drops' },
@@ -491,6 +493,7 @@ const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
 ];
 const CLIENT_DIAGNOSTIC_EVENTS: Array<{ value: string; label: string }> = [
   { value: '', label: 'All events' },
+  { value: 'client_environment', label: 'Environment' },
   { value: 'client_low_fps_snapshot', label: 'Low FPS' },
   { value: 'client_low_fps_post_scale_snapshot', label: 'Post-scale FPS' },
   { value: 'client_frame_spike', label: 'Frame spikes' },
@@ -558,6 +561,9 @@ export class AdminPanel {
   private botSearchInput: HTMLInputElement;
   private botHideBannedLabel: HTMLLabelElement;
   private botHideBannedCheckbox: HTMLInputElement;
+  private botOnlineOnlyLabel: HTMLLabelElement;
+  private botOnlineOnlyCheckbox: HTMLInputElement;
+  private botSortSelect: HTMLSelectElement;
   private eventSearchInput: HTMLInputElement;
   private eventUserInput: HTMLInputElement;
   private diagnosticSearchInput: HTMLInputElement;
@@ -570,6 +576,7 @@ export class AdminPanel {
   private readonly tabButtons = new Map<AdminTab, HTMLButtonElement>();
   private accounts: AdminBotAccount[] = [];
   private selectedAccountId: number | null = null;
+  private accountBackStack: number[] = [];
   private botReplays: AdminBotReplaySummary[] = [];
   private selectedReplayId: number | null = null;
   private replayEvents: AdminBotReplayEvent[] = [];
@@ -579,9 +586,12 @@ export class AdminPanel {
   private events: GameEventLogEntry[] = [];
   private selectedEventId: number | null = null;
   private diagnostics: ClientDiagnosticLogEntry[] = [];
+  private accountDeviceDiagnostics = new Map<number, ClientDiagnosticLogEntry[]>();
+  private accountDeviceDiagnosticsLoading = new Set<number>();
   private selectedDiagnosticKey: string | null = null;
   private diagnosticBytesScanned = 0;
   private eventAfterId = 0;
+  private readonly newEventIds = new Set<number>();
   private eventPollTimer: number | null = null;
   private eventLoading = false;
   private replayLoading = false;
@@ -597,6 +607,9 @@ export class AdminPanel {
   private diagnosticFilterDebounceTimer: number | null = null;
   private botSearchQuery = '';
   private hideBannedAccounts = false;
+  private botOnlineOnly = false;
+  private botQuickFilter: BotQuickFilter = 'all';
+  private botSortMode: BotSortMode = 'risk';
   private botSearchDebounceTimer: number | null = null;
   private accountContextMenuEl: HTMLDivElement | null = null;
   private visible = false;
@@ -616,9 +629,9 @@ export class AdminPanel {
   };
 
   constructor(private readonly token: string) {
-    const { root, header, subtitle, closeButton } = createModalPanel({
+    const { root, header, title, subtitle, closeButton } = createModalPanel({
       id: 'm0-panel',
-      title: 'Tools',
+      title: 'Admin Tools',
       subtitle: 'Review',
       geometry: {
         kind: 'game-canvas',
@@ -630,7 +643,28 @@ export class AdminPanel {
       onClose: () => this.hide(),
     });
     this.root = root;
+    this.applyPanelPosition();
     this.subtitleEl = subtitle ?? null;
+    header.style.display = 'grid';
+    header.style.gridTemplateColumns = '150px minmax(0, 1fr) auto';
+    header.style.gap = '10px';
+    header.style.justifyContent = '';
+    title.style.whiteSpace = 'nowrap';
+    if (subtitle) {
+      subtitle.style.color = '#c9b48f';
+      subtitle.style.whiteSpace = 'nowrap';
+    }
+    const titleBlock = document.createElement('div');
+    titleBlock.style.cssText = `
+      min-width: 0;
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      overflow: hidden;
+    `;
+    header.insertBefore(titleBlock, title);
+    titleBlock.appendChild(title);
+    if (subtitle) titleBlock.appendChild(subtitle);
 
     const body = document.createElement('div');
     body.style.cssText = `
@@ -653,7 +687,7 @@ export class AdminPanel {
       gap: 6px;
       align-items: center;
       min-width: 0;
-      margin-left: auto;
+      justify-content: flex-end;
     `;
     for (const [tab, label] of [['bots', 'Bot review'], ['replays', 'Replays'], ['playtime', 'Playtime'], ['events', 'Game log'], ['diagnostics', 'Diagnostics']] as const) {
       const button = document.createElement('button');
@@ -675,7 +709,7 @@ export class AdminPanel {
     const toolbar = document.createElement('div');
     toolbar.style.cssText = `
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(170px, 220px) minmax(96px, 118px) 84px;
+      grid-template-columns: minmax(0, 1fr) minmax(150px, 200px) 116px 106px 116px 84px;
       align-items: center;
       gap: 8px;
       min-width: 0;
@@ -756,6 +790,43 @@ export class AdminPanel {
     hideBannedText.style.cssText = `overflow: hidden; text-overflow: ellipsis;`;
     this.botHideBannedLabel.append(this.botHideBannedCheckbox, hideBannedText);
     toolbar.appendChild(this.botHideBannedLabel);
+
+    this.botOnlineOnlyCheckbox = document.createElement('input');
+    this.botOnlineOnlyCheckbox.type = 'checkbox';
+    this.botOnlineOnlyCheckbox.checked = this.botOnlineOnly;
+    this.botOnlineOnlyCheckbox.style.cssText = this.botHideBannedCheckbox.style.cssText;
+    this.botOnlineOnlyCheckbox.addEventListener('change', () => {
+      this.botOnlineOnly = this.botOnlineOnlyCheckbox.checked;
+      this.renderBotReview();
+    });
+    this.botOnlineOnlyLabel = document.createElement('label');
+    this.botOnlineOnlyLabel.title = 'Show online accounts only';
+    this.botOnlineOnlyLabel.style.cssText = this.botHideBannedLabel.style.cssText;
+    const onlineOnlyText = document.createElement('span');
+    onlineOnlyText.textContent = 'Online only';
+    onlineOnlyText.style.cssText = `overflow: hidden; text-overflow: ellipsis;`;
+    this.botOnlineOnlyLabel.append(this.botOnlineOnlyCheckbox, onlineOnlyText);
+    toolbar.appendChild(this.botOnlineOnlyLabel);
+
+    this.botSortSelect = document.createElement('select');
+    this.botSortSelect.style.cssText = this.eventFilterInputCss();
+    for (const [value, label] of [
+      ['risk', 'Sort: risk'],
+      ['online', 'Sort: online'],
+      ['login', 'Sort: login'],
+      ['links', 'Sort: links'],
+      ['actions', 'Sort: actions'],
+    ] as Array<[BotSortMode, string]>) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      this.botSortSelect.appendChild(option);
+    }
+    this.botSortSelect.addEventListener('change', () => {
+      this.botSortMode = this.botSortSelect.value as BotSortMode;
+      this.renderBotReview();
+    });
+    toolbar.appendChild(this.botSortSelect);
 
     this.refreshButton = document.createElement('button');
     this.refreshButton.type = 'button';
@@ -919,7 +990,7 @@ export class AdminPanel {
       border: 1px solid rgba(74, 64, 53, 0.72);
       background: rgba(18, 13, 10, 0.84);
     `;
-    for (const label of ['Account', 'Score', 'Risk', 'Signals', 'Network', 'Last login']) {
+    for (const label of ['', 'Account', 'Score', 'Risk', 'Signals', 'Network', 'Login']) {
       const cell = document.createElement('div');
       cell.textContent = label;
       this.gridHeaderEl.appendChild(cell);
@@ -976,9 +1047,17 @@ export class AdminPanel {
 
   show(): void {
     this.visible = true;
+    this.applyPanelPosition();
     this.root.style.display = 'flex';
     if (this.activeTab === 'events') this.startEventPolling();
     void this.refresh();
+  }
+
+  private applyPanelPosition(): void {
+    this.root.style.position = 'fixed';
+    this.root.style.left = 'calc(var(--eq-viewport-left, 0px) + (var(--eq-viewport-width, 100vw) - var(--right-rail-width, 300px)) / 2)';
+    this.root.style.top = 'calc(var(--eq-viewport-top, 0px) + (var(--eq-viewport-height, 100vh) - var(--chat-height, 220px)) / 2)';
+    this.root.style.transform = 'translate(-50%, -50%)';
   }
 
   hide(): void {
@@ -1195,7 +1274,12 @@ export class AdminPanel {
           ? 'Client diagnostics'
           : 'Bot review';
     }
-    this.clearRiskButton.style.display = this.activeTab === 'bots' ? '' : 'none';
+    this.setControlVisible(this.clearRiskButton, this.activeTab === 'bots');
+  }
+
+  private setControlVisible(el: HTMLElement, visible: boolean): void {
+    el.style.visibility = visible ? 'visible' : 'hidden';
+    el.style.pointerEvents = visible ? '' : 'none';
   }
 
   private startEventPolling(): void {
@@ -1242,10 +1326,14 @@ export class AdminPanel {
       const incoming = payload.events ?? [];
       if (reset) {
         this.events = [...incoming].sort((a, b) => b.id - a.id).slice(0, 500);
+        this.newEventIds.clear();
       } else if (incoming.length > 0) {
         const merged = new Map<number, GameEventLogEntry>();
         for (const event of this.events) merged.set(event.id, event);
-        for (const event of incoming) merged.set(event.id, event);
+        for (const event of incoming) {
+          if (!merged.has(event.id)) this.newEventIds.add(event.id);
+          merged.set(event.id, event);
+        }
         this.events = [...merged.values()].sort((a, b) => b.id - a.id).slice(0, 500);
       }
       this.eventAfterId = Math.max(
@@ -1350,12 +1438,15 @@ export class AdminPanel {
   }
 
   private renderBotReview(): void {
-    this.botSearchInput.style.display = '';
-    this.botHideBannedLabel.style.display = 'flex';
-    this.clearRiskButton.style.display = '';
+    this.setControlVisible(this.botSearchInput, true);
+    this.setControlVisible(this.botHideBannedLabel, true);
+    this.setControlVisible(this.botOnlineOnlyLabel, true);
+    this.setControlVisible(this.botSortSelect, true);
+    this.botSortSelect.value = this.botSortMode;
+    this.setControlVisible(this.clearRiskButton, true);
     this.eventFilterEl.style.display = 'none';
     this.diagnosticFilterEl.style.display = 'none';
-    this.setGridHeader(BOT_GRID_COLUMNS, ['Account', 'Score', 'Risk', 'Signals', 'Network', 'Last login']);
+    this.setGridHeader(BOT_GRID_COLUMNS, ['', 'Account', 'Score', 'Risk', 'Signals', 'Network', 'Login']);
     const visibleAccounts = this.visibleBotAccounts();
     const total = visibleAccounts.length;
     const high = visibleAccounts.filter((a) => a.riskLevel === 'high' || a.riskLevel === 'critical').length;
@@ -1367,13 +1458,13 @@ export class AdminPanel {
     const banned = this.accounts.filter((a) => a.accountBan || a.ipBan).length;
     const hiddenBanned = this.hideBannedAccounts ? this.accounts.length - visibleAccounts.length : 0;
     const summaryPills = [
-      this.summaryPill(`${this.hideBannedAccounts ? `${total} shown` : `${total} accounts`}`, '#6c5c43'),
-      this.summaryPill(`${flagged} flagged`, '#8f6d2d'),
+      this.botFilterPill(`${this.hideBannedAccounts ? `${total} shown` : `${total} accounts`}`, '#6c5c43', 'all'),
+      this.botFilterPill(`${flagged} flagged`, '#8f6d2d', 'flagged'),
       this.summaryPill(`${high} high/critical`, '#8f2f28'),
-      this.summaryPill(`${sharedIp} shared IP`, sharedIp > 0 ? '#6b3b34' : '#4d5d45'),
-      this.summaryPill(`${bannedDevice} banned device`, bannedDevice > 0 ? '#b52f24' : '#4d5d45'),
-      this.summaryPill(`${vpnLike} VPN/DC`, vpnLike > 0 ? '#7a5a25' : '#4d5d45'),
-      this.summaryPill(`${banned} banned`, banned > 0 ? '#8f2f28' : '#4d5d45'),
+      this.botFilterPill(`${sharedIp} shared IP`, sharedIp > 0 ? '#6b3b34' : '#4d5d45', 'sharedIp'),
+      this.botFilterPill(`${bannedDevice} banned device`, bannedDevice > 0 ? '#b52f24' : '#4d5d45', 'bannedDevice'),
+      this.botFilterPill(`${vpnLike} VPN/DC`, vpnLike > 0 ? '#7a5a25' : '#4d5d45', 'vpn'),
+      this.botFilterPill(`${banned} banned`, banned > 0 ? '#8f2f28' : '#4d5d45', 'banned'),
       this.summaryPill(`${suspiciousPackets} bad packets`, '#5f4a7d'),
       this.summaryPill(`${this.botSearchQuery ? 'search on' : 'all names'}`, this.botSearchQuery ? '#7a5a25' : '#4d5d45'),
     ];
@@ -1381,7 +1472,13 @@ export class AdminPanel {
     this.summaryEl.replaceChildren(...summaryPills);
 
     this.rowsEl.replaceChildren();
+    let lastGroup = '';
     for (const account of visibleAccounts) {
+      const group = this.accountGroupLabel(account);
+      if (group !== lastGroup) {
+        this.rowsEl.appendChild(this.accountGroupDivider(group));
+        lastGroup = group;
+      }
       this.rowsEl.appendChild(this.accountRow(account));
     }
 
@@ -1392,15 +1489,17 @@ export class AdminPanel {
     }
     const selected = visibleAccounts.find((a) => a.accountId === this.selectedAccountId) ?? null;
     if (selected) this.renderDetail(selected);
-    else this.renderDetailMessage(this.accounts.length > 0 && this.hideBannedAccounts
-      ? 'All matching accounts are hidden by the banned filter.'
+    else this.renderDetailMessage(this.accounts.length > 0 && (this.hideBannedAccounts || this.botOnlineOnly || this.botQuickFilter !== 'all')
+      ? 'No accounts match the current filters.'
       : 'No bot telemetry yet.');
   }
 
   private renderBotReplays(): void {
-    this.botSearchInput.style.display = 'none';
-    this.botHideBannedLabel.style.display = 'none';
-    this.clearRiskButton.style.display = 'none';
+    this.setControlVisible(this.botSearchInput, false);
+    this.setControlVisible(this.botHideBannedLabel, false);
+    this.setControlVisible(this.botOnlineOnlyLabel, false);
+    this.setControlVisible(this.botSortSelect, false);
+    this.setControlVisible(this.clearRiskButton, false);
     this.eventFilterEl.style.display = 'none';
     this.diagnosticFilterEl.style.display = 'none';
     this.setGridHeader(REPLAY_GRID_COLUMNS, ['Replay', 'Account', 'Trigger', 'Score', 'Events', 'Saved']);
@@ -1443,7 +1542,7 @@ export class AdminPanel {
       text-align: left;
       cursor: pointer;
       text-shadow: ${TEXT_SHADOW};
-      transition: background 120ms ease, filter 120ms ease;
+      transition: background 900ms ease, filter 120ms ease;
     `;
     this.installRowHover(row, selected ? 'rgba(122, 50, 40, 0.48)' : 'rgba(22, 16, 12, 0.38)');
     row.addEventListener('click', () => {
@@ -2006,9 +2105,11 @@ export class AdminPanel {
   }
 
   private renderPlaytime(): void {
-    this.botSearchInput.style.display = 'none';
-    this.botHideBannedLabel.style.display = 'none';
-    this.clearRiskButton.style.display = 'none';
+    this.setControlVisible(this.botSearchInput, false);
+    this.setControlVisible(this.botHideBannedLabel, false);
+    this.setControlVisible(this.botOnlineOnlyLabel, false);
+    this.setControlVisible(this.botSortSelect, false);
+    this.setControlVisible(this.clearRiskButton, false);
     this.eventFilterEl.style.display = 'none';
     this.diagnosticFilterEl.style.display = 'none';
     this.setGridHeader(PLAYTIME_GRID_COLUMNS, ['Time', 'Play time', 'Avg online', 'Logins', 'Logouts']);
@@ -2051,7 +2152,7 @@ export class AdminPanel {
       text-align: left;
       cursor: pointer;
       text-shadow: ${TEXT_SHADOW};
-      transition: background 120ms ease, filter 120ms ease;
+      transition: background 900ms ease, filter 120ms ease;
     `;
     this.installRowHover(row, selected ? 'rgba(122, 50, 40, 0.48)' : 'rgba(22, 16, 12, 0.38)');
     row.addEventListener('click', () => {
@@ -2178,9 +2279,11 @@ export class AdminPanel {
   }
 
   private renderGameEvents(): void {
-    this.botSearchInput.style.display = 'none';
-    this.botHideBannedLabel.style.display = 'none';
-    this.clearRiskButton.style.display = 'none';
+    this.setControlVisible(this.botSearchInput, false);
+    this.setControlVisible(this.botHideBannedLabel, false);
+    this.setControlVisible(this.botOnlineOnlyLabel, false);
+    this.setControlVisible(this.botSortSelect, false);
+    this.setControlVisible(this.clearRiskButton, false);
     this.eventFilterEl.style.display = 'flex';
     this.diagnosticFilterEl.style.display = 'none';
     this.renderEventFilters();
@@ -2188,7 +2291,7 @@ export class AdminPanel {
     const rare = this.events.filter(event => event.severity === 'rare' || event.type === 'rare_drop').length;
     const trades = this.events.filter(event => event.type === 'trade').length;
     const chats = this.events.filter(event => event.type === 'chat' || event.type === 'private_chat').length;
-    const activeFilters = this.hiddenEventTypes.size
+    const activeFilters = this.hiddenEventGroupCount()
       + (this.eventSearchQuery ? 1 : 0)
       + (this.eventUserFilter ? 1 : 0);
     this.summaryEl.replaceChildren(
@@ -2216,18 +2319,23 @@ export class AdminPanel {
   }
 
   private renderClientDiagnostics(): void {
-    this.botSearchInput.style.display = 'none';
-    this.botHideBannedLabel.style.display = 'none';
-    this.clearRiskButton.style.display = 'none';
+    this.setControlVisible(this.botSearchInput, false);
+    this.setControlVisible(this.botHideBannedLabel, false);
+    this.setControlVisible(this.botOnlineOnlyLabel, false);
+    this.setControlVisible(this.botSortSelect, false);
+    this.setControlVisible(this.clearRiskButton, false);
     this.eventFilterEl.style.display = 'none';
     this.diagnosticFilterEl.style.display = 'grid';
-    this.setGridHeader(DIAGNOSTIC_GRID_COLUMNS, ['Time', 'Event', 'User', 'Renderer', 'FPS']);
+    this.setGridHeader(DIAGNOSTIC_GRID_COLUMNS, ['Time', 'Event', 'User', 'Browser / device', 'FPS']);
     const counts = {
       lowFps: 0,
       postScale: 0,
       frameSpike: 0,
       perf: 0,
       quality: 0,
+      environment: 0,
+      mobile: 0,
+      touch: 0,
       software: 0,
       brave: 0,
       braveLow: 0,
@@ -2242,6 +2350,11 @@ export class AdminPanel {
       else if (entry.event === 'client_frame_spike') counts.frameSpike++;
       else if (entry.event === 'client_perf_snapshot') counts.perf++;
       else if (entry.event === 'client_quality_change') counts.quality++;
+      else if (entry.event === 'client_environment') counts.environment++;
+      const browser = this.recordObject(this.diagnosticPayload(entry), 'browser');
+      const uaData = this.recordObject(browser, 'userAgentData');
+      if (uaData.mobile === true) counts.mobile++;
+      if ((this.recordNumber(browser, 'maxTouchPoints') ?? 0) > 0) counts.touch++;
       const flags = this.diagnosticFlags(entry);
       if (flags.includes('software-renderer-likely')) counts.software++;
       if (flags.includes('brave-browser')) counts.brave++;
@@ -2262,6 +2375,9 @@ export class AdminPanel {
       this.summaryPill(`${counts.frameSpike} spikes`, counts.frameSpike > 0 ? '#8f2f28' : '#4d5d45'),
       this.summaryPill(`${counts.perf} perf`, '#2f5f8f'),
       this.summaryPill(`${counts.quality} quality`, counts.quality > 0 ? '#2f5f8f' : '#4d5d45'),
+      this.summaryPill(`${counts.environment} env`, counts.environment > 0 ? '#2f5f8f' : '#4d5d45'),
+      this.summaryPill(`${counts.mobile} mobile`, counts.mobile > 0 ? '#5f4a7d' : '#4d5d45'),
+      this.summaryPill(`${counts.touch} touch`, counts.touch > 0 ? '#5f4a7d' : '#4d5d45'),
       this.summaryPill(`${counts.hardwareLow} hardware low`, counts.hardwareLow > 0 ? '#8f6d2d' : '#4d5d45'),
       this.summaryPill(`${counts.stable30} stable 30`, counts.stable30 > 0 ? '#7a5a25' : '#4d5d45'),
       this.summaryPill(`${counts.uneven} stalls`, counts.uneven > 0 ? '#8f2f28' : '#4d5d45'),
@@ -2297,32 +2413,64 @@ export class AdminPanel {
 
   private renderEventFilters(): void {
     this.eventTypeChipsEl.replaceChildren();
-    for (const config of GAME_EVENT_TYPES) {
-      const hidden = this.hiddenEventTypes.has(config.type);
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = config.label;
-      button.title = hidden ? `Show ${config.label}` : `Hide ${config.label}`;
-      button.style.cssText = `
-        min-width: 58px;
-        padding: 4px 7px;
-        border: 1px solid rgba(220, 190, 140, ${hidden ? '0.14' : '0.28'});
-        border-radius: 3px;
-        background: ${hidden ? 'rgba(36, 29, 24, 0.76)' : this.eventTypeColor(config.type)};
-        color: ${hidden ? '#8f8066' : '#f4ded5'};
-        cursor: pointer;
-        font: 700 10px Arial, Helvetica, sans-serif;
-        text-shadow: ${TEXT_SHADOW};
-        text-decoration: ${hidden ? 'line-through' : 'none'};
-      `;
-      button.addEventListener('click', () => {
-        if (hidden) this.hiddenEventTypes.delete(config.type);
-        else this.hiddenEventTypes.add(config.type);
+    this.eventTypeChipsEl.append(
+      this.eventFilterButton('Add all', false, () => {
+        this.hiddenEventTypes.clear();
         this.resetEventStream();
         void this.refreshGameEvents(true);
-      });
+      }, '#564428', 'Show every event type'),
+      this.eventFilterButton('Remove all', false, () => {
+        for (const config of GAME_EVENT_TYPES) {
+          for (const type of this.eventFilterTypes(config)) this.hiddenEventTypes.add(type);
+        }
+        this.resetEventStream();
+        void this.refreshGameEvents(true);
+      }, '#4a241f', 'Hide every event type'),
+    );
+    for (const config of GAME_EVENT_TYPES) {
+      const types = this.eventFilterTypes(config);
+      const hidden = types.every(type => this.hiddenEventTypes.has(type));
+      const button = this.eventFilterButton(config.label, hidden, () => {
+        for (const type of types) {
+          if (hidden) this.hiddenEventTypes.delete(type);
+          else this.hiddenEventTypes.add(type);
+        }
+        this.resetEventStream();
+        void this.refreshGameEvents(true);
+      }, this.eventTypeColor(config.type));
       this.eventTypeChipsEl.appendChild(button);
     }
+  }
+
+  private eventFilterTypes(config: { type: string; types?: string[] }): string[] {
+    return config.types ?? [config.type];
+  }
+
+  private hiddenEventGroupCount(): number {
+    return GAME_EVENT_TYPES.filter(config =>
+      this.eventFilterTypes(config).every(type => this.hiddenEventTypes.has(type))
+    ).length;
+  }
+
+  private eventFilterButton(label: string, hidden: boolean, onClick: () => void, color = '#564428', title?: string): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.title = title ?? (hidden ? `Show ${label}` : `Hide ${label}`);
+    button.style.cssText = `
+      min-width: 58px;
+      padding: 4px 7px;
+      border: 1px solid rgba(220, 190, 140, ${hidden ? '0.14' : '0.28'});
+      border-radius: 3px;
+      background: ${hidden ? 'rgba(36, 29, 24, 0.76)' : color};
+      color: ${hidden ? '#8f8066' : '#f4ded5'};
+      cursor: pointer;
+      font: 700 10px Arial, Helvetica, sans-serif;
+      text-shadow: ${TEXT_SHADOW};
+      text-decoration: ${hidden ? 'line-through' : 'none'};
+    `;
+    button.addEventListener('click', onClick);
+    return button;
   }
 
   private resetEventStream(): void {
@@ -2422,7 +2570,7 @@ export class AdminPanel {
       this.truncateCell(this.formatDiagnosticClock(entry)),
       this.diagnosticEventPill(entry.event),
       this.truncateCell(entry.username || '-'),
-      this.truncateCell(this.diagnosticRenderer(entry)),
+      this.truncateCell(this.diagnosticDeviceSummary(entry)),
       this.truncateCell(this.formatRate(this.diagnosticFps(entry))),
     );
     return row;
@@ -2489,6 +2637,22 @@ export class AdminPanel {
       this.metricCell('Renderer', this.diagnosticRenderer(entry)),
       this.metricCell('WebGL', String(webgl.context ?? '-')),
       this.metricCell('Browser', this.diagnosticBrowser(entry)),
+      this.metricCell('Browser detail', this.diagnosticBrowserFull(entry)),
+      this.metricCell('OS/platform', this.formatBrowserPlatform(browser)),
+      this.metricCell('Architecture', this.formatBrowserArchitecture(browser)),
+      this.metricCell('Device model', this.formatUnknown(this.recordObject(browser, 'userAgentDataHighEntropy').model)),
+      this.metricCell('CPU/memory', this.formatCpuMemory(browser)),
+      this.metricCell('Touch points', this.formatNullableNumber(this.recordNumber(browser, 'maxTouchPoints'))),
+      this.metricCell('Screen', this.formatScreen(browser)),
+      this.metricCell('Window', this.formatWindow(browser)),
+      this.metricCell('Viewport', this.formatVisualViewport(browser)),
+      this.metricCell('Connection', this.formatConnection(browser)),
+      this.metricCell('Battery', this.formatBattery(browser)),
+      this.metricCell('Language', this.formatLanguages(browser)),
+      this.metricCell('Timezone', this.formatUnknown(browser.timeZone)),
+      this.metricCell('Cookies/DNT', `${this.formatBoolean(browser.cookieEnabled)}/${this.formatUnknown(browser.doNotTrack)}`),
+      this.metricCell('Webdriver', this.formatBoolean(browser.webdriver)),
+      this.metricCell('WebGL vendor', this.formatUnknown(webgl.unmaskedVendor ?? webgl.vendor)),
       this.metricCell('DPR', this.formatRate(this.recordNumber(browser, 'devicePixelRatio'))),
       this.metricCell('Render scale', this.formatRate(this.recordNumber(payload, 'renderScale'))),
       this.metricCell('Canvas', this.formatCanvas(canvas)),
@@ -2545,7 +2709,7 @@ export class AdminPanel {
       text-align: left;
       cursor: pointer;
       text-shadow: ${TEXT_SHADOW};
-      transition: background 120ms ease, filter 120ms ease;
+      transition: background 900ms ease, filter 120ms ease;
     `;
     this.installRowHover(row, selected ? 'rgba(122, 50, 40, 0.48)' : 'rgba(22, 16, 12, 0.38)');
     row.addEventListener('click', () => {
@@ -2553,13 +2717,76 @@ export class AdminPanel {
       this.renderGameEvents();
     });
     row.append(
-      this.truncateCell(this.formatClock(event.createdAt)),
+      this.truncateCell(this.formatEventClock(event.createdAt)),
       this.eventTypePill(event.type, event.severity),
       this.truncateCell(event.actorName || event.npcName || '-'),
       this.truncateCell(event.message),
-      this.truncateCell(this.formatLocation(event)),
+      this.eventLocationCell(event),
     );
+    if (this.newEventIds.delete(event.id)) {
+      row.style.background = 'rgba(143, 109, 45, 0.72)';
+      window.setTimeout(() => { row.style.background = selected ? 'rgba(122, 50, 40, 0.48)' : 'rgba(22, 16, 12, 0.38)'; }, 60);
+    }
     return row;
+  }
+
+  private eventLocationCell(event: GameEventLogEntry): HTMLDivElement {
+    const cell = this.truncateCell(this.formatLocation(event));
+    if (!this.hasEventLocation(event)) return cell;
+    cell.style.cursor = 'context-menu';
+    cell.title = `${this.formatLocation(event)}\nRight-click to teleport`;
+    cell.addEventListener('contextmenu', (mouseEvent) => this.openEventLocationMenu(event, mouseEvent));
+    return cell;
+  }
+
+  private hasEventLocation(event: GameEventLogEntry): boolean {
+    return Boolean(event.mapLevel) && event.x !== null && event.z !== null;
+  }
+
+  private openEventLocationMenu(event: GameEventLogEntry, mouseEvent: MouseEvent): void {
+    mouseEvent.preventDefault();
+    mouseEvent.stopPropagation();
+    if (!this.hasEventLocation(event)) return;
+    this.selectedEventId = event.id;
+    this.renderGameEvents();
+    this.hideAccountContextMenu();
+
+    const menu = this.contextMenuShell();
+    menu.appendChild(this.accountMenuItem(`Teleport to ${this.formatLocation(event)}`, false, () => {
+      void this.teleportToEventLocation(event);
+    }));
+    document.body.appendChild(menu);
+    this.accountContextMenuEl = menu;
+    this.placeContextMenu(menu, mouseEvent);
+  }
+
+  private async teleportToEventLocation(event: GameEventLogEntry): Promise<void> {
+    if (!this.hasEventLocation(event)) return;
+    try {
+      const res = await fetch('/api/admin/teleport-location', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          mapLevel: event.mapLevel,
+          floor: event.floor ?? 0,
+          x: event.x,
+          z: event.z,
+        }),
+      });
+      if (privateEndpointDenied(res.status)) {
+        this.hide();
+        return;
+      }
+      const payload = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok || !payload.ok) throw new Error(payload.error || `Teleport failed (${res.status})`);
+      this.hideAccountContextMenu();
+    } catch (err) {
+      this.renderActionError(err instanceof Error ? err.message : 'Teleport failed.');
+    }
   }
 
   private renderEventDetail(event: GameEventLogEntry): void {
@@ -2586,7 +2813,7 @@ export class AdminPanel {
       gap: 6px;
     `;
     metrics.append(
-      this.metricCell('Time', this.formatTime(event.createdAt)),
+      this.metricCell('Time', this.formatEventTime(event.createdAt)),
       this.metricCell('Actor', event.actorName ?? '-'),
       this.metricCell('Target', event.targetName ?? event.npcName ?? '-'),
       this.metricCell('Item', event.itemName ? `${event.quantity ?? 1} x ${event.itemName}` : '-'),
@@ -2662,20 +2889,44 @@ export class AdminPanel {
     this.installRowHover(row, rowBackground);
     row.addEventListener('click', () => {
       this.selectedAccountId = account.accountId;
+      this.accountBackStack = [];
       this.renderBotReview();
     });
     row.addEventListener('contextmenu', event => {
       this.openAccountContextMenu(account, event);
     });
     row.append(
+      this.accountOnlineCell(account),
       this.accountNameCell(account),
       this.truncateCell(String(account.riskScore)),
       this.riskPill(account.riskLevel),
       this.truncateCell(this.signalSummary(account)),
       this.accountNetworkCell(account),
-      this.truncateCell(this.formatTime(account.lastLoginTs)),
+      this.truncateCell(this.formatShortTime(account.lastLoginTs), this.formatTime(account.lastLoginTs)),
     );
     return row;
+  }
+
+  private accountOnlineCell(account: AdminBotAccount): HTMLDivElement {
+    const cell = document.createElement('div');
+    cell.title = account.online ? 'Online' : 'Offline';
+    cell.style.cssText = `
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      align-self: center;
+    `;
+    const dot = document.createElement('span');
+    dot.style.cssText = `
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: ${account.online ? '#31a05f' : '#6b6259'};
+      box-shadow: inset 0 0 0 1px rgba(244, 222, 213, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.38);
+    `;
+    cell.appendChild(dot);
+    return cell;
   }
 
   private accountNameCell(account: AdminBotAccount): HTMLDivElement {
@@ -2700,11 +2951,6 @@ export class AdminPanel {
       font-weight: ${account.accountBan || account.ipBan ? '700' : '400'};
     `;
     cell.appendChild(name);
-    cell.appendChild(this.statusPill(
-      account.online ? 'ONLINE' : 'OFFLINE',
-      account.online ? '#2f6f4e' : '#5a5146',
-      account.online ? 'Online now' : 'Offline',
-    ));
     if (account.accountBan) {
       cell.appendChild(this.statusPill('BANNED', '#b52f24', this.accountBanTitle(account.accountBan)));
     }
@@ -2761,22 +3007,7 @@ export class AdminPanel {
     this.renderBotReview();
     this.hideAccountContextMenu();
 
-    const menu = document.createElement('div');
-    menu.style.cssText = `
-      position: fixed;
-      z-index: 10000;
-      min-width: 164px;
-      padding: 4px;
-      border: 1px solid rgba(154, 51, 43, 0.8);
-      background: rgba(12, 8, 6, 0.97);
-      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.42);
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      font-family: Arial, Helvetica, sans-serif;
-      text-shadow: ${TEXT_SHADOW};
-    `;
-
+    const menu = this.contextMenuShell();
     menu.append(
       this.accountMenuItem('Clear risk score', false, () => {
         void this.clearBotRiskForAccount(account);
@@ -2832,6 +3063,29 @@ export class AdminPanel {
 
     document.body.appendChild(menu);
     this.accountContextMenuEl = menu;
+    this.placeContextMenu(menu, event);
+  }
+
+  private contextMenuShell(): HTMLDivElement {
+    const menu = document.createElement('div');
+    menu.style.cssText = `
+      position: fixed;
+      z-index: 10000;
+      min-width: 164px;
+      padding: 4px;
+      border: 1px solid rgba(154, 51, 43, 0.8);
+      background: rgba(12, 8, 6, 0.97);
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.42);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-family: Arial, Helvetica, sans-serif;
+      text-shadow: ${TEXT_SHADOW};
+    `;
+    return menu;
+  }
+
+  private placeContextMenu(menu: HTMLElement, event: MouseEvent): void {
     const rect = menu.getBoundingClientRect();
     const left = Math.max(8, Math.min(event.clientX, window.innerWidth - rect.width - 8));
     const top = Math.max(8, Math.min(event.clientY, window.innerHeight - rect.height - 8));
@@ -2985,6 +3239,31 @@ export class AdminPanel {
     const root = document.createElement('div');
     root.style.cssText = `display: flex; flex-direction: column; gap: 10px;`;
 
+    if (this.accountBackStack.length > 0) {
+      const previousId = this.accountBackStack[this.accountBackStack.length - 1];
+      const previous = this.accounts.find(item => item.accountId === previousId);
+      if (previous) {
+        const back = document.createElement('button');
+        back.type = 'button';
+        back.textContent = `Back to ${previous.username}`;
+        back.style.cssText = `
+          align-self: flex-start;
+          padding: 2px 0;
+          border: 0;
+          background: transparent;
+          color: #c9b48f;
+          cursor: pointer;
+          font: 700 10px Arial, Helvetica, sans-serif;
+          text-shadow: ${TEXT_SHADOW};
+        `;
+        back.onclick = () => {
+          this.selectedAccountId = this.accountBackStack.pop() ?? previousId;
+          this.renderBotReview();
+        };
+        root.appendChild(back);
+      }
+    }
+
     const title = document.createElement('div');
     title.style.cssText = `display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13px; font-weight: bold; color: #f4ded5;`;
     title.append(
@@ -3048,37 +3327,67 @@ export class AdminPanel {
       root.appendChild(muteChips);
     }
 
-    const metrics = document.createElement('div');
-    metrics.style.cssText = `
+    const summaryMetrics = document.createElement('div');
+    summaryMetrics.style.cssText = `
       display: grid;
       grid-template-columns: repeat(3, minmax(118px, 1fr));
       gap: 6px;
     `;
-    const metricRows: Array<[string, string]> = [
-      ['Score', String(account.riskScore)],
+    summaryMetrics.append(
+      this.compareMetricCell('Score', String(account.riskScore), this.formatRate(this.averageAccountMetric(a => a.riskScore)), this.compareDelta(account.riskScore, this.averageAccountMetric(a => a.riskScore))),
+      this.compareMetricCell('Actions/hr', this.formatRate(account.actionsPerHour), this.formatRate(this.averageAccountMetric(a => a.actionsPerHour)), this.compareDelta(account.actionsPerHour, this.averageAccountMetric(a => a.actionsPerHour))),
+      this.compareMetricCell('Actions/chat', this.formatRate(account.actionsPerChat), this.formatRate(this.averageAccountMetric(a => a.actionsPerChat)), this.compareDelta(account.actionsPerChat, this.averageAccountMetric(a => a.actionsPerChat))),
+      this.compareMetricCell('Evidence', String(account.totalFlagEvents), this.formatRate(this.averageAccountMetric(a => a.totalFlagEvents)), this.compareDelta(account.totalFlagEvents, this.averageAccountMetric(a => a.totalFlagEvents))),
+      this.compareMetricCell('Bad packets', String(account.totalSuspiciousPackets), this.formatRate(this.averageAccountMetric(a => a.totalSuspiciousPackets)), this.compareDelta(account.totalSuspiciousPackets, this.averageAccountMetric(a => a.totalSuspiciousPackets))),
+      this.compareMetricCell('Path repeat', this.formatPercent(account.topPathRepetition), this.formatPercent(this.averageAccountMetric(a => a.topPathRepetition)), this.compareDelta(account.topPathRepetition, this.averageAccountMetric(a => a.topPathRepetition))),
+      this.compareMetricCell('Total time', this.formatMinutes(account.totalSessionMinutes), this.formatMinutes(Math.round(this.averageAccountMetric(a => a.totalSessionMinutes) ?? 0)), this.compareDelta(account.totalSessionMinutes, this.averageAccountMetric(a => a.totalSessionMinutes))),
+      this.compareMetricCell('Devices', String(account.deviceIdsSeen), this.formatRate(this.averageAccountMetric(a => a.deviceIdsSeen)), this.compareDelta(account.deviceIdsSeen, this.averageAccountMetric(a => a.deviceIdsSeen))),
+      this.compareMetricCell('IP alts', String(account.sharedIpAlts.length), this.formatRate(this.averageAccountMetric(a => a.sharedIpAlts.length)), this.compareDelta(account.sharedIpAlts.length, this.averageAccountMetric(a => a.sharedIpAlts.length))),
+    );
+    root.appendChild(this.detailSection('Review summary', summaryMetrics));
+
+    const accountMeta = document.createElement('div');
+    accountMeta.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(3, minmax(118px, 1fr));
+      gap: 6px;
+    `;
+    const accountMetaRows: Array<[string, string]> = [
       ['Online', account.online ? 'yes' : 'no'],
-      ['Total time', this.formatMinutes(account.totalSessionMinutes)],
-      ['Evidence events', String(account.totalFlagEvents)],
-      ['Bad packets', String(account.totalSuspiciousPackets)],
       ['Actions', this.formatNumber(activeActions)],
-      ['Actions/hr', this.formatRate(account.actionsPerHour)],
-      ['Chats/hr', this.formatRate(account.chatRatePerHour)],
-      ['Actions/chat', this.formatRate(account.actionsPerChat)],
       ['Moves', this.formatNumber(account.totalMovements)],
       ['Chats', this.formatNumber(account.totalChatMessages)],
-      ['Devices', String(account.deviceIdsSeen)],
-      ['IP alts', String(account.sharedIpAlts.length)],
+      ['Chats/hr', this.formatRate(account.chatRatePerHour)],
       ['VPN/DC', account.vpnLikeIp?.reason ?? '-'],
-      ['Path repeat', this.formatPercent(account.topPathRepetition)],
       ['Last login', this.formatTime(account.lastLoginTs)],
       ['Last session', account.lastSessionMinutes == null ? '-' : this.formatMinutes(account.lastSessionMinutes)],
       ['Last IP', account.lastIp || '-'],
       ['PTR', account.lastReverseDns || '-'],
     ];
-    for (const [label, value] of metricRows) metrics.appendChild(this.metricCell(label, value));
-    root.appendChild(this.detailSection('Overview', metrics));
+    for (const [label, value] of accountMetaRows) accountMeta.appendChild(this.metricCell(label, value));
+    root.appendChild(this.detailFoldout('Account and network', accountMeta));
+
+    if (account.deviceIdsSeen > 0 || this.accountEnvironmentDiagnostics(account).length > 0) {
+      root.appendChild(this.detailSection('Devices', this.renderAccountDevices(account)));
+    }
 
     if (summary) {
+      const timingHighlights = document.createElement('div');
+      timingHighlights.style.cssText = `
+        display: grid;
+        grid-template-columns: repeat(3, minmax(118px, 1fr));
+        gap: 6px;
+      `;
+      timingHighlights.append(
+        this.compareMetricCell('Reaction', this.formatMs(this.summaryNumber(summary, 'reactionMedianMs')), this.formatMs(this.averageSummaryNumber('reactionMedianMs')), this.compareDelta(this.summaryNumber(summary, 'reactionMedianMs'), this.averageSummaryNumber('reactionMedianMs'))),
+        this.compareMetricCell('Ping jitter', this.formatMs(this.summaryNumber(summary, 'pingIntervalStdDevMs')), this.formatMs(this.averageSummaryNumber('pingIntervalStdDevMs')), this.compareDelta(this.summaryNumber(summary, 'pingIntervalStdDevMs'), this.averageSummaryNumber('pingIntervalStdDevMs'))),
+        this.compareMetricCell('Cmd jitter', this.formatMs(this.summaryNumber(summary, 'gameplayCommandIntervalStdDevMs')), this.formatMs(this.averageSummaryNumber('gameplayCommandIntervalStdDevMs')), this.compareDelta(this.summaryNumber(summary, 'gameplayCommandIntervalStdDevMs'), this.averageSummaryNumber('gameplayCommandIntervalStdDevMs'))),
+        this.compareMetricCell('Inputless cmds', String(this.summaryNumber(summary, 'sessionInputlessCommands') ?? '-'), this.formatRate(this.averageSummaryNumber('sessionInputlessCommands')), this.compareDelta(this.summaryNumber(summary, 'sessionInputlessCommands'), this.averageSummaryNumber('sessionInputlessCommands'))),
+        this.compareMetricCell('Cursor cells', String(this.summaryNumber(summary, 'cursorUniqueCells') ?? '-'), this.formatRate(this.averageSummaryNumber('cursorUniqueCells')), this.compareDelta(this.summaryNumber(summary, 'cursorUniqueCells'), this.averageSummaryNumber('cursorUniqueCells'))),
+        this.compareMetricCell('Route repeat', this.formatPercent(this.summaryNumber(summary, 'topActionLoopRepetition')), this.formatPercent(this.averageSummaryNumber('topActionLoopRepetition')), this.compareDelta(this.summaryNumber(summary, 'topActionLoopRepetition'), this.averageSummaryNumber('topActionLoopRepetition'))),
+      );
+      root.appendChild(this.detailSection('Timing summary', timingHighlights));
+
       const session = document.createElement('div');
       session.style.cssText = `
         display: grid;
@@ -3104,7 +3413,7 @@ export class AdminPanel {
         ['Cursor cells', String(this.summaryNumber(summary, 'cursorUniqueCells') ?? '-')],
       ];
       for (const [label, value] of sessionRows) session.appendChild(this.metricCell(label, value));
-      root.appendChild(this.detailSection('Timing', session));
+      root.appendChild(this.detailFoldout('Detailed timing', session));
     }
 
     const xpEntries = Object.entries(xpPerHour).filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]);
@@ -3136,43 +3445,35 @@ export class AdminPanel {
     }
 
     if (account.topPathDestinations.length > 0 || account.sharedDeviceAlts.length > 0 || account.sharedIpAlts.length > 0 || account.vpnLikeIp) {
-      const context = document.createElement('div');
-      context.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px;`;
-      for (const entry of account.topPathDestinations.slice(0, 5)) {
-        context.appendChild(this.summaryPill(`${entry.tile}: ${this.formatNumber(entry.count)} moves`, '#564428'));
-      }
-      for (const alt of account.sharedDeviceAlts.slice(0, 5)) {
-        // Highlight alts that are themselves banned or high-risk — a strong
-        // alt-account / gold-farm-fleet signal an admin should not miss.
-        const flagged = alt.banned || alt.riskLevel === 'high' || alt.riskLevel === 'critical';
-        const tag = alt.banned ? ' BANNED' : flagged ? ` ${alt.riskLevel} ${alt.riskScore}` : '';
-        const color = alt.banned ? '#b52f24' : flagged ? '#8f2f28' : '#6b3b34';
-        const pill = this.summaryPill(`device alt ${alt.username}: ${alt.devices} dev/${alt.logins} logins${tag}`, color);
-        if (flagged) pill.title = 'Shares a device with this account and is itself flagged/banned — likely the same operator.';
-        context.appendChild(pill);
-      }
-      for (const alt of account.sharedIpAlts.slice(0, 5)) {
-        const flagged = alt.banned || alt.riskLevel === 'high' || alt.riskLevel === 'critical';
-        const tag = alt.banned ? ' BANNED' : flagged ? ` ${alt.riskLevel} ${alt.riskScore}` : '';
-        const color = alt.banned ? '#b52f24' : flagged ? '#8f2f28' : '#6b3b34';
-        const pill = this.summaryPill(`same IP ${alt.username}: ${alt.ips} ip/${alt.logins} logins${tag}`, color);
-        pill.title = alt.lastIp ? `Shared IP: ${alt.lastIp}` : 'Shares at least one login IP with this account.';
-        context.appendChild(pill);
-      }
-      if (account.vpnLikeIp) {
-        const signal = account.vpnLikeIp;
-        const pill = this.summaryPill(`VPN/DC ${signal.ip}: ${signal.reason}`, '#7a5a25');
-        pill.title = `${signal.reverseDns} at ${this.formatTime(signal.lastSeenTs)}`;
-        context.appendChild(pill);
-      }
-      root.appendChild(this.detailSection('Links and movement', context));
+      root.appendChild(this.detailSection('Links and movement', this.renderLinksAndMovement(account)));
     }
 
     if (account.sessionHistory.length > 0) {
-      root.appendChild(this.detailSection('Recent sessions', this.sessionHistoryTable(account.sessionHistory)));
+      root.appendChild(this.detailSection('Recent session scores', this.sessionHistoryTable(account.sessionHistory)));
     }
 
-    const actionSection = this.detailSection('Actions', this.moderationControls(account));
+    const actionSection = document.createElement('details');
+    actionSection.style.cssText = `
+      min-width: 0;
+      padding: 8px;
+      border: 1px solid rgba(84, 70, 50, 0.5);
+      border-left: 3px solid rgba(154, 108, 63, 0.62);
+      background: #140e0a;
+      box-sizing: border-box;
+      color: #f4ded5;
+    `;
+    const actionSummary = document.createElement('summary');
+    actionSummary.textContent = 'Actions';
+    actionSummary.style.cssText = `
+      color: #c9b48f;
+      cursor: pointer;
+      font: 700 11px Arial, Helvetica, sans-serif;
+      letter-spacing: 0;
+      list-style-position: inside;
+    `;
+    const actionControls = this.moderationControls(account);
+    actionControls.style.marginTop = '6px';
+    actionSection.append(actionSummary, actionControls);
     actionSection.style.position = 'sticky';
     actionSection.style.bottom = '0';
     actionSection.style.zIndex = '1';
@@ -3392,31 +3693,201 @@ export class AdminPanel {
     const table = document.createElement('div');
     table.style.cssText = `
       display: grid;
-      grid-template-columns: 86px 56px 50px minmax(92px, 1fr) 58px;
+      grid-template-columns: 62px 42px 44px minmax(118px, 1fr) 38px;
       gap: 1px;
       border: 1px solid rgba(84, 70, 50, 0.6);
       background: rgba(84, 70, 50, 0.45);
       font-size: 10px;
     `;
-    for (const label of ['Session', 'Minutes', 'Score', 'Evidence', 'Packets']) {
-      const cell = this.tableCell(label, true);
+    const headers: Array<[string, string]> = [
+      ['Ended', 'Session finalized time'],
+      ['Len', 'Session length'],
+      ['Score', 'Risk score from this individual session'],
+      ['Signals', 'Top signals from this session'],
+      ['Bad', 'Suspicious packets in this session'],
+    ];
+    for (const [label, title] of headers) {
+      const cell = this.tableCell(label, true, title);
       table.appendChild(cell);
     }
     for (const entry of history.slice(-5).reverse()) {
-      const evidenceFlags = this.summaryEvidenceFlags(entry);
-      const contextFlags = evidenceFlags.length > 0 ? [] : this.summaryStringArray(entry, 'contextFlags');
-      const flags = evidenceFlags.length > 0
-        ? evidenceFlags.slice(0, 3).map(botSignalLabel).join(', ')
-        : contextFlags.slice(0, 3).map((flag) => `ctx ${botSignalLabel(flag)}`).join(', ');
+      const finalizedAt = this.recordNumber(entry, 'finalizedAt');
+      const signals = this.sessionSignalSummary(entry);
       table.append(
-        this.tableCell(this.formatTime(this.recordNumber(entry, 'finalizedAt'))),
+        this.tableCell(this.formatShortTime(finalizedAt), false, this.formatTime(finalizedAt)),
         this.tableCell(this.formatMinutes(this.recordNumber(entry, 'sessionMinutes') ?? 0)),
         this.tableCell(String(this.recordNumber(entry, 'riskScore') ?? 0)),
-        this.tableCell(flags || '-'),
+        this.tableCell(signals),
         this.tableCell(String(this.recordNumber(entry, 'sessionSuspiciousPackets') ?? 0)),
       );
     }
     return table;
+  }
+
+  private sessionSignalSummary(entry: Record<string, unknown>): string {
+    const evidenceFlags = this.summaryEvidenceFlags(entry);
+    if (evidenceFlags.length > 0) return evidenceFlags.slice(0, 2).map(botSignalLabel).join(', ');
+    const signals = this.summarySignals(entry);
+    if (signals.length > 0) return signals.slice(0, 2).map((signal) => signal.label).join(', ');
+    const contextFlags = this.summaryStringArray(entry, 'contextFlags');
+    if (contextFlags.length > 0) return contextFlags.slice(0, 2).map((flag) => `ctx ${botSignalLabel(flag)}`).join(', ');
+    const diagnosticFlags = this.summaryStringArray(entry, 'diagnosticFlags');
+    if (diagnosticFlags.length > 0) return diagnosticFlags.slice(0, 2).map((flag) => `diag ${botSignalLabel(flag)}`).join(', ');
+    const reasons = this.summaryStringArray(entry, 'riskReasons');
+    if (reasons.length > 0) return reasons.slice(0, 2).join(', ');
+    return '-';
+  }
+
+  private renderAccountDevices(account: AdminBotAccount): HTMLElement {
+    void this.ensureAccountDeviceDiagnostics(account);
+    const entries = this.accountEnvironmentDiagnostics(account);
+    const wrap = document.createElement('div');
+    wrap.style.cssText = `display: flex; flex-direction: column; gap: 6px; min-width: 0;`;
+
+    if (entries.length === 0) {
+      const empty = document.createElement('div');
+      empty.textContent = this.accountDeviceDiagnosticsLoading.has(account.accountId)
+        ? 'Loading device snapshots...'
+        : account.deviceIdsSeen > 0
+          ? `${account.deviceIdsSeen} login device ID${account.deviceIdsSeen === 1 ? '' : 's'} seen. Browser/OS/spec details will appear after those clients log in on this build.`
+          : 'No device snapshots yet.';
+      empty.style.cssText = `font-size: 10px; color: #a99573;`;
+      wrap.appendChild(empty);
+      return wrap;
+    }
+
+    const byDevice = new Map<string, { entry: ClientDiagnosticLogEntry; count: number; lastMs: number }>();
+    for (const entry of entries) {
+      const key = this.deviceSignature(entry);
+      const ts = Date.parse(entry.ts);
+      const lastMs = Number.isFinite(ts) ? ts : 0;
+      const existing = byDevice.get(key);
+      if (!existing) {
+        byDevice.set(key, { entry, count: 1, lastMs });
+        continue;
+      }
+      existing.count += 1;
+      if (lastMs >= existing.lastMs) {
+        existing.entry = entry;
+        existing.lastMs = lastMs;
+      }
+    }
+
+    const table = document.createElement('div');
+    table.style.cssText = `
+      display: grid;
+      grid-template-columns: 58px minmax(86px, 1.05fr) minmax(74px, 0.9fr) minmax(72px, 0.8fr) minmax(90px, 1fr);
+      gap: 1px;
+      border: 1px solid rgba(84, 70, 50, 0.6);
+      background: rgba(84, 70, 50, 0.45);
+      font-size: 10px;
+    `;
+    for (const [label, title] of [
+      ['Last', 'Most recent environment snapshot'],
+      ['Browser / OS', 'Browser and operating system or platform'],
+      ['Specs', 'CPU, memory, architecture, and touch points when available'],
+      ['Display', 'Screen and device pixel ratio'],
+      ['Renderer', 'WebGL renderer and diagnostic flags'],
+    ] as Array<[string, string]>) {
+      table.appendChild(this.tableCell(label, true, title));
+    }
+
+    const rows = Array.from(byDevice.values()).sort((a, b) => b.lastMs - a.lastMs);
+    for (const row of rows) {
+      const entry = row.entry;
+      const payload = this.diagnosticPayload(entry);
+      const browser = this.recordObject(payload, 'browser');
+      const touchPoints = this.recordNumber(browser, 'maxTouchPoints');
+      const specs = [
+        this.formatCpuMemory(browser),
+        this.formatBrowserArchitecture(browser),
+        touchPoints && touchPoints > 0 ? `${this.formatNumber(touchPoints)} touch` : '-',
+      ].filter(part => part !== '-').join(' · ') || '-';
+      const display = [
+        this.formatScreen(browser),
+        this.recordNumber(browser, 'devicePixelRatio') === null ? '-' : `DPR ${this.formatRate(this.recordNumber(browser, 'devicePixelRatio'))}`,
+      ].filter(part => part !== '-').join(' · ') || '-';
+      const flags = this.diagnosticFlags(entry);
+      const renderer = [
+        this.diagnosticRenderer(entry),
+        flags.length > 0 ? flags.slice(0, 2).join(', ') : '-',
+      ].filter(part => part !== '-').join(' · ') || '-';
+      table.append(
+        this.tableCell(`${this.formatDiagnosticShortDate(entry)}${row.count > 1 ? ` x${row.count}` : ''}`, false, this.formatDiagnosticTime(entry)),
+        this.tableCell(`${this.diagnosticBrowser(entry)} / ${this.formatBrowserPlatform(browser)}`, false, this.diagnosticBrowserFull(entry)),
+        this.tableCell(specs),
+        this.tableCell(display),
+        this.tableCell(renderer),
+      );
+    }
+
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  private async ensureAccountDeviceDiagnostics(account: AdminBotAccount): Promise<void> {
+    if (this.accountDeviceDiagnostics.has(account.accountId) || this.accountDeviceDiagnosticsLoading.has(account.accountId)) return;
+    this.accountDeviceDiagnosticsLoading.add(account.accountId);
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', '200');
+      params.set('bytes', String(4 * 1024 * 1024));
+      params.set('event', 'client_environment');
+      params.set('user', account.username);
+      const res = await fetch(`/api/admin/client-diagnostics?${params.toString()}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.token}` },
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (privateEndpointDenied(res.status)) {
+        this.accountDeviceDiagnostics.set(account.accountId, []);
+        return;
+      }
+      const payload = await res.json() as ClientDiagnosticsResponse;
+      const username = account.username.toLowerCase();
+      this.accountDeviceDiagnostics.set(account.accountId, (payload.events ?? []).filter(entry =>
+        entry.event === 'client_environment' && entry.username.toLowerCase() === username
+      ));
+    } catch {
+      this.accountDeviceDiagnostics.set(account.accountId, []);
+    } finally {
+      this.accountDeviceDiagnosticsLoading.delete(account.accountId);
+      if (this.visible && this.activeTab === 'bots' && this.selectedAccountId === account.accountId) {
+        const selected = this.accounts.find(item => item.accountId === account.accountId);
+        if (selected) this.renderDetail(selected);
+      }
+    }
+  }
+
+  private accountEnvironmentDiagnostics(account: AdminBotAccount): ClientDiagnosticLogEntry[] {
+    const username = account.username.toLowerCase();
+    const merged = new Map<string, ClientDiagnosticLogEntry>();
+    for (const entry of this.accountDeviceDiagnostics.get(account.accountId) ?? []) {
+      if (entry.event === 'client_environment' && entry.username.toLowerCase() === username) {
+        merged.set(this.diagnosticKey(entry), entry);
+      }
+    }
+    for (const entry of this.diagnostics) {
+      if (entry.event === 'client_environment' && entry.username.toLowerCase() === username) {
+        merged.set(this.diagnosticKey(entry), entry);
+      }
+    }
+    return Array.from(merged.values());
+  }
+
+  private deviceSignature(entry: ClientDiagnosticLogEntry): string {
+    const payload = this.diagnosticPayload(entry);
+    const browser = this.recordObject(payload, 'browser');
+    return [
+      this.diagnosticBrowserFull(entry),
+      this.formatBrowserPlatform(browser),
+      this.formatBrowserArchitecture(browser),
+      this.formatCpuMemory(browser),
+      this.formatScreen(browser),
+      this.formatUnknown(this.recordNumber(browser, 'maxTouchPoints')),
+      this.diagnosticRenderer(entry),
+    ].join('|');
   }
 
   private setGridHeader(columns: string, labels: string[]): void {
@@ -3429,10 +3900,10 @@ export class AdminPanel {
     }
   }
 
-  private tableCell(text: string, header = false): HTMLDivElement {
+  private tableCell(text: string, header = false, title = text): HTMLDivElement {
     const cell = document.createElement('div');
     cell.textContent = text;
-    cell.title = text;
+    cell.title = title;
     cell.style.cssText = `
       min-width: 0;
       padding: 4px 5px;
@@ -3471,8 +3942,110 @@ export class AdminPanel {
   }
 
   private visibleBotAccounts(): AdminBotAccount[] {
-    if (!this.hideBannedAccounts) return this.accounts;
-    return this.accounts.filter((account) => !this.isBannedAccount(account));
+    return this.accounts
+      .filter((account) => !this.hideBannedAccounts || !this.isBannedAccount(account))
+      .filter((account) => !this.botOnlineOnly || account.online)
+      .filter((account) => this.accountMatchesQuickFilter(account))
+      .sort((a, b) => this.compareBotAccounts(a, b));
+  }
+
+  private accountMatchesQuickFilter(account: AdminBotAccount): boolean {
+    switch (this.botQuickFilter) {
+      case 'flagged':
+        return account.riskScore > 0 || account.totalFlagEvents > 0 || account.sharedIpAlts.length > 0 || this.bannedDeviceAlts(account).length > 0 || !!account.vpnLikeIp;
+      case 'sharedIp':
+        return account.sharedIpAlts.length > 0;
+      case 'bannedDevice':
+        return this.bannedDeviceAlts(account).length > 0;
+      case 'vpn':
+        return !!account.vpnLikeIp;
+      case 'banned':
+        return this.isBannedAccount(account);
+      default:
+        return true;
+    }
+  }
+
+  private compareBotAccounts(a: AdminBotAccount, b: AdminBotAccount): number {
+    const fallback = b.riskScore - a.riskScore || (b.lastLoginTs ?? 0) - (a.lastLoginTs ?? 0) || a.username.localeCompare(b.username);
+    switch (this.botSortMode) {
+      case 'online':
+        return Number(b.online) - Number(a.online) || fallback;
+      case 'login':
+        return (b.lastLoginTs ?? 0) - (a.lastLoginTs ?? 0) || fallback;
+      case 'links':
+        return this.accountLinkCount(b) - this.accountLinkCount(a) || fallback;
+      case 'actions':
+        return (b.actionsPerHour ?? -1) - (a.actionsPerHour ?? -1) || fallback;
+      default:
+        return fallback;
+    }
+  }
+
+  private accountLinkCount(account: AdminBotAccount): number {
+    return account.sharedDeviceAlts.length + account.sharedIpAlts.length + (account.vpnLikeIp ? 1 : 0);
+  }
+
+  private accountGroupLabel(account: AdminBotAccount): string {
+    if (account.riskScore > 0 || account.totalFlagEvents > 0 || this.isBannedAccount(account)) return 'Needs review';
+    if (account.online) return 'Online';
+    return 'Quiet';
+  }
+
+  private accountGroupDivider(label: string): HTMLDivElement {
+    const div = document.createElement('div');
+    div.textContent = label;
+    div.style.cssText = `
+      padding: 5px 8px 4px;
+      border-bottom: 1px solid rgba(74, 64, 53, 0.45);
+      background: rgba(10, 7, 5, 0.74);
+      color: #a99573;
+      font: 700 10px Arial, Helvetica, sans-serif;
+    `;
+    return div;
+  }
+
+  private botFilterPill(text: string, color: string, filter: BotQuickFilter): HTMLDivElement {
+    const pill = this.summaryPill(text, filter === this.botQuickFilter ? '#9a332b' : color);
+    pill.style.cursor = 'pointer';
+    pill.tabIndex = 0;
+    pill.setAttribute('role', 'button');
+    pill.onclick = () => {
+      this.botQuickFilter = filter;
+      if (filter === 'banned' && this.hideBannedAccounts) {
+        this.hideBannedAccounts = false;
+        this.botHideBannedCheckbox.checked = false;
+      }
+      this.renderBotReview();
+    };
+    pill.onkeydown = (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      pill.click();
+    };
+    return pill;
+  }
+
+  private selectLinkedAccount(accountId: number): void {
+    const target = this.accounts.find(account => account.accountId === accountId);
+    if (!target) return;
+    if (this.selectedAccountId !== null && this.selectedAccountId !== accountId) this.accountBackStack.push(this.selectedAccountId);
+    if (this.botSearchQuery) {
+      this.botSearchQuery = '';
+      this.botSearchInput.value = '';
+    }
+    if (this.botQuickFilter !== 'all' && !this.accountMatchesQuickFilter(target)) this.botQuickFilter = 'all';
+    if (this.botOnlineOnly && !target.online) {
+      this.botOnlineOnly = false;
+      this.botOnlineOnlyCheckbox.checked = false;
+    }
+    if (this.hideBannedAccounts && this.isBannedAccount(target)) {
+      this.hideBannedAccounts = false;
+      this.botHideBannedCheckbox.checked = false;
+    }
+    this.selectedAccountId = accountId;
+    this.renderBotReview();
+    this.detailEl.scrollTop = 0;
   }
 
   private isBannedAccount(account: AdminBotAccount): boolean {
@@ -3611,6 +4184,215 @@ export class AdminPanel {
     return box;
   }
 
+  private renderLinksAndMovement(account: AdminBotAccount): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = `
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    `;
+
+    if (account.sharedDeviceAlts.length > 0) {
+      const shown = account.sharedDeviceAlts.slice(0, 6);
+      wrap.appendChild(this.linkEvidenceGroup(
+        'Device alts',
+        this.linkGroupCount(shown.length, account.sharedDeviceAlts.length, 'account'),
+        shown.map((alt) => {
+          const flagged = alt.banned || alt.riskLevel === 'high' || alt.riskLevel === 'critical';
+          return this.linkEvidenceRow(
+            alt.username,
+            `${this.formatNumber(alt.devices)} shared dev / ${this.formatNumber(alt.logins)} logins`,
+            alt.banned ? 'banned' : flagged ? `${alt.riskLevel} ${alt.riskScore}` : `risk ${alt.riskScore}`,
+            alt.banned ? '#b52f24' : flagged ? '#8f2f28' : '#4d535f',
+            alt.lastSeenTs ? `last seen ${this.formatTime(alt.lastSeenTs)}` : 'last seen -',
+            flagged ? 'Shares a browser device and is itself flagged or banned.' : 'Shares at least one browser device.',
+            () => this.selectLinkedAccount(alt.accountId),
+          );
+        }),
+      ));
+    }
+
+    if (account.sharedIpAlts.length > 0) {
+      const shown = account.sharedIpAlts.slice(0, 6);
+      wrap.appendChild(this.linkEvidenceGroup(
+        'IP alts',
+        this.linkGroupCount(shown.length, account.sharedIpAlts.length, 'account'),
+        shown.map((alt) => {
+          const flagged = alt.banned || alt.riskLevel === 'high' || alt.riskLevel === 'critical';
+          const lastIp = alt.lastIp ? `last ${alt.lastIp}` : 'last IP -';
+          return this.linkEvidenceRow(
+            alt.username,
+            `${this.formatNumber(alt.ips)} shared IP / ${this.formatNumber(alt.logins)} logins`,
+            alt.banned ? 'banned' : flagged ? `${alt.riskLevel} ${alt.riskScore}` : `risk ${alt.riskScore}`,
+            alt.banned ? '#b52f24' : flagged ? '#8f2f28' : '#6b3b34',
+            `${lastIp}${alt.lastSeenTs ? ` · ${this.formatTime(alt.lastSeenTs)}` : ''}`,
+            alt.lastIp ? `Shared IP: ${alt.lastIp}` : 'Shares at least one login IP.',
+            () => this.selectLinkedAccount(alt.accountId),
+          );
+        }),
+      ));
+    }
+
+    if (account.topPathDestinations.length > 0) {
+      const shown = account.topPathDestinations.slice(0, 5);
+      wrap.appendChild(this.linkEvidenceGroup(
+        'Movement routes',
+        this.linkGroupCount(shown.length, account.topPathDestinations.length, 'route'),
+        shown.map((entry) => this.linkEvidenceRow(
+          entry.tile,
+          'frequent destination',
+          `${this.formatNumber(entry.count)} moves`,
+          '#564428',
+          '',
+          'Most repeated path destination for this account.',
+        )),
+        true,
+      ));
+    }
+
+    if (account.vpnLikeIp) {
+      const signal = account.vpnLikeIp;
+      wrap.appendChild(this.linkEvidenceGroup(
+        'Network signal',
+        '1 signal',
+        [
+          this.linkEvidenceRow(
+            signal.ip,
+            `${signal.reason}${signal.reverseDns ? ` · ${signal.reverseDns}` : ''}`,
+            'VPN/DC?',
+            '#7a5a25',
+            this.formatTime(signal.lastSeenTs),
+            `${signal.reverseDns} at ${this.formatTime(signal.lastSeenTs)}`,
+          ),
+        ],
+      ));
+    }
+
+    return wrap;
+  }
+
+  private linkGroupCount(shown: number, total: number, noun: string): string {
+    const label = total === 1 ? noun : `${noun}s`;
+    return shown === total ? `${total} ${label}` : `${shown} of ${total} ${label}`;
+  }
+
+  private linkEvidenceGroup(title: string, summary: string, rows: HTMLElement[], collapsed = false): HTMLElement {
+    const group = document.createElement(collapsed ? 'details' : 'div');
+    group.style.cssText = `
+      min-width: 0;
+      ${collapsed ? 'display: block;' : 'display: flex; flex-direction: column; gap: 5px;'}
+    `;
+
+    const header = document.createElement(collapsed ? 'summary' : 'div');
+    header.style.cssText = `
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-width: 0;
+      ${collapsed ? 'cursor: pointer; list-style-position: inside;' : ''}
+    `;
+    const label = document.createElement('div');
+    label.textContent = title;
+    label.style.cssText = `font: 700 10px Arial, Helvetica, sans-serif; color: #c9b48f;`;
+    const count = document.createElement('div');
+    count.textContent = summary;
+    count.style.cssText = `font: 10px Arial, Helvetica, sans-serif; color: #8f8268; font-variant-numeric: tabular-nums; white-space: nowrap;`;
+    header.append(label, count);
+
+    const list = document.createElement('div');
+    list.style.cssText = `
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      border-top: 1px solid rgba(84, 70, 50, 0.44);
+      ${collapsed ? 'margin-top: 5px;' : ''}
+    `;
+    list.append(...rows);
+    group.append(header, list);
+    return group;
+  }
+
+  private linkEvidenceRow(
+    primary: string,
+    secondary: string,
+    badge: string,
+    badgeColor: string,
+    meta: string,
+    title: string,
+    onClick?: () => void,
+  ): HTMLElement {
+    const row = document.createElement(onClick ? 'button' : 'div');
+    if (row instanceof HTMLButtonElement) row.type = 'button';
+    row.title = title || `${primary} ${secondary}`;
+    row.style.cssText = `
+      appearance: none;
+      width: 100%;
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 5px 0;
+      border: 0;
+      border-bottom: 1px solid rgba(84, 70, 50, 0.28);
+      background: ${onClick ? 'rgba(34, 25, 18, 0.28)' : 'transparent'};
+      color: inherit;
+      cursor: ${onClick ? 'pointer' : 'default'};
+      text-align: left;
+      text-shadow: ${TEXT_SHADOW};
+    `;
+    if (onClick) {
+      const normalBackground = row.style.background;
+      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(84, 70, 50, 0.34)'; });
+      row.addEventListener('mouseleave', () => { row.style.background = normalBackground; });
+      row.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      });
+    }
+
+    const text = document.createElement('div');
+    text.style.cssText = `min-width: 0; display: flex; flex-direction: column; gap: 1px;`;
+    const name = document.createElement('div');
+    name.textContent = primary;
+    name.style.cssText = `min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f4ded5; font: 700 11px Arial, Helvetica, sans-serif;`;
+    const detail = document.createElement('div');
+    detail.textContent = secondary;
+    detail.style.cssText = `min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #a99573; font: 10px Arial, Helvetica, sans-serif; font-variant-numeric: tabular-nums;`;
+    text.append(name, detail);
+
+    const aside = document.createElement('div');
+    aside.style.cssText = `display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 64px;`;
+    const tag = document.createElement('div');
+    tag.textContent = badge;
+    tag.style.cssText = `
+      max-width: 88px;
+      padding: 2px 5px;
+      border: 1px solid rgba(220, 190, 140, 0.18);
+      border-radius: 2px;
+      background: ${badgeColor};
+      color: #f4ded5;
+      font: 800 9px Arial, Helvetica, sans-serif;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    `;
+    aside.appendChild(tag);
+    if (meta) {
+      const metaEl = document.createElement('div');
+      metaEl.textContent = meta;
+      metaEl.style.cssText = `max-width: 116px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8f8268; font: 9px Arial, Helvetica, sans-serif; font-variant-numeric: tabular-nums;`;
+      aside.appendChild(metaEl);
+    }
+
+    row.append(text, aside);
+    return row;
+  }
+
   private summaryStringArray(summary: Record<string, unknown> | null, key: string): string[] {
     const value = summary?.[key];
     return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
@@ -3619,6 +4401,18 @@ export class AdminPanel {
   private summaryNumber(summary: Record<string, unknown> | null, key: string): number | null {
     const value = summary?.[key];
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  private averageAccountMetric(read: (account: AdminBotAccount) => number | null): number | null {
+    const values = this.accounts
+      .map(read)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    if (values.length === 0) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }
+
+  private averageSummaryNumber(key: string): number | null {
+    return this.averageAccountMetric((account) => this.summaryNumber(account.lastSessionSummary, key));
   }
 
   private summaryNumberRecord(summary: Record<string, unknown> | null, key: string): Record<string, number> {
@@ -3631,10 +4425,10 @@ export class AdminPanel {
     return out;
   }
 
-  private truncateCell(text: string): HTMLDivElement {
+  private truncateCell(text: string, title = text): HTMLDivElement {
     const cell = document.createElement('div');
     cell.textContent = text;
-    cell.title = text;
+    cell.title = title;
     cell.style.cssText = `min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; align-self: center;`;
     return cell;
   }
@@ -3813,26 +4607,55 @@ export class AdminPanel {
     return String(webgl.unmaskedRenderer ?? webgl.renderer ?? 'unknown');
   }
 
+  private diagnosticDeviceSummary(entry: ClientDiagnosticLogEntry): string {
+    const browser = this.recordObject(this.diagnosticPayload(entry), 'browser');
+    return [
+      this.diagnosticBrowser(entry),
+      this.formatBrowserPlatform(browser),
+      this.formatCpuMemory(browser),
+    ].filter(part => part && part !== '-').join(' · ') || this.diagnosticRenderer(entry);
+  }
+
   private diagnosticBrowser(entry: ClientDiagnosticLogEntry): string {
     const payload = this.diagnosticPayload(entry);
     const browser = this.recordObject(payload, 'browser');
     if (browser.brave === true) return 'Brave';
     const uaData = this.recordObject(browser, 'userAgentData');
-    const brands = uaData.brands;
-    if (Array.isArray(brands)) {
-      const brandNames = brands
-        .map(brand => brand && typeof brand === 'object' && !Array.isArray(brand) ? String((brand as Record<string, unknown>).brand ?? '') : '')
-        .filter(Boolean);
-      if (brandNames.length > 0) return brandNames.join(', ');
-    }
+    const brands = this.formatBrandList(uaData.brands);
+    if (brands !== '-') return brands;
     const ua = String(browser.userAgent ?? '');
     if (ua.includes('Edg/')) return 'Edge';
     if (ua.includes('Chrome/')) return 'Chrome';
     return String(browser.platform ?? 'unknown');
   }
 
+  private diagnosticBrowserFull(entry: ClientDiagnosticLogEntry): string {
+    const browser = this.recordObject(this.diagnosticPayload(entry), 'browser');
+    const highEntropy = this.recordObject(browser, 'userAgentDataHighEntropy');
+    const uaData = this.recordObject(browser, 'userAgentData');
+    const brands = this.formatBrandList(highEntropy.fullVersionList ?? uaData.brands);
+    if (browser.brave === true) return brands === '-' ? 'Brave' : `Brave / ${brands}`;
+    return brands === '-' ? this.diagnosticBrowser(entry) : brands;
+  }
+
+  private formatBrandList(value: unknown): string {
+    if (!Array.isArray(value)) return '-';
+    const brands = value
+      .map((brand) => {
+        if (!brand || typeof brand !== 'object' || Array.isArray(brand)) return '';
+        const record = brand as Record<string, unknown>;
+        const name = String(record.brand ?? '').trim();
+        if (!name || name.includes('Not)A;Brand')) return '';
+        const version = String(record.version ?? '').trim();
+        return version ? `${name} ${version}` : name;
+      })
+      .filter(Boolean);
+    return brands.length > 0 ? brands.join(', ') : '-';
+  }
+
   private diagnosticEventLabel(event: string): string {
     switch (event) {
+      case 'client_environment': return 'Environment';
       case 'client_low_fps_snapshot': return 'Low FPS';
       case 'client_low_fps_post_scale_snapshot': return 'Post-scale FPS';
       case 'client_frame_spike': return 'Frame spike';
@@ -3845,7 +4668,9 @@ export class AdminPanel {
   }
 
   private diagnosticEventPill(event: string): HTMLDivElement {
-    const color = event === 'client_low_fps_snapshot'
+    const color = event === 'client_environment'
+      ? '#2f5f8f'
+      : event === 'client_low_fps_snapshot'
       ? '#8f2f28'
       : event === 'client_low_fps_post_scale_snapshot'
         ? '#8f6d2d'
@@ -3862,7 +4687,7 @@ export class AdminPanel {
   }
 
   private eventTypeLabel(type: string): string {
-    return GAME_EVENT_TYPES.find(config => config.type === type)?.label ?? type.replace(/_/g, ' ');
+    return GAME_EVENT_TYPES.find(config => config.type === type || config.types?.includes(type))?.label ?? type.replace(/_/g, ' ');
   }
 
   private eventTypeColor(type: string): string {
@@ -3880,7 +4705,9 @@ export class AdminPanel {
       case 'npc_kill':
       case 'npc_drop':
         return '#5f4930';
+      case 'skilling':
       case 'harvest':
+      case 'firemaking':
       case 'item_pickup':
       case 'bonus_loot':
       case 'chest_loot':
@@ -3942,6 +4769,34 @@ export class AdminPanel {
     return cell;
   }
 
+  private compareMetricCell(label: string, value: string, average: string, delta = ''): HTMLDivElement {
+    const cell = document.createElement('div');
+    cell.style.cssText = `
+      min-width: 0;
+      padding: 6px 7px;
+      background: rgba(10, 7, 5, 0.46);
+      border: 1px solid rgba(84, 70, 50, 0.52);
+      box-sizing: border-box;
+    `;
+    const labelEl = document.createElement('div');
+    labelEl.textContent = label;
+    labelEl.style.cssText = `font-size: 9px; color: #a99573; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`;
+    const valueEl = document.createElement('div');
+    valueEl.textContent = value;
+    valueEl.title = `${label}: ${value} · avg ${average}${delta}`;
+    valueEl.style.cssText = `font-size: 12px; color: #f4ded5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums;`;
+    const averageEl = document.createElement('div');
+    averageEl.textContent = `avg ${average}${delta}`;
+    averageEl.style.cssText = `margin-top: 1px; font-size: 9px; color: #8f8268; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums;`;
+    cell.append(labelEl, valueEl, averageEl);
+    return cell;
+  }
+
+  private compareDelta(value: number | null, average: number | null): string {
+    if (value === null || average === null || !Number.isFinite(value) || !Number.isFinite(average) || average <= 0) return '';
+    return ` · ${(value / average).toFixed(1)}x`;
+  }
+
   private detailSection(title: string, content: HTMLElement): HTMLDivElement {
     const section = document.createElement('div');
     section.style.cssText = `
@@ -3962,6 +4817,31 @@ export class AdminPanel {
       font: 700 11px Arial, Helvetica, sans-serif;
       letter-spacing: 0;
     `;
+    section.append(heading, content);
+    return section;
+  }
+
+  private detailFoldout(title: string, content: HTMLElement, open = false): HTMLDetailsElement {
+    const section = document.createElement('details');
+    section.open = open;
+    section.style.cssText = `
+      min-width: 0;
+      padding: 8px;
+      border: 1px solid rgba(84, 70, 50, 0.5);
+      border-left: 3px solid rgba(154, 108, 63, 0.62);
+      background: rgba(20, 14, 10, 0.5);
+      box-sizing: border-box;
+    `;
+    const heading = document.createElement('summary');
+    heading.textContent = title;
+    heading.style.cssText = `
+      color: #c9b48f;
+      cursor: pointer;
+      font: 700 11px Arial, Helvetica, sans-serif;
+      letter-spacing: 0;
+      list-style-position: inside;
+    `;
+    content.style.marginTop = '6px';
     section.append(heading, content);
     return section;
   }
@@ -4090,6 +4970,14 @@ export class AdminPanel {
     });
   }
 
+  private formatShortTime(unixSeconds: number | null): string {
+    if (!unixSeconds) return '-';
+    const date = new Date(unixSeconds * 1000);
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${date.getMonth() + 1}/${date.getDate()} ${hours}:${minutes}`;
+  }
+
   private formatClock(unixSeconds: number | null): string {
     if (!unixSeconds) return '-';
     return new Date(unixSeconds * 1000).toLocaleTimeString(undefined, {
@@ -4097,6 +4985,21 @@ export class AdminPanel {
       minute: '2-digit',
       second: '2-digit',
     });
+  }
+
+  private formatEventClock(unixSeconds: number | null): string {
+    if (!unixSeconds) return '-';
+    const date = new Date(unixSeconds * 1000);
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${hours}:${minutes}:${seconds}`;
+  }
+
+  private formatEventTime(unixSeconds: number | null): string {
+    if (!unixSeconds) return '-';
+    const date = new Date(unixSeconds * 1000);
+    return `${date.getMonth() + 1}/${date.getDate()} ${this.formatEventClock(unixSeconds)}`;
   }
 
   private formatDiagnosticClock(entry: ClientDiagnosticLogEntry): string {
@@ -4114,11 +5017,113 @@ export class AdminPanel {
     return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : '-';
   }
 
+  private formatDiagnosticShortDate(entry: ClientDiagnosticLogEntry): string {
+    const timestamp = Date.parse(entry.ts);
+    if (!Number.isFinite(timestamp)) return '-';
+    const date = new Date(timestamp);
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${date.getMonth() + 1}/${date.getDate()} ${hours}:${minutes}`;
+  }
+
   private formatLocation(event: GameEventLogEntry): string {
     if (!event.mapLevel) return '-';
     const x = event.x == null ? '?' : event.x.toFixed(1);
     const z = event.z == null ? '?' : event.z.toFixed(1);
     return `${event.mapLevel} F${event.floor ?? 0} ${x},${z}`;
+  }
+
+  private formatUnknown(value: unknown): string {
+    if (value === null || value === undefined || value === '') return '-';
+    return String(value);
+  }
+
+  private formatBoolean(value: unknown): string {
+    if (value === true) return 'yes';
+    if (value === false) return 'no';
+    return '-';
+  }
+
+  private formatBrowserPlatform(browser: Record<string, unknown>): string {
+    const uaData = this.recordObject(browser, 'userAgentData');
+    const highEntropy = this.recordObject(browser, 'userAgentDataHighEntropy');
+    return this.formatUnknown(highEntropy.platform ?? uaData.platform ?? browser.platform);
+  }
+
+  private formatBrowserArchitecture(browser: Record<string, unknown>): string {
+    const highEntropy = this.recordObject(browser, 'userAgentDataHighEntropy');
+    const architecture = this.formatUnknown(highEntropy.architecture);
+    const bitness = this.formatUnknown(highEntropy.bitness);
+    if (architecture === '-' && bitness === '-') return '-';
+    return bitness === '-' ? architecture : `${architecture} ${bitness}-bit`;
+  }
+
+  private formatCpuMemory(browser: Record<string, unknown>): string {
+    const cores = this.recordNumber(browser, 'hardwareConcurrency');
+    const memory = this.recordNumber(browser, 'deviceMemory');
+    return [
+      cores === null ? null : `${this.formatNumber(cores)} cores`,
+      memory === null ? null : `${this.formatRate(memory)} GB`,
+    ].filter(Boolean).join(', ') || '-';
+  }
+
+  private formatScreen(browser: Record<string, unknown>): string {
+    const screen = this.recordObject(browser, 'screen');
+    const width = this.recordNumber(screen, 'width');
+    const height = this.recordNumber(screen, 'height');
+    const colorDepth = this.recordNumber(screen, 'colorDepth');
+    if (width === null || height === null) return '-';
+    return `${Math.round(width)}x${Math.round(height)}${colorDepth === null ? '' : `, ${Math.round(colorDepth)}-bit`}`;
+  }
+
+  private formatWindow(browser: Record<string, unknown>): string {
+    const win = this.recordObject(browser, 'window');
+    const innerWidth = this.recordNumber(win, 'innerWidth');
+    const innerHeight = this.recordNumber(win, 'innerHeight');
+    const outerWidth = this.recordNumber(win, 'outerWidth');
+    const outerHeight = this.recordNumber(win, 'outerHeight');
+    if (innerWidth === null || innerHeight === null) return '-';
+    const inner = `${Math.round(innerWidth)}x${Math.round(innerHeight)}`;
+    return outerWidth === null || outerHeight === null ? inner : `${inner} / ${Math.round(outerWidth)}x${Math.round(outerHeight)}`;
+  }
+
+  private formatVisualViewport(browser: Record<string, unknown>): string {
+    const viewport = this.recordObject(browser, 'visualViewport');
+    const width = this.recordNumber(viewport, 'width');
+    const height = this.recordNumber(viewport, 'height');
+    const scale = this.recordNumber(viewport, 'scale');
+    if (width === null || height === null) return '-';
+    return `${Math.round(width)}x${Math.round(height)}${scale === null ? '' : ` @ ${this.formatRate(scale)}x`}`;
+  }
+
+  private formatConnection(browser: Record<string, unknown>): string {
+    const connection = this.recordObject(browser, 'connection');
+    const type = this.formatUnknown(connection.effectiveType ?? connection.type);
+    const downlink = this.recordNumber(connection, 'downlink');
+    const rtt = this.recordNumber(connection, 'rtt');
+    const parts = [
+      type === '-' ? null : type,
+      downlink === null ? null : `${this.formatRate(downlink)} Mbps`,
+      rtt === null ? null : `${this.formatNumber(rtt)} ms`,
+      connection.saveData === true ? 'save-data' : null,
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(', ') : '-';
+  }
+
+  private formatBattery(browser: Record<string, unknown>): string {
+    const battery = this.recordObject(browser, 'battery');
+    const level = this.recordNumber(battery, 'level');
+    if (level === null && battery.charging === undefined) return '-';
+    return [
+      level === null ? null : this.formatPercent(level),
+      battery.charging === true ? 'charging' : battery.charging === false ? 'not charging' : null,
+    ].filter(Boolean).join(', ') || '-';
+  }
+
+  private formatLanguages(browser: Record<string, unknown>): string {
+    const languages = browser.languages;
+    if (Array.isArray(languages) && languages.length > 0) return languages.map(String).join(', ');
+    return this.formatUnknown(browser.language);
   }
 
   private formatNullableNumber(value: number | null): string {

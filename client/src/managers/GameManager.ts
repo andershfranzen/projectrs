@@ -878,6 +878,7 @@ export class GameManager {
   private lowFpsDiagnosticFrames: number = 0;
   private lowFpsDiagnosticSent: boolean = false;
   private lowFpsRendererWarningSent: boolean = false;
+  private clientEnvironmentReported: boolean = false;
   private readonly frameSpikeProfilerEnabled: boolean = isClientDiagnosticFlagEnabled(
     CLIENT_FRAME_SPIKE_PROFILER_QUERY_FLAGS,
     CLIENT_FRAME_SPIKE_PROFILER_STORAGE_KEY,
@@ -1494,6 +1495,7 @@ export class GameManager {
         z: Math.round(this.playerZ * 10) / 10,
       },
     });
+    void this.reportClientEnvironmentSnapshot();
     const resolver = this._loginOkResolver;
     this._loginOkResolver = null;
     this._loginProgress = null;
@@ -1540,6 +1542,7 @@ export class GameManager {
       this._loginSettled = false;
       this.lowFpsDiagnosticSent = false;
       this.lowFpsRendererWarningSent = false;
+      this.clientEnvironmentReported = false;
       this.resetLowFpsDiagnosticWindow();
       this._initialMapReadySent = false;
       this.suppressNextMapEntryMessage = false;
@@ -1768,6 +1771,11 @@ export class GameManager {
         pixelDepth: window.screen.pixelDepth,
         orientation: screenOrientation,
       } : null,
+      maxTouchPoints: nav.maxTouchPoints,
+      cookieEnabled: nav.cookieEnabled,
+      doNotTrack: nav.doNotTrack ?? null,
+      webdriver: nav.webdriver === true,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? null,
     };
   }
 
@@ -1822,6 +1830,43 @@ export class GameManager {
       await this.enrichBrowserDiagnostics(browser as Record<string, unknown>);
     }
     return snapshot;
+  }
+
+  private async reportClientEnvironmentSnapshot(): Promise<void> {
+    if (this.clientEnvironmentReported || this.destroyed) return;
+    this.clientEnvironmentReported = true;
+    const canvas = this.engine.getRenderingCanvas();
+    const browser = this.getBrowserDiagnostics();
+    const webgl = this.getWebGlDiagnostics();
+    const dpr = typeof window === 'undefined' ? 1 : window.devicePixelRatio;
+    await this.enrichBrowserDiagnostics(browser);
+    this.reportClientLog('client_environment', {
+      protocolVersion: PROTOCOL_VERSION,
+      currentMap: this.chunkManager.getMapId(),
+      currentFloor: this.currentFloor,
+      player: {
+        x: Math.round(this.playerX * 10) / 10,
+        z: Math.round(this.playerZ * 10) / 10,
+      },
+      renderScale: this.renderHardwareScalingLevel,
+      baseRenderScale: this.baseHardwareScalingLevel,
+      framePace: {
+        mode: this.framePaceMode,
+        estimatedDisplayHz: this.framePaceEstimatedHz === null ? null : Number(this.framePaceEstimatedHz.toFixed(1)),
+        targetRenderFps: this.framePaceTargetIntervalMs === null ? null : Number((1000 / this.framePaceTargetIntervalMs).toFixed(1)),
+      },
+      canvas: canvas ? {
+        width: canvas.width,
+        height: canvas.height,
+        clientWidth: canvas.clientWidth,
+        clientHeight: canvas.clientHeight,
+        devicePixelRatio: dpr,
+        renderScale: canvas.dataset.renderScale,
+      } : null,
+      diagnosticFlags: this.getPerformanceDiagnosticFlags(webgl, browser, canvas),
+      browser,
+      webgl,
+    });
   }
 
   private getPerformanceDiagnosticFlags(

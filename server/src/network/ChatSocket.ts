@@ -232,6 +232,22 @@ export function adminTeleportPlayerToPlayer(world: World, traveler: Player, dest
   });
 }
 
+export function adminTeleportPlayerToLocation(
+  world: World,
+  traveler: Player,
+  targetMap: string,
+  targetX: number,
+  targetZ: number,
+  targetFloor: number,
+): void {
+  preparePlayerForAdminTeleport(traveler, world);
+  if (traveler.currentMapLevel === targetMap) {
+    world.teleportPlayer(traveler, targetX, targetZ, undefined, targetFloor);
+    return;
+  }
+  world.handleMapTransition(traveler, { targetMap, targetX, targetZ, targetFloor });
+}
+
 function sendSocialPresence(accountId: number, username: string, online: boolean, subjectIsStaff: boolean = false): void {
   const payload = JSON.stringify({ type: 'social_presence', accountId, username, online });
   for (const sock of chatSockets) {

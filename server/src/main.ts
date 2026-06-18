@@ -1308,6 +1308,7 @@ import {
   type GameSocketData,
 } from './network/GameSocket';
 import {
+  adminTeleportPlayerToLocation,
   adminTeleportPlayerToPlayer,
   handleChatSocketOpen,
   handleChatSocketMessage,
@@ -3905,6 +3906,34 @@ async function rawFetch(req: Request, server: Server<SocketData>): Promise<Respo
         generatedAt: Math.floor(Date.now() / 1000),
         ...db.getAdminPlaytimeTimeline(days, bucketMinutes),
       }, 200, { 'Cache-Control': 'no-store' });
+    }
+
+    if (url.pathname === '/api/admin/teleport-location' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { mapLevel?: unknown; floor?: unknown; x?: unknown; z?: unknown };
+        const mapLevel = String(body.mapLevel ?? '').trim();
+        const floor = Math.floor(Number(body.floor ?? 0));
+        const x = Number(body.x);
+        const z = Number(body.z);
+        if (!mapLevel || !Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(floor)) {
+          return jsonResponse({ ok: false, error: 'Invalid location' }, 400);
+        }
+        const adminPlayer = world.getActivePlayerByAccountId(session.accountId);
+        if (!adminPlayer) return jsonResponse({ ok: false, error: 'You are not online in game' }, 409);
+        adminTeleportPlayerToLocation(world, adminPlayer, mapLevel, x, z, floor);
+        audit({
+          type: 'admin',
+          tick: world.getCurrentTick(),
+          accountId: session.accountId,
+          details: { action: 'admin_game_log_teleport', mapLevel, floor, x, z },
+        });
+        return jsonResponse({ ok: true }, 200, { 'Cache-Control': 'no-store' });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
     }
 
     if (url.pathname === '/api/admin/game-events' && req.method === 'GET') {
