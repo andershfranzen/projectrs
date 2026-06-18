@@ -77,7 +77,8 @@ function makeManager(
   manager.isSkilling = false;
   manager.localCombatWalkUntilMs = 0;
   manager.pendingFaceTargetEntityId = -1;
-  manager.entities = { npcTargets: new Map() };
+  manager.entities = { npcTargets: new Map(), npcDefs: new Map() };
+  manager.npcDefsCache = new Map();
   manager.destMarker = null;
   manager.minimap = null;
   manager.sidePanel = null;
@@ -933,6 +934,30 @@ describe('GameManager local movement prediction', () => {
     expect(minimapDestinations).toEqual([{ x: 50.5, z: 0.5 }]);
   });
 
+  test('ground clicks split long compressed segments before sending movement', () => {
+    const { manager, sentMoves } = makeManager([], 0);
+    manager.findPathFromMovementAnchor = () => ({
+      path: [{ x: 130.5, z: 0.5 }],
+      preserveCurrentStep: false,
+    });
+
+    manager.handleGroundClick(130.5, 0.5);
+
+    expect(sentMoves).toEqual([{
+      path: [
+        { x: 64.5, z: 0.5 },
+        { x: 128.5, z: 0.5 },
+        { x: 130.5, z: 0.5 },
+      ],
+      mode: 'run',
+    }]);
+    expect(manager.path).toEqual([
+      { x: 64.5, z: 0.5 },
+      { x: 128.5, z: 0.5 },
+      { x: 130.5, z: 0.5 },
+    ]);
+  });
+
   test('ground clicks can override a server correction move lock', () => {
     const { manager, sentMoves } = makeManager([
       { x: 5.5, z: 0.5 },
@@ -1001,6 +1026,42 @@ describe('GameManager local movement prediction', () => {
     };
 
     const result = manager.findPathFromMovementAnchor(2.5, 0.5);
+
+    expect(result.preserveCurrentStep).toBe(true);
+    expect(result.path).toEqual([{ x: 1.5, z: 0.5 }, { x: 2.5, z: 0.5 }]);
+  });
+
+  test('active-step NPC interaction redirects from the predicted floor after a stair step', () => {
+    const { manager } = makeManager([{ x: 1.5, z: 0.5 }], 1);
+    manager.tileProgress = 0.5;
+    manager.playerX = 1.0;
+    manager.playerZ = 0.5;
+    manager.localPlayer.position = { x: 1.0, y: 0, z: 0.5 };
+    manager.chunkManager = {
+      ...manager.chunkManager,
+      getMapWidth: () => 8,
+      getMapHeight: () => 8,
+      getEffectiveHeight: (_x: number, _z: number, floor: number) => floor === 1 ? 3 : 0,
+      getWalkableFloorTargetsAt: (x: number, z: number) => (
+        Math.floor(x) === 1 && Math.floor(z) === 0
+          ? [{ floor: 0, y: 0 }, { floor: 1, y: 3 }]
+          : []
+      ),
+      getStairOnFloor: (x: number, z: number, floor: number) => (
+        x === 1 && z === 0 && (floor === 0 || floor === 1)
+          ? { direction: 'N', baseHeight: 0, topHeight: 3 }
+          : undefined
+      ),
+      isBlocked: (x: number, z: number) => Math.floor(x) >= 2 || Math.floor(z) !== 0,
+      isBlockedOnFloor: (x: number, z: number, floor: number) => floor !== 1 || Math.floor(z) !== 0,
+      isWallBlocked: () => false,
+      isWallBlockedOnFloor: () => false,
+    };
+
+    const result = manager.findPathToNpcInteraction(
+      123,
+      { x: 3.5, z: 0.5, floor: 1, y: 3 },
+    );
 
     expect(result.preserveCurrentStep).toBe(true);
     expect(result.path).toEqual([{ x: 1.5, z: 0.5 }, { x: 2.5, z: 0.5 }]);

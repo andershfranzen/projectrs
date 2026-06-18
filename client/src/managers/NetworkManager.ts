@@ -123,6 +123,8 @@ export class NetworkManager {
   /** Tear down + reconnect the game socket if the browser send buffer exceeds
    *  this (a stuck connection accumulating unsent frames). */
   private static readonly MAX_SEND_BUFFER_BYTES = 1_000_000;
+  private static readonly PLAYER_MOVE_RATE_WINDOW_MS = 1_000;
+  private static readonly PLAYER_MOVE_CLIENT_MAX_PER_WINDOW = 7;
   private gameSocket: WebSocket | null = null;
   private chatSocket: WebSocket | null = null;
   private handlers: Map<ServerOpcode, MessageHandler[]> = new Map();
@@ -148,6 +150,7 @@ export class NetworkManager {
   private sendCipherCounter: number = 0;
   private lastRecvCipherCounter: number = -1;
   private sendCipherQueue: Promise<void> = Promise.resolve();
+  private recentMoveSendTimes: number[] = [];
   private recvCipherQueue: Promise<void> = Promise.resolve();
   // Inbound decrypt backpressure: if decryption can't keep up, the chained queue
   // accumulates continuations + captured ArrayBuffers unbounded. Bounded by total
@@ -606,6 +609,17 @@ export class NetworkManager {
 
     if (path.length > 50) return false;
 
+    const shouldRateLimit = path.length > 0;
+    const now = performance.now();
+    if (shouldRateLimit) {
+      this.recentMoveSendTimes = this.recentMoveSendTimes.filter(
+        sentAt => now - sentAt <= NetworkManager.PLAYER_MOVE_RATE_WINDOW_MS,
+      );
+      if (this.recentMoveSendTimes.length >= NetworkManager.PLAYER_MOVE_CLIENT_MAX_PER_WINDOW) {
+        return false;
+      }
+    }
+
     // Encode: [opcode, pathLength, x1*10, z1*10, x2*10, z2*10, ..., modeIdx?]
     // modeIdx is optional for compatibility with pre-run-mode-bound servers.
     const values = [path.length];
@@ -614,7 +628,9 @@ export class NetworkManager {
       values.push(Math.round(path[i].z * 10));
     }
     if (mode !== undefined) values.push(movementModeIndex(mode));
-    return this.sendRaw(encodePacket(ClientOpcode.PLAYER_MOVE, ...values));
+    const sent = this.sendRaw(encodePacket(ClientOpcode.PLAYER_MOVE, ...values));
+    if (sent && shouldRateLimit) this.recentMoveSendTimes.push(now);
+    return sent;
   }
 
   sendMovementMode(mode: MovementMode): boolean {

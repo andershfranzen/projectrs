@@ -52,4 +52,56 @@ describe('GameManager login movement mode bootstrap', () => {
     expect(localModes).toEqual(['run']);
     expect(sideModes).toEqual(['run']);
   });
+
+  test('login readiness does not recompute the server-authored spawn height', async () => {
+    const manager = Object.create(GameManager.prototype) as any;
+    const positions: Array<{ x: number; y: number; z: number }> = [];
+    const inputYs: number[] = [];
+    let resolved = false;
+    const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+    (globalThis as any).requestAnimationFrame = (callback: FrameRequestCallback): number => {
+      callback(performance.now());
+      return 1;
+    };
+
+    manager._loginSettled = false;
+    manager._loginReadySeq = 7;
+    manager._loginOkResolver = () => { resolved = true; };
+    manager._loginProgress = () => {};
+    manager._loginMapReady = Promise.resolve();
+    manager._loginBootstrapPending = null;
+    manager._pendingLoginGearLoads = [];
+    manager.destroyed = false;
+    manager.playerX = 10.5;
+    manager.playerZ = 20.5;
+    manager.localAppearance = null;
+    manager.baseHardwareScalingLevel = 1;
+    manager.chunkManager = { getMapId: () => 'kcmap' };
+    manager.localPlayer = {
+      position: { x: 10.5, y: 4.25, z: 20.5 },
+      whenReady: () => Promise.resolve(),
+      applyAppearance: () => {},
+      setPositionXYZ: (x: number, y: number, z: number) => {
+        positions.push({ x, y, z });
+      },
+    };
+    manager.inputManager = {
+      setEnabled: () => {},
+      setPlayerY: (y: number) => { inputYs.push(y); },
+    };
+    manager.getHeight = () => {
+      throw new Error('login readiness must not recompute spawn height');
+    };
+    manager.setRenderHardwareScalingLevel = () => {};
+
+    try {
+      await manager.tryResolveLoginReady(7);
+    } finally {
+      (globalThis as any).requestAnimationFrame = previousRequestAnimationFrame;
+    }
+
+    expect(resolved).toBe(true);
+    expect(positions).toEqual([]);
+    expect(inputYs).toEqual([]);
+  });
 });

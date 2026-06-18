@@ -163,3 +163,49 @@ export function collectCompressedRouteTileKeys(
 
   return tiles;
 }
+
+export function splitLongCompressedPathSegments(
+  start: PathTilePoint,
+  path: readonly PathTilePoint[],
+  maxSegmentTiles: number,
+): PathTilePoint[] {
+  const maxTiles = Math.max(1, Math.floor(maxSegmentTiles));
+  const result: PathTilePoint[] = [];
+  let sx = tileX(start);
+  let sz = tileZ(start);
+
+  for (const waypoint of path) {
+    const ex = tileX(waypoint);
+    const ez = tileZ(waypoint);
+    const dxTotal = ex - sx;
+    const dzTotal = ez - sz;
+    const dx = Math.sign(dxTotal);
+    const dz = Math.sign(dzTotal);
+    const distance = Math.max(Math.abs(dxTotal), Math.abs(dzTotal));
+
+    if (
+      distance === 0
+      || (dx !== 0 && dz !== 0 && Math.abs(dxTotal) !== Math.abs(dzTotal))
+      || distance <= maxTiles
+    ) {
+      result.push({ x: waypoint.x, z: waypoint.z });
+      sx = ex;
+      sz = ez;
+      continue;
+    }
+
+    let advanced = maxTiles;
+    while (advanced < distance) {
+      result.push({
+        x: sx + dx * advanced + 0.5,
+        z: sz + dz * advanced + 0.5,
+      });
+      advanced += maxTiles;
+    }
+    result.push({ x: waypoint.x, z: waypoint.z });
+    sx = ex;
+    sz = ez;
+  }
+
+  return result;
+}

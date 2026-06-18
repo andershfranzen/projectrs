@@ -7,6 +7,7 @@ import {
   compressedRouteSegmentIndexForTile,
   compressedRouteStepIndexForTile,
   samePathTile,
+  splitLongCompressedPathSegments,
   tileOnCompressedPathSegment,
 } from './movementPath';
 
@@ -71,6 +72,28 @@ test('collectCompressedRouteTileKeys emits every unit tile on a compressed route
   );
 
   expect([...tiles]).toEqual(['0,0', '1,0', '2,0', '3,1', '4,2']);
+});
+
+test('splitLongCompressedPathSegments inserts same-direction waypoints under a segment cap', () => {
+  expect(splitLongCompressedPathSegments(
+    { x: 0.5, z: 0.5 },
+    [{ x: 130.5, z: 0.5 }],
+    64,
+  )).toEqual([
+    { x: 64.5, z: 0.5 },
+    { x: 128.5, z: 0.5 },
+    { x: 130.5, z: 0.5 },
+  ]);
+
+  expect(splitLongCompressedPathSegments(
+    { x: 0.5, z: 0.5 },
+    [{ x: 130.5, z: 130.5 }],
+    64,
+  )).toEqual([
+    { x: 64.5, z: 64.5 },
+    { x: 128.5, z: 128.5 },
+    { x: 130.5, z: 130.5 },
+  ]);
 });
 
 test('samePathTile compares by tile, not fractional offset', () => {

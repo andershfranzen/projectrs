@@ -66,7 +66,7 @@ import { startupTrace } from '../debug/StartupTrace';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, ActionCapabilityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, collectCompressedRouteTileKeys, compressedPathTileSteps, compressedPathTileStepsFromIndex, compressedRouteProgressSteps, compressedRouteSegmentIndexForTile, compressedRouteStepIndexForTile, getActiveMovementStep, normalizeMovementRouteForActiveStep, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, movementModeFromIndex, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode, type ActionCapabilityWire, type ActionCapabilityProof } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, ActionCapabilityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_DIRECT_ATTACK, encodePacket, encodeQuantityPacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, FIRE_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintBounds, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, collectCompressedRouteTileKeys, compressedPathTileSteps, compressedPathTileStepsFromIndex, compressedRouteProgressSteps, compressedRouteSegmentIndexForTile, compressedRouteStepIndexForTile, splitLongCompressedPathSegments, getActiveMovementStep, normalizeMovementRouteForActiveStep, findPathToReach, canReachGroundItemTile, GROUND_ITEM_SURFACE_REACH_MIN_HEIGHT, isTileInsidePathingCollisionBox, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, isWalkHerePrimarySceneryAssetId, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, isSoftwareWebGlRenderer, isStableLowFrameCadence as sharedIsStableLowFrameCadence, summarizeFramePacing, effectiveMovementModeForPath, movementModeFromIndex, movementTilesPerSecond, resolveNpcDisplayNameForAppearance, type FramePacingSample, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker, type EquipSlot, type MovementMode, type ActionCapabilityWire, type ActionCapabilityProof } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -83,6 +83,7 @@ const NPC_LOD_HYSTERESIS_TILES = 4;
 const NPC_TARGET_PATH_MAX_SEARCH_TILES = 4096;
 const NPC_TARGET_PATH_MAX_WAYPOINTS = 50;
 const PLAYER_MOVE_MAX_WAYPOINTS = 50;
+const PLAYER_MOVE_MAX_SEGMENT_TILES = 64;
 const LOCAL_COMBAT_REASSERT_MS = TICK_RATE * 5;
 const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
@@ -165,6 +166,19 @@ interface FrameRateSample {
   fps: number;
   framePacing: FramePacingSample | null;
 }
+
+type LocalUnitStep = {
+  from: { x: number; z: number };
+  target: { x: number; z: number };
+  progress: number;
+};
+
+type MovementPathAnchor = {
+  activeStep: LocalUnitStep | null;
+  start: { x: number; z: number };
+  floor: number;
+  y: number;
+};
 
 const ROOF_HOVER_STRUCTURAL_SAMPLE_HEIGHT_OFFSETS = [1.1, 1.8, 2.5] as const;
 const NPC_FACING_NONE = -32768;
@@ -1411,11 +1425,6 @@ export class GameManager {
     if (this.localAppearance && this.localPlayer) this.localPlayer.applyAppearance(this.localAppearance);
 
     this._loginProgress?.(0.78, 'Loading saved location');
-    if (this.localPlayer) {
-      const groundY = this.getHeight(this.playerX, this.playerZ);
-      this.localPlayer.setPositionXYZ(this.playerX, groundY, this.playerZ);
-      this.inputManager.setPlayerY(groundY);
-    }
 
     this._loginProgress?.(0.86, 'Loading character state');
     await this.waitForLoginBootstrapPackets(seq);
@@ -6107,7 +6116,6 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.PATH_TRUNCATED, (_op, v) => {
-      this.clearControlledMoveLock();
       // Server validated our requested path short — collision/wall edge
       // somewhere mid-path. Trim our local walk so it ends at the last
       // reachable tile center the server reports. Without this, the visual
@@ -6117,6 +6125,8 @@ export class GameManager {
       const lastZ = (v[1] ?? 0) / 10;
       const authoritativeFloor = Number.isInteger(v[2]) ? Math.trunc(v[2]!) : null;
       const authoritativeY = Number.isFinite(v[3]) ? v[3]! / 10 : null;
+      if (this.shouldIgnoreRedirectStaleLocalAuthority(lastX, lastZ)) return;
+      this.clearControlledMoveLock();
       this.applyPathTruncated(lastX, lastZ, authoritativeFloor, authoritativeY);
     });
 
@@ -6125,6 +6135,8 @@ export class GameManager {
       for (let i = 0; i + 1 < v.length; i += 2) {
         path.push({ x: v[i] / 10, z: v[i + 1] / 10 });
       }
+      const final = path[path.length - 1];
+      if (final && this.shouldIgnoreRedirectStaleLocalAuthority(final.x, final.z)) return;
       this.armControlledMoveLock(path);
       this.startLocalPredictedPath(path);
     });
@@ -8906,7 +8918,7 @@ export class GameManager {
     return false;
   }
 
-  private getActiveUnitStep(): { from: { x: number; z: number }; target: { x: number; z: number }; progress: number } | null {
+  private getActiveUnitStep(): LocalUnitStep | null {
     return getActiveMovementStep({
       anchor: this.tileFrom,
       path: this.path,
@@ -8925,6 +8937,31 @@ export class GameManager {
     return this.pathIndex < this.path.length
       ? compressedPathTileStepsFromIndex(this.tileFrom, this.path, this.pathIndex)
       : 0;
+  }
+
+  private getMovementPathAnchor(): MovementPathAnchor {
+    const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
+    const currentY = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
+    if (!activeStep) {
+      return {
+        activeStep: null,
+        start: { x: this.playerX, z: this.playerZ },
+        floor: this.currentFloor,
+        y: currentY,
+      };
+    }
+
+    const layer = this.resolveLocalMovementLayerAt(activeStep.target.x, activeStep.target.z, {
+      floor: this.currentFloor,
+      y: currentY,
+      lastFloorChangeTile: -1,
+    });
+    return {
+      activeStep,
+      start: activeStep.target,
+      floor: layer.floor,
+      y: layer.y,
+    };
   }
 
   private activeLocalStepMode(pathUnitSteps?: number, remainingUnitSteps?: number): MovementMode {
@@ -9020,22 +9057,17 @@ export class GameManager {
   }
 
   private findPathFromMovementAnchor(goalX: number, goalZ: number, maxSteps: number = 200): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
-    const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
+    const anchor = this.getMovementPathAnchor();
+    const activeStep = anchor.activeStep;
     if (activeStep) {
-      const currentY = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
-      const layer = this.resolveLocalMovementLayerAt(activeStep.target.x, activeStep.target.z, {
-        floor: this.currentFloor,
-        y: currentY,
-        lastFloorChangeTile: -1,
-      });
       const tailMaxSteps = Math.max(0, maxSteps - 1);
       const tail = this.findPathOnMovementLayer(
-        activeStep.target.x,
-        activeStep.target.z,
+        anchor.start.x,
+        anchor.start.z,
         goalX,
         goalZ,
-        layer.floor,
-        layer.y,
+        anchor.floor,
+        anchor.y,
         tailMaxSteps,
       );
       if (tail.length === 0) {
@@ -9049,15 +9081,14 @@ export class GameManager {
         preserveCurrentStep: true,
       };
     }
-    const currentY = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
     return {
       path: this.findPathOnMovementLayer(
-        this.playerX,
-        this.playerZ,
+        anchor.start.x,
+        anchor.start.z,
         goalX,
         goalZ,
-        this.currentFloor,
-        currentY,
+        anchor.floor,
+        anchor.y,
         maxSteps,
       ),
       preserveCurrentStep: false,
@@ -9093,13 +9124,14 @@ export class GameManager {
     target: { x: number; z: number; floor: number; y: number },
     fromX: number,
     fromZ: number,
+    floor: number = this.currentFloor,
+    currentY: number = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor),
   ): boolean {
     const sameTile = Math.floor(fromX) === Math.floor(this.playerX)
       && Math.floor(fromZ) === Math.floor(this.playerZ);
-    const currentY = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
     const sourceBaseY = sameTile
       ? currentY
-      : this.getHeightAtFloor(fromX, fromZ, this.currentFloor, currentY);
+      : this.getHeightAtFloor(fromX, fromZ, floor, currentY);
     const sourceY = sourceBaseY + RANGED_PROJECTILE_SOURCE_HEIGHT;
     const targetY = target.y + RANGED_PROJECTILE_TARGET_HEIGHT;
     const size = this.getNpcTileSize(npcEntityId);
@@ -9109,7 +9141,7 @@ export class GameManager {
         fromZ,
         target.x,
         target.z,
-        this.currentFloor,
+        floor,
         sourceY,
         targetY,
       );
@@ -9123,7 +9155,7 @@ export class GameManager {
           fromZ,
           minTileX + dx + 0.5,
           minTileZ + dz + 0.5,
-          this.currentFloor,
+          floor,
           sourceY,
           targetY,
         )) {
@@ -9152,10 +9184,17 @@ export class GameManager {
     return this.isPointOnNpcInteractionTile(npcEntityId, target, this.playerX, this.playerZ);
   }
 
-  private isPointOnNpcInteractionTile(npcEntityId: number, target: { x: number; z: number }, x: number, z: number): boolean {
+  private isPointOnNpcInteractionTile(
+    npcEntityId: number,
+    target: { x: number; z: number },
+    x: number,
+    z: number,
+    floor: number = this.currentFloor,
+    y: number = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor),
+  ): boolean {
     const ptx = Math.floor(x);
     const ptz = Math.floor(z);
-    return this.getNpcInteractionTilesWithLineOfWalk(npcEntityId, target)
+    return this.getNpcInteractionTilesWithLineOfWalk(npcEntityId, target, floor, y)
       .some(tile => ptx === tile.x && ptz === tile.z);
   }
 
@@ -9202,18 +9241,23 @@ export class GameManager {
     return null;
   }
 
-  private getNpcInteractionTilesWithLineOfWalk(npcEntityId: number, target: { x: number; z: number }): { x: number; z: number }[] {
+  private getNpcInteractionTilesWithLineOfWalk(
+    npcEntityId: number,
+    target: { x: number; z: number },
+    floor: number = this.currentFloor,
+    y: number = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor),
+  ): { x: number; z: number }[] {
     const size = this.getNpcTileSize(npcEntityId);
     const footprint = getObjectFootprintTiles(target.x, target.z, { width: size });
     const hasLineOfWalk = (tileX: number, tileZ: number) => {
       for (const foot of footprint) {
         if (Math.abs(foot.x - tileX) + Math.abs(foot.z - tileZ) !== 1) continue;
-        if (!this.isWallBlockedForPath(tileX, tileZ, foot.x, foot.z)) return true;
+        if (!this.isWallBlockedForPathOnFloor(tileX, tileZ, foot.x, foot.z, floor, y)) return true;
       }
       return false;
     };
     return getObjectInteractionTiles(target.x, target.z, { width: size })
-      .filter(tile => !this.isTileBlocked(tile.x, tile.z) && hasLineOfWalk(tile.x, tile.z));
+      .filter(tile => !this.isTileBlockedOnFloorForPath(tile.x, tile.z, floor) && hasLineOfWalk(tile.x, tile.z));
   }
 
   private isPointInNpcMeleeAttackRange(
@@ -9222,10 +9266,12 @@ export class GameManager {
     x: number,
     z: number,
     range: number,
+    floor: number = this.currentFloor,
+    y: number = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor),
   ): boolean {
     const fp = this.distToNpcFootprint(npcEntityId, target, x, z);
     if (!combatRangeIncludesOffset(fp.dx, fp.dz, range, 'euclidean')) return false;
-    if (this.isPointOnNpcInteractionTile(npcEntityId, target, x, z)) return true;
+    if (this.isPointOnNpcInteractionTile(npcEntityId, target, x, z, floor, y)) return true;
 
     const tileX = Math.floor(x);
     const tileZ = Math.floor(z);
@@ -9235,7 +9281,7 @@ export class GameManager {
       const dz = foot.z - tileZ;
       if (Math.max(Math.abs(dx), Math.abs(dz)) !== 1) continue;
       if (dx === 0 && dz === 0) continue;
-      if (!this.isWallBlockedForPath(tileX, tileZ, foot.x, foot.z)) return true;
+      if (!this.isWallBlockedForPathOnFloor(tileX, tileZ, foot.x, foot.z, floor, y)) return true;
     }
     return false;
   }
@@ -9248,17 +9294,19 @@ export class GameManager {
     range: number,
     mode: 'euclidean' | 'chebyshev' | 'cardinal' | 'melee' = 'euclidean',
     requireRangedLineOfSight: boolean = false,
+    floor: number = this.currentFloor,
+    y: number = this.localPlayer?.position?.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor),
   ): boolean {
     if (mode === 'melee') {
-      return this.isPointInNpcMeleeAttackRange(npcEntityId, target, x, z, range);
+      return this.isPointInNpcMeleeAttackRange(npcEntityId, target, x, z, range, floor, y);
     }
     if (mode === 'cardinal') {
-      return this.isPointOnNpcInteractionTile(npcEntityId, target, x, z);
+      return this.isPointOnNpcInteractionTile(npcEntityId, target, x, z, floor, y);
     }
     const fp = this.distToNpcFootprint(npcEntityId, target, x, z);
     const inRange = combatRangeIncludesOffset(fp.dx, fp.dz, range, mode);
     if (!inRange) return false;
-    return !requireRangedLineOfSight || this.hasRangedLineOfSightToNpc(npcEntityId, target, x, z);
+    return !requireRangedLineOfSight || this.hasRangedLineOfSightToNpc(npcEntityId, target, x, z, floor, y);
   }
 
   private findPathToNpcInteraction(
@@ -9268,11 +9316,20 @@ export class GameManager {
     rangeMode: 'euclidean' | 'chebyshev' | 'cardinal' | 'melee' = 'cardinal',
     requireRangedLineOfSight: boolean = false,
   ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
+    const anchor = this.getMovementPathAnchor();
     const reached = (x: number, z: number): boolean =>
-      this.isPointInNpcInteractionRange(npcEntityId, target, x, z, requiredRange, rangeMode, requireRangedLineOfSight);
-
-    const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
-    const start = activeStep?.target ?? { x: this.playerX, z: this.playerZ };
+      this.isPointInNpcInteractionRange(
+        npcEntityId,
+        target,
+        x,
+        z,
+        requiredRange,
+        rangeMode,
+        requireRangedLineOfSight,
+        anchor.floor,
+        anchor.y,
+      );
+    const activeStep = anchor.activeStep;
     if (!activeStep && reached(this.playerX, this.playerZ)) {
       return { path: [], preserveCurrentStep: false };
     }
@@ -9285,13 +9342,15 @@ export class GameManager {
       && tileZ >= targetMinZ && tileZ < targetMinZ + targetSize;
 
     const path = findPathToReach({
-      startX: start.x,
-      startZ: start.z,
+      startX: anchor.start.x,
+      startZ: anchor.start.z,
       collision: {
         width: this.chunkManager.getMapWidth(),
         height: this.chunkManager.getMapHeight(),
-        isTileBlocked: (tileX, tileZ) => isTargetFootprintTile(tileX, tileZ) || this.isTileBlocked(tileX, tileZ),
-        isWallBlocked: this.isWallBlockedForPath,
+        isTileBlocked: (tileX, tileZ) => isTargetFootprintTile(tileX, tileZ)
+          || this.isTileBlockedOnFloorForPath(tileX, tileZ, anchor.floor),
+        isWallBlocked: (fromTileX, fromTileZ, toTileX, toTileZ) =>
+          this.isWallBlockedForPathOnFloor(fromTileX, fromTileZ, toTileX, toTileZ, anchor.floor, anchor.y),
       },
       maxSearchTiles: NPC_TARGET_PATH_MAX_SEARCH_TILES,
       maxWaypoints: NPC_TARGET_PATH_MAX_WAYPOINTS,
@@ -9374,9 +9433,14 @@ export class GameManager {
     if (path.length === 0) return false;
     if (this.controlledMoveUntilMs > 0) this.clearControlledMoveLock();
     const normalized = this.normalizePredictedPathForActiveStep(path, preserveCurrentStep);
-    const sendPath = normalized.path.length > PLAYER_MOVE_MAX_WAYPOINTS
-      ? normalized.path.slice(0, PLAYER_MOVE_MAX_WAYPOINTS)
-      : normalized.path;
+    const splitPath = splitLongCompressedPathSegments(
+      { x: this.playerX, z: this.playerZ },
+      normalized.path,
+      PLAYER_MOVE_MAX_SEGMENT_TILES,
+    );
+    const sendPath = splitPath.length > PLAYER_MOVE_MAX_WAYPOINTS
+      ? splitPath.slice(0, PLAYER_MOVE_MAX_WAYPOINTS)
+      : splitPath;
     if (sendPath.length === 0) return false;
     if (this.shouldCoalesceDuplicatePredictedPath(sendPath, options.coalesceDuplicateDestination ?? true)) return false;
     this.followTargetPlayerId = -1;
