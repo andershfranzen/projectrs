@@ -41,6 +41,11 @@ function itemName(itemId: number): string | null {
   return items.find(item => item.id === itemId)?.name ?? null;
 }
 
+function itemHealAmount(itemId: number): number | null {
+  const item = items.find(candidate => candidate.id === itemId);
+  return item?.healAmount ?? null;
+}
+
 function fishingSpotByHarvestItemId(itemId: number): WorldObjectDef | null {
   return objects.find(def => def.category === 'fishingspot' && def.harvestItemId === itemId) ?? null;
 }
@@ -99,6 +104,16 @@ describe('fishing data', () => {
       expect(recipe?.failureOutputItemId).toBe(burntItemId);
       expect(itemName(burntItemId)?.startsWith('Burnt ')).toBe(true);
     }
+  });
+
+  test('cooked fish heal amounts match the authored balance table', () => {
+    expect(itemHealAmount(28)).toBe(2); // Cooked Shrimp
+    expect(itemHealAmount(526)).toBe(3); // Crayfish
+    expect(itemHealAmount(561)).toBe(4); // Sardine
+    expect(itemHealAmount(535)).toBe(8); // Tuna
+    expect(itemHealAmount(559)).toBe(11); // Lobster
+    expect(itemHealAmount(563)).toBe(17); // Octopus
+    expect(itemHealAmount(548)).toBe(20); // Oarfish
   });
 
   test('tuna spot is a harpoon spot, not a bait spot', () => {

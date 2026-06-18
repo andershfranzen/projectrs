@@ -258,10 +258,10 @@
   {
     "id": 28,
     "name": "Cooked Shrimp",
-    "description": "Some cooked shrimp. Heals 3 HP.",
+    "description": "Some cooked shrimp. Heals 2 HP.",
     "stackable": false,
     "equippable": false,
-    "healAmount": 3,
+    "healAmount": 2,
     "value": 8,
     "model": "/assets/models/Food/ShrimpCooked.glb"
   },
@@ -5812,20 +5812,20 @@
   {
     "id": 535,
     "name": "Tuna",
-    "description": "A cooked tuna. Heals 12 HP.",
+    "description": "A cooked tuna. Heals 8 HP.",
     "stackable": false,
     "equippable": false,
-    "healAmount": 12,
+    "healAmount": 8,
     "value": 49,
     "model": "/assets/models/Food/TunaCooked.glb"
   },
   {
     "id": 548,
     "name": "Oarfish",
-    "description": "A cooked oarfish. Heals 25 HP.",
+    "description": "A cooked oarfish. Heals 20 HP.",
     "stackable": false,
     "equippable": false,
-    "healAmount": 25,
+    "healAmount": 20,
     "value": 162,
     "model": "/assets/models/Food/OarfishCooked.glb"
   },
@@ -5971,10 +5971,10 @@
   {
     "id": 559,
     "name": "Lobster",
-    "description": "A cooked lobster. Heals 12 HP.",
+    "description": "A cooked lobster. Heals 11 HP.",
     "stackable": false,
     "equippable": false,
-    "healAmount": 12,
+    "healAmount": 11,
     "value": 50,
     "model": "/assets/models/Food/LobsterCooked.glb"
   },
@@ -6009,10 +6009,10 @@
   {
     "id": 563,
     "name": "Octopus",
-    "description": "A cooked octopus. Heals 12 HP.",
+    "description": "A cooked octopus. Heals 17 HP.",
     "stackable": false,
     "equippable": false,
-    "healAmount": 12,
+    "healAmount": 17,
     "value": 48,
     "model": "/assets/models/Food/OctopusCooked.glb"
   },

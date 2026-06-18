@@ -35555,13 +35555,6 @@
         "size": 16
       },
       {
-        "id": "marker_mq81dwx9_103b",
-        "icon": "Fish_Icon.png",
-        "x": 363.1827205889323,
-        "z": 175.58517280065277,
-        "size": 16
-      },
-      {
         "id": "marker_mq81e82f_1kp0",
         "icon": "Dungeon_Icon.png",
         "x": 311.8126624692446,
@@ -35587,6 +35580,55 @@
         "icon": "quest icon.png",
         "x": 170.42298859744474,
         "z": 160.41669020408648,
+        "size": 16
+      },
+      {
+        "id": "marker_mqjchyn0_1ead",
+        "icon": "Fish_Icon.png",
+        "x": 357.388903478655,
+        "z": 104.8057223441104,
+        "size": 16
+      },
+      {
+        "id": "marker_mqjcijsc_1ec7",
+        "icon": "Cooking_Range_Icon_Small.png",
+        "x": 225.38347936270338,
+        "z": 158.1768129980197,
+        "size": 16
+      },
+      {
+        "id": "marker_mqjcitpw_14dp",
+        "icon": "quest icon.png",
+        "x": 152.37679462655592,
+        "z": 94.78585774067503,
+        "size": 16
+      },
+      {
+        "id": "marker_mqjcix8f_dxs",
+        "icon": "quest icon.png",
+        "x": 187.71483480606506,
+        "z": 174.898460401061,
+        "size": 16
+      },
+      {
+        "id": "marker_mqjcj0qv_n8t",
+        "icon": "Anvil_Icon_Small.png",
+        "x": 209.38181202840153,
+        "z": 152.51017577397164,
+        "size": 16
+      },
+      {
+        "id": "marker_mqjcjhxs_5y0",
+        "icon": "Fish_Icon.png",
+        "x": 366.0972602304752,
+        "z": 177.8667081616614,
+        "size": 16
+      },
+      {
+        "id": "marker_mqjcjjn1_5ab",
+        "icon": "Fish_Icon.png",
+        "x": 343.34718125887673,
+        "z": 176.63834800544294,
         "size": 16
       }
     ],
