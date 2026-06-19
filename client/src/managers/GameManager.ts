@@ -1213,7 +1213,9 @@ export class GameManager {
           }
           break;
         case 'system': {
-          if (this.chatPanel) this.chatPanel.addSystemMessage(data.message, null, { colorKey: 'world' });
+          if (this.chatPanel) {
+            this.chatPanel.addSystemMessage(data.message, typeof data.color === 'string' ? data.color : null, { colorKey: 'world' });
+          }
           break;
         }
       }

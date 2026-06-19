@@ -11,6 +11,7 @@ import { DataLoader } from './data/DataLoader';
 import { ASSET_TO_GROUND_ITEM_SPAWN } from './data/AssetGroundItemSpawns';
 import { GameDatabase, type GameEventLogInput } from './Database';
 import { applyPlayerMagicImpactToNpc, armNpcRetaliation, isPointInNpcMagicAttackRange, isPointInNpcRangedAttackRange as isNpcInRangedAttackRange, processPlayerCombat, processPlayerRangedCombat, processNpcCombat, rollLoot, rollPlayerMagicDamageAgainstNpc, rollPlayerMagicDamageAgainstPlayer, rollPlayerMeleeDamageAgainstPlayer, rollPlayerRangedDamageAgainstPlayer, shouldConsumeAmmoOnShot, MAGIC_ATTACK_COOLDOWN_TICKS, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE, MELEE_ATTACK_DISTANCE, RANGED_ATTACK_DISTANCE, type PlayerNpcCombatResult } from './combat/Combat';
+import { rollRareDropTable } from './combat/RareDropTable';
 import { CombatSystem, type CombatActorRef, type CombatContext, type CombatMode, type ImpactQueueEntry, type RetaliationRequest } from './combat/CombatSystem';
 import { finalizeNpcDeath as finalizeNpcDeathCombat } from './combat/NpcDeath';
 import { broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSocket';
@@ -360,6 +361,10 @@ const PLAYER_FOLLOW_PATH_SEARCH_STEPS = DEFAULT_MAX_SEARCH_TILES;
 const MITHRIL_ROCK_OBJECT_DEF_ID = 16;
 const MITHRIL_PICKAXE_ITEM_ID = 55;
 const MITHRIL_PICKAXE_FIND_CHANCE = 1 / 1024;
+const FISHING_RARE_DROP_TABLE_ID = 'universal';
+const FISHING_RARE_DROP_BASE_CHANCE = 1 / (128 * 8);
+const FISHING_RARE_DROP_MAX_CHANCE = 1 / (128 * 3);
+const FISHING_RARE_DROP_MESSAGE_COLOR = '#1f5fbf';
 const RARE_DROP_LOG_CHANCE_THRESHOLD = 1 / 32;
 const RARE_DROP_TABLE_CHAT_MESSAGE = "All of a sudden you're feeling very lucky...";
 const LOW_VALUE_NPC_DROP_LOG_SUPPRESSION_ITEM_IDS = new Set([
@@ -371,6 +376,11 @@ const LOW_VALUE_NPC_DROP_LOG_SUPPRESSION_ITEM_IDS = new Set([
 ]);
 
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
+
+function fishingRareDropTableChance(levelRequired: number): number {
+  const progress = Math.max(0, Math.min(1, (levelRequired - 1) / (MAX_SKILL_LEVEL - 1)));
+  return FISHING_RARE_DROP_BASE_CHANCE + (FISHING_RARE_DROP_MAX_CHANCE - FISHING_RARE_DROP_BASE_CHANCE) * progress;
+}
 
 export interface GroundItem {
   id: number;
@@ -11618,6 +11628,52 @@ export class World {
           },
         });
 
+        if (skillId === 'fishing') {
+          const fishLevelRequired = harvestYield.levelRequired;
+          const chance = fishingRareDropTableChance(fishLevelRequired);
+          if (Math.random() < chance) {
+            const drop = rollRareDropTable(FISHING_RARE_DROP_TABLE_ID, this.data.rareDropTableDefs);
+            if (drop) {
+              const rare = this.awardHarvestItem(player, drop.itemId, drop.quantity, { dropOverflow: true });
+              const rareQuantity = rare.added + rare.dropped;
+              if (rareQuantity > 0) {
+                inventoryChanged ||= rare.added > 0;
+                if (rare.added > 0) {
+                  this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId: drop.itemId, quantity: rare.added, source: 'harvest' });
+                }
+                const rareItemName = this.itemEventName(drop.itemId);
+                this.sendChatSystem(player, `You find ${this.itemLootPhrase(drop.itemId, rareQuantity)} among the fish.. And feel incredibly lucky!`, FISHING_RARE_DROP_MESSAGE_COLOR);
+                this.recordGameEvent({
+                  type: 'rare_drop',
+                  severity: 'rare',
+                  message: `${player.name} found ${rareQuantity} x ${rareItemName} while fishing at ${obj.def.name}`,
+                  actorAccountId: player.accountId,
+                  actorName: player.name,
+                  itemId: drop.itemId,
+                  itemName: rareItemName,
+                  quantity: rareQuantity,
+                  mapLevel: obj.mapLevel,
+                  floor: obj.floor,
+                  x: obj.x,
+                  z: obj.z,
+                  details: {
+                    source: 'fishing_rare_drop_table',
+                    objectEntityId: obj.id,
+                    objectDefId: obj.defId,
+                    objectName: obj.def.name,
+                    chance,
+                    fishLevelRequired,
+                    rareTableId: drop.rareTableId,
+                    rareAccessTableId: FISHING_RARE_DROP_TABLE_ID,
+                    added: rare.added,
+                    dropped: rare.dropped,
+                  },
+                });
+              }
+            }
+          }
+        }
+
         if (obj.defId === MITHRIL_ROCK_OBJECT_DEF_ID && Math.random() < MITHRIL_PICKAXE_FIND_CHANCE) {
           const rare = this.awardHarvestItem(player, MITHRIL_PICKAXE_ITEM_ID, 1, { dropOverflow: canDropOverflow });
           this.sendChatSystem(player, 'You find a beautiful blue pickaxe left among the rocks...');
@@ -12837,11 +12893,11 @@ export class World {
     this.broadcastNearbyOnFloor(obj.mapLevel, obj.floor ?? 0, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_ANIMATION, obj.id);
   }
 
-  private sendChatSystem(player: Player, message: string): void {
+  private sendChatSystem(player: Player, message: string, color?: string): void {
     // System messages travel over the JSON chat socket, looked up by username.
     // The binary CHAT_SYSTEM opcode is reserved for future use (e.g. ping the
     // game socket) and currently carries no string payload.
-    sendSystemMessageToUser(player.name, message);
+    sendSystemMessageToUser(player.name, message, color);
   }
 
   private sendMapChange(player: Player, mapId: string): void {

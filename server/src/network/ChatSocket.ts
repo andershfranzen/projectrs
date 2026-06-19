@@ -1437,9 +1437,9 @@ export function broadcastPlayerInfo(entityId: number, name: string): void {
  *  Used by World.sendChatSystem so server-side errors (inventory full, trade
  *  range, etc.) actually reach the player's chat panel. Silently no-ops if the
  *  player isn't currently connected to the chat socket. */
-export function sendSystemMessageToUser(username: string, message: string): void {
+export function sendSystemMessageToUser(username: string, message: string, color?: string): void {
   const lc = username.toLowerCase();
-  const payload = JSON.stringify({ type: 'system', message });
+  const payload = JSON.stringify(color ? { type: 'system', message, color } : { type: 'system', message });
   const sock = chatSocketsByUsername.get(lc);
   if (sock) {
     try { sock.send(payload); } catch { /* ignore */ }
